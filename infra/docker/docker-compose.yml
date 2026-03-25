@@ -2,8 +2,6 @@ services:
   openclaw:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     restart: unless-stopped
-    env_file:
-      - ../../.env
     environment:
       REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
