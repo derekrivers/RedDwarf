@@ -1,0 +1,18 @@
+{
+  "name": "@reddwarf/evidence",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@reddwarf/contracts": "workspace:*",
+    "drizzle-orm": "^0.40.0",
+    "pg": "^8.14.1"
+  }
+}
