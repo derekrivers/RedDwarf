@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "incremental": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@reddwarf/contracts": ["packages/contracts/src/index.ts"],
+      "@reddwarf/policy": ["packages/policy/src/index.ts"],
+      "@reddwarf/control-plane": ["packages/control-plane/src/index.ts"],
+      "@reddwarf/execution-plane": ["packages/execution-plane/src/index.ts"],
+      "@reddwarf/evidence": ["packages/evidence/src/index.ts"],
+      "@reddwarf/integrations": ["packages/integrations/src/index.ts"]
+    }
+  }
+}

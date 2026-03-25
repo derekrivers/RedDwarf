@@ -1,0 +1,40 @@
+services:
+  openclaw:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}
+      REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
+      REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ${REDDWARF_POLICY_SOURCE_ROOT:-../../}:${REDDWARF_POLICY_ROOT:-/opt/reddwarf}:ro
+      - runtime-workspace:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
+      - runtime-evidence:${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reddwarf}
+      POSTGRES_USER: ${POSTGRES_USER:-reddwarf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reddwarf}
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-reddwarf} -d ${POSTGRES_DB:-reddwarf}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  runtime-workspace:
+  runtime-evidence:

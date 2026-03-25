@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/policy" },
+    { "path": "./packages/control-plane" },
+    { "path": "./packages/execution-plane" },
+    { "path": "./packages/evidence" },
+    { "path": "./packages/integrations" }
+  ]
+}
