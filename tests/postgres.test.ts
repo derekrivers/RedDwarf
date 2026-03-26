@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   createWorkspaceContextBundleFromSnapshot,
   destroyTaskWorkspace,
   provisionTaskWorkspace,
   resolveApprovalRequest,
+  runDeveloperPhase,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import {
@@ -18,11 +20,14 @@ import {
 } from "@reddwarf/evidence";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
-const connectionString = process.env.HOST_DATABASE_URL ?? process.env.DATABASE_URL;
+const connectionString =
+  process.env.HOST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describeIfDatabase = connectionString ? describe : describe.skip;
 
 describeIfDatabase("postgres planning repository", () => {
-  const repository = new PostgresPlanningRepository({ connectionString: connectionString! });
+  const repository = new PostgresPlanningRepository({
+    connectionString: connectionString!
+  });
 
   beforeAll(async () => {
     await repository.healthcheck();
@@ -47,7 +52,10 @@ describeIfDatabase("postgres planning repository", () => {
         "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, pipeline-run records, and managed workspace lifecycle are queryable.",
       priority: 1,
       labels: ["ai-eligible"],
-      acceptanceCriteria: ["The planning spec exists", "Audit records can be queried"],
+      acceptanceCriteria: [
+        "The planning spec exists",
+        "Audit records can be queried"
+      ],
       affectedPaths: ["docs/postgres-verification.md"],
       requestedCapabilities: ["can_plan", "can_archive_evidence"],
       metadata: {}
@@ -106,13 +114,18 @@ describeIfDatabase("postgres planning repository", () => {
     );
 
     const snapshot = await repository.getTaskSnapshot(result.manifest.taskId);
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
     const memoryContext = await repository.getMemoryContext({
       taskId: result.manifest.taskId,
       repo: input.source.repo,
       organizationId
     });
-    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-postgres-context-"));
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-postgres-context-")
+    );
 
     try {
       expect(snapshot.manifest?.taskId).toBe(result.manifest.taskId);
@@ -147,14 +160,29 @@ describeIfDatabase("postgres planning repository", () => {
         targetRoot: tempRoot,
         workspaceId: `${result.manifest.taskId}-integration`
       });
-      const descriptor = JSON.parse(await readFile(provisioned.workspace.stateFile, "utf8"));
-      const policySnapshot = JSON.parse(await readFile(provisioned.workspace.files.policySnapshotJson, "utf8"));
-      const soulMd = await readFile(provisioned.workspace.instructions.files.soulMd, "utf8");
-      const toolsMd = await readFile(provisioned.workspace.instructions.files.toolsMd, "utf8");
-      const taskSkillMd = await readFile(provisioned.workspace.instructions.files.taskSkillMd, "utf8");
+      const descriptor = JSON.parse(
+        await readFile(provisioned.workspace.stateFile, "utf8")
+      );
+      const policySnapshot = JSON.parse(
+        await readFile(provisioned.workspace.files.policySnapshotJson, "utf8")
+      );
+      const soulMd = await readFile(
+        provisioned.workspace.instructions.files.soulMd,
+        "utf8"
+      );
+      const toolsMd = await readFile(
+        provisioned.workspace.instructions.files.toolsMd,
+        "utf8"
+      );
+      const taskSkillMd = await readFile(
+        provisioned.workspace.instructions.files.taskSkillMd,
+        "utf8"
+      );
 
       expect(bundle.allowedPaths).toEqual(["docs/postgres-verification.md"]);
-      expect(policySnapshot.allowedPaths).toEqual(["docs/postgres-verification.md"]);
+      expect(policySnapshot.allowedPaths).toEqual([
+        "docs/postgres-verification.md"
+      ]);
       expect(descriptor.status).toBe("provisioned");
       expect(soulMd).toContain(result.manifest.taskId);
       expect(toolsMd).toContain("can_archive_evidence");
@@ -165,16 +193,28 @@ describeIfDatabase("postgres planning repository", () => {
         repository,
         targetRoot: tempRoot
       });
-      const persistedManifest = await repository.getManifest(result.manifest.taskId);
-      const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+      const persistedManifest = await repository.getManifest(
+        result.manifest.taskId
+      );
+      const evidenceRecords = await repository.listEvidenceRecords(
+        result.manifest.taskId
+      );
 
       expect(destroyed.manifest.workspaceId).toBeNull();
       expect(destroyed.workspace.removed).toBe(true);
       expect(destroyed.workspace.descriptor?.status).toBe("destroyed");
       expect(persistedManifest?.workspaceId).toBeNull();
-      expect(evidenceRecords.some((record) => record.recordId.endsWith(":provisioned"))).toBe(true);
-      expect(evidenceRecords.some((record) => record.recordId.endsWith(":destroyed"))).toBe(true);
-      await expect(access(provisioned.workspace.workspaceRoot)).rejects.toThrow();
+      expect(
+        evidenceRecords.some((record) =>
+          record.recordId.endsWith(":provisioned")
+        )
+      ).toBe(true);
+      expect(
+        evidenceRecords.some((record) => record.recordId.endsWith(":destroyed"))
+      ).toBe(true);
+      await expect(
+        access(provisioned.workspace.workspaceRoot)
+      ).rejects.toThrow();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -195,7 +235,10 @@ describeIfDatabase("postgres planning repository", () => {
         "Persist a planning run that requires human approval, verify the approval queue entry is durable, and confirm approval resolution updates the manifest and evidence state.",
       priority: 1,
       labels: ["ai-eligible"],
-      acceptanceCriteria: ["Approval request is stored", "Approval decisions update manifest state"],
+      acceptanceCriteria: [
+        "Approval request is stored",
+        "Approval decisions update manifest state"
+      ],
       affectedPaths: ["src/approval-flow.ts"],
       requestedCapabilities: ["can_write_code"],
       metadata: {}
@@ -208,7 +251,10 @@ describeIfDatabase("postgres planning repository", () => {
       idGenerator: () => `approval-${issueNumber}`
     });
     const snapshot = await repository.getTaskSnapshot(result.manifest.taskId);
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
 
     expect(result.manifest.lifecycleStatus).toBe("blocked");
     expect(result.approvalRequest?.status).toBe("pending");
@@ -221,7 +267,7 @@ describeIfDatabase("postgres planning repository", () => {
         requestId: result.approvalRequest!.requestId,
         decision: "approve",
         decidedBy: "operator",
-        decisionSummary: "Approved for the developer phase once it is implemented.",
+        decisionSummary: "Approved for developer orchestration.",
         comment: "Queue is behaving as expected."
       },
       {
@@ -229,19 +275,140 @@ describeIfDatabase("postgres planning repository", () => {
         clock: () => new Date("2026-03-25T18:05:00.000Z")
       }
     );
-    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
-    const persistedManifest = await repository.getManifest(result.manifest.taskId);
-    const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+    const persistedRequest = await repository.getApprovalRequest(
+      result.approvalRequest!.requestId
+    );
+    const persistedManifest = await repository.getManifest(
+      result.manifest.taskId
+    );
+    const evidenceRecords = await repository.listEvidenceRecords(
+      result.manifest.taskId
+    );
 
     expect(resolved.manifest.lifecycleStatus).toBe("ready");
     expect(persistedRequest?.status).toBe("approved");
     expect(persistedRequest?.decision).toBe("approve");
     expect(persistedManifest?.lifecycleStatus).toBe("ready");
-    expect(evidenceRecords.some((record) => record.recordId.includes(":approval-decision:"))).toBe(true);
+    expect(
+      evidenceRecords.some((record) =>
+        record.recordId.includes(":approval-decision:")
+      )
+    ).toBe(true);
+  });
+
+  it("persists developer phase orchestration with code writing disabled", async () => {
+    const issueNumber = Date.now() + 2;
+    const repo = `developer-${issueNumber}/platform-${issueNumber}`;
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-postgres-development-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        source: {
+          provider: "github",
+          repo,
+          issueNumber,
+          issueUrl: `https://github.com/${repo}/issues/${issueNumber}`
+        },
+        title: "Persist developer phase orchestration",
+        summary:
+          "Persist a developer-phase run after human approval, verify the workspace handoff is captured, and confirm code writing stays disabled by default.",
+        priority: 1,
+        labels: ["ai-eligible"],
+        acceptanceCriteria: [
+          "Developer workspace is provisioned",
+          "Developer handoff is queryable"
+        ],
+        affectedPaths: ["src/developer-phase.ts"],
+        requestedCapabilities: ["can_write_code"],
+        metadata: {}
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => `developer-plan-${issueNumber}`
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for developer orchestration.",
+        comment: "Keep code writing disabled."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: `${planningResult.manifest.taskId}-development`
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => `developer-run-${issueNumber}`
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const snapshot = await repository.getTaskSnapshot(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        development.runId
+      );
+      const handoffMarkdown = await readFile(development.handoffPath!, "utf8");
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(development.workspace?.descriptor.toolPolicy.mode).toBe(
+        "development_readonly"
+      );
+      expect(
+        development.workspace?.descriptor.toolPolicy.codeWriteEnabled
+      ).toBe(false);
+      expect(persistedManifest?.currentPhase).toBe("development");
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+      expect(
+        snapshot.phaseRecords.some((record) => record.phase === "development")
+      ).toBe(true);
+      expect(
+        snapshot.memoryRecords.some(
+          (record) => record.key === "development.handoff"
+        )
+      ).toBe(true);
+      expect(
+        snapshot.evidenceRecords.some((record) =>
+          record.recordId.includes(":handoff")
+        )
+      ).toBe(true);
+      expect(runSummary?.status).toBe("blocked");
+      expect(runSummary?.latestPhase).toBe("development");
+      expect(handoffMarkdown).toContain("Development Handoff");
+
+      await destroyTaskWorkspace({
+        manifest: development.manifest,
+        repository,
+        targetRoot: tempRoot
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("marks stale overlapping runs and blocks fresh overlaps in Postgres", async () => {
-    const issueNumber = Date.now() + 2;
+    const issueNumber = Date.now() + 3;
     const repo = `concurrency-${issueNumber}/platform-${issueNumber}`;
     const concurrencyKey = `github:${repo}:${issueNumber}`;
     const taskId = `${repo.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()}-${issueNumber}`;
@@ -271,7 +438,10 @@ describeIfDatabase("postgres planning repository", () => {
         "Verify that stale overlapping runs are retired and fresh overlaps are blocked conservatively in the Postgres-backed planning pipeline.",
       priority: 1,
       labels: ["ai-eligible"],
-      acceptanceCriteria: ["Stale runs are marked", "Fresh overlaps are blocked"],
+      acceptanceCriteria: [
+        "Stale runs are marked",
+        "Fresh overlaps are blocked"
+      ],
       affectedPaths: ["docs/concurrency-verification.md"],
       requestedCapabilities: ["can_plan", "can_archive_evidence"],
       metadata: {}
@@ -310,16 +480,32 @@ describeIfDatabase("postgres planning repository", () => {
       }
     });
 
-    const pipelineRuns = await repository.listPipelineRuns({ concurrencyKey, limit: 10 });
-    const blockedSummary = await repository.getRunSummary(taskId, `blocked-${issueNumber}`);
+    const pipelineRuns = await repository.listPipelineRuns({
+      concurrencyKey,
+      limit: 10
+    });
+    const blockedSummary = await repository.getRunSummary(
+      taskId,
+      `blocked-${issueNumber}`
+    );
 
-    expect(staleResult.concurrencyDecision.staleRunIds).toEqual([`stale-${issueNumber}`]);
+    expect(staleResult.concurrencyDecision.staleRunIds).toEqual([
+      `stale-${issueNumber}`
+    ]);
     expect(blockedResult.concurrencyDecision.action).toBe("block");
-    expect(blockedResult.concurrencyDecision.blockedByRunId).toBe(`active-${issueNumber}`);
+    expect(blockedResult.concurrencyDecision.blockedByRunId).toBe(
+      `active-${issueNumber}`
+    );
     expect(blockedSummary?.status).toBe("blocked");
     expect(blockedSummary?.failureClass).toBe("execution_loop");
-    expect(pipelineRuns.find((run) => run.runId === `stale-${issueNumber}`)?.status).toBe("stale");
-    expect(pipelineRuns.find((run) => run.runId === `fresh-${issueNumber}`)?.status).toBe("completed");
-    expect(pipelineRuns.find((run) => run.runId === `blocked-${issueNumber}`)?.status).toBe("blocked");
+    expect(
+      pipelineRuns.find((run) => run.runId === `stale-${issueNumber}`)?.status
+    ).toBe("stale");
+    expect(
+      pipelineRuns.find((run) => run.runId === `fresh-${issueNumber}`)?.status
+    ).toBe("completed");
+    expect(
+      pipelineRuns.find((run) => run.runId === `blocked-${issueNumber}`)?.status
+    ).toBe("blocked");
   });
 });

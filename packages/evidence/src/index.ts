@@ -42,7 +42,10 @@ export interface PlanningRepository {
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
   getManifest(taskId: string): Promise<TaskManifest | null>;
   getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
-  listApprovalRequests(query?: Partial<ApprovalRequestQuery>): Promise<ApprovalRequest[]>;
+  listApprovalRequests(
+    query?: Partial<ApprovalRequestQuery>
+  ): Promise<ApprovalRequest[]>;
+  getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
 }
 
@@ -85,7 +88,10 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.planningSpecs.set(spec.taskId, spec);
   }
 
-  async savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void> {
+  async savePolicySnapshot(
+    taskId: string,
+    snapshot: PolicySnapshot
+  ): Promise<void> {
     this.policySnapshots.set(taskId, snapshot);
   }
 
@@ -98,7 +104,9 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   }
 
   async saveMemoryRecord(record: MemoryRecord): Promise<void> {
-    const index = this.memoryRecords.findIndex((entry) => entry.memoryId === record.memoryId);
+    const index = this.memoryRecords.findIndex(
+      (entry) => entry.memoryId === record.memoryId
+    );
 
     if (index >= 0) {
       this.memoryRecords[index] = record;
@@ -145,44 +153,80 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   }
 
   async listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]> {
-    return this.runEvents.filter((event) => event.taskId === taskId && (runId === undefined || event.runId === runId));
+    return this.runEvents.filter(
+      (event) =>
+        event.taskId === taskId &&
+        (runId === undefined || event.runId === runId)
+    );
   }
 
-  async listMemoryRecords(query: Partial<MemoryQuery> = {}): Promise<MemoryRecord[]> {
+  async listMemoryRecords(
+    query: Partial<MemoryQuery> = {}
+  ): Promise<MemoryRecord[]> {
     const parsed = normalizeMemoryQuery(query);
 
     return this.memoryRecords
       .filter((record) => (parsed.scope ? record.scope === parsed.scope : true))
-      .filter((record) => (parsed.taskId ? record.taskId === parsed.taskId : true))
-      .filter((record) => (parsed.repo ? record.repo === parsed.repo : true))
-      .filter((record) => (parsed.organizationId ? record.organizationId === parsed.organizationId : true))
-      .filter((record) => (parsed.sourceUri ? record.sourceUri === parsed.sourceUri : true))
-      .filter((record) => (parsed.keyPrefix ? record.key.startsWith(parsed.keyPrefix) : true))
       .filter((record) =>
-        parsed.tags.length > 0 ? parsed.tags.every((tag) => record.tags.includes(tag)) : true
+        parsed.taskId ? record.taskId === parsed.taskId : true
+      )
+      .filter((record) => (parsed.repo ? record.repo === parsed.repo : true))
+      .filter((record) =>
+        parsed.organizationId
+          ? record.organizationId === parsed.organizationId
+          : true
+      )
+      .filter((record) =>
+        parsed.sourceUri ? record.sourceUri === parsed.sourceUri : true
+      )
+      .filter((record) =>
+        parsed.keyPrefix ? record.key.startsWith(parsed.keyPrefix) : true
+      )
+      .filter((record) =>
+        parsed.tags.length > 0
+          ? parsed.tags.every((tag) => record.tags.includes(tag))
+          : true
       )
       .sort(compareMemoryRecords)
       .slice(0, parsed.limit);
   }
 
-  async listPipelineRuns(query: Partial<PipelineRunQuery> = {}): Promise<PipelineRun[]> {
+  async listPipelineRuns(
+    query: Partial<PipelineRunQuery> = {}
+  ): Promise<PipelineRun[]> {
     const parsed = normalizePipelineRunQuery(query);
 
     return [...this.pipelineRuns.values()]
       .filter((run) => (parsed.taskId ? run.taskId === parsed.taskId : true))
-      .filter((run) => (parsed.concurrencyKey ? run.concurrencyKey === parsed.concurrencyKey : true))
-      .filter((run) => (parsed.statuses.length > 0 ? parsed.statuses.includes(run.status) : true))
+      .filter((run) =>
+        parsed.concurrencyKey
+          ? run.concurrencyKey === parsed.concurrencyKey
+          : true
+      )
+      .filter((run) =>
+        parsed.statuses.length > 0 ? parsed.statuses.includes(run.status) : true
+      )
       .sort(comparePipelineRuns)
       .slice(0, parsed.limit);
   }
 
-  async listApprovalRequests(query: Partial<ApprovalRequestQuery> = {}): Promise<ApprovalRequest[]> {
+  async listApprovalRequests(
+    query: Partial<ApprovalRequestQuery> = {}
+  ): Promise<ApprovalRequest[]> {
     const parsed = normalizeApprovalRequestQuery(query);
 
     return [...this.approvalRequests.values()]
-      .filter((request) => (parsed.taskId ? request.taskId === parsed.taskId : true))
-      .filter((request) => (parsed.runId ? request.runId === parsed.runId : true))
-      .filter((request) => (parsed.statuses.length > 0 ? parsed.statuses.includes(request.status) : true))
+      .filter((request) =>
+        parsed.taskId ? request.taskId === parsed.taskId : true
+      )
+      .filter((request) =>
+        parsed.runId ? request.runId === parsed.runId : true
+      )
+      .filter((request) =>
+        parsed.statuses.length > 0
+          ? parsed.statuses.includes(request.status)
+          : true
+      )
       .sort(compareApprovalRequests)
       .slice(0, parsed.limit);
   }
@@ -195,14 +239,25 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       phaseRecords: await this.listPhaseRecords(taskId),
       evidenceRecords: await this.listEvidenceRecords(taskId),
       runEvents: await this.listRunEvents(taskId),
-      memoryRecords: await this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
+      memoryRecords: await this.listMemoryRecords({
+        taskId,
+        scope: "task",
+        limit: 100
+      }),
       pipelineRuns: await this.listPipelineRuns({ taskId, limit: 100 }),
       approvalRequests: await this.listApprovalRequests({ taskId, limit: 100 })
     };
   }
 
-  async getRunSummary(taskId: string, runId: string): Promise<RunSummary | null> {
-    return summarizeRunEvents(taskId, runId, await this.listRunEvents(taskId, runId));
+  async getRunSummary(
+    taskId: string,
+    runId: string
+  ): Promise<RunSummary | null> {
+    return summarizeRunEvents(
+      taskId,
+      runId,
+      await this.listRunEvents(taskId, runId)
+    );
   }
 
   async getMemoryContext(input: {
@@ -385,7 +440,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
       ]
     );
   }
-  async savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void> {
+  async savePolicySnapshot(
+    taskId: string,
+    snapshot: PolicySnapshot
+  ): Promise<void> {
     const now = asIsoTimestamp();
     await this.pool.query(
       `
@@ -651,12 +709,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async getManifest(taskId: string): Promise<TaskManifest | null> {
-    const result = await this.pool.query("SELECT * FROM task_manifests WHERE task_id = $1", [taskId]);
+    const result = await this.pool.query(
+      "SELECT * FROM task_manifests WHERE task_id = $1",
+      [taskId]
+    );
     return result.rows[0] ? mapManifestRow(result.rows[0]) : null;
   }
 
   async getApprovalRequest(requestId: string): Promise<ApprovalRequest | null> {
-    const result = await this.pool.query("SELECT * FROM approval_requests WHERE request_id = $1", [requestId]);
+    const result = await this.pool.query(
+      "SELECT * FROM approval_requests WHERE request_id = $1",
+      [requestId]
+    );
     return result.rows[0] ? mapApprovalRequestRow(result.rows[0]) : null;
   }
 
@@ -669,12 +733,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async getPolicySnapshot(taskId: string): Promise<PolicySnapshot | null> {
-    const result = await this.pool.query("SELECT * FROM policy_snapshots WHERE task_id = $1", [taskId]);
+    const result = await this.pool.query(
+      "SELECT * FROM policy_snapshots WHERE task_id = $1",
+      [taskId]
+    );
     return result.rows[0] ? mapPolicySnapshotRow(result.rows[0]) : null;
   }
 
   async getPipelineRun(runId: string): Promise<PipelineRun | null> {
-    const result = await this.pool.query("SELECT * FROM pipeline_runs WHERE run_id = $1", [runId]);
+    const result = await this.pool.query(
+      "SELECT * FROM pipeline_runs WHERE run_id = $1",
+      [runId]
+    );
     return result.rows[0] ? mapPipelineRunRow(result.rows[0]) : null;
   }
 
@@ -706,7 +776,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
     return result.rows.map(mapRunEventRow);
   }
-  async listMemoryRecords(query: Partial<MemoryQuery> = {}): Promise<MemoryRecord[]> {
+  async listMemoryRecords(
+    query: Partial<MemoryQuery> = {}
+  ): Promise<MemoryRecord[]> {
     const parsed = normalizeMemoryQuery(query);
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -755,7 +827,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
     }
 
     params.push(parsed.limit);
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const result = await this.pool.query(
       `SELECT * FROM memory_records ${whereClause} ORDER BY updated_at DESC, created_at DESC, memory_id ASC LIMIT $${parameterIndex}`,
       params
@@ -764,7 +837,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapMemoryRecordRow);
   }
 
-  async listPipelineRuns(query: Partial<PipelineRunQuery> = {}): Promise<PipelineRun[]> {
+  async listPipelineRuns(
+    query: Partial<PipelineRunQuery> = {}
+  ): Promise<PipelineRun[]> {
     const parsed = normalizePipelineRunQuery(query);
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -789,7 +864,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
     }
 
     params.push(parsed.limit);
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const result = await this.pool.query(
       `SELECT * FROM pipeline_runs ${whereClause} ORDER BY started_at DESC, run_id ASC LIMIT $${parameterIndex}`,
       params
@@ -798,7 +874,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapPipelineRunRow);
   }
 
-  async listApprovalRequests(query: Partial<ApprovalRequestQuery> = {}): Promise<ApprovalRequest[]> {
+  async listApprovalRequests(
+    query: Partial<ApprovalRequestQuery> = {}
+  ): Promise<ApprovalRequest[]> {
     const parsed = normalizeApprovalRequestQuery(query);
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -823,7 +901,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
     }
 
     params.push(parsed.limit);
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const result = await this.pool.query(
       `SELECT * FROM approval_requests ${whereClause} ORDER BY updated_at DESC, created_at DESC, request_id ASC LIMIT $${parameterIndex}`,
       params
@@ -833,18 +912,27 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
-    const [manifest, spec, policySnapshot, phaseRecords, evidenceRecords, runEvents, memoryRecords, pipelineRuns, approvalRequests] =
-      await Promise.all([
-        this.getManifest(taskId),
-        this.getPlanningSpec(taskId),
-        this.getPolicySnapshot(taskId),
-        this.listPhaseRecords(taskId),
-        this.listEvidenceRecords(taskId),
-        this.listRunEvents(taskId),
-        this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
-        this.listPipelineRuns({ taskId, limit: 100 }),
-        this.listApprovalRequests({ taskId, limit: 100 })
-      ]);
+    const [
+      manifest,
+      spec,
+      policySnapshot,
+      phaseRecords,
+      evidenceRecords,
+      runEvents,
+      memoryRecords,
+      pipelineRuns,
+      approvalRequests
+    ] = await Promise.all([
+      this.getManifest(taskId),
+      this.getPlanningSpec(taskId),
+      this.getPolicySnapshot(taskId),
+      this.listPhaseRecords(taskId),
+      this.listEvidenceRecords(taskId),
+      this.listRunEvents(taskId),
+      this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
+      this.listPipelineRuns({ taskId, limit: 100 }),
+      this.listApprovalRequests({ taskId, limit: 100 })
+    ]);
 
     return {
       manifest,
@@ -859,8 +947,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
     };
   }
 
-  async getRunSummary(taskId: string, runId: string): Promise<RunSummary | null> {
-    return summarizeRunEvents(taskId, runId, await this.listRunEvents(taskId, runId));
+  async getRunSummary(
+    taskId: string,
+    runId: string
+  ): Promise<RunSummary | null> {
+    return summarizeRunEvents(
+      taskId,
+      runId,
+      await this.listRunEvents(taskId, runId)
+    );
   }
 
   async getMemoryContext(input: {
@@ -873,7 +968,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 }
 
-export function buildEvidenceLocation(kind: EvidenceRecord["kind"], id: string): string {
+export function buildEvidenceLocation(
+  kind: EvidenceRecord["kind"],
+  id: string
+): string {
   return `db://${kind}/${id}`;
 }
 
@@ -891,7 +989,8 @@ export function createEvidenceRecord(input: {
     taskId: input.taskId,
     kind: input.kind,
     title: input.title,
-    location: input.location ?? buildEvidenceLocation(input.kind, input.recordId),
+    location:
+      input.location ?? buildEvidenceLocation(input.kind, input.recordId),
     metadata: input.metadata ?? {},
     createdAt: input.createdAt ?? asIsoTimestamp()
   };
@@ -918,7 +1017,9 @@ export function createRunEvent(input: {
     level: input.level,
     code: input.code,
     message: input.message,
-    ...(input.failureClass === undefined ? {} : { failureClass: input.failureClass }),
+    ...(input.failureClass === undefined
+      ? {}
+      : { failureClass: input.failureClass }),
     ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
     data: input.data ?? {},
     createdAt: input.createdAt ?? asIsoTimestamp()
@@ -1036,7 +1137,11 @@ export function createApprovalRequest(input: {
     resolvedAt: input.resolvedAt ?? null
   });
 }
-export function summarizeRunEvents(taskId: string, runId: string, events: RunEvent[]): RunSummary | null {
+export function summarizeRunEvents(
+  taskId: string,
+  runId: string,
+  events: RunEvent[]
+): RunSummary | null {
   const scoped = [...events]
     .filter((event) => event.taskId === taskId && event.runId === runId)
     .sort((left, right) => {
@@ -1070,14 +1175,21 @@ export function summarizeRunEvents(taskId: string, runId: string, events: RunEve
         event.code === "PHASE_BLOCKED" ||
         event.code === "PHASE_FAILED")
     ) {
-      phaseDurations[event.phase] = Math.max(phaseDurations[event.phase] ?? 0, event.durationMs);
+      phaseDurations[event.phase] = Math.max(
+        phaseDurations[event.phase] ?? 0,
+        event.durationMs
+      );
     }
 
     if (event.failureClass !== undefined && failureClass === null) {
       failureClass = event.failureClass;
     }
 
-    if (event.failureClass !== undefined || event.level === "error" || event.level === "warn") {
+    if (
+      event.failureClass !== undefined ||
+      event.level === "error" ||
+      event.level === "warn"
+    ) {
       failureCodes.add(event.code);
     }
 
@@ -1099,7 +1211,8 @@ export function summarizeRunEvents(taskId: string, runId: string, events: RunEve
         event.code === "PIPELINE_FAILED"
     );
   const totalDurationMs =
-    terminalEvent?.durationMs ?? Object.values(phaseDurations).reduce((sum, value) => sum + value, 0);
+    terminalEvent?.durationMs ??
+    Object.values(phaseDurations).reduce((sum, value) => sum + value, 0);
 
   return runSummarySchema.parse({
     taskId,
@@ -1117,14 +1230,29 @@ export function summarizeRunEvents(taskId: string, runId: string, events: RunEve
 }
 
 export async function buildMemoryContextForRepository(
-  repository: { listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]> },
-  input: { taskId: string; repo: string; organizationId?: string | null; limitPerScope?: number }
+  repository: {
+    listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
+  },
+  input: {
+    taskId: string;
+    repo: string;
+    organizationId?: string | null;
+    limitPerScope?: number;
+  }
 ): Promise<MemoryContext> {
   const limit = input.limitPerScope ?? 10;
   const externalCandidates = await Promise.all([
-    repository.listMemoryRecords({ scope: "external", repo: input.repo, limit }),
+    repository.listMemoryRecords({
+      scope: "external",
+      repo: input.repo,
+      limit
+    }),
     input.organizationId
-      ? repository.listMemoryRecords({ scope: "external", organizationId: input.organizationId, limit })
+      ? repository.listMemoryRecords({
+          scope: "external",
+          organizationId: input.organizationId,
+          limit
+        })
       : Promise.resolve([])
   ]);
 
@@ -1132,10 +1260,22 @@ export async function buildMemoryContextForRepository(
     taskId: input.taskId,
     repo: input.repo,
     organizationId: input.organizationId ?? null,
-    taskMemory: await repository.listMemoryRecords({ scope: "task", taskId: input.taskId, limit }),
-    projectMemory: await repository.listMemoryRecords({ scope: "project", repo: input.repo, limit }),
+    taskMemory: await repository.listMemoryRecords({
+      scope: "task",
+      taskId: input.taskId,
+      limit
+    }),
+    projectMemory: await repository.listMemoryRecords({
+      scope: "project",
+      repo: input.repo,
+      limit
+    }),
     organizationMemory: input.organizationId
-      ? await repository.listMemoryRecords({ scope: "organization", organizationId: input.organizationId, limit })
+      ? await repository.listMemoryRecords({
+          scope: "organization",
+          organizationId: input.organizationId,
+          limit
+        })
       : [],
     externalMemory: dedupeMemoryRecords(externalCandidates.flat())
   });
@@ -1150,11 +1290,15 @@ function normalizeMemoryQuery(query: Partial<MemoryQuery>): MemoryQuery {
   return memoryQuerySchema.parse(query);
 }
 
-function normalizePipelineRunQuery(query: Partial<PipelineRunQuery>): PipelineRunQuery {
+function normalizePipelineRunQuery(
+  query: Partial<PipelineRunQuery>
+): PipelineRunQuery {
   return pipelineRunQuerySchema.parse(query);
 }
 
-function normalizeApprovalRequestQuery(query: Partial<ApprovalRequestQuery>): ApprovalRequestQuery {
+function normalizeApprovalRequestQuery(
+  query: Partial<ApprovalRequestQuery>
+): ApprovalRequestQuery {
   return approvalRequestQuerySchema.parse(query);
 }
 
@@ -1190,7 +1334,10 @@ function comparePipelineRuns(left: PipelineRun, right: PipelineRun): number {
   return started !== 0 ? started : left.runId.localeCompare(right.runId);
 }
 
-function compareApprovalRequests(left: ApprovalRequest, right: ApprovalRequest): number {
+function compareApprovalRequests(
+  left: ApprovalRequest,
+  right: ApprovalRequest
+): number {
   const updated = right.updatedAt.localeCompare(left.updatedAt);
 
   if (updated !== 0) {
@@ -1198,7 +1345,9 @@ function compareApprovalRequests(left: ApprovalRequest, right: ApprovalRequest):
   }
 
   const created = right.createdAt.localeCompare(left.createdAt);
-  return created !== 0 ? created : left.requestId.localeCompare(right.requestId);
+  return created !== 0
+    ? created
+    : left.requestId.localeCompare(right.requestId);
 }
 
 function mapManifestRow(row: Record<string, unknown>): TaskManifest {
@@ -1212,8 +1361,10 @@ function mapManifestRow(row: Record<string, unknown>): TaskManifest {
     approvalMode: row.approval_mode as TaskManifest["approvalMode"],
     currentPhase: row.current_phase as TaskManifest["currentPhase"],
     lifecycleStatus: row.lifecycle_status as TaskManifest["lifecycleStatus"],
-    assignedAgentType: row.assigned_agent_type as TaskManifest["assignedAgentType"],
-    requestedCapabilities: row.requested_capabilities as TaskManifest["requestedCapabilities"],
+    assignedAgentType:
+      row.assigned_agent_type as TaskManifest["assignedAgentType"],
+    requestedCapabilities:
+      row.requested_capabilities as TaskManifest["requestedCapabilities"],
     retryCount: row.retry_count as number,
     evidenceLinks: row.evidence_links as string[],
     workspaceId: (row.workspace_id as string | null) ?? null,
@@ -1248,7 +1399,8 @@ function mapPlanningSpecRow(row: Record<string, unknown>): PlanningSpec {
     constraints: row.constraints as string[],
     acceptanceCriteria: row.acceptance_criteria as string[],
     testExpectations: row.test_expectations as string[],
-    recommendedAgentType: row.recommended_agent_type as PlanningSpec["recommendedAgentType"],
+    recommendedAgentType:
+      row.recommended_agent_type as PlanningSpec["recommendedAgentType"],
     riskClass: row.risk_class as PlanningSpec["riskClass"],
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date))
   };
@@ -1317,7 +1469,9 @@ function mapPipelineRunRow(row: Record<string, unknown>): PipelineRun {
     blockedByRunId: (row.blocked_by_run_id as string | null) ?? null,
     overlapReason: (row.overlap_reason as string | null) ?? null,
     startedAt: asIsoTimestamp(new Date(row.started_at as string | Date)),
-    lastHeartbeatAt: asIsoTimestamp(new Date(row.last_heartbeat_at as string | Date)),
+    lastHeartbeatAt: asIsoTimestamp(
+      new Date(row.last_heartbeat_at as string | Date)
+    ),
     completedAt:
       row.completed_at === null || row.completed_at === undefined
         ? null
@@ -1340,9 +1494,13 @@ function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {
     status: row.status as ApprovalRequest["status"],
     riskClass: row.risk_class as ApprovalRequest["riskClass"],
     summary: row.summary as string,
-    requestedCapabilities: (row.requested_capabilities as ApprovalRequest["requestedCapabilities"] | null) ?? [],
+    requestedCapabilities:
+      (row.requested_capabilities as
+        | ApprovalRequest["requestedCapabilities"]
+        | null) ?? [],
     allowedPaths: (row.allowed_paths as string[] | null) ?? [],
-    blockedPhases: (row.blocked_phases as ApprovalRequest["blockedPhases"] | null) ?? [],
+    blockedPhases:
+      (row.blocked_phases as ApprovalRequest["blockedPhases"] | null) ?? [],
     policyReasons: (row.policy_reasons as string[] | null) ?? [],
     requestedBy: row.requested_by as string,
     decidedBy: (row.decided_by as string | null) ?? null,
@@ -1359,5 +1517,3 @@ function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {
 }
 
 export * from "./schema.js";
-
-

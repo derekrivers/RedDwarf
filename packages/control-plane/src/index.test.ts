@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
@@ -14,9 +15,13 @@ import {
   destroyTaskWorkspace,
   provisionTaskWorkspace,
   resolveApprovalRequest,
+  runDeveloperPhase,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
-import { InMemoryPlanningRepository, createPipelineRun } from "@reddwarf/evidence";
+import {
+  InMemoryPlanningRepository,
+  createPipelineRun
+} from "@reddwarf/evidence";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
 const eligibleInput: PlanningTaskInput = {
@@ -27,7 +32,8 @@ const eligibleInput: PlanningTaskInput = {
     issueUrl: "https://github.com/acme/platform/issues/99"
   },
   title: "Plan a docs-safe change",
-  summary: "Plan a deterministic docs-safe change for the platform repository with durable evidence output.",
+  summary:
+    "Plan a deterministic docs-safe change for the platform repository with durable evidence output.",
   priority: 1,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists", "Policy output is archived"],
@@ -63,7 +69,9 @@ describe("control-plane", () => {
       "policy_gate",
       "archive"
     ]);
-    expect(repository.phaseRecords.some((record) => record.phase === "development")).toBe(false);
+    expect(
+      repository.phaseRecords.some((record) => record.phase === "development")
+    ).toBe(false);
 
     const bundle = createWorkspaceContextBundle({
       manifest: result.manifest,
@@ -71,17 +79,35 @@ describe("control-plane", () => {
       policySnapshot: result.policySnapshot!
     });
     const runtimeInstructionLayer = createRuntimeInstructionLayer(bundle);
-    const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(runtimeInstructionLayer);
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
-    const taskMemory = await repository.listMemoryRecords({ taskId: result.manifest.taskId, scope: "task" });
-    const pipelineRuns = await repository.listPipelineRuns({ taskId: result.manifest.taskId });
+    const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(
+      runtimeInstructionLayer
+    );
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
+    const taskMemory = await repository.listMemoryRecords({
+      taskId: result.manifest.taskId,
+      scope: "task"
+    });
+    const pipelineRuns = await repository.listPipelineRuns({
+      taskId: result.manifest.taskId
+    });
 
     expect(bundle.allowedPaths).toEqual(["docs/guide.md"]);
-    expect(runtimeInstructionLayer.files.map((file) => file.relativePath)).toContain("SOUL.md");
-    expect(runtimeInstructionLayer.canonicalSources).toContain("standards/engineering.md");
-    expect(runtimeInstructionArtifacts.soulMd).toContain("RedDwarf Runtime Soul");
+    expect(
+      runtimeInstructionLayer.files.map((file) => file.relativePath)
+    ).toContain("SOUL.md");
+    expect(runtimeInstructionLayer.canonicalSources).toContain(
+      "standards/engineering.md"
+    );
+    expect(runtimeInstructionArtifacts.soulMd).toContain(
+      "RedDwarf Runtime Soul"
+    );
     expect(runtimeInstructionArtifacts.toolsMd).toContain("can_plan");
-    expect(runtimeInstructionArtifacts.taskSkillMd).toContain(".context/task.json");
+    expect(runtimeInstructionArtifacts.taskSkillMd).toContain(
+      ".context/task.json"
+    );
     expect(runSummary?.status).toBe("completed");
     expect(runSummary?.phaseDurations.planning).toBe(0);
     expect(runSummary?.eventCounts.info).toBeGreaterThanOrEqual(6);
@@ -89,17 +115,25 @@ describe("control-plane", () => {
     expect(taskMemory[0]?.key).toBe("planning.brief");
     expect(pipelineRuns).toHaveLength(1);
     expect(pipelineRuns[0]?.status).toBe("completed");
-    expect(bufferedLogger.records.some((record) => record.bindings.runId === result.runId)).toBe(true);
     expect(
       bufferedLogger.records.some(
-        (record) => record.bindings.code === "PIPELINE_COMPLETED" && record.level === "info"
+        (record) => record.bindings.runId === result.runId
+      )
+    ).toBe(true);
+    expect(
+      bufferedLogger.records.some(
+        (record) =>
+          record.bindings.code === "PIPELINE_COMPLETED" &&
+          record.level === "info"
       )
     ).toBe(true);
   });
 
   it("provisions and destroys a managed workspace with manifest and evidence updates", async () => {
     const repository = new InMemoryPlanningRepository();
-    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-managed-workspace-"));
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-managed-workspace-")
+    );
     const planningResult = await runPlanningPipeline(eligibleInput, {
       repository,
       planner: new DeterministicPlanningAgent(),
@@ -108,7 +142,9 @@ describe("control-plane", () => {
     });
 
     try {
-      const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const snapshot = await repository.getTaskSnapshot(
+        planningResult.manifest.taskId
+      );
       const provisioned = await provisionTaskWorkspace({
         snapshot,
         repository,
@@ -116,13 +152,22 @@ describe("control-plane", () => {
         workspaceId: "workspace-001",
         clock: () => new Date("2026-03-25T18:05:00.000Z")
       });
-      const descriptor = JSON.parse(await readFile(provisioned.workspace.stateFile, "utf8"));
+      const descriptor = JSON.parse(
+        await readFile(provisioned.workspace.stateFile, "utf8")
+      );
 
       expect(provisioned.manifest.workspaceId).toBe("workspace-001");
       expect(descriptor.status).toBe("provisioned");
       expect(descriptor.toolPolicy.mode).toBe("planning_only");
-      expect(provisioned.workspace.descriptor.credentialPolicy.mode).toBe("none");
-      expect(repository.evidenceRecords.some((record) => record.recordId.endsWith(":provisioned"))).toBe(true);
+      expect(descriptor.toolPolicy.codeWriteEnabled).toBe(false);
+      expect(provisioned.workspace.descriptor.credentialPolicy.mode).toBe(
+        "none"
+      );
+      expect(
+        repository.evidenceRecords.some((record) =>
+          record.recordId.endsWith(":provisioned")
+        )
+      ).toBe(true);
 
       const destroyed = await destroyTaskWorkspace({
         manifest: provisioned.manifest,
@@ -134,8 +179,14 @@ describe("control-plane", () => {
       expect(destroyed.manifest.workspaceId).toBeNull();
       expect(destroyed.workspace.removed).toBe(true);
       expect(destroyed.workspace.descriptor?.status).toBe("destroyed");
-      expect(repository.evidenceRecords.some((record) => record.recordId.endsWith(":destroyed"))).toBe(true);
-      await expect(access(provisioned.workspace.workspaceRoot)).rejects.toThrow();
+      expect(
+        repository.evidenceRecords.some((record) =>
+          record.recordId.endsWith(":destroyed")
+        )
+      ).toBe(true);
+      await expect(
+        access(provisioned.workspace.workspaceRoot)
+      ).rejects.toThrow();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -155,8 +206,13 @@ describe("control-plane", () => {
         idGenerator: () => "run-002"
       }
     );
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
-    const pipelineRuns = await repository.listPipelineRuns({ taskId: result.manifest.taskId });
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
+    const pipelineRuns = await repository.listPipelineRuns({
+      taskId: result.manifest.taskId
+    });
 
     expect(result.nextAction).toBe("task_blocked");
     expect(result.manifest.currentPhase).toBe("eligibility");
@@ -181,19 +237,29 @@ describe("control-plane", () => {
         idGenerator: () => "run-003"
       }
     );
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
-    const pipelineRuns = await repository.listPipelineRuns({ taskId: result.manifest.taskId });
-    const approvalRequests = await repository.listApprovalRequests({ taskId: result.manifest.taskId });
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
+    const pipelineRuns = await repository.listPipelineRuns({
+      taskId: result.manifest.taskId
+    });
+    const approvalRequests = await repository.listApprovalRequests({
+      taskId: result.manifest.taskId
+    });
 
     expect(result.nextAction).toBe("await_human");
     expect(result.manifest.lifecycleStatus).toBe("blocked");
     expect(result.policySnapshot?.approvalMode).toBe("human_signoff_required");
     expect(result.approvalRequest?.status).toBe("pending");
-    expect(repository.phaseRecords.find((record) => record.phase === "policy_gate")?.status).toBe(
-      "escalated"
-    );
+    expect(
+      repository.phaseRecords.find((record) => record.phase === "policy_gate")
+        ?.status
+    ).toBe("escalated");
     expect(approvalRequests).toHaveLength(1);
-    expect(approvalRequests[0]?.requestedCapabilities).toEqual(["can_write_code"]);
+    expect(approvalRequests[0]?.requestedCapabilities).toEqual([
+      "can_write_code"
+    ]);
     expect(pipelineRuns[0]?.status).toBe("blocked");
     expect(runSummary?.status).toBe("blocked");
     expect(runSummary?.failureClass).toBeNull();
@@ -221,7 +287,7 @@ describe("control-plane", () => {
         requestId: result.approvalRequest!.requestId,
         decision: "approve",
         decidedBy: "operator",
-        decisionSummary: "Approved for the next execution phase.",
+        decisionSummary: "Approved for developer orchestration.",
         comment: "Proceed under supervision."
       },
       {
@@ -229,13 +295,110 @@ describe("control-plane", () => {
         clock: () => new Date("2026-03-25T18:05:00.000Z")
       }
     );
-    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
+    const persistedRequest = await repository.getApprovalRequest(
+      result.approvalRequest!.requestId
+    );
 
     expect(decision.manifest.lifecycleStatus).toBe("ready");
     expect(persistedRequest?.status).toBe("approved");
     expect(persistedRequest?.decision).toBe("approve");
-    expect(repository.phaseRecords.some((record) => record.recordId.includes(":approval:"))).toBe(true);
-    expect(repository.runEvents.some((event) => event.code === "APPROVAL_APPROVED")).toBe(true);
+    expect(
+      repository.phaseRecords.some((record) =>
+        record.recordId.includes(":approval:")
+      )
+    ).toBe(true);
+    expect(
+      repository.runEvents.some((event) => event.code === "APPROVAL_APPROVED")
+    ).toBe(true);
+  });
+
+  it("runs the developer phase in a managed workspace with code writing disabled", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-development-workspace-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-dev-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for developer orchestration.",
+        comment: "Code writing stays disabled."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dev"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-dev-phase"
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        development.runId
+      );
+      const handoffMarkdown = await readFile(development.handoffPath!, "utf8");
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(development.manifest.currentPhase).toBe("development");
+      expect(development.manifest.lifecycleStatus).toBe("blocked");
+      expect(development.workspace?.descriptor.toolPolicy.mode).toBe(
+        "development_readonly"
+      );
+      expect(
+        development.workspace?.descriptor.toolPolicy.codeWriteEnabled
+      ).toBe(false);
+      expect(handoffMarkdown).toContain("Development Handoff");
+      expect(
+        repository.phaseRecords.some((record) => record.phase === "development")
+      ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) => event.code === "CODE_WRITE_DISABLED"
+        )
+      ).toBe(true);
+      expect(persistedManifest?.assignedAgentType).toBe("developer");
+      expect(runSummary?.status).toBe("blocked");
+      expect(runSummary?.latestPhase).toBe("development");
+
+      await destroyTaskWorkspace({
+        manifest: development.manifest,
+        repository,
+        targetRoot: tempRoot,
+        clock: () => new Date("2026-03-25T18:15:00.000Z")
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("rejects a pending approval request and cancels the task", async () => {
@@ -267,12 +430,16 @@ describe("control-plane", () => {
         clock: () => new Date("2026-03-25T18:07:00.000Z")
       }
     );
-    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
+    const persistedRequest = await repository.getApprovalRequest(
+      result.approvalRequest!.requestId
+    );
 
     expect(decision.manifest.lifecycleStatus).toBe("cancelled");
     expect(persistedRequest?.status).toBe("rejected");
     expect(persistedRequest?.decision).toBe("reject");
-    expect(repository.runEvents.some((event) => event.code === "APPROVAL_REJECTED")).toBe(true);
+    expect(
+      repository.runEvents.some((event) => event.code === "APPROVAL_REJECTED")
+    ).toBe(true);
   });
 
   it("blocks a fresh overlapping run for the same task source", async () => {
@@ -296,8 +463,13 @@ describe("control-plane", () => {
       clock: () => new Date("2026-03-25T18:00:05.000Z"),
       idGenerator: () => "run-blocked"
     });
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
-    const pipelineRuns = await repository.listPipelineRuns({ concurrencyKey: "github:acme/platform:99" });
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
+    const pipelineRuns = await repository.listPipelineRuns({
+      concurrencyKey: "github:acme/platform:99"
+    });
 
     expect(result.nextAction).toBe("task_blocked");
     expect(result.concurrencyDecision.action).toBe("block");
@@ -332,8 +504,13 @@ describe("control-plane", () => {
         staleAfterMs: 60_000
       }
     });
-    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
-    const pipelineRuns = await repository.listPipelineRuns({ concurrencyKey: "github:acme/platform:99" });
+    const runSummary = await repository.getRunSummary(
+      result.manifest.taskId,
+      result.runId
+    );
+    const pipelineRuns = await repository.listPipelineRuns({
+      concurrencyKey: "github:acme/platform:99"
+    });
     const staleRun = pipelineRuns.find((run) => run.runId === "run-stale");
     const activeRun = pipelineRuns.find((run) => run.runId === "run-005");
 
@@ -365,13 +542,22 @@ describe("control-plane", () => {
     ).rejects.toBeInstanceOf(PlanningPipelineFailure);
 
     const manifest = await repository.getManifest("acme-platform-99");
-    const runSummary = await repository.getRunSummary("acme-platform-99", "run-004");
-    const pipelineRuns = await repository.listPipelineRuns({ taskId: "acme-platform-99" });
+    const runSummary = await repository.getRunSummary(
+      "acme-platform-99",
+      "run-004"
+    );
+    const pipelineRuns = await repository.listPipelineRuns({
+      taskId: "acme-platform-99"
+    });
 
     expect(manifest?.lifecycleStatus).toBe("failed");
     expect(runSummary?.status).toBe("failed");
     expect(runSummary?.failureClass).toBe("planning_failure");
-    expect(pipelineRuns.find((run) => run.runId === "run-004")?.status).toBe("failed");
-    expect(bufferedLogger.records.some((record) => record.level === "error")).toBe(true);
+    expect(pipelineRuns.find((run) => run.runId === "run-004")?.status).toBe(
+      "failed"
+    );
+    expect(
+      bufferedLogger.records.some((record) => record.level === "error")
+    ).toBe(true);
   });
 });

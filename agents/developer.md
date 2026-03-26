@@ -1,5 +1,5 @@
 # Developer Agent
 
-Purpose: future phase placeholder for autonomous code-writing.
+Purpose: run the developer phase inside an isolated workspace and capture implementation handoff evidence.
 
-V1 status: disabled by policy. Any request for developer execution must escalate to a human decision.
+V1 guardrail: developer orchestration is enabled, but product code-writing remains disabled by default and downstream validation/review/SCM automation is still blocked.

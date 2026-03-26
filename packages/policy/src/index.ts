@@ -10,9 +10,17 @@
 const V1_POLICY_VERSION = "reddwarf-v1";
 
 const lowRiskPatterns = [/^docs\//i, /^tests?\//i, /\.md$/i, /^README/i];
-const highRiskPatterns = [/auth/i, /billing/i, /secret/i, /infra/i, /deploy/i, /migration/i];
-const disabledPhases: TaskPhase[] = ["development", "validation", "review", "scm"];
+const highRiskPatterns = [
+  /auth/i,
+  /billing/i,
+  /secret/i,
+  /infra/i,
+  /deploy/i,
+  /migration/i
+];
+const disabledPhases: TaskPhase[] = ["validation", "review", "scm"];
 const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
+const developmentCapabilities: Capability[] = ["can_archive_evidence"];
 
 export interface EligibilityAssessment {
   eligible: boolean;
@@ -25,7 +33,9 @@ export interface ApprovalResolutionInput {
   requestedCapabilities: Capability[];
 }
 
-export function assessEligibility(input: PlanningTaskInput): EligibilityAssessment {
+export function assessEligibility(
+  input: PlanningTaskInput
+): EligibilityAssessment {
   const reasons: string[] = [];
   const labels = new Set(input.labels.map((label) => label.toLowerCase()));
 
@@ -53,11 +63,17 @@ export function classifyRisk(input: PlanningTaskInput): RiskClass {
   );
   const touchesLowRiskOnly =
     input.affectedPaths.length > 0 &&
-    input.affectedPaths.every((path) => lowRiskPatterns.some((pattern) => pattern.test(path)));
-  const requestsSensitiveCapability = input.requestedCapabilities.some((capability) =>
-    ["can_use_secrets", "can_open_pr", "can_touch_sensitive_paths", "can_modify_schema"].includes(
-      capability
-    )
+    input.affectedPaths.every((path) =>
+      lowRiskPatterns.some((pattern) => pattern.test(path))
+    );
+  const requestsSensitiveCapability = input.requestedCapabilities.some(
+    (capability) =>
+      [
+        "can_use_secrets",
+        "can_open_pr",
+        "can_touch_sensitive_paths",
+        "can_modify_schema"
+      ].includes(capability)
   );
 
   if (touchesHighRiskPath || requestsSensitiveCapability) {
@@ -71,19 +87,28 @@ export function classifyRisk(input: PlanningTaskInput): RiskClass {
   return "medium";
 }
 
-export function resolveApprovalMode(input: ApprovalResolutionInput): ApprovalMode {
+export function resolveApprovalMode(
+  input: ApprovalResolutionInput
+): ApprovalMode {
   if (
-    ["intake", "eligibility", "planning", "policy_gate", "archive"].includes(input.phase) &&
-    input.requestedCapabilities.every((capability) => planningCapabilities.includes(capability))
+    ["intake", "eligibility", "planning", "policy_gate", "archive"].includes(
+      input.phase
+    ) &&
+    input.requestedCapabilities.every((capability) =>
+      planningCapabilities.includes(capability)
+    )
   ) {
     return "auto";
   }
 
   if (
     input.requestedCapabilities.some((capability) =>
-      ["can_write_code", "can_use_secrets", "can_open_pr", "can_touch_sensitive_paths"].includes(
-        capability
-      )
+      [
+        "can_write_code",
+        "can_use_secrets",
+        "can_open_pr",
+        "can_touch_sensitive_paths"
+      ].includes(capability)
     )
   ) {
     return "human_signoff_required";
@@ -105,13 +130,24 @@ export function capabilitiesAllowedForPhase(
   requestedCapabilities: Capability[]
 ): boolean {
   if (phase === "planning") {
-    return requestedCapabilities.every((capability) => planningCapabilities.includes(capability));
+    return requestedCapabilities.every((capability) =>
+      planningCapabilities.includes(capability)
+    );
+  }
+
+  if (phase === "development") {
+    return requestedCapabilities.every((capability) =>
+      developmentCapabilities.includes(capability)
+    );
   }
 
   return true;
 }
 
-export function createAllowedPaths(input: PlanningTaskInput, riskClass: RiskClass): string[] {
+export function createAllowedPaths(
+  input: PlanningTaskInput,
+  riskClass: RiskClass
+): string[] {
   if (input.affectedPaths.length > 0) {
     return [...new Set(input.affectedPaths)];
   }
@@ -135,7 +171,9 @@ export function buildPolicySnapshot(
   const reasons =
     approvalMode === "auto"
       ? ["Planning phase is approved for autonomous execution in v1."]
-      : ["Future execution beyond planning requires human intervention in v1."];
+      : [
+          "Developer orchestration may continue after human intervention, but code writing remains disabled by default in v1."
+        ];
 
   return {
     policyVersion: V1_POLICY_VERSION,

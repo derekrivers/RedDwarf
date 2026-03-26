@@ -13,7 +13,9 @@ const connectionString =
   process.env.HOST_DATABASE_URL ??
   process.env.DATABASE_URL ??
   "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
-const targetRoot = resolve(process.env.REDDWARF_HOST_WORKSPACE_ROOT ?? "runtime-data/workspaces");
+const targetRoot = resolve(
+  process.env.REDDWARF_HOST_WORKSPACE_ROOT ?? "runtime-data/workspaces"
+);
 const repository = new PostgresPlanningRepository({ connectionString });
 const unique = Date.now();
 
@@ -31,7 +33,10 @@ try {
         "Run the planning pipeline against live Postgres, provision a managed workspace, validate its isolation metadata, and destroy it cleanly.",
       priority: 1,
       labels: ["ai-eligible"],
-      acceptanceCriteria: ["Workspace is provisioned", "Workspace is destroyed cleanly"],
+      acceptanceCriteria: [
+        "Workspace is provisioned",
+        "Workspace is destroyed cleanly"
+      ],
       affectedPaths: ["docs/workspace-manager-verification.md"],
       requestedCapabilities: ["can_plan", "can_archive_evidence"],
       metadata: {}
@@ -49,12 +54,21 @@ try {
     targetRoot,
     workspaceId: `${result.manifest.taskId}-managed-verify`
   });
-  const descriptor = JSON.parse(await readFile(provisioned.workspace.stateFile, "utf8"));
-  const soulMd = await readFile(provisioned.workspace.instructions.files.soulMd, "utf8");
+  const descriptor = JSON.parse(
+    await readFile(provisioned.workspace.stateFile, "utf8")
+  );
+  const soulMd = await readFile(
+    provisioned.workspace.instructions.files.soulMd,
+    "utf8"
+  );
 
-  assert.equal(provisioned.manifest.workspaceId, provisioned.workspace.workspaceId);
+  assert.equal(
+    provisioned.manifest.workspaceId,
+    provisioned.workspace.workspaceId
+  );
   assert.equal(descriptor.status, "provisioned");
   assert.equal(descriptor.toolPolicy.mode, "planning_only");
+  assert.equal(descriptor.toolPolicy.codeWriteEnabled, false);
   assert.equal(descriptor.credentialPolicy.mode, "none");
   assert.match(soulMd, /RedDwarf Runtime Soul/);
 
@@ -63,15 +77,25 @@ try {
     repository,
     targetRoot
   });
-  const persistedManifest = await repository.getManifest(result.manifest.taskId);
-  const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+  const persistedManifest = await repository.getManifest(
+    result.manifest.taskId
+  );
+  const evidenceRecords = await repository.listEvidenceRecords(
+    result.manifest.taskId
+  );
 
   assert.equal(destroyed.manifest.workspaceId, null);
   assert.equal(destroyed.workspace.removed, true);
   assert.equal(destroyed.workspace.descriptor?.status, "destroyed");
   assert.equal(persistedManifest?.workspaceId, null);
-  assert.equal(evidenceRecords.some((record) => record.recordId.endsWith(":provisioned")), true);
-  assert.equal(evidenceRecords.some((record) => record.recordId.endsWith(":destroyed")), true);
+  assert.equal(
+    evidenceRecords.some((record) => record.recordId.endsWith(":provisioned")),
+    true
+  );
+  assert.equal(
+    evidenceRecords.some((record) => record.recordId.endsWith(":destroyed")),
+    true
+  );
   await assert.rejects(access(provisioned.workspace.workspaceRoot));
 
   console.log(

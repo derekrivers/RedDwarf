@@ -28,7 +28,8 @@ describe("contracts", () => {
         issueUrl: "https://github.com/acme/platform/issues/42"
       },
       title: "Plan the docs-only backlog",
-      summary: "Create a deterministic planning package for the docs-only backlog in the platform repo.",
+      summary:
+        "Create a deterministic planning package for the docs-only backlog in the platform repo.",
       priority: 1,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Spec is produced"],
@@ -50,7 +51,8 @@ describe("contracts", () => {
           issueUrl: "https://github.com/acme/platform/issues/42"
         },
         title: "Plan the docs-only backlog",
-        summary: "Create a deterministic planning package for the docs-only backlog in the platform repo.",
+        summary:
+          "Create a deterministic planning package for the docs-only backlog in the platform repo.",
         priority: 1,
         riskClass: "low",
         approvalMode: "auto",
@@ -85,14 +87,18 @@ describe("contracts", () => {
         approvalMode: "auto",
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
         allowedPaths: ["docs/**"],
-        blockedPhases: ["development", "validation", "review", "scm"],
+        blockedPhases: ["validation", "review", "scm"],
         reasons: ["Planning phase is approved for autonomous execution in v1."]
       },
       acceptanceCriteria: ["Spec is produced"],
       allowedPaths: ["docs/**"]
     });
 
-    expect(bundle.policySnapshot.blockedPhases).toContain("development");
+    expect(bundle.policySnapshot.blockedPhases).toEqual([
+      "validation",
+      "review",
+      "scm"
+    ]);
   });
 
   it("parses a runtime instruction layer", () => {
@@ -102,8 +108,11 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       approvalMode: "auto",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
-      blockedPhases: ["development", "validation", "review", "scm"],
-      canonicalSources: ["standards/engineering.md", "prompts/planning-system.md"],
+      blockedPhases: ["validation", "review", "scm"],
+      canonicalSources: [
+        "standards/engineering.md",
+        "prompts/planning-system.md"
+      ],
       contextFiles: [".context/task.json", ".context/spec.md"],
       files: [
         {
@@ -127,28 +136,38 @@ describe("contracts", () => {
       workspaceId: "workspace-42",
       taskId: "acme-platform-42",
       workspaceRoot: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42",
-      contextDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context",
-      stateFile: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.workspace/workspace.json",
-      scratchDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/scratch",
-      artifactsDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/artifacts",
+      contextDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context",
+      stateFile:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.workspace/workspace.json",
+      scratchDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/scratch",
+      artifactsDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/artifacts",
       status: "provisioned",
       assignedAgentType: "architect",
       recommendedAgentType: "architect",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
       allowedPaths: ["docs/**"],
-      blockedPhases: ["development", "validation", "review", "scm"],
+      blockedPhases: ["validation", "review", "scm"],
       canonicalSources: ["standards/engineering.md"],
-      taskContractFiles: ["C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context/task.json"],
+      taskContractFiles: [
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context/task.json"
+      ],
       instructionFiles: {
         soulMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/SOUL.md",
-        agentsMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/AGENTS.md",
-        toolsMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/TOOLS.md",
-        taskSkillMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/skills/reddwarf-task/SKILL.md"
+        agentsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/AGENTS.md",
+        toolsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/TOOLS.md",
+        taskSkillMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/skills/reddwarf-task/SKILL.md"
       },
       toolPolicy: {
         mode: "planning_only",
+        codeWriteEnabled: false,
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
-        blockedPhases: ["development", "validation", "review", "scm"],
+        blockedPhases: ["validation", "review", "scm"],
         notes: ["Planning-only workspace."]
       },
       credentialPolicy: {
@@ -163,6 +182,7 @@ describe("contracts", () => {
 
     expect(descriptor.status).toBe("provisioned");
     expect(descriptor.toolPolicy.mode).toBe("planning_only");
+    expect(descriptor.toolPolicy.codeWriteEnabled).toBe(false);
   });
 
   it("parses approval requests and queue queries", () => {
@@ -177,8 +197,10 @@ describe("contracts", () => {
       summary: "Human approval is required before downstream execution.",
       requestedCapabilities: ["can_write_code"],
       allowedPaths: ["src/**"],
-      blockedPhases: ["development", "validation", "review", "scm"],
-      policyReasons: ["Future execution beyond planning requires human intervention in v1."],
+      blockedPhases: ["validation", "review", "scm"],
+      policyReasons: [
+        "Developer orchestration may continue after human intervention, but code writing remains disabled by default in v1."
+      ],
       requestedBy: "policy",
       decidedBy: null,
       decision: null,
@@ -277,9 +299,12 @@ describe("contracts", () => {
       rootPackageVersion: "0.1.0",
       createdAt: timestamp,
       sourceRoot: "C:/Dev/RedDwarf",
-      packageRoot: "C:/Dev/RedDwarf/artifacts/policy-packs/reddwarf-policy-pack-0.1.0+20260325t210000z/policy-root",
-      composePolicySourceRoot: "C:/Dev/RedDwarf/artifacts/policy-packs/reddwarf-policy-pack-0.1.0+20260325t210000z/policy-root",
-      contentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      packageRoot:
+        "C:/Dev/RedDwarf/artifacts/policy-packs/reddwarf-policy-pack-0.1.0+20260325t210000z/policy-root",
+      composePolicySourceRoot:
+        "C:/Dev/RedDwarf/artifacts/policy-packs/reddwarf-policy-pack-0.1.0+20260325t210000z/policy-root",
+      contentHash:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       runtimeDependenciesBundled: true,
       includedEntries: [
         {
@@ -322,11 +347,11 @@ describe("contracts", () => {
       strategy: "serialize",
       blockedByRunId: "run-0",
       staleRunIds: ["run-stale"],
-      reason: "Active overlapping run run-0 already owns github:acme/platform:42."
+      reason:
+        "Active overlapping run run-0 already owns github:acme/platform:42."
     });
 
     expect(run.status).toBe("active");
     expect(decision.action).toBe("block");
   });
 });
-

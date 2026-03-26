@@ -44,7 +44,10 @@ import {
   type PersistedTaskSnapshot,
   type PlanningRepository
 } from "@reddwarf/evidence";
-import { agentDefinitions, assertPhaseExecutable } from "@reddwarf/execution-plane";
+import {
+  agentDefinitions,
+  assertPhaseExecutable
+} from "@reddwarf/execution-plane";
 import {
   assessEligibility,
   buildPolicySnapshot,
@@ -53,7 +56,10 @@ import {
   resolveApprovalMode
 } from "@reddwarf/policy";
 
-const taskLifecycleTransitions: Record<TaskLifecycleStatus, TaskLifecycleStatus[]> = {
+const taskLifecycleTransitions: Record<
+  TaskLifecycleStatus,
+  TaskLifecycleStatus[]
+> = {
   draft: ["ready", "cancelled"],
   ready: ["active", "cancelled"],
   active: ["blocked", "completed", "failed", "cancelled"],
@@ -63,7 +69,10 @@ const taskLifecycleTransitions: Record<TaskLifecycleStatus, TaskLifecycleStatus[
   cancelled: []
 };
 
-const phaseLifecycleTransitions: Record<PhaseLifecycleStatus, PhaseLifecycleStatus[]> = {
+const phaseLifecycleTransitions: Record<
+  PhaseLifecycleStatus,
+  PhaseLifecycleStatus[]
+> = {
   pending: ["running", "skipped"],
   running: ["passed", "failed", "escalated", "skipped"],
   passed: [],
@@ -145,6 +154,50 @@ export interface PlanningPipelineResult {
   policySnapshot?: PolicySnapshot;
   approvalRequest?: ApprovalRequest;
   nextAction: "complete" | "await_human" | "task_blocked";
+  concurrencyDecision: ConcurrencyDecision;
+}
+
+export interface DevelopmentDraft {
+  summary: string;
+  implementationNotes: string[];
+  blockedActions: string[];
+  nextActions: string[];
+}
+
+export interface DevelopmentAgent {
+  createHandoff(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      codeWriteEnabled: boolean;
+    }
+  ): Promise<DevelopmentDraft>;
+}
+
+export interface RunDeveloperPhaseInput {
+  taskId: string;
+  targetRoot: string;
+  workspaceId?: string;
+}
+
+export interface DevelopmentPhaseDependencies {
+  repository: PlanningRepository;
+  developer: DevelopmentAgent;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  concurrency?: PlanningConcurrencyOptions;
+}
+
+export interface DevelopmentPhaseResult {
+  runId: string;
+  manifest: TaskManifest;
+  workspace?: MaterializedManagedWorkspace;
+  handoff?: DevelopmentDraft;
+  handoffPath?: string;
+  nextAction: "await_validation" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
 }
 
@@ -261,7 +314,10 @@ export class PlanningPipelineFailure extends Error {
     taskId?: string | null;
     runId?: string | null;
   }) {
-    super(input.message, input.cause === undefined ? undefined : { cause: input.cause });
+    super(
+      input.message,
+      input.cause === undefined ? undefined : { cause: input.cause }
+    );
     this.name = "PlanningPipelineFailure";
     this.failureClass = input.failureClass;
     this.phase = input.phase;
@@ -302,26 +358,42 @@ const workspaceScratchDirName = "scratch";
 const workspaceArtifactsDirName = "artifacts";
 const workspaceLocationPrefix = "workspace://";
 
-const agentInstructionPathByType: Partial<Record<TaskManifest["assignedAgentType"], string>> = {
+const agentInstructionPathByType: Partial<
+  Record<TaskManifest["assignedAgentType"], string>
+> = {
   architect: "agents/architect.md",
   developer: "agents/developer.md"
 };
 
 const capabilityGuidance: Record<Capability, string> = {
-  can_plan: "Inspect task context, policy inputs, and mounted standards to produce deterministic planning output.",
-  can_write_code: "Write or modify product code only after the development phase is enabled and policy grants it.",
-  can_run_tests: "Run validation commands only when the validation phase and policy both allow test execution.",
-  can_open_pr: "Create branches, commits, or pull requests only behind explicit SCM approval gates.",
-  can_modify_schema: "Change schemas or migrations only with explicit approval for sensitive surfaces.",
-  can_touch_sensitive_paths: "Touch restricted repo areas only after path-level approval is granted.",
-  can_use_secrets: "Use scoped credentials only when a secrets adapter has injected them for this task.",
-  can_review: "Review generated work and compare it to requirements when the review phase is enabled.",
-  can_archive_evidence: "Persist structured logs, specs, diffs, and verification output as durable evidence."
+  can_plan:
+    "Inspect task context, policy inputs, and mounted standards to produce deterministic planning output.",
+  can_write_code:
+    "Write or modify product code only after the development phase is enabled and policy grants it.",
+  can_run_tests:
+    "Run validation commands only when the validation phase and policy both allow test execution.",
+  can_open_pr:
+    "Create branches, commits, or pull requests only behind explicit SCM approval gates.",
+  can_modify_schema:
+    "Change schemas or migrations only with explicit approval for sensitive surfaces.",
+  can_touch_sensitive_paths:
+    "Touch restricted repo areas only after path-level approval is granted.",
+  can_use_secrets:
+    "Use scoped credentials only when a secrets adapter has injected them for this task.",
+  can_review:
+    "Review generated work and compare it to requirements when the review phase is enabled.",
+  can_archive_evidence:
+    "Persist structured logs, specs, diffs, and verification output as durable evidence."
 };
 
-const workspaceToolPolicyNotes = [
+const planningWorkspaceToolPolicyNotes = [
   "Workspace execution is constrained to planning-only capabilities in RedDwarf v1.",
   "Filesystem access should stay inside the isolated workspace plus policy-approved product paths."
+] as const;
+
+const developmentWorkspaceToolPolicyNotes = [
+  "Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default.",
+  "Use the isolated workspace for inspection, handoff artifacts, and evidence capture until validation automation lands."
 ] as const;
 
 const workspaceCredentialPolicyNotes = [
@@ -329,11 +401,16 @@ const workspaceCredentialPolicyNotes = [
   "No credentials are injected into provisioned workspaces by default."
 ] as const;
 
-export function createPinoPlanningLogger(options: PinoPlanningLoggerOptions = {}): PlanningPipelineLogger {
+export function createPinoPlanningLogger(
+  options: PinoPlanningLoggerOptions = {}
+): PlanningPipelineLogger {
   const logger = pino(
     {
       name: "reddwarf.control-plane",
-      level: options.level ?? (process.env.REDDWARF_LOG_LEVEL as RunEvent["level"] | undefined) ?? "info",
+      level:
+        options.level ??
+        (process.env.REDDWARF_LOG_LEVEL as RunEvent["level"] | undefined) ??
+        "info",
       base: {
         service: "reddwarf-control-plane",
         ...(options.baseBindings ?? {})
@@ -348,7 +425,9 @@ export function createPinoPlanningLogger(options: PinoPlanningLoggerOptions = {}
 export function createBufferedPlanningLogger(): BufferedPlanningLogger {
   const records: PlanningLogRecord[] = [];
 
-  const createLogger = (bindings: Record<string, unknown>): PlanningPipelineLogger => ({
+  const createLogger = (
+    bindings: Record<string, unknown>
+  ): PlanningPipelineLogger => ({
     info(message, context) {
       records.push({
         level: "info",
@@ -407,7 +486,9 @@ export function assertPhaseLifecycleTransition(
   to: PhaseLifecycleStatus
 ): void {
   if (!phaseLifecycleTransitions[from].includes(to)) {
-    throw new Error(`Illegal phase lifecycle transition from ${from} to ${to}.`);
+    throw new Error(
+      `Illegal phase lifecycle transition from ${from} to ${to}.`
+    );
   }
 }
 export function createWorkspaceContextBundle(input: {
@@ -428,11 +509,15 @@ export function createWorkspaceContextBundleFromSnapshot(
   snapshot: PersistedTaskSnapshot
 ): WorkspaceContextBundle {
   if (!snapshot.manifest) {
-    throw new Error("Cannot materialize workspace context without a task manifest.");
+    throw new Error(
+      "Cannot materialize workspace context without a task manifest."
+    );
   }
 
   if (!snapshot.spec) {
-    throw new Error(`Cannot materialize workspace context for ${snapshot.manifest.taskId} without a planning spec.`);
+    throw new Error(
+      `Cannot materialize workspace context for ${snapshot.manifest.taskId} without a planning spec.`
+    );
   }
 
   if (!snapshot.policySnapshot) {
@@ -448,7 +533,9 @@ export function createWorkspaceContextBundleFromSnapshot(
   });
 }
 
-export function renderPlanningSpecMarkdown(bundle: WorkspaceContextBundle): string {
+export function renderPlanningSpecMarkdown(
+  bundle: WorkspaceContextBundle
+): string {
   return [
     "# Planning Spec",
     "",
@@ -530,12 +617,14 @@ export function createRuntimeInstructionLayer(
       },
       {
         relativePath: runtimeInstructionRelativePaths.toolsMd,
-        description: "Capability, path, and escalation guardrails for the workspace.",
+        description:
+          "Capability, path, and escalation guardrails for the workspace.",
         content: renderRuntimeToolsMarkdown(bundle)
       },
       {
         relativePath: runtimeInstructionRelativePaths.taskSkillMd,
-        description: "Task-scoped skill that tells agents how to use the context bundle and policy pack.",
+        description:
+          "Task-scoped skill that tells agents how to use the context bundle and policy pack.",
         content: renderRuntimeTaskSkillMarkdown(bundle, canonicalSources)
       }
     ]
@@ -548,10 +637,22 @@ export function createRuntimeInstructionArtifacts(
   const layer = runtimeInstructionLayerSchema.parse(layerInput);
 
   return {
-    soulMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.soulMd),
-    agentsMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.agentsMd),
-    toolsMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.toolsMd),
-    taskSkillMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.taskSkillMd)
+    soulMd: getRuntimeInstructionContent(
+      layer,
+      runtimeInstructionRelativePaths.soulMd
+    ),
+    agentsMd: getRuntimeInstructionContent(
+      layer,
+      runtimeInstructionRelativePaths.agentsMd
+    ),
+    toolsMd: getRuntimeInstructionContent(
+      layer,
+      runtimeInstructionRelativePaths.toolsMd
+    ),
+    taskSkillMd: getRuntimeInstructionContent(
+      layer,
+      runtimeInstructionRelativePaths.taskSkillMd
+    )
   };
 }
 
@@ -561,7 +662,8 @@ export async function materializeWorkspaceContext(input: {
   workspaceId?: string;
 }): Promise<MaterializedWorkspaceContext> {
   const bundle = workspaceContextBundleSchema.parse(input.bundle);
-  const workspaceId = input.workspaceId ?? bundle.manifest.workspaceId ?? bundle.manifest.taskId;
+  const workspaceId =
+    input.workspaceId ?? bundle.manifest.workspaceId ?? bundle.manifest.taskId;
   const workspaceRoot = resolve(input.targetRoot, workspaceId);
   const contextDir = join(workspaceRoot, ".context");
   const files = {
@@ -579,27 +681,55 @@ export async function materializeWorkspaceContext(input: {
     }
   });
   const artifacts = createWorkspaceContextArtifacts(materializedBundle);
-  const runtimeInstructionLayer = createRuntimeInstructionLayer(materializedBundle);
-  const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(runtimeInstructionLayer);
+  const runtimeInstructionLayer =
+    createRuntimeInstructionLayer(materializedBundle);
+  const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(
+    runtimeInstructionLayer
+  );
   const instructionFiles = {
     soulMd: join(workspaceRoot, runtimeInstructionRelativePaths.soulMd),
     agentsMd: join(workspaceRoot, runtimeInstructionRelativePaths.agentsMd),
     toolsMd: join(workspaceRoot, runtimeInstructionRelativePaths.toolsMd),
-    taskSkillMd: join(workspaceRoot, ...runtimeInstructionRelativePaths.taskSkillMd.split("/"))
+    taskSkillMd: join(
+      workspaceRoot,
+      ...runtimeInstructionRelativePaths.taskSkillMd.split("/")
+    )
   };
 
   await mkdir(contextDir, { recursive: true });
-  await mkdir(join(workspaceRoot, "skills", "reddwarf-task"), { recursive: true });
+  await mkdir(join(workspaceRoot, "skills", "reddwarf-task"), {
+    recursive: true
+  });
   await Promise.all([
     writeFile(files.taskJson, artifacts.taskJson, "utf8"),
     writeFile(files.specMarkdown, artifacts.specMarkdown, "utf8"),
     writeFile(files.policySnapshotJson, artifacts.policySnapshotJson, "utf8"),
     writeFile(files.allowedPathsJson, artifacts.allowedPathsJson, "utf8"),
-    writeFile(files.acceptanceCriteriaJson, artifacts.acceptanceCriteriaJson, "utf8"),
-    writeFile(instructionFiles.soulMd, runtimeInstructionArtifacts.soulMd, "utf8"),
-    writeFile(instructionFiles.agentsMd, runtimeInstructionArtifacts.agentsMd, "utf8"),
-    writeFile(instructionFiles.toolsMd, runtimeInstructionArtifacts.toolsMd, "utf8"),
-    writeFile(instructionFiles.taskSkillMd, runtimeInstructionArtifacts.taskSkillMd, "utf8")
+    writeFile(
+      files.acceptanceCriteriaJson,
+      artifacts.acceptanceCriteriaJson,
+      "utf8"
+    ),
+    writeFile(
+      instructionFiles.soulMd,
+      runtimeInstructionArtifacts.soulMd,
+      "utf8"
+    ),
+    writeFile(
+      instructionFiles.agentsMd,
+      runtimeInstructionArtifacts.agentsMd,
+      "utf8"
+    ),
+    writeFile(
+      instructionFiles.toolsMd,
+      runtimeInstructionArtifacts.toolsMd,
+      "utf8"
+    ),
+    writeFile(
+      instructionFiles.taskSkillMd,
+      runtimeInstructionArtifacts.taskSkillMd,
+      "utf8"
+    )
   ]);
 
   return {
@@ -627,10 +757,19 @@ export function createWorkspaceDescriptor(input: {
   const workspaceId = input.materialized.workspaceId;
   const createdAt = input.createdAt ?? asIsoTimestamp();
   const updatedAt = input.updatedAt ?? createdAt;
-  const stateDir = join(input.materialized.workspaceRoot, workspaceStateDirName);
+  const stateDir = join(
+    input.materialized.workspaceRoot,
+    workspaceStateDirName
+  );
   const stateFile = join(stateDir, workspaceStateFileName);
-  const scratchDir = join(input.materialized.workspaceRoot, workspaceScratchDirName);
-  const artifactsDir = join(input.materialized.workspaceRoot, workspaceArtifactsDirName);
+  const scratchDir = join(
+    input.materialized.workspaceRoot,
+    workspaceScratchDirName
+  );
+  const artifactsDir = join(
+    input.materialized.workspaceRoot,
+    workspaceArtifactsDirName
+  );
 
   return workspaceDescriptorSchema.parse({
     workspaceId,
@@ -649,12 +788,7 @@ export function createWorkspaceDescriptor(input: {
     canonicalSources: input.materialized.instructions.canonicalSources,
     taskContractFiles: input.materialized.instructions.taskContractFiles,
     instructionFiles: input.materialized.instructions.files,
-    toolPolicy: {
-      mode: "planning_only",
-      allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
-      blockedPhases: bundle.policySnapshot.blockedPhases,
-      notes: [...workspaceToolPolicyNotes]
-    },
+    toolPolicy: createWorkspaceToolPolicy(bundle),
     credentialPolicy: {
       mode: "none",
       allowedSecretScopes: [],
@@ -677,7 +811,10 @@ export async function materializeManagedWorkspace(input: {
     ...bundle,
     manifest: {
       ...bundle.manifest,
-      workspaceId: input.workspaceId ?? bundle.manifest.workspaceId ?? `${bundle.manifest.taskId}-workspace`
+      workspaceId:
+        input.workspaceId ??
+        bundle.manifest.workspaceId ??
+        `${bundle.manifest.taskId}-workspace`
     }
   });
   const materialized = await materializeWorkspaceContext({
@@ -690,7 +827,10 @@ export async function materializeManagedWorkspace(input: {
   const stateDir = join(materialized.workspaceRoot, workspaceStateDirName);
   const stateFile = join(stateDir, workspaceStateFileName);
   const scratchDir = join(materialized.workspaceRoot, workspaceScratchDirName);
-  const artifactsDir = join(materialized.workspaceRoot, workspaceArtifactsDirName);
+  const artifactsDir = join(
+    materialized.workspaceRoot,
+    workspaceArtifactsDirName
+  );
   const descriptor = createWorkspaceDescriptor({
     bundle: materializedBundle,
     materialized,
@@ -702,7 +842,11 @@ export async function materializeManagedWorkspace(input: {
     mkdir(scratchDir, { recursive: true }),
     mkdir(artifactsDir, { recursive: true })
   ]);
-  await writeFile(stateFile, `${JSON.stringify(descriptor, null, 2)}\n`, "utf8");
+  await writeFile(
+    stateFile,
+    `${JSON.stringify(descriptor, null, 2)}\n`,
+    "utf8"
+  );
 
   return {
     ...materialized,
@@ -733,7 +877,12 @@ export async function provisionTaskWorkspace(input: {
     ...bundle.manifest,
     workspaceId: workspace.workspaceId,
     updatedAt: now,
-    evidenceLinks: [...new Set([...bundle.manifest.evidenceLinks, `${workspaceLocationPrefix}${workspace.workspaceId}`])]
+    evidenceLinks: [
+      ...new Set([
+        ...bundle.manifest.evidenceLinks,
+        `${workspaceLocationPrefix}${workspace.workspaceId}`
+      ])
+    ]
   });
 
   await input.repository.updateManifest(manifest);
@@ -770,8 +919,15 @@ export async function destroyManagedWorkspace(input: {
 
   assertWorkspacePathWithinRoot(input.targetRoot, workspaceRoot);
 
-  const stateFile = join(workspaceRoot, workspaceStateDirName, workspaceStateFileName);
-  const descriptor = await readWorkspaceDescriptorForDestroy(stateFile, destroyedAt);
+  const stateFile = join(
+    workspaceRoot,
+    workspaceStateDirName,
+    workspaceStateFileName
+  );
+  const descriptor = await readWorkspaceDescriptorForDestroy(
+    stateFile,
+    destroyedAt
+  );
   const removed = await pathExists(workspaceRoot);
 
   if (removed) {
@@ -796,7 +952,9 @@ export async function destroyTaskWorkspace(input: {
   const workspaceId = input.workspaceId ?? input.manifest.workspaceId;
 
   if (!workspaceId) {
-    throw new Error(`Cannot destroy workspace for ${input.manifest.taskId} without a workspaceId.`);
+    throw new Error(
+      `Cannot destroy workspace for ${input.manifest.taskId} without a workspaceId.`
+    );
   }
 
   const destroyedAt = asIsoTimestamp((input.clock ?? (() => new Date()))());
@@ -809,7 +967,12 @@ export async function destroyTaskWorkspace(input: {
     ...input.manifest,
     workspaceId: null,
     updatedAt: destroyedAt,
-    evidenceLinks: [...new Set([...input.manifest.evidenceLinks, `${workspaceLocationPrefix}${workspaceId}`])]
+    evidenceLinks: [
+      ...new Set([
+        ...input.manifest.evidenceLinks,
+        `${workspaceLocationPrefix}${workspaceId}`
+      ])
+    ]
   });
 
   await input.repository.updateManifest(manifest);
@@ -848,7 +1011,10 @@ export class DeterministicPlanningAgent implements PlanningAgent {
         "The task source is trustworthy and labels accurately reflect readiness.",
         "Human approval remains mandatory before any future code-writing or PR mutation."
       ],
-      affectedAreas: input.affectedPaths.length > 0 ? input.affectedPaths : ["planning-surface-only"],
+      affectedAreas:
+        input.affectedPaths.length > 0
+          ? input.affectedPaths
+          : ["planning-surface-only"],
       constraints: [
         "Do not write product code in RedDwarf v1.",
         "Archive all planning outputs as durable evidence."
@@ -860,6 +1026,36 @@ export class DeterministicPlanningAgent implements PlanningAgent {
     };
   }
 }
+
+export class DeterministicDeveloperAgent implements DevelopmentAgent {
+  async createHandoff(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      codeWriteEnabled: boolean;
+    }
+  ): Promise<DevelopmentDraft> {
+    return {
+      summary: `Prepare workspace ${context.workspace.workspaceId} for task ${context.manifest.taskId} without mutating product code.`,
+      implementationNotes: [
+        `Inspect the allowed paths ${formatLiteralList(bundle.allowedPaths)} before proposing any edits.`,
+        "Capture implementation intent and evidence in the workspace artifacts directory while product writes remain disabled.",
+        "Keep the developer handoff aligned with the planning constraints and acceptance criteria from the task contract."
+      ],
+      blockedActions: [
+        "Product code writes remain disabled by default in the development phase.",
+        "Validation, review, and SCM automation are still blocked in RedDwarf v1."
+      ],
+      nextActions: [
+        "Wait for validation orchestration before attempting automated checks.",
+        "Escalate if the task truly requires code-write access before downstream phases land."
+      ]
+    };
+  }
+}
+
 export async function runPlanningPipeline(
   rawInput: PlanningTaskInput,
   dependencies: PlanningPipelineDependencies
@@ -1037,7 +1233,9 @@ export async function runPlanningPipeline(
       phase: "intake",
       level: "warn",
       code: "RUN_BLOCKED_BY_OVERLAP",
-      message: concurrencyDecision.reason ?? "Planning pipeline blocked by an overlapping run.",
+      message:
+        concurrencyDecision.reason ??
+        "Planning pipeline blocked by an overlapping run.",
       failureClass: "execution_loop",
       data: {
         concurrencyKey,
@@ -1316,7 +1514,10 @@ export async function runPlanningPipeline(
     let draft: PlanningDraft;
 
     try {
-      draft = await planner.createSpec(input, { manifest: currentManifest, runId });
+      draft = await planner.createSpec(input, {
+        manifest: currentManifest,
+        runId
+      });
     } catch (error) {
       throw normalizePipelineFailure(error, activePhase, taskId, runId);
     }
@@ -1388,7 +1589,8 @@ export async function runPlanningPipeline(
     activePhase = "policy_gate";
     const policyStartedAt = clock();
     const policySnapshot = buildPolicySnapshot(input, riskClass, approvalMode);
-    const approvalRequestId = approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
+    const approvalRequestId =
+      approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
     await repository.savePolicySnapshot(taskId, policySnapshot);
     await repository.saveMemoryRecord(
       createMemoryRecord({
@@ -1418,7 +1620,8 @@ export async function runPlanningPipeline(
 
     const policyCompletedAt = clock();
     const policyCompletedAtIso = asIsoTimestamp(policyCompletedAt);
-    const policyStatus: PhaseLifecycleStatus = approvalMode === "auto" ? "passed" : "escalated";
+    const policyStatus: PhaseLifecycleStatus =
+      approvalMode === "auto" ? "passed" : "escalated";
     const approvalRequest =
       approvalRequestId === null
         ? undefined
@@ -1430,7 +1633,8 @@ export async function runPlanningPipeline(
             approvalMode,
             status: "pending",
             riskClass,
-            summary: "Human approval is required before downstream execution can continue.",
+            summary:
+              "Human approval is required before downstream execution can continue.",
             requestedCapabilities: input.requestedCapabilities,
             allowedPaths: policySnapshot.allowedPaths,
             blockedPhases: policySnapshot.blockedPhases,
@@ -1458,7 +1662,9 @@ export async function runPlanningPipeline(
         details: {
           approvalMode,
           reasons: policySnapshot.reasons,
-          ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+          ...(approvalRequest
+            ? { approvalRequestId: approvalRequest.requestId }
+            : {})
         },
         createdAt: policyCompletedAtIso
       })
@@ -1473,7 +1679,9 @@ export async function runPlanningPipeline(
           approvalMode,
           blockedPhases: policySnapshot.blockedPhases,
           policySnapshot,
-          ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+          ...(approvalRequest
+            ? { approvalRequestId: approvalRequest.requestId }
+            : {})
         },
         createdAt: policyCompletedAtIso
       })
@@ -1520,7 +1728,9 @@ export async function runPlanningPipeline(
         approvalMode,
         reasons: policySnapshot.reasons,
         status: policyStatus,
-        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        ...(approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {})
       },
       createdAt: policyCompletedAtIso
     });
@@ -1549,7 +1759,9 @@ export async function runPlanningPipeline(
       metadata: {
         currentPhase: "policy_gate",
         approvalMode,
-        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        ...(approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {})
       }
     });
 
@@ -1565,7 +1777,9 @@ export async function runPlanningPipeline(
         status: "passed",
         actor: "evidence",
         summary: "Planning outputs archived.",
-        details: approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {},
+        details: approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {},
         createdAt: archiveCompletedAtIso
       })
     );
@@ -1583,7 +1797,9 @@ export async function runPlanningPipeline(
       data: {
         actor: "evidence",
         status: "passed",
-        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        ...(approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {})
       },
       createdAt: archiveCompletedAtIso
     });
@@ -1606,7 +1822,9 @@ export async function runPlanningPipeline(
       data: {
         approvalMode,
         riskClass,
-        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        ...(approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {})
       },
       createdAt: archiveCompletedAtIso
     });
@@ -1619,7 +1837,9 @@ export async function runPlanningPipeline(
         `db://manifest/${taskId}`,
         `db://planning_spec/${spec.specId}`,
         `db://gate_decision/${taskId}:gate:policy`,
-        ...(approvalRequest ? [`db://gate_decision/${taskId}:approval:${runId}`] : [])
+        ...(approvalRequest
+          ? [`db://gate_decision/${taskId}:approval:${runId}`]
+          : [])
       ],
       updatedAt: archiveCompletedAtIso
     });
@@ -1632,7 +1852,9 @@ export async function runPlanningPipeline(
       metadata: {
         currentPhase: "archive",
         nextAction: approvalRequest ? "await_human" : "complete",
-        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        ...(approvalRequest
+          ? { approvalRequestId: approvalRequest.requestId }
+          : {})
       }
     });
     currentManifest = completedManifest;
@@ -1647,7 +1869,12 @@ export async function runPlanningPipeline(
       concurrencyDecision
     };
   } catch (error) {
-    const pipelineFailure = normalizePipelineFailure(error, activePhase, taskId, runId);
+    const pipelineFailure = normalizePipelineFailure(
+      error,
+      activePhase,
+      taskId,
+      runId
+    );
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
     const failedManifest = taskManifestSchema.parse({
@@ -1762,6 +1989,664 @@ export async function runPlanningPipeline(
   }
 }
 
+export async function runDeveloperPhase(
+  input: RunDeveloperPhaseInput,
+  dependencies: DevelopmentPhaseDependencies
+): Promise<DevelopmentPhaseResult> {
+  const taskId = input.taskId.trim();
+
+  if (taskId.length === 0) {
+    throw new Error("Task id is required to run the developer phase.");
+  }
+
+  const repository = dependencies.repository;
+  const developer = dependencies.developer;
+  const logger = dependencies.logger ?? defaultLogger;
+  const clock = dependencies.clock ?? (() => new Date());
+  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
+  const concurrency = {
+    strategy: dependencies.concurrency?.strategy ?? "serialize",
+    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+  } satisfies Required<PlanningConcurrencyOptions>;
+  const snapshot = await repository.getTaskSnapshot(taskId);
+
+  if (!snapshot.manifest) {
+    throw new Error(`Task manifest ${taskId} was not found.`);
+  }
+
+  if (!snapshot.spec) {
+    throw new Error(`Planning spec for ${taskId} was not found.`);
+  }
+
+  if (!snapshot.policySnapshot) {
+    throw new Error(`Policy snapshot for ${taskId} was not found.`);
+  }
+
+  const approvedRequest =
+    snapshot.manifest.approvalMode === "auto"
+      ? null
+      : (snapshot.approvalRequests.find(
+          (request) => request.status === "approved"
+        ) ?? null);
+
+  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
+    throw new Error(
+      `Task ${taskId} requires an approved request before the developer phase can start.`
+    );
+  }
+
+  const lifecycleAllowsDevelopment =
+    snapshot.manifest.lifecycleStatus === "ready" ||
+    snapshot.manifest.lifecycleStatus === "active" ||
+    (snapshot.manifest.lifecycleStatus === "blocked" &&
+      snapshot.manifest.currentPhase === "development");
+
+  if (!lifecycleAllowsDevelopment) {
+    throw new Error(
+      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter development.`
+    );
+  }
+
+  assertPhaseExecutable("development");
+
+  const runId = idGenerator();
+  const runStartedAt = clock();
+  const runStartedAtIso = asIsoTimestamp(runStartedAt);
+  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  let currentManifest = taskManifestSchema.parse(snapshot.manifest);
+  let concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds: [],
+    reason: null
+  });
+  let trackedRun = createPipelineRun({
+    runId,
+    taskId,
+    concurrencyKey,
+    strategy: concurrency.strategy,
+    status: "active",
+    startedAt: runStartedAtIso,
+    lastHeartbeatAt: runStartedAtIso,
+    metadata: {
+      sourceRepo: currentManifest.source.repo,
+      phase: "development",
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    }
+  });
+  const runLogger = bindPlanningLogger(logger, {
+    runId,
+    taskId,
+    sourceRepo: currentManifest.source.repo,
+    phase: "development"
+  });
+  let eventSequence = 0;
+  const nextEventId = (phase: TaskPhase, code: string): string => {
+    const sequence = String(eventSequence).padStart(3, "0");
+    eventSequence += 1;
+    return `${runId}:${sequence}:${phase}:${code}`;
+  };
+  const persistTrackedRun = async (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+  ): Promise<void> => {
+    trackedRun = createPipelineRun({
+      ...trackedRun,
+      ...patch,
+      metadata: {
+        ...trackedRun.metadata,
+        ...(patch.metadata ?? {})
+      }
+    });
+    await repository.savePipelineRun(trackedRun);
+  };
+
+  const overlappingRuns = await repository.listPipelineRuns({
+    concurrencyKey,
+    statuses: ["active"],
+    limit: 25
+  });
+  const staleRunIds: string[] = [];
+  let blockedByRun: PipelineRun | null = null;
+
+  for (const overlap of overlappingRuns) {
+    if (overlap.runId === runId) {
+      continue;
+    }
+
+    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...overlap,
+          status: "stale",
+          lastHeartbeatAt: runStartedAtIso,
+          completedAt: runStartedAtIso,
+          staleAt: runStartedAtIso,
+          overlapReason: `Marked stale by run ${runId}`,
+          metadata: {
+            ...overlap.metadata,
+            staleDetectedByRunId: runId
+          }
+        })
+      );
+      staleRunIds.push(overlap.runId);
+      continue;
+    }
+
+    blockedByRun = overlap;
+    break;
+  }
+
+  if (blockedByRun) {
+    concurrencyDecision = createConcurrencyDecision({
+      action: "block",
+      strategy: concurrency.strategy,
+      blockedByRunId: blockedByRun.runId,
+      staleRunIds,
+      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    });
+    await repository.savePipelineRun(
+      createPipelineRun({
+        ...trackedRun,
+        status: "blocked",
+        blockedByRunId: blockedByRun.runId,
+        overlapReason: concurrencyDecision.reason,
+        completedAt: runStartedAtIso,
+        metadata: {
+          ...trackedRun.metadata,
+          staleRunIds
+        }
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:development:concurrency:${runId}`,
+        taskId,
+        kind: "gate_decision",
+        title: "Development concurrency gate decision",
+        metadata: concurrencyDecision,
+        createdAt: runStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "RUN_BLOCKED_BY_OVERLAP"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "warn",
+      code: "RUN_BLOCKED_BY_OVERLAP",
+      message:
+        concurrencyDecision.reason ??
+        "Developer phase blocked by an overlapping run.",
+      failureClass: "execution_loop",
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId,
+        staleRunIds
+      },
+      createdAt: runStartedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "PIPELINE_BLOCKED"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message: "Developer phase blocked by concurrency controls.",
+      failureClass: "execution_loop",
+      durationMs: getDurationMs(runStartedAt, runStartedAt),
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId
+      },
+      createdAt: runStartedAtIso
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      nextAction: "task_blocked",
+      concurrencyDecision
+    };
+  }
+
+  concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds,
+    reason:
+      staleRunIds.length > 0
+        ? `Marked ${staleRunIds.length} stale overlapping run(s) before starting.`
+        : null
+  });
+  await persistTrackedRun({ metadata: { staleRunIds } });
+
+  try {
+    if (staleRunIds.length > 0) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", "STALE_RUNS_DETECTED"),
+        taskId,
+        runId,
+        phase: "development",
+        level: "info",
+        code: "STALE_RUNS_DETECTED",
+        message:
+          "Stale overlapping runs were marked before the developer phase started.",
+        data: {
+          concurrencyKey,
+          staleRunIds,
+          strategy: concurrency.strategy
+        },
+        createdAt: runStartedAtIso
+      });
+    }
+
+    const developmentStartedAt = clock();
+    const developmentStartedAtIso = asIsoTimestamp(developmentStartedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      updatedAt: developmentStartedAtIso
+    });
+    await repository.updateManifest(currentManifest);
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "PHASE_RUNNING"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "info",
+      code: "PHASE_RUNNING",
+      message: "Developer phase started.",
+      data: {
+        actor: "developer",
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      },
+      createdAt: developmentStartedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: developmentStartedAtIso,
+      metadata: {
+        currentPhase: "development",
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      }
+    });
+
+    const bundle = createWorkspaceContextBundle({
+      manifest: currentManifest,
+      spec: snapshot.spec,
+      policySnapshot: snapshot.policySnapshot
+    });
+    const workspace = await materializeManagedWorkspace({
+      bundle,
+      targetRoot: input.targetRoot,
+      workspaceId:
+        input.workspaceId ??
+        currentManifest.workspaceId ??
+        `${taskId}-workspace`,
+      createdAt: developmentStartedAtIso
+    });
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      workspaceId: workspace.workspaceId,
+      updatedAt: developmentStartedAtIso,
+      evidenceLinks: [
+        ...new Set([
+          ...currentManifest.evidenceLinks,
+          `${workspaceLocationPrefix}${workspace.workspaceId}`
+        ])
+      ]
+    });
+    await repository.updateManifest(currentManifest);
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:workspace:${workspace.workspaceId}:provisioned`,
+        taskId,
+        kind: "file_artifact",
+        title: "Managed workspace provisioned",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}`,
+        metadata: {
+          status: workspace.descriptor.status,
+          workspaceRoot: workspace.workspaceRoot,
+          stateFile: workspace.stateFile,
+          descriptor: workspace.descriptor,
+          phase: "development",
+          runId
+        },
+        createdAt: developmentStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "WORKSPACE_PROVISIONED"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "info",
+      code: "WORKSPACE_PROVISIONED",
+      message: "Developer workspace provisioned.",
+      data: {
+        workspaceId: workspace.workspaceId,
+        toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      },
+      createdAt: developmentStartedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "CODE_WRITE_DISABLED"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "warn",
+      code: "CODE_WRITE_DISABLED",
+      message:
+        "Developer workspace is ready, but product code writes remain disabled by default.",
+      data: {
+        workspaceId: workspace.workspaceId,
+        toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+        requestedCapabilities: currentManifest.requestedCapabilities
+      },
+      createdAt: developmentStartedAtIso
+    });
+
+    const handoff = await developer.createHandoff(bundle, {
+      manifest: currentManifest,
+      runId,
+      workspace,
+      codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+    });
+    const developmentCompletedAt = clock();
+    const developmentCompletedAtIso = asIsoTimestamp(developmentCompletedAt);
+    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
+    await writeFile(
+      handoffPath,
+      renderDevelopmentHandoffMarkdown({
+        bundle,
+        handoff,
+        workspace,
+        runId,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      }),
+      "utf8"
+    );
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:development`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "development.handoff",
+        title: "Developer handoff",
+        value: {
+          summary: handoff.summary,
+          implementationNotes: handoff.implementationNotes,
+          blockedActions: handoff.blockedActions,
+          nextActions: handoff.nextActions,
+          runId,
+          workspaceId: workspace.workspaceId,
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        },
+        repo: currentManifest.source.repo,
+        organizationId: deriveOrganizationId(currentManifest.source.repo),
+        tags: ["development", "task"],
+        createdAt: developmentCompletedAtIso,
+        updatedAt: developmentCompletedAtIso
+      })
+    );
+    await repository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${taskId}:phase:development`,
+        taskId,
+        phase: "development",
+        status: "passed",
+        actor: "developer",
+        summary: "Developer phase orchestrated in an isolated workspace.",
+        details: {
+          workspaceId: workspace.workspaceId,
+          handoffPath,
+          toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+          ...(approvedRequest
+            ? { approvalRequestId: approvedRequest.requestId }
+            : {})
+        },
+        createdAt: developmentCompletedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:development:${runId}:handoff`,
+        taskId,
+        kind: "file_artifact",
+        title: "Developer handoff",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/developer-handoff.md`,
+        metadata: {
+          runId,
+          workspaceId: workspace.workspaceId,
+          toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+          summary: handoff.summary
+        },
+        createdAt: developmentCompletedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "PHASE_PASSED"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "info",
+      code: "PHASE_PASSED",
+      message: "Developer handoff captured in the managed workspace.",
+      durationMs: getDurationMs(developmentStartedAt, developmentCompletedAt),
+      data: {
+        actor: "developer",
+        workspaceId: workspace.workspaceId,
+        handoffPath,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      },
+      createdAt: developmentCompletedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: developmentCompletedAtIso,
+      metadata: {
+        currentPhase: "development",
+        workspaceId: workspace.workspaceId,
+        handoffPath
+      }
+    });
+
+    const blockedAt = clock();
+    const blockedAtIso = asIsoTimestamp(blockedAt);
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("development", "PIPELINE_BLOCKED"),
+      taskId,
+      runId,
+      phase: "development",
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message:
+        "Developer phase completed, but validation automation is not implemented yet.",
+      durationMs: getDurationMs(runStartedAt, blockedAt),
+      data: {
+        nextPhase: "validation",
+        workspaceId: workspace.workspaceId,
+        handoffPath
+      },
+      createdAt: blockedAtIso
+    });
+
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "development",
+      lifecycleStatus: "blocked",
+      updatedAt: blockedAtIso
+    });
+    await repository.updateManifest(currentManifest);
+    await persistTrackedRun({
+      status: "blocked",
+      lastHeartbeatAt: blockedAtIso,
+      completedAt: blockedAtIso,
+      metadata: {
+        currentPhase: "development",
+        nextAction: "await_validation",
+        workspaceId: workspace.workspaceId,
+        handoffPath
+      }
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      workspace,
+      handoff,
+      handoffPath,
+      nextAction: "await_validation",
+      concurrencyDecision
+    };
+  } catch (error) {
+    const pipelineFailure = normalizePipelineFailure(
+      error,
+      "development",
+      taskId,
+      runId
+    );
+    const failedAt = clock();
+    const failedAtIso = asIsoTimestamp(failedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "development",
+      lifecycleStatus: "failed",
+      updatedAt: failedAtIso
+    });
+
+    try {
+      await repository.savePhaseRecord(
+        createPhaseRecord({
+          id: `${taskId}:phase:development`,
+          taskId,
+          phase: "development",
+          status: "failed",
+          actor: "control-plane",
+          summary: pipelineFailure.message,
+          details: {
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            ...pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:development:failure:${runId}`,
+          taskId,
+          kind: "run_event",
+          title: "Developer phase failure",
+          metadata: {
+            runId,
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            details: pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", "PHASE_FAILED"),
+        taskId,
+        runId,
+        phase: "development",
+        level: "error",
+        code: "PHASE_FAILED",
+        message: pipelineFailure.message,
+        failureClass: pipelineFailure.failureClass,
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", "PIPELINE_FAILED"),
+        taskId,
+        runId,
+        phase: "development",
+        level: "error",
+        code: "PIPELINE_FAILED",
+        message: "Developer phase failed.",
+        failureClass: pipelineFailure.failureClass,
+        durationMs: getDurationMs(runStartedAt, failedAt),
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await repository.updateManifest(currentManifest);
+      await persistTrackedRun({
+        status: "failed",
+        lastHeartbeatAt: failedAtIso,
+        completedAt: failedAtIso,
+        metadata: {
+          currentPhase: "development",
+          failureCode: pipelineFailure.code,
+          failureClass: pipelineFailure.failureClass
+        }
+      });
+    } catch (persistenceError) {
+      runLogger.error("Failed to persist developer phase failure evidence.", {
+        runId,
+        taskId,
+        failureClass: pipelineFailure.failureClass,
+        code: pipelineFailure.code,
+        persistenceError: serializeError(persistenceError)
+      });
+    }
+
+    throw new PlanningPipelineFailure({
+      message: pipelineFailure.message,
+      failureClass: pipelineFailure.failureClass,
+      phase: pipelineFailure.phase,
+      code: pipelineFailure.code,
+      details: pipelineFailure.details,
+      cause: pipelineFailure,
+      taskId,
+      runId
+    });
+  }
+}
+
 export async function resolveApprovalRequest(
   input: ResolveApprovalRequestInput,
   dependencies: ResolveApprovalRequestDependencies
@@ -1794,13 +2679,17 @@ export async function resolveApprovalRequest(
   }
 
   if (approvalRequest.status !== "pending") {
-    throw new Error(`Approval request ${requestId} is already ${approvalRequest.status}.`);
+    throw new Error(
+      `Approval request ${requestId} is already ${approvalRequest.status}.`
+    );
   }
 
   const manifest = await repository.getManifest(approvalRequest.taskId);
 
   if (!manifest) {
-    throw new Error(`Task manifest ${approvalRequest.taskId} was not found for approval request ${requestId}.`);
+    throw new Error(
+      `Task manifest ${approvalRequest.taskId} was not found for approval request ${requestId}.`
+    );
   }
 
   const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";
@@ -1825,12 +2714,14 @@ export async function resolveApprovalRequest(
     ],
     updatedAt: resolvedAtIso
   });
-  const decisionCode = input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
+  const decisionCode =
+    input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
   const decisionMessage =
     input.decision === "approve"
       ? "Approval granted for downstream execution."
       : "Approval rejected and the task was cancelled.";
-  const phaseStatus: PhaseLifecycleStatus = input.decision === "approve" ? "passed" : "failed";
+  const phaseStatus: PhaseLifecycleStatus =
+    input.decision === "approve" ? "passed" : "failed";
   const runLogger = bindPlanningLogger(logger, {
     runId: approvalRequest.runId,
     taskId: approvalRequest.taskId,
@@ -1862,7 +2753,8 @@ export async function resolveApprovalRequest(
       recordId: `${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`,
       taskId: approvalRequest.taskId,
       kind: "gate_decision",
-      title: input.decision === "approve" ? "Approval granted" : "Approval rejected",
+      title:
+        input.decision === "approve" ? "Approval granted" : "Approval rejected",
       metadata: {
         requestId: approvalRequest.requestId,
         decision: input.decision,
@@ -1923,16 +2815,28 @@ function createPhaseRecord(input: {
   });
 }
 
-function createConcurrencyDecision(input: ConcurrencyDecision): ConcurrencyDecision {
+function createConcurrencyDecision(
+  input: ConcurrencyDecision
+): ConcurrencyDecision {
   return concurrencyDecisionSchema.parse(input);
 }
 
-function createTaskConcurrencyKey(input: PlanningTaskInput): string {
-  const sourceIssue = input.source.issueNumber ?? input.source.issueId ?? "adhoc";
-  return `${input.source.provider}:${input.source.repo}:${sourceIssue}`;
+function createSourceConcurrencyKey(
+  source: PlanningTaskInput["source"]
+): string {
+  const sourceIssue = source.issueNumber ?? source.issueId ?? "adhoc";
+  return `${source.provider}:${source.repo}:${sourceIssue}`;
 }
 
-function isPipelineRunStale(run: PipelineRun, now: Date, staleAfterMs: number): boolean {
+function createTaskConcurrencyKey(input: PlanningTaskInput): string {
+  return createSourceConcurrencyKey(input.source);
+}
+
+function isPipelineRunStale(
+  run: PipelineRun,
+  now: Date,
+  staleAfterMs: number
+): boolean {
   return now.getTime() - new Date(run.lastHeartbeatAt).getTime() > staleAfterMs;
 }
 
@@ -1994,6 +2898,64 @@ function bindPlanningLogger(
   };
 }
 
+function createWorkspaceToolPolicy(
+  bundleInput: WorkspaceContextBundle
+): WorkspaceDescriptor["toolPolicy"] {
+  const bundle = workspaceContextBundleSchema.parse(bundleInput);
+  const mode =
+    bundle.manifest.currentPhase === "development" ||
+    bundle.manifest.assignedAgentType === "developer"
+      ? "development_readonly"
+      : "planning_only";
+  const notes =
+    mode === "development_readonly"
+      ? [...developmentWorkspaceToolPolicyNotes]
+      : [...planningWorkspaceToolPolicyNotes];
+
+  return {
+    mode,
+    codeWriteEnabled: false,
+    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+    blockedPhases: bundle.policySnapshot.blockedPhases,
+    notes
+  };
+}
+
+function renderDevelopmentHandoffMarkdown(input: {
+  bundle: WorkspaceContextBundle;
+  handoff: DevelopmentDraft;
+  workspace: MaterializedManagedWorkspace;
+  runId: string;
+  codeWriteEnabled: boolean;
+}): string {
+  return [
+    "# Development Handoff",
+    "",
+    `- Task ID: ${input.bundle.manifest.taskId}`,
+    `- Run ID: ${input.runId}`,
+    `- Workspace ID: ${input.workspace.workspaceId}`,
+    `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
+    `- Code writing enabled: ${input.codeWriteEnabled ? "yes" : "no"}`,
+    "",
+    "## Summary",
+    "",
+    input.handoff.summary,
+    "",
+    "## Implementation Notes",
+    "",
+    ...input.handoff.implementationNotes.map((item) => `- ${item}`),
+    "",
+    "## Blocked Actions",
+    "",
+    ...input.handoff.blockedActions.map((item) => `- ${item}`),
+    "",
+    "## Next Actions",
+    "",
+    ...input.handoff.nextActions.map((item) => `- ${item}`),
+    ""
+  ].join("\n");
+}
+
 function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
   const canonicalSources = new Set<string>([
     "openclaw_ai_dev_team_v_2_architecture.md",
@@ -2001,8 +2963,10 @@ function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
     "standards/engineering.md",
     "prompts/planning-system.md"
   ]);
-  const assignedAgentSource = agentInstructionPathByType[bundle.manifest.assignedAgentType];
-  const recommendedAgentSource = agentInstructionPathByType[bundle.spec.recommendedAgentType];
+  const assignedAgentSource =
+    agentInstructionPathByType[bundle.manifest.assignedAgentType];
+  const recommendedAgentSource =
+    agentInstructionPathByType[bundle.spec.recommendedAgentType];
 
   if (assignedAgentSource) {
     canonicalSources.add(assignedAgentSource);
@@ -2015,7 +2979,10 @@ function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
   return [...canonicalSources];
 }
 
-function getRuntimeInstructionContent(layer: RuntimeInstructionLayer, relativePath: string): string {
+function getRuntimeInstructionContent(
+  layer: RuntimeInstructionLayer,
+  relativePath: string
+): string {
   const file = layer.files.find((entry) => entry.relativePath === relativePath);
 
   if (!file) {
@@ -2063,7 +3030,9 @@ function renderRuntimeSoulMarkdown(
 }
 
 function renderRuntimeAgentsMarkdown(bundle: WorkspaceContextBundle): string {
-  const enabledAgents = agentDefinitions.filter((agent) => agent.enabled).map((agent) => agent.type);
+  const enabledAgents = agentDefinitions
+    .filter((agent) => agent.enabled)
+    .map((agent) => agent.type);
 
   return [
     "# Agent Instructions",
@@ -2094,19 +3063,28 @@ function renderRuntimeAgentsMarkdown(bundle: WorkspaceContextBundle): string {
 
 function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
   const deniedCapabilities = capabilities.filter(
-    (capability) => !bundle.policySnapshot.allowedCapabilities.includes(capability)
+    (capability) =>
+      !bundle.policySnapshot.allowedCapabilities.includes(capability)
   );
   const requestedButDenied = bundle.manifest.requestedCapabilities.filter(
-    (capability) => !bundle.policySnapshot.allowedCapabilities.includes(capability)
+    (capability) =>
+      !bundle.policySnapshot.allowedCapabilities.includes(capability)
   );
+  const toolPolicy = createWorkspaceToolPolicy(bundle);
 
   return [
     "# Tool Contract",
     "",
+    `- Tool policy mode: \`${toolPolicy.mode}\``,
+    `- Code writing enabled: ${toolPolicy.codeWriteEnabled ? "yes" : "no"}`,
     `- Requested capabilities: ${formatLiteralList(bundle.manifest.requestedCapabilities)}`,
     `- Allowed capabilities now: ${formatLiteralList(bundle.policySnapshot.allowedCapabilities)}`,
     `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
     `- Requested but denied: ${formatLiteralList(requestedButDenied)}`,
+    "",
+    "## Tool Policy Notes",
+    "",
+    ...toolPolicy.notes.map((note) => `- ${note}`),
     "",
     "## Allowed Capability Guidance",
     "",
@@ -2120,7 +3098,9 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     "",
     ...(bundle.allowedPaths.length > 0
       ? bundle.allowedPaths.map((path) => `- \`${path}\``)
-      : ["- No product-repo paths are pre-authorized. Escalate before modifying any surface."]),
+      : [
+          "- No product-repo paths are pre-authorized. Escalate before modifying any surface."
+        ]),
     "",
     "## Blocked Phases",
     "",
@@ -2174,7 +3154,9 @@ async function readWorkspaceDescriptorForDestroy(
   destroyedAt: string
 ): Promise<WorkspaceDescriptor | null> {
   try {
-    const descriptor = workspaceDescriptorSchema.parse(JSON.parse(await readFile(stateFile, "utf8")));
+    const descriptor = workspaceDescriptorSchema.parse(
+      JSON.parse(await readFile(stateFile, "utf8"))
+    );
 
     return workspaceDescriptorSchema.parse({
       ...descriptor,
@@ -2204,18 +3186,27 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function assertWorkspacePathWithinRoot(targetRoot: string, workspaceRoot: string): void {
+function assertWorkspacePathWithinRoot(
+  targetRoot: string,
+  workspaceRoot: string
+): void {
   const resolvedTargetRoot = resolve(targetRoot);
   const resolvedWorkspaceRoot = resolve(workspaceRoot);
   const relativePath = relative(resolvedTargetRoot, resolvedWorkspaceRoot);
 
   if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
-    throw new Error(`Workspace path ${resolvedWorkspaceRoot} escapes configured root ${resolvedTargetRoot}.`);
+    throw new Error(
+      `Workspace path ${resolvedWorkspaceRoot} escapes configured root ${resolvedTargetRoot}.`
+    );
   }
 }
 
 function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 function normalizePipelineFailure(
@@ -2238,7 +3229,10 @@ function normalizePipelineFailure(
   }
 
   return new PlanningPipelineFailure({
-    message: error instanceof Error ? error.message : `Unexpected failure while running ${phase}.`,
+    message:
+      error instanceof Error
+        ? error.message
+        : `Unexpected failure while running ${phase}.`,
     failureClass: phaseFailureClassMap[phase],
     phase,
     code: phaseFailureCodeMap[phase],
@@ -2303,7 +3297,9 @@ async function recordRunEvent(input: {
     level: input.level,
     code: input.code,
     message: input.message,
-    ...(input.failureClass === undefined ? {} : { failureClass: input.failureClass }),
+    ...(input.failureClass === undefined
+      ? {}
+      : { failureClass: input.failureClass }),
     ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
     data: input.data ?? {},
     createdAt: input.createdAt
@@ -2316,7 +3312,9 @@ async function recordRunEvent(input: {
     runId: event.runId,
     phase: event.phase,
     code: event.code,
-    ...(event.failureClass === undefined ? {} : { failureClass: event.failureClass }),
+    ...(event.failureClass === undefined
+      ? {}
+      : { failureClass: event.failureClass }),
     ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
     ...event.data
   };
@@ -2331,10 +3329,3 @@ async function recordRunEvent(input: {
 
   return event;
 }
-
-
-
-
-
-
-

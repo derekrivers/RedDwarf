@@ -29,7 +29,10 @@ try {
         "Run a planning task that requires human approval, verify the durable approval queue entry, and resolve the decision against live Postgres.",
       priority: 1,
       labels: ["ai-eligible"],
-      acceptanceCriteria: ["Approval request is queued", "Approval decision updates task state"],
+      acceptanceCriteria: [
+        "Approval request is queued",
+        "Approval decision updates task state"
+      ],
       affectedPaths: ["src/approval-flow.ts"],
       requestedCapabilities: ["can_write_code"],
       metadata: {}
@@ -45,7 +48,10 @@ try {
   const queuedRequest = result.approvalRequest;
   assert.ok(queuedRequest);
   const snapshot = await repository.getTaskSnapshot(result.manifest.taskId);
-  const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+  const runSummary = await repository.getRunSummary(
+    result.manifest.taskId,
+    result.runId
+  );
 
   assert.equal(result.manifest.lifecycleStatus, "blocked");
   assert.equal(queuedRequest?.status, "pending");
@@ -58,7 +64,7 @@ try {
       requestId: queuedRequest.requestId,
       decision: "approve",
       decidedBy: "operator",
-      decisionSummary: "Approved for the next execution phase once downstream orchestration lands.",
+      decisionSummary: "Approved for developer orchestration.",
       comment: "Live verification path succeeded."
     },
     {
@@ -66,8 +72,12 @@ try {
       clock: () => new Date("2026-03-25T18:05:00.000Z")
     }
   );
-  const persistedRequest = await repository.getApprovalRequest(queuedRequest.requestId);
-  const persistedManifest = await repository.getManifest(result.manifest.taskId);
+  const persistedRequest = await repository.getApprovalRequest(
+    queuedRequest.requestId
+  );
+  const persistedManifest = await repository.getManifest(
+    result.manifest.taskId
+  );
 
   assert.equal(resolved.manifest.lifecycleStatus, "ready");
   assert.equal(persistedRequest?.status, "approved");

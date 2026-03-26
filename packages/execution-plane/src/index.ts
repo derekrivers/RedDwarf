@@ -8,16 +8,18 @@ export const agentDefinitions: AgentDefinition[] = [
     capabilities: ["can_plan", "can_archive_evidence"],
     activePhases: ["planning"],
     enabled: true,
-    description: "Produces planning specs, constraints, and acceptance mappings."
+    description:
+      "Produces planning specs, constraints, and acceptance mappings."
   },
   {
-    id: "developer-placeholder",
+    id: "developer-default",
     displayName: "Developer Agent",
     type: "developer",
-    capabilities: ["can_write_code", "can_run_tests"],
+    capabilities: ["can_archive_evidence"],
     activePhases: ["development"],
-    enabled: false,
-    description: "Declared for future autonomous development, disabled in v1."
+    enabled: true,
+    description:
+      "Runs the developer phase inside an isolated workspace while product code writes remain disabled by default."
   },
   {
     id: "validation-placeholder",
@@ -48,7 +50,7 @@ export const agentDefinitions: AgentDefinition[] = [
   }
 ];
 
-const disabledPhases = new Set<TaskPhase>(["development", "validation", "review", "scm"]);
+const disabledPhases = new Set<TaskPhase>(["validation", "review", "scm"]);
 
 export function phaseIsExecutable(phase: TaskPhase): boolean {
   return !disabledPhases.has(phase);

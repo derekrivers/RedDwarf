@@ -3,7 +3,8 @@ import {
   assessEligibility,
   buildPolicySnapshot,
   classifyRisk,
-  resolveApprovalMode
+  resolveApprovalMode,
+  capabilitiesAllowedForPhase
 } from "@reddwarf/policy";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
@@ -15,7 +16,8 @@ const baseInput: PlanningTaskInput = {
     issueUrl: "https://github.com/acme/platform/issues/7"
   },
   title: "Prepare planning artifacts",
-  summary: "Prepare deterministic planning artifacts for the docs-only task in the platform repository.",
+  summary:
+    "Prepare deterministic planning artifacts for the docs-only task in the platform repository.",
   priority: 1,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists"],
@@ -39,9 +41,18 @@ describe("policy", () => {
     ).toBe("human_signoff_required");
   });
 
+  it("keeps code writing disabled by default in the development phase", () => {
+    expect(capabilitiesAllowedForPhase("development", ["can_write_code"])).toBe(
+      false
+    );
+    expect(
+      capabilitiesAllowedForPhase("development", ["can_archive_evidence"])
+    ).toBe(true);
+  });
+
   it("builds a policy snapshot with blocked future phases", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
-    expect(snapshot.blockedPhases).toEqual(["development", "validation", "review", "scm"]);
+    expect(snapshot.blockedPhases).toEqual(["validation", "review", "scm"]);
   });
 
   it("blocks tasks without the AI eligibility label", () => {

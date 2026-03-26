@@ -3,16 +3,23 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createPolicyPackPackage, validatePolicyPackRoot } from "./lib/policy-packaging.mjs";
+import {
+  createPolicyPackPackage,
+  validatePolicyPackRoot
+} from "./lib/policy-packaging.mjs";
 
 const packaged = await createPolicyPackPackage();
 await validatePolicyPackRoot(packaged.packageRoot);
 
 const controlPlaneModule = await import(
-  pathToFileURL(`${packaged.packageRoot.replace(/\\/g, "/")}/packages/control-plane/dist/index.js`).href
+  pathToFileURL(
+    `${packaged.packageRoot.replace(/\\/g, "/")}/packages/control-plane/dist/index.js`
+  ).href
 );
 const manifestModule = await import(
-  pathToFileURL(`${packaged.packageRoot.replace(/\\/g, "/")}/packages/contracts/dist/index.js`).href
+  pathToFileURL(
+    `${packaged.packageRoot.replace(/\\/g, "/")}/packages/contracts/dist/index.js`
+  ).href
 );
 
 const bundle = {
@@ -25,7 +32,8 @@ const bundle = {
       issueUrl: "https://github.com/acme/platform/issues/1"
     },
     title: "Verify packaged policy pack",
-    summary: "Verify that the packaged policy pack can be mounted and its runtime helpers can still execute.",
+    summary:
+      "Verify that the packaged policy pack can be mounted and its runtime helpers can still execute.",
     priority: 1,
     riskClass: "low",
     approvalMode: "auto",
@@ -60,7 +68,7 @@ const bundle = {
     approvalMode: "auto",
     allowedCapabilities: ["can_plan", "can_archive_evidence"],
     allowedPaths: ["prompts/**"],
-    blockedPhases: ["development", "validation", "review", "scm"],
+    blockedPhases: ["validation", "review", "scm"],
     reasons: ["Packaged policy pack verification run."]
   },
   acceptanceCriteria: ["Spec markdown renders", "Manifest validates"],
@@ -68,18 +76,24 @@ const bundle = {
 };
 
 const artifacts = controlPlaneModule.createWorkspaceContextArtifacts(bundle);
-const instructionLayer = controlPlaneModule.createRuntimeInstructionLayer(bundle);
-const instructionArtifacts = controlPlaneModule.createRuntimeInstructionArtifacts(instructionLayer);
-const parsedManifest = manifestModule.policyPackManifestSchema.parse(packaged.manifest);
+const instructionLayer =
+  controlPlaneModule.createRuntimeInstructionLayer(bundle);
+const instructionArtifacts =
+  controlPlaneModule.createRuntimeInstructionArtifacts(instructionLayer);
+const parsedManifest = manifestModule.policyPackManifestSchema.parse(
+  packaged.manifest
+);
 const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-packaged-workspace-"));
 
 try {
-  const managedWorkspace = await controlPlaneModule.materializeManagedWorkspace({
-    bundle,
-    targetRoot: tempRoot,
-    workspaceId: "packaged-workspace-1",
-    createdAt: packaged.manifest.createdAt
-  });
+  const managedWorkspace = await controlPlaneModule.materializeManagedWorkspace(
+    {
+      bundle,
+      targetRoot: tempRoot,
+      workspaceId: "packaged-workspace-1",
+      createdAt: packaged.manifest.createdAt
+    }
+  );
   const destroyed = await controlPlaneModule.destroyManagedWorkspace({
     targetRoot: tempRoot,
     workspaceId: "packaged-workspace-1",
@@ -89,11 +103,17 @@ try {
   assert.equal(parsedManifest.policyPackId, "reddwarf-policy-pack");
   assert.match(artifacts.specMarkdown, /# Planning Spec/);
   assert.match(artifacts.taskJson, /packaged-verify-1/);
-  assert.equal(artifacts.acceptanceCriteriaJson.includes("Spec markdown renders"), true);
+  assert.equal(
+    artifacts.acceptanceCriteriaJson.includes("Spec markdown renders"),
+    true
+  );
   assert.match(instructionArtifacts.soulMd, /RedDwarf Runtime Soul/);
   assert.match(instructionArtifacts.agentsMd, /Architect Agent/);
   assert.match(instructionArtifacts.taskSkillMd, /\.context\/task\.json/);
-  assert.equal(instructionLayer.canonicalSources.includes("prompts/planning-system.md"), true);
+  assert.equal(
+    instructionLayer.canonicalSources.includes("prompts/planning-system.md"),
+    true
+  );
   assert.equal(managedWorkspace.descriptor.status, "provisioned");
   assert.equal(destroyed.descriptor?.status, "destroyed");
   assert.equal(destroyed.removed, true);

@@ -69,11 +69,27 @@ export const evidenceKinds = [
 ] as const;
 
 export const eventLevels = ["info", "warn", "error"] as const;
-export const memoryScopes = ["task", "project", "organization", "external"] as const;
-export const memoryProvenances = ["human_curated", "pipeline_derived", "external_retrieval"] as const;
+export const memoryScopes = [
+  "task",
+  "project",
+  "organization",
+  "external"
+] as const;
+export const memoryProvenances = [
+  "human_curated",
+  "pipeline_derived",
+  "external_retrieval"
+] as const;
 export const policyPackEntryKinds = ["directory", "file"] as const;
 export const concurrencyStrategies = ["serialize", "escalate"] as const;
-export const pipelineRunStatuses = ["active", "completed", "blocked", "failed", "stale", "cancelled"] as const;
+export const pipelineRunStatuses = [
+  "active",
+  "completed",
+  "blocked",
+  "failed",
+  "stale",
+  "cancelled"
+] as const;
 export const overlapActions = ["start", "block"] as const;
 export const failureClasses = [
   "planning_failure",
@@ -84,9 +100,22 @@ export const failureClasses = [
   "policy_violation",
   "execution_loop"
 ] as const;
-export const pipelineRunStatusesForSummary = ["completed", "blocked", "failed"] as const;
+export const pipelineRunStatusesForSummary = [
+  "completed",
+  "blocked",
+  "failed"
+] as const;
 export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
-export const approvalRequestStatuses = ["pending", "approved", "rejected", "cancelled"] as const;
+export const workspaceToolModes = [
+  "planning_only",
+  "development_readonly"
+] as const;
+export const approvalRequestStatuses = [
+  "pending",
+  "approved",
+  "rejected",
+  "cancelled"
+] as const;
 export const approvalDecisions = ["approve", "reject"] as const;
 
 const isoDateTimeSchema = z.string().datetime({ offset: true });
@@ -118,8 +147,13 @@ export const concurrencyStrategySchema = z.enum(concurrencyStrategies);
 export const pipelineRunStatusSchema = z.enum(pipelineRunStatuses);
 export const overlapActionSchema = z.enum(overlapActions);
 export const failureClassSchema = z.enum(failureClasses);
-export const pipelineRunStatusSummarySchema = z.enum(pipelineRunStatusesForSummary);
-export const workspaceLifecycleStatusSchema = z.enum(workspaceLifecycleStatuses);
+export const pipelineRunStatusSummarySchema = z.enum(
+  pipelineRunStatusesForSummary
+);
+export const workspaceLifecycleStatusSchema = z.enum(
+  workspaceLifecycleStatuses
+);
+export const workspaceToolModeSchema = z.enum(workspaceToolModes);
 export const approvalRequestStatusSchema = z.enum(approvalRequestStatuses);
 export const approvalDecisionSchema = z.enum(approvalDecisions);
 
@@ -139,7 +173,9 @@ export const planningTaskInputSchema = z.object({
   labels: z.array(z.string().min(1)).default([]),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   affectedPaths: z.array(z.string().min(1)).default([]),
-  requestedCapabilities: z.array(capabilitySchema).default(["can_plan", "can_archive_evidence"]),
+  requestedCapabilities: z
+    .array(capabilitySchema)
+    .default(["can_plan", "can_archive_evidence"]),
   metadata: z.record(jsonValueSchema).default({})
 });
 
@@ -236,7 +272,8 @@ export const workspaceDescriptorSchema = z.object({
     taskSkillMd: z.string().min(1)
   }),
   toolPolicy: z.object({
-    mode: z.literal("planning_only"),
+    mode: workspaceToolModeSchema,
+    codeWriteEnabled: z.boolean(),
     allowedCapabilities: z.array(capabilitySchema),
     blockedPhases: z.array(taskPhaseSchema),
     notes: z.array(z.string().min(1))
@@ -475,10 +512,19 @@ export type PhaseRecord = z.infer<typeof phaseRecordSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
-export type WorkspaceContextBundle = z.infer<typeof workspaceContextBundleSchema>;
-export type RuntimeInstructionFile = z.infer<typeof runtimeInstructionFileSchema>;
-export type RuntimeInstructionLayer = z.infer<typeof runtimeInstructionLayerSchema>;
-export type WorkspaceLifecycleStatus = z.infer<typeof workspaceLifecycleStatusSchema>;
+export type WorkspaceContextBundle = z.infer<
+  typeof workspaceContextBundleSchema
+>;
+export type RuntimeInstructionFile = z.infer<
+  typeof runtimeInstructionFileSchema
+>;
+export type RuntimeInstructionLayer = z.infer<
+  typeof runtimeInstructionLayerSchema
+>;
+export type WorkspaceLifecycleStatus = z.infer<
+  typeof workspaceLifecycleStatusSchema
+>;
+export type WorkspaceToolMode = z.infer<typeof workspaceToolModeSchema>;
 export type WorkspaceDescriptor = z.infer<typeof workspaceDescriptorSchema>;
 export type ApprovalRequestStatus = z.infer<typeof approvalRequestStatusSchema>;
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
@@ -500,10 +546,10 @@ export type PipelineRun = z.infer<typeof pipelineRunSchema>;
 export type PipelineRunQuery = z.infer<typeof pipelineRunQuerySchema>;
 export type ConcurrencyDecision = z.infer<typeof concurrencyDecisionSchema>;
 export type FailureClass = z.infer<typeof failureClassSchema>;
-export type PipelineRunStatusSummary = z.infer<typeof pipelineRunStatusSummarySchema>;
+export type PipelineRunStatusSummary = z.infer<
+  typeof pipelineRunStatusSummarySchema
+>;
 
 export function asIsoTimestamp(date: Date = new Date()): string {
   return date.toISOString();
 }
-
-
