@@ -72,4 +72,12 @@
   - `control-plane` already depends on `execution-plane`; adding the reverse dependency creates a circular package graph.
   - `DeterministicPlanningAgent` only uses contracts types, but its `PlanningAgent` interface and `PlanningDraft` type are defined in `pipeline.ts` — moving it requires also moving those types.
   - Unblocking options for a future M7 pass: (a) move agent interfaces (`PlanningAgent`, `DevelopmentAgent`, `ValidationAgent`, `ScmAgent`) and draft types to `@reddwarf/contracts`; (b) move `MaterializedManagedWorkspace` and related types to `@reddwarf/contracts`; or (c) introduce a new `@reddwarf/agents` package that sits between `execution-plane` and `control-plane`.
-- Likely next board items: features 33–38 (policy phase-map, type fixes in integrations, disabled-phases constant, archive duration, filter/redact optimisations).
+- Completed features 33–38 from `FEATURE_BOARD.md` (M6 refactor pass, second half).
+  - Feature 33: replaced if/else phase chains in `capabilitiesAllowedForPhase` and `resolveApprovalMode` with `phaseCapabilityMap` lookup table and `planningOnlyPhases` Set constant.
+  - Feature 34: `SecretLeaseRequest.riskClass` and `approvalMode` now use imported `RiskClass` and `ApprovalMode` types from `@reddwarf/contracts` instead of inline literal unions.
+  - Feature 35: `isCapability` guard now uses `(capabilities as readonly string[]).includes(value)` derived from the contracts `capabilities` tuple rather than a duplicated inline string array.
+  - Feature 36: `v1DisabledPhases` exported from `@reddwarf/contracts`; `policy` and `execution-plane` both import and use the shared constant, removing two independent declarations.
+  - Feature 37: `archiveStartedAt` captured before evidence persistence calls and `archiveCompletedAt` captured after the final `savePhaseRecord`, so archive durations now reflect real elapsed time.
+  - Feature 38: `InMemoryPlanningRepository.listMemoryRecords` now uses a single composed predicate instead of seven chained `.filter()` calls; `redactSecretValues` uses a single compiled regex replace instead of per-secret split/join loops.
+- All M6 features (26–31, 33–38) are complete; feature 32 remains blocked by circular dependency constraint (see above). Feature board updated accordingly.
+- Likely next board items: features 39–40 (M7: split PlanningRepository interface into read/write contracts; inject pg.Pool into PostgresPlanningRepository constructor).

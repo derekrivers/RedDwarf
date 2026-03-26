@@ -29,3 +29,18 @@ The board is ordered by implementation priority.
 | 23       | Retry, escalation, and follow-up issue automation                              | M4        | completed | Failure Recovery Model                                                 |
 | 24       | Operator dashboard or API for runs, approvals, evidence, and blocked tasks     | M5        | completed | Control Plane, Observability Model                                     |
 | 25       | Knowledge ingestion pipeline for ADRs, standards, and curated external context | M5        | completed | Knowledge & Policy Plane, External Knowledge Retrieval                 |
+| 26       | Extract concurrency detection into a shared utility function                   | M6        | completed | Control Plane, Concurrency and Conflict Handling                       |
+| 27       | Split control-plane/src/index.ts into focused module files                     | M6        | completed | Control Plane                                                          |
+| 28       | Split evidence/src/index.ts into repository, factories, and utilities          | M6        | completed | Evidence Plane                                                         |
+| 29       | Consolidate duplicate phase-capability constants across packages               | M6        | completed | Policy, Control Plane, Execution Plane                                 |
+| 30       | Fix InMemoryPlanningRepository.getTaskSnapshot to use Promise.all              | M6        | completed | Evidence Plane                                                         |
+| 31       | Eliminate redundant Zod re-parsing in workspace materialization path           | M6        | completed | Control Plane                                                          |
+| 32       | Move deterministic agent classes from control-plane into execution-plane       | M6        | blocked   | Execution Plane, Control Plane                                         |
+| 33       | Replace if/else phase chains with capability-per-phase map in policy package   | M6        | completed | Policy                                                                 |
+| 34       | Fix SecretLeaseRequest to use imported RiskClass and ApprovalMode types        | M6        | completed | Integration Plane                                                      |
+| 35       | Fix isCapability guard to derive values from the contracts array               | M6        | completed | Integration Plane                                                      |
+| 36       | Merge disabled-phases list into a single shared constant                       | M6        | completed | Policy, Execution Plane                                                |
+| 37       | Fix archive phase to measure real duration rather than always reporting zero   | M6        | completed | Control Plane                                                          |
+| 38       | Optimize InMemoryPlanningRepository filter chain and redactSecretValues        | M6        | completed | Evidence Plane, Integration Plane                                      |
+| 39       | Split PlanningRepository interface into read and write contracts               | M7        | todo      | Evidence Plane                                                         |
+| 40       | Inject pg.Pool dependency into PostgresPlanningRepository constructor          | M7        | todo      | Evidence Plane                                                         |
