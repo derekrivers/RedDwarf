@@ -1,3 +1,4 @@
+import { v1DisabledPhases } from "@reddwarf/contracts";
 import type {
   ApprovalMode,
   Capability,
@@ -18,7 +19,7 @@ const highRiskPatterns = [
   /deploy/i,
   /migration/i
 ];
-const disabledPhases: TaskPhase[] = ["review"];
+const disabledPhases: readonly TaskPhase[] = v1DisabledPhases;
 export const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
 export const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
@@ -212,7 +213,7 @@ export function buildPolicySnapshot(
     allowedCapabilities,
     allowedPaths: createAllowedPaths(input, riskClass),
     allowedSecretScopes,
-    blockedPhases: disabledPhases,
+    blockedPhases: [...disabledPhases],
     reasons
   };
 }

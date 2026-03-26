@@ -39,6 +39,8 @@ export const approvalModes = [
   "disallowed"
 ] as const;
 
+export const v1DisabledPhases = ["review"] as const satisfies readonly (typeof taskPhases)[number][];
+
 export const capabilities = [
   "can_plan",
   "can_write_code",

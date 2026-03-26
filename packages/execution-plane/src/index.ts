@@ -1,3 +1,4 @@
+import { v1DisabledPhases } from "@reddwarf/contracts";
 import type { AgentDefinition, TaskPhase } from "@reddwarf/contracts";
 
 export const agentDefinitions: AgentDefinition[] = [
@@ -52,7 +53,7 @@ export const agentDefinitions: AgentDefinition[] = [
   }
 ];
 
-const disabledPhases = new Set<TaskPhase>(["review"]);
+const disabledPhases = new Set<TaskPhase>(v1DisabledPhases);
 
 export function phaseIsExecutable(phase: TaskPhase): boolean {
   return !disabledPhases.has(phase);
