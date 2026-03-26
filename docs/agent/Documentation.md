@@ -49,3 +49,10 @@
 - Added `corepack pnpm verify:operator-api` for Postgres-backed end-to-end verification of all 8 endpoints including the full approval-resolve flow.
 - Updated repository docs and the feature board so feature 24 is marked complete and feature 25 is now the likely next actionable item.
 - Likely next board item: feature 25, knowledge ingestion pipeline for ADRs, standards, and curated external context.
+- Completed feature 25 from `FEATURE_BOARD.md`: knowledge ingestion pipeline for ADRs, standards, and curated external context.
+- Added `KnowledgeSource`, `KnowledgeSourceQuery`, `KnowledgeIngestionAdapter`, and `FixtureKnowledgeIngestionAdapter` to the integrations package so callers can define and retrieve project-scoped ADRs, organization-scoped standards, and externally retrieved reference docs through a uniform adapter contract.
+- Added `ingestKnowledgeSources(query, deps)` to the control-plane package which lists or fetches sources from the adapter, derives a deterministic `knowledge:<sha256>` memoryId per sourceUri, and saves each source as a `MemoryRecord` with the correct scope, provenance, tags, and sourceUri so `getMemoryContext()` returns them in the right partition without modification.
+- The pipeline is idempotent — re-ingesting the same sourceUri upserts the existing record, keeping the memory store stable under repeated runs.
+- Added 5 unit tests covering full-batch ingestion, sourceUri filtering, tag filtering, scope filtering, idempotency, and end-to-end appearance in `getMemoryContext`.
+- Added `corepack pnpm verify:knowledge-ingestion` for Postgres-backed verification of all ingestion modes plus planning-pipeline context injection.
+- Updated repository docs and the feature board so feature 25 is marked complete. All board items through M5 are now delivered.
