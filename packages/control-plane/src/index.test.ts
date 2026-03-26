@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicScmAgent,
   DeterministicValidationAgent,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
@@ -18,13 +19,17 @@ import {
   resolveApprovalRequest,
   runDeveloperPhase,
   runPlanningPipeline,
+  runScmPhase,
   runValidationPhase
 } from "@reddwarf/control-plane";
 import {
   InMemoryPlanningRepository,
   createPipelineRun
 } from "@reddwarf/evidence";
-import { FixtureSecretsAdapter } from "@reddwarf/integrations";
+import {
+  FixtureGitHubAdapter,
+  FixtureSecretsAdapter
+} from "@reddwarf/integrations";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
 const eligibleInput: PlanningTaskInput = {
@@ -675,6 +680,134 @@ describe("control-plane", () => {
     }
   });
 
+  it("routes approved PR tasks from validation into SCM and completes the task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-workspace-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic change that requires validation before an approved branch and pull request are opened.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-scm-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for SCM orchestration.",
+        comment: "Open the branch and pull request after validation."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scm"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-scm-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-scm-validation"
+        }
+      );
+      const scm = await runScmPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          scm: new DeterministicScmAgent(),
+          github: new FixtureGitHubAdapter({
+            candidates: [
+              {
+                repo: planningResult.manifest.source.repo,
+                issueNumber: 99,
+                title: planningResult.manifest.title,
+                body: planningResult.manifest.summary,
+                labels: ["ai-eligible"],
+                url: "https://github.com/acme/platform/issues/99",
+                state: "open"
+              }
+            ],
+            mutations: {
+              allowBranchCreation: true,
+              allowPullRequestCreation: true,
+              pullRequestNumberStart: 71
+            }
+          }),
+          clock: () => new Date("2026-03-25T18:20:00.000Z"),
+          idGenerator: () => "run-scm-phase"
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        scm.runId
+      );
+      const reportMarkdown = await readFile(scm.reportPath!, "utf8");
+
+      expect(validation.nextAction).toBe("await_scm");
+      expect(scm.nextAction).toBe("complete");
+      expect(scm.workspace?.descriptor.toolPolicy.mode).toBe("scm_only");
+      expect(scm.branch?.branchName).toContain(planningResult.manifest.taskId);
+      expect(scm.pullRequest?.number).toBe(71);
+      expect(persistedManifest?.currentPhase).toBe("scm");
+      expect(persistedManifest?.lifecycleStatus).toBe("completed");
+      expect(persistedManifest?.branchName).toBe(scm.branch?.branchName ?? null);
+      expect(persistedManifest?.prNumber).toBe(71);
+      expect(runSummary?.status).toBe("completed");
+      expect(runSummary?.latestPhase).toBe("scm");
+      expect(reportMarkdown).toContain("SCM Report");
+      expect(
+        repository.memoryRecords.some((record) => record.key === "scm.summary")
+      ).toBe(true);
+      expect(
+        repository.runEvents.some((event) => event.code === "PULL_REQUEST_CREATED")
+      ).toBe(true);
+
+      await destroyTaskWorkspace({
+        manifest: scm.manifest,
+        repository,
+        targetRoot: tempRoot,
+        clock: () => new Date("2026-03-25T18:25:00.000Z")
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails the validation phase when a validation command exits non-zero", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(
@@ -795,8 +928,8 @@ describe("control-plane", () => {
         requestId: result.approvalRequest!.requestId,
         decision: "reject",
         decidedBy: "operator",
-        decisionSummary: "Rejected until SCM workflow exists.",
-        comment: "Wait for the SCM phase feature."
+        decisionSummary: "Rejected pending operator signoff.",
+        comment: "Do not proceed with SCM automation for this task."
       },
       {
         repository,

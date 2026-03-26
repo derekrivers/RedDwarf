@@ -62,6 +62,15 @@ export interface GitHubPullRequestSummary {
   mergedAt: string | null;
 }
 
+export interface GitHubBranchSummary {
+  repo: string;
+  baseBranch: string;
+  branchName: string;
+  ref: string;
+  url: string;
+  createdAt: string;
+}
+
 export interface GitHubIssueComment {
   repo: string;
   issueNumber: number;
@@ -97,8 +106,12 @@ export interface GitHubAdapter {
   convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput>;
   addLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
   removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
-  createBranch(repo: string, baseBranch: string, branchName: string): Promise<never>;
-  createPullRequest(input: GitHubPullRequestDraft): Promise<never>;
+  createBranch(
+    repo: string,
+    baseBranch: string,
+    branchName: string
+  ): Promise<GitHubBranchSummary>;
+  createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary>;
   commentOnIssue(comment: GitHubIssueComment): Promise<never>;
 }
 
@@ -173,13 +186,23 @@ export class V1MutationDisabledError extends Error {
   }
 }
 
+export interface FixtureGitHubMutationOptions {
+  allowBranchCreation?: boolean;
+  allowPullRequestCreation?: boolean;
+  pullRequestNumberStart?: number;
+}
+
 export class FixtureGitHubAdapter implements GitHubAdapter {
   private readonly candidates: Map<string, GitHubIssueCandidate>;
   private readonly statusSnapshots: Map<string, GitHubIssueStatusSnapshot>;
+  private readonly mutationOptions: FixtureGitHubMutationOptions;
+  private readonly createdBranches: Map<string, GitHubBranchSummary>;
+  private nextPullRequestNumber: number;
 
   constructor(input: {
     candidates: GitHubIssueCandidate[];
     statuses?: GitHubIssueStatusSnapshot[];
+    mutations?: FixtureGitHubMutationOptions;
   }) {
     this.candidates = new Map(
       input.candidates.map((candidate) => [createIssueKey(candidate.repo, candidate.issueNumber), candidate])
@@ -187,6 +210,9 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     this.statusSnapshots = new Map(
       (input.statuses ?? []).map((status) => [createIssueKey(status.repo, status.issueNumber), status])
     );
+    this.mutationOptions = input.mutations ?? {};
+    this.createdBranches = new Map();
+    this.nextPullRequestNumber = this.mutationOptions.pullRequestNumberStart ?? 1;
   }
 
   async fetchIssueCandidate(repo: string, issueNumber: number): Promise<GitHubIssueCandidate> {
@@ -248,12 +274,54 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     throw new V1MutationDisabledError(`Removing labels ${labels.join(", ")} from ${repo}#${issueNumber}`);
   }
 
-  async createBranch(repo: string, baseBranch: string, branchName: string): Promise<never> {
-    throw new V1MutationDisabledError(`Creating branch ${branchName} from ${baseBranch} in ${repo}`);
+  async createBranch(
+    repo: string,
+    baseBranch: string,
+    branchName: string
+  ): Promise<GitHubBranchSummary> {
+    if (this.mutationOptions.allowBranchCreation !== true) {
+      throw new V1MutationDisabledError(`Creating branch ${branchName} from ${baseBranch} in ${repo}`);
+    }
+
+    const summary: GitHubBranchSummary = {
+      repo,
+      baseBranch,
+      branchName,
+      ref: `refs/heads/${branchName}`,
+      url: `https://github.com/${repo}/tree/${encodeURIComponent(branchName)}`,
+      createdAt: asIsoTimestamp()
+    };
+
+    this.createdBranches.set(createBranchKey(repo, branchName), summary);
+    return summary;
   }
 
-  async createPullRequest(input: GitHubPullRequestDraft): Promise<never> {
-    throw new V1MutationDisabledError(`Creating a pull request in ${input.repo}`);
+  async createPullRequest(
+    input: GitHubPullRequestDraft
+  ): Promise<GitHubPullRequestSummary> {
+    if (this.mutationOptions.allowPullRequestCreation !== true) {
+      throw new V1MutationDisabledError(`Creating a pull request in ${input.repo}`);
+    }
+
+    if (!this.createdBranches.has(createBranchKey(input.repo, input.headBranch))) {
+      throw new Error(
+        `No fixture branch ${input.headBranch} exists in ${input.repo}. Create the branch before opening the pull request.`
+      );
+    }
+
+    const number = this.nextPullRequestNumber;
+    this.nextPullRequestNumber += 1;
+
+    return {
+      repo: input.repo,
+      number,
+      url: `https://github.com/${input.repo}/pull/${number}`,
+      state: "open",
+      baseBranch: input.baseBranch,
+      headBranch: input.headBranch,
+      title: input.title,
+      mergedAt: null
+    };
   }
 
   async commentOnIssue(comment: GitHubIssueComment): Promise<never> {
@@ -497,6 +565,10 @@ export function createPlanningInputFromGitHubIssue(
 
 function createIssueKey(repo: string, issueNumber: number): string {
   return `${repo}#${issueNumber}`;
+}
+
+function createBranchKey(repo: string, branchName: string): string {
+  return `${repo}@${branchName}`;
 }
 
 function createCheckKey(repo: string, ref: string): string {

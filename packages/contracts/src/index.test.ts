@@ -88,14 +88,14 @@ describe("contracts", () => {
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
         allowedPaths: ["docs/**"],
         allowedSecretScopes: [],
-        blockedPhases: ["review", "scm"],
+        blockedPhases: ["review"],
         reasons: ["Planning phase is approved for autonomous execution in v1."]
       },
       acceptanceCriteria: ["Spec is produced"],
       allowedPaths: ["docs/**"]
     });
 
-    expect(bundle.policySnapshot.blockedPhases).toEqual(["review", "scm"]);
+    expect(bundle.policySnapshot.blockedPhases).toEqual(["review"]);
   });
 
   it("parses a runtime instruction layer", () => {
@@ -105,7 +105,7 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       approvalMode: "auto",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
-      blockedPhases: ["review", "scm"],
+      blockedPhases: ["review"],
       canonicalSources: [
         "standards/engineering.md",
         "prompts/planning-system.md"
@@ -146,7 +146,7 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
       allowedPaths: ["docs/**"],
-      blockedPhases: ["review", "scm"],
+      blockedPhases: ["review"],
       canonicalSources: ["standards/engineering.md"],
       taskContractFiles: [
         "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context/task.json"
@@ -164,7 +164,7 @@ describe("contracts", () => {
         mode: "planning_only",
         codeWriteEnabled: false,
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
-        blockedPhases: ["review", "scm"],
+        blockedPhases: ["review"],
         notes: ["Planning-only workspace."]
       },
       credentialPolicy: {
@@ -205,7 +205,7 @@ describe("contracts", () => {
       recommendedAgentType: "developer",
       allowedCapabilities: ["can_run_tests", "can_archive_evidence"],
       allowedPaths: ["src/**"],
-      blockedPhases: ["review", "scm"],
+      blockedPhases: ["review"],
       canonicalSources: ["agents/validation.md"],
       taskContractFiles: [
         "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/.context/task.json"
@@ -224,7 +224,7 @@ describe("contracts", () => {
         mode: "validation_only",
         codeWriteEnabled: false,
         allowedCapabilities: ["can_run_tests", "can_archive_evidence"],
-        blockedPhases: ["review", "scm"],
+        blockedPhases: ["review"],
         notes: ["Validation-only workspace."]
       },
       credentialPolicy: {
@@ -246,6 +246,66 @@ describe("contracts", () => {
     expect(descriptor.toolPolicy.allowedCapabilities).toContain(
       "can_run_tests"
     );
+  });
+
+  it("parses an scm workspace descriptor", () => {
+    const descriptor = workspaceDescriptorSchema.parse({
+      workspaceId: "workspace-42-scm",
+      taskId: "acme-platform-42",
+      workspaceRoot:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm",
+      contextDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/.context",
+      stateFile:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/.workspace/workspace.json",
+      scratchDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/scratch",
+      artifactsDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/artifacts",
+      status: "provisioned",
+      assignedAgentType: "scm",
+      recommendedAgentType: "developer",
+      allowedCapabilities: ["can_open_pr", "can_archive_evidence"],
+      allowedPaths: ["src/**"],
+      blockedPhases: ["review"],
+      canonicalSources: ["docs/implementation-map.md"],
+      taskContractFiles: [
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/.context/task.json"
+      ],
+      instructionFiles: {
+        soulMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/SOUL.md",
+        agentsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/AGENTS.md",
+        toolsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/TOOLS.md",
+        taskSkillMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-scm/skills/reddwarf-task/SKILL.md"
+      },
+      toolPolicy: {
+        mode: "scm_only",
+        codeWriteEnabled: false,
+        allowedCapabilities: ["can_open_pr", "can_archive_evidence"],
+        blockedPhases: ["review"],
+        notes: ["SCM-only workspace."]
+      },
+      credentialPolicy: {
+        mode: "none",
+        allowedSecretScopes: [],
+        injectedSecretKeys: [],
+        secretEnvFile: null,
+        leaseIssuedAt: null,
+        leaseExpiresAt: null,
+        notes: ["Secrets are not injected during SCM."]
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      destroyedAt: null
+    });
+
+    expect(descriptor.assignedAgentType).toBe("scm");
+    expect(descriptor.toolPolicy.mode).toBe("scm_only");
+    expect(descriptor.toolPolicy.allowedCapabilities).toContain("can_open_pr");
   });
 
   it("parses a policy snapshot with allowed secret scopes", () => {
@@ -296,7 +356,7 @@ describe("contracts", () => {
         allowedCapabilities: ["can_plan", "can_archive_evidence", "can_use_secrets"],
         allowedPaths: ["src/**"],
         allowedSecretScopes: ["github_readonly"],
-        blockedPhases: ["review", "scm"],
+        blockedPhases: ["review"],
         reasons: ["Scoped secrets are allowed after approval."]
       },
       acceptanceCriteria: ["Secret scopes are explicit"],
@@ -320,7 +380,7 @@ describe("contracts", () => {
       summary: "Human approval is required before downstream execution.",
       requestedCapabilities: ["can_write_code"],
       allowedPaths: ["src/**"],
-      blockedPhases: ["review", "scm"],
+      blockedPhases: ["review"],
       policyReasons: [
         "Developer orchestration may continue after human intervention, but code writing remains disabled by default in v1."
       ],

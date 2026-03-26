@@ -20,3 +20,11 @@
 - Environment note: `corepack pnpm verify:secrets` uses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
 - Updated repository docs and the feature board so feature 20 is marked complete and feature 21 is now the likely next actionable item.
 - Likely next board item: feature 21, SCM adapter with branch and PR creation behind approval gates.
+- Completed feature 21 from `FEATURE_BOARD.md`: SCM adapter with branch and PR creation behind approval gates.
+- Enabled the `scm` phase in policy and execution routing, added `runScmPhase` plus a deterministic SCM agent, and persisted branch/PR summaries, SCM reports, task memory, and completion metadata back into the manifest and evidence store.
+- Validation now hands approved `can_open_pr` tasks directly into SCM because review automation is still blocked; all other tasks still stop after validation with `await_review`.
+- Expanded workspace tool policy contracts with `scm_only` mode so SCM workspaces allow `can_open_pr` and evidence capture while product code writes remain disabled.
+- Added `corepack pnpm verify:scm` plus unit and Postgres-backed coverage for validation-to-SCM handoff, fixture-backed branch/PR creation, SCM workspace descriptors, and completed-task persistence.
+- Environment note: `corepack pnpm verify:scm` traverses the validation runner first and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
+- Updated repository docs and the feature board so feature 21 is marked complete and feature 22 is now the likely next actionable item.
+- Likely next board item: feature 22, evidence artifact archival for diffs, logs, test results, and review outputs.

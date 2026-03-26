@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   assessEligibility,
   buildPolicySnapshot,
@@ -66,9 +66,21 @@ describe("policy", () => {
     );
   });
 
-  it("builds a policy snapshot with blocked future phases", () => {
+  it("allows SCM capabilities only during the scm phase", () => {
+    expect(
+      capabilitiesAllowedForPhase("scm", [
+        "can_open_pr",
+        "can_archive_evidence"
+      ])
+    ).toBe(true);
+    expect(capabilitiesAllowedForPhase("scm", ["can_use_secrets"])).toBe(
+      false
+    );
+  });
+
+  it("builds a policy snapshot with review as the remaining blocked future phase", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
-    expect(snapshot.blockedPhases).toEqual(["review", "scm"]);
+    expect(snapshot.blockedPhases).toEqual(["review"]);
   });
 
   it("grants scoped secrets only to non-high-risk tasks with explicit scopes", () => {

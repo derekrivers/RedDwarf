@@ -109,7 +109,8 @@ export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
 export const workspaceToolModes = [
   "planning_only",
   "development_readonly",
-  "validation_only"
+  "validation_only",
+  "scm_only"
 ] as const;
 export const workspaceCredentialModes = ["none", "scoped_env"] as const;
 export const approvalRequestStatuses = [

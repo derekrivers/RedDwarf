@@ -121,6 +121,38 @@ describe("integrations", () => {
     ).toBe("token=***REDACTED***");
   });
 
+  it("creates fixture-backed branches and pull requests only when SCM mutations are explicitly enabled", async () => {
+    const github = new FixtureGitHubAdapter({
+      candidates: [candidate],
+      mutations: {
+        allowBranchCreation: true,
+        allowPullRequestCreation: true,
+        pullRequestNumberStart: 41
+      }
+    });
+
+    const branch = await github.createBranch(
+      candidate.repo,
+      "main",
+      "reddwarf/acme-platform-88/run-scm"
+    );
+    const pullRequest = await github.createPullRequest({
+      repo: candidate.repo,
+      baseBranch: "main",
+      headBranch: branch.branchName,
+      title: "[RedDwarf] Test PR",
+      body: "Body",
+      labels: ["reddwarf", "automation"],
+      issueNumber: candidate.issueNumber
+    });
+
+    expect(branch.ref).toBe("refs/heads/reddwarf/acme-platform-88/run-scm");
+    expect(branch.url).toContain("/tree/");
+    expect(pullRequest.number).toBe(41);
+    expect(pullRequest.baseBranch).toBe("main");
+    expect(pullRequest.headBranch).toBe(branch.branchName);
+  });
+
   it("denies mutation-oriented GitHub, CI, and secret operations in v1", async () => {
     const github = new FixtureGitHubAdapter({ candidates: [candidate] });
     const ci = new FixtureCiAdapter([]);

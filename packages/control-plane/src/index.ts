@@ -47,6 +47,9 @@ import {
 } from "@reddwarf/evidence";
 import {
   redactSecretValues,
+  type GitHubAdapter,
+  type GitHubBranchSummary,
+  type GitHubPullRequestSummary,
   type SecretLease,
   type SecretsAdapter
 } from "@reddwarf/integrations";
@@ -222,6 +225,29 @@ export interface ValidationReport {
   commandResults: ValidationCommandResult[];
 }
 
+export interface ScmDraft {
+  summary: string;
+  baseBranch: string;
+  branchName: string;
+  pullRequestTitle: string;
+  pullRequestBody: string;
+  labels: string[];
+}
+
+export interface ScmAgent {
+  createPullRequest(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      baseBranch: string;
+      validationSummary: string;
+      validationReportPath: string;
+    }
+  ): Promise<ScmDraft>;
+}
+
 export interface RunDeveloperPhaseInput {
   taskId: string;
   targetRoot: string;
@@ -229,6 +255,12 @@ export interface RunDeveloperPhaseInput {
 }
 
 export interface RunValidationPhaseInput {
+  taskId: string;
+  targetRoot: string;
+  workspaceId?: string;
+}
+
+export interface RunScmPhaseInput {
   taskId: string;
   targetRoot: string;
   workspaceId?: string;
@@ -256,6 +288,16 @@ export interface ValidationPhaseDependencies {
   concurrency?: PlanningConcurrencyOptions;
 }
 
+export interface ScmPhaseDependencies {
+  repository: PlanningRepository;
+  scm: ScmAgent;
+  github: GitHubAdapter;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  concurrency?: PlanningConcurrencyOptions;
+}
+
 export interface DevelopmentPhaseResult {
   runId: string;
   manifest: TaskManifest;
@@ -272,7 +314,19 @@ export interface ValidationPhaseResult {
   workspace?: MaterializedManagedWorkspace;
   report?: ValidationReport;
   reportPath?: string;
-  nextAction: "await_review" | "task_blocked";
+  nextAction: "await_review" | "await_scm" | "task_blocked";
+  concurrencyDecision: ConcurrencyDecision;
+}
+
+export interface ScmPhaseResult {
+  runId: string;
+  manifest: TaskManifest;
+  workspace?: MaterializedManagedWorkspace;
+  draft?: ScmDraft;
+  branch?: GitHubBranchSummary;
+  pullRequest?: GitHubPullRequestSummary;
+  reportPath?: string;
+  nextAction: "complete" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
 }
 
@@ -477,6 +531,10 @@ const validationWorkspaceCapabilities: Capability[] = [
   "can_archive_evidence",
   "can_use_secrets"
 ];
+const scmWorkspaceCapabilities: Capability[] = [
+  "can_open_pr",
+  "can_archive_evidence"
+];
 
 const planningWorkspaceToolPolicyNotes = [
   "Workspace execution is constrained to planning-only capabilities in RedDwarf v1.",
@@ -491,6 +549,11 @@ const developmentWorkspaceToolPolicyNotes = [
 const validationWorkspaceToolPolicyNotes = [
   "Validation orchestration is enabled in RedDwarf v1 for deterministic workspace-local checks.",
   "Run lint, test, and contract validation commands inside the isolated workspace while product code writes remain disabled."
+] as const;
+
+const scmWorkspaceToolPolicyNotes = [
+  "SCM orchestration is enabled in RedDwarf v1 only for approved branch and pull-request creation after validation.",
+  "Remote mutations are limited to the GitHub adapter while product code writes remain disabled in the managed workspace."
 ] as const;
 
 const defaultWorkspaceCredentialPolicyNotes = [
@@ -1277,10 +1340,10 @@ export class DeterministicDeveloperAgent implements DevelopmentAgent {
       ],
       blockedActions: [
         "Product code writes remain disabled by default in the development phase.",
-        "Review and SCM automation remain blocked in RedDwarf v1 after validation completes."
+        "Review automation remains blocked in RedDwarf v1 for tasks that do not request SCM handoff."
       ],
       nextActions: [
-        "Run the validation phase against the managed workspace before asking for review.",
+        "Run the validation phase against the managed workspace before asking for review or SCM handoff.",
         "Escalate if the task truly requires code-write access before downstream phases land."
       ]
     };
@@ -1297,7 +1360,7 @@ export class DeterministicValidationAgent implements ValidationAgent {
     }
   ): Promise<ValidationDraft> {
     return {
-      summary: `Run deterministic lint and test checks for workspace ${context.workspace.workspaceId} before the review phase.`,
+      summary: `Run deterministic lint and test checks for workspace ${context.workspace.workspaceId} before review or SCM handoff.`,
       commands: [
         {
           id: "lint",
@@ -1312,6 +1375,39 @@ export class DeterministicValidationAgent implements ValidationAgent {
           args: ["-e", createValidationNodeScript("test")]
         }
       ]
+    };
+  }
+}
+
+export class DeterministicScmAgent implements ScmAgent {
+  async createPullRequest(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      baseBranch: string;
+      validationSummary: string;
+      validationReportPath: string;
+    }
+  ): Promise<ScmDraft> {
+    const branchName = createScmBranchName(context.manifest.taskId, context.runId);
+
+    return {
+      summary: `Create approved branch ${branchName} and a pull request for task ${context.manifest.taskId}.`,
+      baseBranch: context.baseBranch,
+      branchName,
+      pullRequestTitle: `[RedDwarf] ${context.manifest.title}`,
+      pullRequestBody: createScmPullRequestBody({
+        bundle,
+        validationSummary: context.validationSummary,
+        validationReportPath: context.validationReportPath,
+        branchName,
+        baseBranch: context.baseBranch,
+        workspace: context.workspace,
+        runId: context.runId
+      }),
+      labels: ["reddwarf", "automation", `risk:${context.manifest.riskClass}`]
     };
   }
 }
@@ -1869,6 +1965,7 @@ export async function runPlanningPipeline(
           policyReasons: policySnapshot.reasons,
           approvalMode,
           allowedSecretScopes: policySnapshot.allowedSecretScopes,
+          defaultBranch: readConfiguredBaseBranch(input),
           ...(approvalRequestId ? { approvalRequestId } : {})
         },
         repo: input.source.repo,
@@ -3625,6 +3722,14 @@ export async function runValidationPhase(
       }
     });
 
+    const nextAction = taskRequestsPullRequest(currentManifest)
+      ? "await_scm"
+      : "await_review";
+    const nextPhase = nextAction === "await_scm" ? "scm" : "review";
+    const blockedMessage =
+      nextAction === "await_scm"
+        ? "Validation phase completed and is ready for SCM branch and pull-request creation."
+        : "Validation phase completed, but review automation is not implemented yet.";
     const blockedAt = clock();
     const blockedAtIso = asIsoTimestamp(blockedAt);
     await recordRunEvent({
@@ -3636,11 +3741,11 @@ export async function runValidationPhase(
       phase: "validation",
       level: "warn",
       code: "PIPELINE_BLOCKED",
-      message:
-        "Validation phase completed, but review automation is not implemented yet.",
+      message: blockedMessage,
       durationMs: getDurationMs(runStartedAt, blockedAt),
       data: {
-        nextPhase: "review",
+        nextPhase,
+        nextAction,
         workspaceId: workspace.workspaceId,
         reportPath
       },
@@ -3660,7 +3765,7 @@ export async function runValidationPhase(
       completedAt: blockedAtIso,
       metadata: {
         currentPhase: "validation",
-        nextAction: "await_review",
+        nextAction,
         workspaceId: workspace.workspaceId,
         reportPath
       }
@@ -3672,7 +3777,7 @@ export async function runValidationPhase(
       workspace,
       report,
       reportPath,
-      nextAction: "await_review",
+      nextAction,
       concurrencyDecision
     };
   } catch (error) {
@@ -4119,6 +4224,112 @@ function createWorkspaceCredentialPolicy(input: {
   };
 }
 
+function readConfiguredBaseBranch(input: PlanningTaskInput): string {
+  const githubMetadata = input.metadata["github"];
+
+  if (githubMetadata && typeof githubMetadata === "object") {
+    const baseBranch = (githubMetadata as Record<string, unknown>)["baseBranch"];
+
+    if (typeof baseBranch === "string" && baseBranch.trim().length > 0) {
+      return baseBranch.trim();
+    }
+  }
+
+  return "main";
+}
+
+function readTaskMemoryValue(
+  snapshot: PersistedTaskSnapshot,
+  key: string
+): unknown {
+  return (
+    snapshot.memoryRecords.find(
+      (record) => record.scope === "task" && record.key === key
+    )?.value ?? null
+  );
+}
+
+function readPlanningDefaultBranchFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): string {
+  const planningBrief = readTaskMemoryValue(snapshot, "planning.brief");
+
+  if (planningBrief && typeof planningBrief === "object") {
+    const defaultBranch = (planningBrief as Record<string, unknown>)[
+      "defaultBranch"
+    ];
+
+    if (typeof defaultBranch === "string" && defaultBranch.trim().length > 0) {
+      return defaultBranch.trim();
+    }
+  }
+
+  return "main";
+}
+
+function readValidationSummaryFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): string {
+  const validationSummary = readTaskMemoryValue(snapshot, "validation.summary");
+
+  if (validationSummary && typeof validationSummary === "object") {
+    const summary = (validationSummary as Record<string, unknown>)["summary"];
+
+    if (typeof summary === "string" && summary.trim().length > 0) {
+      return summary.trim();
+    }
+  }
+
+  throw new Error(
+    `Task ${snapshot.manifest?.taskId ?? "unknown"} requires a validation.summary memory record before SCM can start.`
+  );
+}
+
+function readValidationReportPathFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): string {
+  const validationSummary = readTaskMemoryValue(snapshot, "validation.summary");
+
+  if (validationSummary && typeof validationSummary === "object") {
+    const reportPath = (validationSummary as Record<string, unknown>)["reportPath"];
+
+    if (typeof reportPath === "string" && reportPath.trim().length > 0) {
+      return reportPath;
+    }
+  }
+
+  throw new Error(
+    `Task ${snapshot.manifest?.taskId ?? "unknown"} requires a validation report path before SCM can start.`
+  );
+}
+
+function taskRequestsPullRequest(manifest: TaskManifest): boolean {
+  return manifest.requestedCapabilities.includes("can_open_pr");
+}
+
+function createScmBranchName(taskId: string, runId: string): string {
+  return `reddwarf/${sanitizeBranchSegment(taskId)}/${sanitizeBranchSegment(runId)}`;
+}
+
+function sanitizeBranchSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._/-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-/.]+|[-/.]+$/g, "");
+
+  return sanitized.length > 0 ? sanitized : "task";
+}
+
+function toolPolicyRequiresScmEscalation(
+  bundle: WorkspaceContextBundle
+): boolean {
+  return !createWorkspaceToolPolicy(bundle).allowedCapabilities.includes(
+    "can_open_pr"
+  );
+}
+
 function createWorkspaceToolPolicy(
   bundleInput: WorkspaceContextBundle
 ): WorkspaceDescriptor["toolPolicy"] {
@@ -4162,6 +4373,19 @@ function createWorkspaceToolPolicy(
       ],
       blockedPhases: bundle.policySnapshot.blockedPhases,
       notes: [...developmentWorkspaceToolPolicyNotes]
+    };
+  }
+
+  if (
+    bundle.manifest.currentPhase === "scm" ||
+    bundle.manifest.assignedAgentType === "scm"
+  ) {
+    return {
+      mode: "scm_only",
+      codeWriteEnabled: false,
+      allowedCapabilities: [...scmWorkspaceCapabilities],
+      blockedPhases: bundle.policySnapshot.blockedPhases,
+      notes: [...scmWorkspaceToolPolicyNotes]
     };
   }
 
@@ -4243,6 +4467,79 @@ function renderValidationReportMarkdown(input: {
       `- Log Path: ${relative(input.workspace.workspaceRoot, result.logPath).replace(/\\/g, "/")}`,
       ""
     ])
+  ].join("\n");
+}
+
+function createScmPullRequestBody(input: {
+  bundle: WorkspaceContextBundle;
+  validationSummary: string;
+  validationReportPath: string;
+  branchName: string;
+  baseBranch: string;
+  workspace: MaterializedManagedWorkspace;
+  runId: string;
+}): string {
+  return [
+    "## RedDwarf SCM Handoff",
+    "",
+    `- Task ID: ${input.bundle.manifest.taskId}`,
+    `- Run ID: ${input.runId}`,
+    `- Base branch: ${input.baseBranch}`,
+    `- Head branch: ${input.branchName}`,
+    `- Validation report: ${workspaceLocationPrefix}${input.workspace.workspaceId}/artifacts/${relative(input.workspace.artifactsDir, input.validationReportPath).replace(/\\/g, "/")}`,
+    "",
+    "### Summary",
+    "",
+    input.bundle.spec.summary,
+    "",
+    "### Validation",
+    "",
+    input.validationSummary,
+    "",
+    "### Acceptance Criteria",
+    "",
+    ...input.bundle.acceptanceCriteria.map((item) => `- ${item}`),
+    ""
+  ].join("\n");
+}
+
+function renderScmReportMarkdown(input: {
+  bundle: WorkspaceContextBundle;
+  draft: ScmDraft;
+  branch: GitHubBranchSummary;
+  pullRequest: GitHubPullRequestSummary;
+  workspace: MaterializedManagedWorkspace;
+  runId: string;
+  validationReportPath: string;
+}): string {
+  return [
+    "# SCM Report",
+    "",
+    `- Task ID: ${input.bundle.manifest.taskId}`,
+    `- Run ID: ${input.runId}`,
+    `- Workspace ID: ${input.workspace.workspaceId}`,
+    `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
+    `- Base branch: ${input.branch.baseBranch}`,
+    `- Head branch: ${input.branch.branchName}`,
+    `- Branch URL: ${input.branch.url}`,
+    `- Pull Request: #${input.pullRequest.number}`,
+    `- Pull Request URL: ${input.pullRequest.url}`,
+    `- Validation report path: ${relative(input.workspace.workspaceRoot, input.validationReportPath).replace(/\\/g, "/")}`,
+    "",
+    "## Summary",
+    "",
+    input.draft.summary,
+    "",
+    "## Pull Request Title",
+    "",
+    input.draft.pullRequestTitle,
+    "",
+    "## Applied Labels",
+    "",
+    ...(input.draft.labels.length > 0
+      ? input.draft.labels.map((label) => `- ${label}`)
+      : ["- none"]),
+    ""
   ].join("\n");
 }
 
@@ -4468,7 +4765,10 @@ function renderRuntimeSoulMarkdown(
     `- Allowed capabilities: ${formatLiteralList(toolPolicy.allowedCapabilities)}`,
     `- Allowed paths: ${formatLiteralList(bundle.allowedPaths)}`,
     `- Blocked phases in v1: ${formatLiteralList(toolPolicy.blockedPhases)}`,
-    "- Escalate rather than write product code, open PRs, use secrets, or exceed the allowed path scope.",
+    "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
+    toolPolicy.allowedCapabilities.includes("can_open_pr")
+      ? "- Remote mutations are limited to approved branch and pull-request creation for this task."
+      : "- Remote mutations remain blocked; escalate before opening branches, pull requests, or mutating external systems.",
     "- Treat `.context/` as the task contract and the policy-pack docs as the canonical source of engineering rules.",
     ""
   ].join("\n");
@@ -4562,7 +4862,9 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     "## Escalate Instead Of",
     "",
     "- writing product code",
-    "- opening pull requests or mutating remote systems",
+    ...(toolPolicy.allowedCapabilities.includes("can_open_pr")
+      ? ["- mutating remote systems outside approved branch and pull-request creation"]
+      : ["- opening pull requests or mutating remote systems"]),
     "- using secrets outside approved scopes or without an injected lease",
     "- touching paths outside the allowed scope",
     ""
@@ -4585,7 +4887,9 @@ function renderRuntimeTaskSkillMarkdown(
     `3. Use the assigned role instructions first: \`${agentInstructionPathByType[bundle.manifest.assignedAgentType] ?? "AGENTS.md"}\`.`,
     `4. Use the recommended role instructions from planning: \`${agentInstructionPathByType[bundle.spec.recommendedAgentType] ?? "AGENTS.md"}\`.`,
     "5. Produce evidence-friendly output that traces assumptions, affected areas, constraints, acceptance criteria, and verification intent.",
-    "6. Escalate whenever the task would require code-writing, secrets, PR creation, or a blocked phase in v1.",
+    toolPolicyRequiresScmEscalation(bundle)
+      ? "6. Escalate whenever the task would require code-writing, secrets, PR creation, or a blocked phase in v1."
+      : "6. Escalate whenever the task would require code-writing, secrets outside approved scopes, or a blocked phase in v1.",
     "",
     "## Canonical Sources",
     "",
@@ -4660,6 +4964,751 @@ function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+export async function runScmPhase(
+  input: RunScmPhaseInput,
+  dependencies: ScmPhaseDependencies
+): Promise<ScmPhaseResult> {
+  const taskId = input.taskId.trim();
+
+  if (taskId.length === 0) {
+    throw new Error("Task id is required to run the SCM phase.");
+  }
+
+  const repository = dependencies.repository;
+  const scm = dependencies.scm;
+  const github = dependencies.github;
+  const logger = dependencies.logger ?? defaultLogger;
+  const clock = dependencies.clock ?? (() => new Date());
+  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
+  const concurrency = {
+    strategy: dependencies.concurrency?.strategy ?? "serialize",
+    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+  } satisfies Required<PlanningConcurrencyOptions>;
+  const snapshot = await repository.getTaskSnapshot(taskId);
+
+  if (!snapshot.manifest) {
+    throw new Error(`Task manifest ${taskId} was not found.`);
+  }
+
+  if (!snapshot.spec) {
+    throw new Error(`Planning spec for ${taskId} was not found.`);
+  }
+
+  if (!snapshot.policySnapshot) {
+    throw new Error(`Policy snapshot for ${taskId} was not found.`);
+  }
+
+  if (!taskRequestsPullRequest(snapshot.manifest)) {
+    throw new Error(
+      `Task ${taskId} did not request can_open_pr and cannot enter SCM.`
+    );
+  }
+
+  const approvedRequest =
+    snapshot.manifest.approvalMode === "auto"
+      ? null
+      : (snapshot.approvalRequests.find(
+          (request) => request.status === "approved"
+        ) ?? null);
+
+  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
+    throw new Error(
+      `Task ${taskId} requires an approved request before the SCM phase can start.`
+    );
+  }
+
+  const lifecycleAllowsScm =
+    (snapshot.manifest.lifecycleStatus === "blocked" &&
+      ["validation", "scm"].includes(snapshot.manifest.currentPhase)) ||
+    (snapshot.manifest.lifecycleStatus === "active" &&
+      snapshot.manifest.currentPhase === "scm");
+
+  if (!lifecycleAllowsScm) {
+    throw new Error(
+      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter SCM.`
+    );
+  }
+
+  if (
+    input.workspaceId &&
+    snapshot.manifest.workspaceId &&
+    input.workspaceId !== snapshot.manifest.workspaceId
+  ) {
+    throw new Error(
+      `SCM must reuse workspace ${snapshot.manifest.workspaceId}; received ${input.workspaceId}.`
+    );
+  }
+
+  const workspaceId = snapshot.manifest.workspaceId ?? input.workspaceId;
+
+  if (!workspaceId) {
+    throw new Error(
+      `Task ${taskId} requires a managed workspace from the developer phase before SCM can start.`
+    );
+  }
+
+  const validationSummary = readValidationSummaryFromSnapshot(snapshot);
+  const validationReportPath = readValidationReportPathFromSnapshot(snapshot);
+  const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
+
+  assertPhaseExecutable("scm");
+
+  const runId = idGenerator();
+  const runStartedAt = clock();
+  const runStartedAtIso = asIsoTimestamp(runStartedAt);
+  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  let currentManifest = taskManifestSchema.parse(snapshot.manifest);
+  let concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds: [],
+    reason: null
+  });
+  let trackedRun = createPipelineRun({
+    runId,
+    taskId,
+    concurrencyKey,
+    strategy: concurrency.strategy,
+    status: "active",
+    startedAt: runStartedAtIso,
+    lastHeartbeatAt: runStartedAtIso,
+    metadata: {
+      sourceRepo: currentManifest.source.repo,
+      phase: "scm",
+      workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    }
+  });
+  const runLogger = bindPlanningLogger(logger, {
+    runId,
+    taskId,
+    sourceRepo: currentManifest.source.repo,
+    phase: "scm"
+  });
+  let eventSequence = 0;
+  const nextEventId = (phase: TaskPhase, code: string): string => {
+    const sequence = String(eventSequence).padStart(3, "0");
+    eventSequence += 1;
+    return `${runId}:${sequence}:${phase}:${code}`;
+  };
+  const persistTrackedRun = async (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+  ): Promise<void> => {
+    trackedRun = createPipelineRun({
+      ...trackedRun,
+      ...patch,
+      metadata: {
+        ...trackedRun.metadata,
+        ...(patch.metadata ?? {})
+      }
+    });
+    await repository.savePipelineRun(trackedRun);
+  };
+
+  const overlappingRuns = await repository.listPipelineRuns({
+    concurrencyKey,
+    statuses: ["active"],
+    limit: 25
+  });
+  const staleRunIds: string[] = [];
+  let blockedByRun: PipelineRun | null = null;
+
+  for (const overlap of overlappingRuns) {
+    if (overlap.runId === runId) {
+      continue;
+    }
+
+    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...overlap,
+          status: "stale",
+          lastHeartbeatAt: runStartedAtIso,
+          completedAt: runStartedAtIso,
+          staleAt: runStartedAtIso,
+          overlapReason: `Marked stale by run ${runId}`,
+          metadata: {
+            ...overlap.metadata,
+            staleDetectedByRunId: runId
+          }
+        })
+      );
+      staleRunIds.push(overlap.runId);
+      continue;
+    }
+
+    blockedByRun = overlap;
+    break;
+  }
+
+  if (blockedByRun) {
+    concurrencyDecision = createConcurrencyDecision({
+      action: "block",
+      strategy: concurrency.strategy,
+      blockedByRunId: blockedByRun.runId,
+      staleRunIds,
+      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    });
+    await repository.savePipelineRun(
+      createPipelineRun({
+        ...trackedRun,
+        status: "blocked",
+        blockedByRunId: blockedByRun.runId,
+        overlapReason: concurrencyDecision.reason,
+        completedAt: runStartedAtIso,
+        metadata: {
+          ...trackedRun.metadata,
+          staleRunIds
+        }
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:scm:concurrency:${runId}`,
+        taskId,
+        kind: "gate_decision",
+        title: "SCM concurrency gate decision",
+        metadata: concurrencyDecision,
+        createdAt: runStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "RUN_BLOCKED_BY_OVERLAP"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "warn",
+      code: "RUN_BLOCKED_BY_OVERLAP",
+      message:
+        concurrencyDecision.reason ?? "SCM phase blocked by an overlapping run.",
+      failureClass: "execution_loop",
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId,
+        staleRunIds
+      },
+      createdAt: runStartedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "PIPELINE_BLOCKED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message: "SCM phase blocked by concurrency controls.",
+      failureClass: "execution_loop",
+      durationMs: getDurationMs(runStartedAt, runStartedAt),
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId
+      },
+      createdAt: runStartedAtIso
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      nextAction: "task_blocked",
+      concurrencyDecision
+    };
+  }
+
+  concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds,
+    reason:
+      staleRunIds.length > 0
+        ? `Marked ${staleRunIds.length} stale overlapping run(s) before starting.`
+        : null
+  });
+  await persistTrackedRun({ metadata: { staleRunIds } });
+
+  try {
+    if (staleRunIds.length > 0) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("scm", "STALE_RUNS_DETECTED"),
+        taskId,
+        runId,
+        phase: "scm",
+        level: "info",
+        code: "STALE_RUNS_DETECTED",
+        message: "Stale overlapping runs were marked before the SCM phase started.",
+        data: {
+          concurrencyKey,
+          staleRunIds,
+          strategy: concurrency.strategy
+        },
+        createdAt: runStartedAtIso
+      });
+    }
+
+    const scmStartedAt = clock();
+    const scmStartedAtIso = asIsoTimestamp(scmStartedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "scm",
+      lifecycleStatus: "active",
+      assignedAgentType: "scm",
+      workspaceId,
+      updatedAt: scmStartedAtIso
+    });
+    await repository.updateManifest(currentManifest);
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "PHASE_RUNNING"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "PHASE_RUNNING",
+      message: "SCM phase started.",
+      data: {
+        actor: "scm",
+        workspaceId,
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      },
+      createdAt: scmStartedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: scmStartedAtIso,
+      metadata: {
+        currentPhase: "scm",
+        workspaceId,
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      }
+    });
+
+    const bundle = createWorkspaceContextBundle({
+      manifest: currentManifest,
+      spec: snapshot.spec,
+      policySnapshot: snapshot.policySnapshot
+    });
+    const workspace = await materializeManagedWorkspace({
+      bundle,
+      targetRoot: input.targetRoot,
+      workspaceId,
+      createdAt: scmStartedAtIso
+    });
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      workspaceId: workspace.workspaceId,
+      updatedAt: scmStartedAtIso,
+      evidenceLinks: [
+        ...new Set([
+          ...currentManifest.evidenceLinks,
+          `${workspaceLocationPrefix}${workspace.workspaceId}`
+        ])
+      ]
+    });
+    await repository.updateManifest(currentManifest);
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:workspace:${workspace.workspaceId}:scm:${runId}`,
+        taskId,
+        kind: "file_artifact",
+        title: "Managed workspace prepared for SCM",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}`,
+        metadata: {
+          status: workspace.descriptor.status,
+          workspaceRoot: workspace.workspaceRoot,
+          stateFile: workspace.stateFile,
+          descriptor: workspace.descriptor,
+          phase: "scm",
+          runId
+        },
+        createdAt: scmStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "WORKSPACE_PREPARED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "WORKSPACE_PREPARED",
+      message: "SCM workspace prepared.",
+      data: {
+        workspaceId: workspace.workspaceId,
+        toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      },
+      createdAt: scmStartedAtIso
+    });
+
+    const draft = await scm.createPullRequest(bundle, {
+      manifest: currentManifest,
+      runId,
+      workspace,
+      baseBranch,
+      validationSummary,
+      validationReportPath
+    });
+
+    if (draft.branchName.trim().length === 0) {
+      throw new Error(`SCM draft for ${taskId} did not provide a branch name.`);
+    }
+
+    if (draft.baseBranch.trim().length === 0) {
+      throw new Error(`SCM draft for ${taskId} did not provide a base branch.`);
+    }
+
+    const branch = await github.createBranch(
+      currentManifest.source.repo,
+      draft.baseBranch,
+      draft.branchName
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "BRANCH_CREATED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "BRANCH_CREATED",
+      message: `SCM branch ${branch.branchName} created.`,
+      data: {
+        workspaceId: workspace.workspaceId,
+        baseBranch: branch.baseBranch,
+        branchName: branch.branchName,
+        branchUrl: branch.url,
+        branchRef: branch.ref
+      },
+      createdAt: scmStartedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: scmStartedAtIso,
+      metadata: {
+        currentPhase: "scm",
+        workspaceId: workspace.workspaceId,
+        branchName: branch.branchName
+      }
+    });
+
+    const pullRequest = await github.createPullRequest({
+      repo: currentManifest.source.repo,
+      baseBranch: draft.baseBranch,
+      headBranch: draft.branchName,
+      title: draft.pullRequestTitle,
+      body: draft.pullRequestBody,
+      labels: draft.labels,
+      ...(currentManifest.source.issueNumber
+        ? { issueNumber: currentManifest.source.issueNumber }
+        : {})
+    });
+    const scmCompletedAt = clock();
+    const scmCompletedAtIso = asIsoTimestamp(scmCompletedAt);
+    const reportPath = join(workspace.artifactsDir, "scm-report.md");
+    await writeFile(
+      reportPath,
+      renderScmReportMarkdown({
+        bundle,
+        draft,
+        branch,
+        pullRequest,
+        workspace,
+        runId,
+        validationReportPath
+      }),
+      "utf8"
+    );
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "scm",
+      lifecycleStatus: "completed",
+      branchName: branch.branchName,
+      prNumber: pullRequest.number,
+      workspaceId: workspace.workspaceId,
+      updatedAt: scmCompletedAtIso,
+      evidenceLinks: [
+        ...new Set([
+          ...currentManifest.evidenceLinks,
+          pullRequest.url,
+          branch.url
+        ])
+      ]
+    });
+    await repository.updateManifest(currentManifest);
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:scm`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "scm.summary",
+        title: "SCM summary",
+        value: {
+          summary: draft.summary,
+          branch,
+          pullRequest,
+          runId,
+          workspaceId: workspace.workspaceId,
+          validationReportPath,
+          reportPath
+        },
+        repo: currentManifest.source.repo,
+        organizationId: deriveOrganizationId(currentManifest.source.repo),
+        tags: ["scm", "task"],
+        createdAt: scmCompletedAtIso,
+        updatedAt: scmCompletedAtIso
+      })
+    );
+    await repository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${taskId}:phase:scm`,
+        taskId,
+        phase: "scm",
+        status: "passed",
+        actor: "scm",
+        summary: "SCM phase created an approved branch and pull request.",
+        details: {
+          workspaceId: workspace.workspaceId,
+          branch,
+          pullRequest,
+          reportPath,
+          validationReportPath,
+          ...(approvedRequest
+            ? { approvalRequestId: approvedRequest.requestId }
+            : {})
+        },
+        createdAt: scmCompletedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:scm:${runId}:report`,
+        taskId,
+        kind: "file_artifact",
+        title: "SCM report",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/scm-report.md`,
+        metadata: {
+          runId,
+          workspaceId: workspace.workspaceId,
+          summary: draft.summary,
+          branch,
+          pullRequest,
+          validationReportPath,
+          reportPath
+        },
+        createdAt: scmCompletedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "PULL_REQUEST_CREATED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "PULL_REQUEST_CREATED",
+      message: `Pull request #${pullRequest.number} created for ${branch.branchName}.`,
+      data: {
+        workspaceId: workspace.workspaceId,
+        branchName: branch.branchName,
+        prNumber: pullRequest.number,
+        pullRequestUrl: pullRequest.url,
+        labels: draft.labels
+      },
+      createdAt: scmCompletedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "PHASE_PASSED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "PHASE_PASSED",
+      message: "SCM branch and pull request created.",
+      durationMs: getDurationMs(scmStartedAt, scmCompletedAt),
+      data: {
+        actor: "scm",
+        workspaceId: workspace.workspaceId,
+        branchName: branch.branchName,
+        prNumber: pullRequest.number,
+        reportPath
+      },
+      createdAt: scmCompletedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("scm", "PIPELINE_COMPLETED"),
+      taskId,
+      runId,
+      phase: "scm",
+      level: "info",
+      code: "PIPELINE_COMPLETED",
+      message: "Task completed after SCM handoff.",
+      durationMs: getDurationMs(runStartedAt, scmCompletedAt),
+      data: {
+        workspaceId: workspace.workspaceId,
+        branchName: branch.branchName,
+        prNumber: pullRequest.number,
+        pullRequestUrl: pullRequest.url
+      },
+      createdAt: scmCompletedAtIso
+    });
+    await persistTrackedRun({
+      status: "completed",
+      lastHeartbeatAt: scmCompletedAtIso,
+      completedAt: scmCompletedAtIso,
+      metadata: {
+        currentPhase: "scm",
+        workspaceId: workspace.workspaceId,
+        branchName: branch.branchName,
+        prNumber: pullRequest.number,
+        pullRequestUrl: pullRequest.url,
+        reportPath
+      }
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      workspace,
+      draft,
+      branch,
+      pullRequest,
+      reportPath,
+      nextAction: "complete",
+      concurrencyDecision
+    };
+  } catch (error) {
+    const pipelineFailure = normalizePipelineFailure(error, "scm", taskId, runId);
+    const failedAt = clock();
+    const failedAtIso = asIsoTimestamp(failedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "scm",
+      lifecycleStatus: "failed",
+      updatedAt: failedAtIso
+    });
+
+    try {
+      await repository.savePhaseRecord(
+        createPhaseRecord({
+          id: `${taskId}:phase:scm`,
+          taskId,
+          phase: "scm",
+          status: "failed",
+          actor: "control-plane",
+          summary: pipelineFailure.message,
+          details: {
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            ...pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:scm:failure:${runId}`,
+          taskId,
+          kind: "run_event",
+          title: "SCM phase failure",
+          metadata: {
+            runId,
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            details: pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("scm", "PHASE_FAILED"),
+        taskId,
+        runId,
+        phase: "scm",
+        level: "error",
+        code: "PHASE_FAILED",
+        message: pipelineFailure.message,
+        failureClass: pipelineFailure.failureClass,
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("scm", "PIPELINE_FAILED"),
+        taskId,
+        runId,
+        phase: "scm",
+        level: "error",
+        code: "PIPELINE_FAILED",
+        message: "SCM phase failed.",
+        failureClass: pipelineFailure.failureClass,
+        durationMs: getDurationMs(runStartedAt, failedAt),
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await repository.updateManifest(currentManifest);
+      await persistTrackedRun({
+        status: "failed",
+        lastHeartbeatAt: failedAtIso,
+        completedAt: failedAtIso,
+        metadata: {
+          currentPhase: "scm",
+          failureCode: pipelineFailure.code,
+          failureClass: pipelineFailure.failureClass
+        }
+      });
+    } catch (persistenceError) {
+      runLogger.error("Failed to persist SCM phase failure evidence.", {
+        runId,
+        taskId,
+        failureClass: pipelineFailure.failureClass,
+        code: pipelineFailure.code,
+        persistenceError: serializeError(persistenceError)
+      });
+    }
+
+    throw new PlanningPipelineFailure({
+      message: pipelineFailure.message,
+      failureClass: pipelineFailure.failureClass,
+      phase: pipelineFailure.phase,
+      code: pipelineFailure.code,
+      details: pipelineFailure.details,
+      cause: pipelineFailure,
+      taskId,
+      runId
+    });
+  }
 }
 
 function normalizePipelineFailure(

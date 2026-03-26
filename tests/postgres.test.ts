@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicScmAgent,
   DeterministicValidationAgent,
   createWorkspaceContextBundleFromSnapshot,
   destroyTaskWorkspace,
@@ -12,6 +13,7 @@ import {
   resolveApprovalRequest,
   runDeveloperPhase,
   runPlanningPipeline,
+  runScmPhase,
   runValidationPhase
 } from "@reddwarf/control-plane";
 import {
@@ -20,6 +22,7 @@ import {
   createPipelineRun,
   deriveOrganizationId
 } from "@reddwarf/evidence";
+import { FixtureGitHubAdapter } from "@reddwarf/integrations";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
 const connectionString =
@@ -521,6 +524,139 @@ describeIfDatabase("postgres planning repository", () => {
 
       await destroyTaskWorkspace({
         manifest: validation.manifest,
+        repository,
+        targetRoot: tempRoot
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("persists SCM phase orchestration and completes the task after validation", async () => {
+    const issueNumber = Date.now() + 5;
+    const repo = `scm-${issueNumber}/platform-${issueNumber}`;
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-postgres-scm-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        source: {
+          provider: "github",
+          repo,
+          issueNumber,
+          issueUrl: `https://github.com/${repo}/issues/${issueNumber}`
+        },
+        title: "Persist SCM phase orchestration",
+        summary:
+          "Persist a task that requires validation before opening an approved branch and pull request, then confirm the Postgres-backed records capture the SCM completion state.",
+        priority: 1,
+        labels: ["ai-eligible"],
+        acceptanceCriteria: [
+          "SCM summary is stored",
+          "Branch and pull request metadata are persisted"
+        ],
+        affectedPaths: ["src/scm-phase.ts"],
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        metadata: {
+          github: {
+            baseBranch: "main"
+          }
+        }
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => `scm-plan-${issueNumber}`
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for SCM orchestration.",
+        comment: "Open the branch and PR after validation."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: `${planningResult.manifest.taskId}-scm`
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => `scm-dev-${issueNumber}`
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => `scm-validation-${issueNumber}`
+        }
+      );
+      const scm = await runScmPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          scm: new DeterministicScmAgent(),
+          github: new FixtureGitHubAdapter({
+            candidates: [
+              {
+                repo,
+                issueNumber,
+                title: planningResult.manifest.title,
+                body: planningResult.manifest.summary,
+                labels: ["ai-eligible"],
+                url: `https://github.com/${repo}/issues/${issueNumber}`,
+                state: "open"
+              }
+            ],
+            mutations: {
+              allowBranchCreation: true,
+              allowPullRequestCreation: true,
+              pullRequestNumberStart: 81
+            }
+          }),
+          clock: () => new Date("2026-03-25T18:20:00.000Z"),
+          idGenerator: () => `scm-run-${issueNumber}`
+        }
+      );
+      const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        scm.runId
+      );
+
+      expect(validation.nextAction).toBe("await_scm");
+      expect(scm.nextAction).toBe("complete");
+      expect(snapshot.manifest?.currentPhase).toBe("scm");
+      expect(snapshot.manifest?.lifecycleStatus).toBe("completed");
+      expect(snapshot.manifest?.branchName).toBe(scm.branch?.branchName ?? null);
+      expect(snapshot.manifest?.prNumber).toBe(81);
+      expect(snapshot.memoryRecords.some((record) => record.key === "scm.summary")).toBe(true);
+      expect(runSummary?.status).toBe("completed");
+      expect(runSummary?.latestPhase).toBe("scm");
+
+      await destroyTaskWorkspace({
+        manifest: scm.manifest,
         repository,
         targetRoot: tempRoot
       });

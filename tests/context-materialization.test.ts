@@ -69,7 +69,7 @@ const policySnapshot: PolicySnapshot = {
   allowedCapabilities: ["can_plan", "can_archive_evidence"],
   allowedPaths: ["docs/**"],
   allowedSecretScopes: [],
-  blockedPhases: ["review", "scm"],
+  blockedPhases: ["review"],
   reasons: ["Planning phase is approved for autonomous execution in v1."]
 };
 
@@ -237,6 +237,49 @@ describe("workspace context materialization", () => {
         "can_run_tests"
       );
       expect(toolsMd).toContain("can_run_tests");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+
+  it("creates an scm workspace descriptor with approved PR capability and code writing disabled", async () => {
+    const bundle = createWorkspaceContextBundle({
+      manifest: {
+        ...manifest,
+        currentPhase: "scm",
+        lifecycleStatus: "active",
+        assignedAgentType: "scm",
+        requestedCapabilities: ["can_open_pr"]
+      },
+      spec,
+      policySnapshot: {
+        ...policySnapshot,
+        approvalMode: "human_signoff_required",
+        allowedCapabilities: ["can_plan", "can_archive_evidence"],
+        reasons: ["SCM is approved after validation."]
+      }
+    });
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-context-"));
+
+    try {
+      const materialized = await materializeManagedWorkspace({
+        bundle,
+        targetRoot: tempRoot,
+        workspaceId: "workspace-42-scm",
+        createdAt: timestamp
+      });
+      const toolsMd = await readFile(
+        materialized.instructions.files.toolsMd,
+        "utf8"
+      );
+
+      expect(materialized.descriptor.toolPolicy.mode).toBe("scm_only");
+      expect(materialized.descriptor.toolPolicy.codeWriteEnabled).toBe(false);
+      expect(materialized.descriptor.toolPolicy.allowedCapabilities).toContain(
+        "can_open_pr"
+      );
+      expect(toolsMd).toContain("can_open_pr");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

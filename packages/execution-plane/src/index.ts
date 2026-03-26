@@ -29,7 +29,7 @@ export const agentDefinitions: AgentDefinition[] = [
     activePhases: ["validation"],
     enabled: true,
     description:
-      "Runs deterministic lint and test commands inside the managed workspace before review."
+      "Runs deterministic lint and test commands inside the managed workspace before review or SCM."
   },
   {
     id: "reviewer-placeholder",
@@ -41,17 +41,18 @@ export const agentDefinitions: AgentDefinition[] = [
     description: "Declared for future review gates, disabled in v1."
   },
   {
-    id: "scm-placeholder",
+    id: "scm-default",
     displayName: "SCM Agent",
     type: "scm",
-    capabilities: ["can_open_pr"],
+    capabilities: ["can_open_pr", "can_archive_evidence"],
     activePhases: ["scm"],
-    enabled: false,
-    description: "Declared for future branch and PR automation, disabled in v1."
+    enabled: true,
+    description:
+      "Creates approved branches and pull requests after validation while keeping product code writes disabled."
   }
 ];
 
-const disabledPhases = new Set<TaskPhase>(["review", "scm"]);
+const disabledPhases = new Set<TaskPhase>(["review"]);
 
 export function phaseIsExecutable(phase: TaskPhase): boolean {
   return !disabledPhases.has(phase);

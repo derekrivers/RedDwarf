@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   ApprovalMode,
   Capability,
   PlanningTaskInput,
@@ -18,7 +18,7 @@ const highRiskPatterns = [
   /deploy/i,
   /migration/i
 ];
-const disabledPhases: TaskPhase[] = ["review", "scm"];
+const disabledPhases: TaskPhase[] = ["review"];
 const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
 const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
@@ -29,6 +29,7 @@ const validationCapabilities: Capability[] = [
   "can_archive_evidence",
   "can_use_secrets"
 ];
+const scmCapabilities: Capability[] = ["can_open_pr", "can_archive_evidence"];
 
 export interface EligibilityAssessment {
   eligible: boolean;
@@ -152,6 +153,12 @@ export function capabilitiesAllowedForPhase(
     );
   }
 
+  if (phase === "scm") {
+    return requestedCapabilities.every((capability) =>
+      scmCapabilities.includes(capability)
+    );
+  }
+
   return true;
 }
 
@@ -190,7 +197,7 @@ export function buildPolicySnapshot(
     approvalMode === "auto"
       ? ["Planning phase is approved for autonomous execution in v1."]
       : [
-          "Developer orchestration may continue after human intervention, validation can run read-only checks, and review/SCM remain blocked in v1."
+          "Developer orchestration may continue after human intervention, validation can run read-only checks, SCM can open an approved branch and pull request after validation, and review remains blocked in v1."
         ];
 
   if (
