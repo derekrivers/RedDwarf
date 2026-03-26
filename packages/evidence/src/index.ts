@@ -1,4 +1,6 @@
 import {
+  approvalRequestQuerySchema,
+  approvalRequestSchema,
   asIsoTimestamp,
   memoryContextSchema,
   memoryQuerySchema,
@@ -7,6 +9,9 @@ import {
   pipelineRunSchema,
   runEventSchema,
   runSummarySchema,
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type ApprovalRequestQuery,
   type ConcurrencyStrategy,
   type EvidenceRecord,
   type FailureClass,
@@ -34,6 +39,10 @@ export interface PlanningRepository {
   saveRunEvent(event: RunEvent): Promise<void>;
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
+  saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+  getManifest(taskId: string): Promise<TaskManifest | null>;
+  getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
+  listApprovalRequests(query?: Partial<ApprovalRequestQuery>): Promise<ApprovalRequest[]>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
 }
 
@@ -46,6 +55,7 @@ export interface PersistedTaskSnapshot {
   runEvents: RunEvent[];
   memoryRecords: MemoryRecord[];
   pipelineRuns: PipelineRun[];
+  approvalRequests: ApprovalRequest[];
 }
 
 export class InMemoryPlanningRepository implements PlanningRepository {
@@ -57,6 +67,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly runEvents: RunEvent[] = [];
   public readonly memoryRecords: MemoryRecord[] = [];
   public readonly pipelineRuns = new Map<string, PipelineRun>();
+  public readonly approvalRequests = new Map<string, ApprovalRequest>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -101,8 +112,16 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.pipelineRuns.set(run.runId, run);
   }
 
+  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
+    this.approvalRequests.set(request.requestId, request);
+  }
+
   async getManifest(taskId: string): Promise<TaskManifest | null> {
     return this.manifests.get(taskId) ?? null;
+  }
+
+  async getApprovalRequest(requestId: string): Promise<ApprovalRequest | null> {
+    return this.approvalRequests.get(requestId) ?? null;
   }
 
   async getPlanningSpec(taskId: string): Promise<PlanningSpec | null> {
@@ -157,6 +176,17 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       .slice(0, parsed.limit);
   }
 
+  async listApprovalRequests(query: Partial<ApprovalRequestQuery> = {}): Promise<ApprovalRequest[]> {
+    const parsed = normalizeApprovalRequestQuery(query);
+
+    return [...this.approvalRequests.values()]
+      .filter((request) => (parsed.taskId ? request.taskId === parsed.taskId : true))
+      .filter((request) => (parsed.runId ? request.runId === parsed.runId : true))
+      .filter((request) => (parsed.statuses.length > 0 ? parsed.statuses.includes(request.status) : true))
+      .sort(compareApprovalRequests)
+      .slice(0, parsed.limit);
+  }
+
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
     return {
       manifest: await this.getManifest(taskId),
@@ -166,7 +196,8 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       evidenceRecords: await this.listEvidenceRecords(taskId),
       runEvents: await this.listRunEvents(taskId),
       memoryRecords: await this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
-      pipelineRuns: await this.listPipelineRuns({ taskId, limit: 100 })
+      pipelineRuns: await this.listPipelineRuns({ taskId, limit: 100 }),
+      approvalRequests: await this.listApprovalRequests({ taskId, limit: 100 })
     };
   }
 
@@ -545,9 +576,88 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
+  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO approval_requests (
+          request_id,
+          task_id,
+          run_id,
+          phase,
+          approval_mode,
+          status,
+          risk_class,
+          summary,
+          requested_capabilities,
+          allowed_paths,
+          blocked_phases,
+          policy_reasons,
+          requested_by,
+          decided_by,
+          decision,
+          decision_summary,
+          comment,
+          created_at,
+          updated_at,
+          resolved_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb,
+          $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20
+        )
+        ON CONFLICT (request_id) DO UPDATE SET
+          task_id = EXCLUDED.task_id,
+          run_id = EXCLUDED.run_id,
+          phase = EXCLUDED.phase,
+          approval_mode = EXCLUDED.approval_mode,
+          status = EXCLUDED.status,
+          risk_class = EXCLUDED.risk_class,
+          summary = EXCLUDED.summary,
+          requested_capabilities = EXCLUDED.requested_capabilities,
+          allowed_paths = EXCLUDED.allowed_paths,
+          blocked_phases = EXCLUDED.blocked_phases,
+          policy_reasons = EXCLUDED.policy_reasons,
+          requested_by = EXCLUDED.requested_by,
+          decided_by = EXCLUDED.decided_by,
+          decision = EXCLUDED.decision,
+          decision_summary = EXCLUDED.decision_summary,
+          comment = EXCLUDED.comment,
+          created_at = EXCLUDED.created_at,
+          updated_at = EXCLUDED.updated_at,
+          resolved_at = EXCLUDED.resolved_at
+      `,
+      [
+        request.requestId,
+        request.taskId,
+        request.runId,
+        request.phase,
+        request.approvalMode,
+        request.status,
+        request.riskClass,
+        request.summary,
+        JSON.stringify(request.requestedCapabilities),
+        JSON.stringify(request.allowedPaths),
+        JSON.stringify(request.blockedPhases),
+        JSON.stringify(request.policyReasons),
+        request.requestedBy,
+        request.decidedBy,
+        request.decision,
+        request.decisionSummary,
+        request.comment,
+        request.createdAt,
+        request.updatedAt,
+        request.resolvedAt
+      ]
+    );
+  }
+
   async getManifest(taskId: string): Promise<TaskManifest | null> {
     const result = await this.pool.query("SELECT * FROM task_manifests WHERE task_id = $1", [taskId]);
     return result.rows[0] ? mapManifestRow(result.rows[0]) : null;
+  }
+
+  async getApprovalRequest(requestId: string): Promise<ApprovalRequest | null> {
+    const result = await this.pool.query("SELECT * FROM approval_requests WHERE request_id = $1", [requestId]);
+    return result.rows[0] ? mapApprovalRequestRow(result.rows[0]) : null;
   }
 
   async getPlanningSpec(taskId: string): Promise<PlanningSpec | null> {
@@ -688,8 +798,42 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapPipelineRunRow);
   }
 
+  async listApprovalRequests(query: Partial<ApprovalRequestQuery> = {}): Promise<ApprovalRequest[]> {
+    const parsed = normalizeApprovalRequestQuery(query);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let parameterIndex = 1;
+
+    if (parsed.taskId) {
+      conditions.push(`task_id = $${parameterIndex}`);
+      params.push(parsed.taskId);
+      parameterIndex += 1;
+    }
+
+    if (parsed.runId) {
+      conditions.push(`run_id = $${parameterIndex}`);
+      params.push(parsed.runId);
+      parameterIndex += 1;
+    }
+
+    if (parsed.statuses.length > 0) {
+      conditions.push(`status = ANY($${parameterIndex})`);
+      params.push(parsed.statuses);
+      parameterIndex += 1;
+    }
+
+    params.push(parsed.limit);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.pool.query(
+      `SELECT * FROM approval_requests ${whereClause} ORDER BY updated_at DESC, created_at DESC, request_id ASC LIMIT $${parameterIndex}`,
+      params
+    );
+
+    return result.rows.map(mapApprovalRequestRow);
+  }
+
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
-    const [manifest, spec, policySnapshot, phaseRecords, evidenceRecords, runEvents, memoryRecords, pipelineRuns] =
+    const [manifest, spec, policySnapshot, phaseRecords, evidenceRecords, runEvents, memoryRecords, pipelineRuns, approvalRequests] =
       await Promise.all([
         this.getManifest(taskId),
         this.getPlanningSpec(taskId),
@@ -698,7 +842,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
         this.listEvidenceRecords(taskId),
         this.listRunEvents(taskId),
         this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
-        this.listPipelineRuns({ taskId, limit: 100 })
+        this.listPipelineRuns({ taskId, limit: 100 }),
+        this.listApprovalRequests({ taskId, limit: 100 })
       ]);
 
     return {
@@ -709,7 +854,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
       evidenceRecords,
       runEvents,
       memoryRecords,
-      pipelineRuns
+      pipelineRuns,
+      approvalRequests
     };
   }
 
@@ -842,6 +988,54 @@ export function createPipelineRun(input: {
     metadata: input.metadata ?? {}
   });
 }
+
+export function createApprovalRequest(input: {
+  requestId: string;
+  taskId: string;
+  runId: string;
+  phase: ApprovalRequest["phase"];
+  approvalMode: ApprovalRequest["approvalMode"];
+  status: ApprovalRequest["status"];
+  riskClass: ApprovalRequest["riskClass"];
+  summary: string;
+  requestedCapabilities: ApprovalRequest["requestedCapabilities"];
+  allowedPaths: string[];
+  blockedPhases: ApprovalRequest["blockedPhases"];
+  policyReasons: string[];
+  requestedBy: string;
+  decidedBy?: string | null;
+  decision?: ApprovalDecision | null;
+  decisionSummary?: string | null;
+  comment?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  resolvedAt?: string | null;
+}): ApprovalRequest {
+  const createdAt = input.createdAt ?? asIsoTimestamp();
+
+  return approvalRequestSchema.parse({
+    requestId: input.requestId,
+    taskId: input.taskId,
+    runId: input.runId,
+    phase: input.phase,
+    approvalMode: input.approvalMode,
+    status: input.status,
+    riskClass: input.riskClass,
+    summary: input.summary,
+    requestedCapabilities: input.requestedCapabilities,
+    allowedPaths: input.allowedPaths,
+    blockedPhases: input.blockedPhases,
+    policyReasons: input.policyReasons,
+    requestedBy: input.requestedBy,
+    decidedBy: input.decidedBy ?? null,
+    decision: input.decision ?? null,
+    decisionSummary: input.decisionSummary ?? null,
+    comment: input.comment ?? null,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
+    resolvedAt: input.resolvedAt ?? null
+  });
+}
 export function summarizeRunEvents(taskId: string, runId: string, events: RunEvent[]): RunSummary | null {
   const scoped = [...events]
     .filter((event) => event.taskId === taskId && event.runId === runId)
@@ -960,6 +1154,10 @@ function normalizePipelineRunQuery(query: Partial<PipelineRunQuery>): PipelineRu
   return pipelineRunQuerySchema.parse(query);
 }
 
+function normalizeApprovalRequestQuery(query: Partial<ApprovalRequestQuery>): ApprovalRequestQuery {
+  return approvalRequestQuerySchema.parse(query);
+}
+
 function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {
   const seen = new Set<string>();
   const deduped: MemoryRecord[] = [];
@@ -990,6 +1188,17 @@ function compareMemoryRecords(left: MemoryRecord, right: MemoryRecord): number {
 function comparePipelineRuns(left: PipelineRun, right: PipelineRun): number {
   const started = right.startedAt.localeCompare(left.startedAt);
   return started !== 0 ? started : left.runId.localeCompare(right.runId);
+}
+
+function compareApprovalRequests(left: ApprovalRequest, right: ApprovalRequest): number {
+  const updated = right.updatedAt.localeCompare(left.updatedAt);
+
+  if (updated !== 0) {
+    return updated;
+  }
+
+  const created = right.createdAt.localeCompare(left.createdAt);
+  return created !== 0 ? created : left.requestId.localeCompare(right.requestId);
 }
 
 function mapManifestRow(row: Record<string, unknown>): TaskManifest {
@@ -1121,4 +1330,34 @@ function mapPipelineRunRow(row: Record<string, unknown>): PipelineRun {
   });
 }
 
+function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {
+  return createApprovalRequest({
+    requestId: row.request_id as string,
+    taskId: row.task_id as string,
+    runId: row.run_id as string,
+    phase: row.phase as ApprovalRequest["phase"],
+    approvalMode: row.approval_mode as ApprovalRequest["approvalMode"],
+    status: row.status as ApprovalRequest["status"],
+    riskClass: row.risk_class as ApprovalRequest["riskClass"],
+    summary: row.summary as string,
+    requestedCapabilities: (row.requested_capabilities as ApprovalRequest["requestedCapabilities"] | null) ?? [],
+    allowedPaths: (row.allowed_paths as string[] | null) ?? [],
+    blockedPhases: (row.blocked_phases as ApprovalRequest["blockedPhases"] | null) ?? [],
+    policyReasons: (row.policy_reasons as string[] | null) ?? [],
+    requestedBy: row.requested_by as string,
+    decidedBy: (row.decided_by as string | null) ?? null,
+    decision: (row.decision as ApprovalDecision | null) ?? null,
+    decisionSummary: (row.decision_summary as string | null) ?? null,
+    comment: (row.comment as string | null) ?? null,
+    createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date)),
+    resolvedAt:
+      row.resolved_at === null || row.resolved_at === undefined
+        ? null
+        : asIsoTimestamp(new Date(row.resolved_at as string | Date))
+  });
+}
+
 export * from "./schema.js";
+
+

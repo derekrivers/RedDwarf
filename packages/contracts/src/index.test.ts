@@ -11,7 +11,9 @@ import {
   runSummarySchema,
   runtimeInstructionLayerSchema,
   workspaceContextBundleSchema,
-  workspaceDescriptorSchema
+  workspaceDescriptorSchema,
+  approvalRequestSchema,
+  approvalRequestQuerySchema
 } from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
@@ -163,6 +165,39 @@ describe("contracts", () => {
     expect(descriptor.toolPolicy.mode).toBe("planning_only");
   });
 
+  it("parses approval requests and queue queries", () => {
+    const request = approvalRequestSchema.parse({
+      requestId: "approval-1",
+      taskId: "acme-platform-42",
+      runId: "run-1",
+      phase: "policy_gate",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "high",
+      summary: "Human approval is required before downstream execution.",
+      requestedCapabilities: ["can_write_code"],
+      allowedPaths: ["src/**"],
+      blockedPhases: ["development", "validation", "review", "scm"],
+      policyReasons: ["Future execution beyond planning requires human intervention in v1."],
+      requestedBy: "policy",
+      decidedBy: null,
+      decision: null,
+      decisionSummary: null,
+      comment: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null
+    });
+    const query = approvalRequestQuerySchema.parse({
+      taskId: "acme-platform-42",
+      statuses: ["pending"],
+      limit: 10
+    });
+
+    expect(request.status).toBe("pending");
+    expect(query.statuses).toEqual(["pending"]);
+  });
+
   it("parses run events and summaries with failure metadata", () => {
     const event = runEventSchema.parse({
       eventId: "run-1:event-1",
@@ -294,3 +329,4 @@ describe("contracts", () => {
     expect(decision.action).toBe("block");
   });
 });
+

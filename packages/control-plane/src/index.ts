@@ -14,6 +14,8 @@ import {
   taskManifestSchema,
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
+  type ApprovalDecision,
+  type ApprovalRequest,
   type Capability,
   type ConcurrencyDecision,
   type ConcurrencyStrategy,
@@ -33,6 +35,7 @@ import {
   type WorkspaceContextBundle
 } from "@reddwarf/contracts";
 import {
+  createApprovalRequest,
   createEvidenceRecord,
   createMemoryRecord,
   createPipelineRun,
@@ -54,7 +57,7 @@ const taskLifecycleTransitions: Record<TaskLifecycleStatus, TaskLifecycleStatus[
   draft: ["ready", "cancelled"],
   ready: ["active", "cancelled"],
   active: ["blocked", "completed", "failed", "cancelled"],
-  blocked: ["active", "failed", "cancelled", "completed"],
+  blocked: ["ready", "active", "failed", "cancelled", "completed"],
   completed: [],
   failed: ["draft", "cancelled"],
   cancelled: []
@@ -140,8 +143,28 @@ export interface PlanningPipelineResult {
   manifest: TaskManifest;
   spec?: PlanningSpec;
   policySnapshot?: PolicySnapshot;
+  approvalRequest?: ApprovalRequest;
   nextAction: "complete" | "await_human" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
+}
+
+export interface ResolveApprovalRequestInput {
+  requestId: string;
+  decision: ApprovalDecision;
+  decidedBy: string;
+  decisionSummary: string;
+  comment?: string | null;
+}
+
+export interface ResolveApprovalRequestDependencies {
+  repository: PlanningRepository;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+}
+
+export interface ResolveApprovalRequestResult {
+  approvalRequest: ApprovalRequest;
+  manifest: TaskManifest;
 }
 
 export interface WorkspaceContextArtifacts {
@@ -1365,6 +1388,7 @@ export async function runPlanningPipeline(
     activePhase = "policy_gate";
     const policyStartedAt = clock();
     const policySnapshot = buildPolicySnapshot(input, riskClass, approvalMode);
+    const approvalRequestId = approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
     await repository.savePolicySnapshot(taskId, policySnapshot);
     await repository.saveMemoryRecord(
       createMemoryRecord({
@@ -1381,7 +1405,8 @@ export async function runPlanningPipeline(
           affectedAreas: spec.affectedAreas,
           constraints: spec.constraints,
           policyReasons: policySnapshot.reasons,
-          approvalMode
+          approvalMode,
+          ...(approvalRequestId ? { approvalRequestId } : {})
         },
         repo: input.source.repo,
         organizationId: deriveOrganizationId(input.source.repo),
@@ -1394,6 +1419,30 @@ export async function runPlanningPipeline(
     const policyCompletedAt = clock();
     const policyCompletedAtIso = asIsoTimestamp(policyCompletedAt);
     const policyStatus: PhaseLifecycleStatus = approvalMode === "auto" ? "passed" : "escalated";
+    const approvalRequest =
+      approvalRequestId === null
+        ? undefined
+        : createApprovalRequest({
+            requestId: approvalRequestId,
+            taskId,
+            runId,
+            phase: "policy_gate",
+            approvalMode,
+            status: "pending",
+            riskClass,
+            summary: "Human approval is required before downstream execution can continue.",
+            requestedCapabilities: input.requestedCapabilities,
+            allowedPaths: policySnapshot.allowedPaths,
+            blockedPhases: policySnapshot.blockedPhases,
+            policyReasons: policySnapshot.reasons,
+            requestedBy: "policy",
+            createdAt: policyCompletedAtIso,
+            updatedAt: policyCompletedAtIso
+          });
+
+    if (approvalRequest) {
+      await repository.saveApprovalRequest(approvalRequest);
+    }
 
     await repository.savePhaseRecord(
       createPhaseRecord({
@@ -1406,7 +1455,11 @@ export async function runPlanningPipeline(
           policyStatus === "passed"
             ? "Policy gate passed for this planning run."
             : "Planning completed, but future execution requires human intervention.",
-        details: { approvalMode, reasons: policySnapshot.reasons },
+        details: {
+          approvalMode,
+          reasons: policySnapshot.reasons,
+          ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
+        },
         createdAt: policyCompletedAtIso
       })
     );
@@ -1419,11 +1472,32 @@ export async function runPlanningPipeline(
         metadata: {
           approvalMode,
           blockedPhases: policySnapshot.blockedPhases,
-          policySnapshot
+          policySnapshot,
+          ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
         },
         createdAt: policyCompletedAtIso
       })
     );
+    if (approvalRequest) {
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:approval:${runId}`,
+          taskId,
+          kind: "gate_decision",
+          title: "Approval request queued",
+          metadata: {
+            requestId: approvalRequest.requestId,
+            approvalMode,
+            riskClass,
+            requestedCapabilities: approvalRequest.requestedCapabilities,
+            allowedPaths: approvalRequest.allowedPaths,
+            blockedPhases: approvalRequest.blockedPhases,
+            policyReasons: approvalRequest.policyReasons
+          },
+          createdAt: policyCompletedAtIso
+        })
+      );
+    }
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -1445,15 +1519,37 @@ export async function runPlanningPipeline(
         actor: "policy",
         approvalMode,
         reasons: policySnapshot.reasons,
-        status: policyStatus
+        status: policyStatus,
+        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
       },
       createdAt: policyCompletedAtIso
     });
+    if (approvalRequest) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("policy_gate", "APPROVAL_REQUESTED"),
+        taskId,
+        runId,
+        phase: "policy_gate",
+        level: "warn",
+        code: "APPROVAL_REQUESTED",
+        message: "Approval request queued for downstream execution.",
+        data: {
+          requestId: approvalRequest.requestId,
+          approvalMode,
+          blockedPhases: approvalRequest.blockedPhases,
+          requestedCapabilities: approvalRequest.requestedCapabilities
+        },
+        createdAt: policyCompletedAtIso
+      });
+    }
     await persistTrackedRun({
       lastHeartbeatAt: policyCompletedAtIso,
       metadata: {
         currentPhase: "policy_gate",
-        approvalMode
+        approvalMode,
+        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
       }
     });
 
@@ -1469,6 +1565,7 @@ export async function runPlanningPipeline(
         status: "passed",
         actor: "evidence",
         summary: "Planning outputs archived.",
+        details: approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {},
         createdAt: archiveCompletedAtIso
       })
     );
@@ -1485,24 +1582,31 @@ export async function runPlanningPipeline(
       durationMs: getDurationMs(archiveStartedAt, archiveCompletedAt),
       data: {
         actor: "evidence",
-        status: "passed"
+        status: "passed",
+        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
       },
       createdAt: archiveCompletedAtIso
     });
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("archive", "PIPELINE_COMPLETED"),
+      eventId: nextEventId(
+        "archive",
+        approvalRequest ? "PIPELINE_BLOCKED" : "PIPELINE_COMPLETED"
+      ),
       taskId,
       runId,
       phase: "archive",
-      level: "info",
-      code: "PIPELINE_COMPLETED",
-      message: "Planning pipeline completed.",
+      level: approvalRequest ? "warn" : "info",
+      code: approvalRequest ? "PIPELINE_BLOCKED" : "PIPELINE_COMPLETED",
+      message: approvalRequest
+        ? "Planning outputs are archived and the task is waiting for human approval."
+        : "Planning pipeline completed.",
       durationMs: getDurationMs(runStartedAt, archiveCompletedAt),
       data: {
         approvalMode,
-        riskClass
+        riskClass,
+        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
       },
       createdAt: archiveCompletedAtIso
     });
@@ -1510,23 +1614,25 @@ export async function runPlanningPipeline(
     const completedManifest = taskManifestSchema.parse({
       ...currentManifest,
       currentPhase: "archive",
-      lifecycleStatus: "completed",
+      lifecycleStatus: approvalRequest ? "blocked" : "completed",
       evidenceLinks: [
         `db://manifest/${taskId}`,
         `db://planning_spec/${spec.specId}`,
-        `db://gate_decision/${taskId}:gate:policy`
+        `db://gate_decision/${taskId}:gate:policy`,
+        ...(approvalRequest ? [`db://gate_decision/${taskId}:approval:${runId}`] : [])
       ],
       updatedAt: archiveCompletedAtIso
     });
 
     await repository.updateManifest(completedManifest);
     await persistTrackedRun({
-      status: "completed",
+      status: approvalRequest ? "blocked" : "completed",
       lastHeartbeatAt: archiveCompletedAtIso,
       completedAt: archiveCompletedAtIso,
       metadata: {
         currentPhase: "archive",
-        nextAction: approvalMode === "auto" ? "complete" : "await_human"
+        nextAction: approvalRequest ? "await_human" : "complete",
+        ...(approvalRequest ? { approvalRequestId: approvalRequest.requestId } : {})
       }
     });
     currentManifest = completedManifest;
@@ -1536,7 +1642,8 @@ export async function runPlanningPipeline(
       manifest: completedManifest,
       spec,
       policySnapshot,
-      nextAction: approvalMode === "auto" ? "complete" : "await_human",
+      ...(approvalRequest ? { approvalRequest } : {}),
+      nextAction: approvalRequest ? "await_human" : "complete",
       concurrencyDecision
     };
   } catch (error) {
@@ -1653,6 +1760,145 @@ export async function runPlanningPipeline(
       runId
     });
   }
+}
+
+export async function resolveApprovalRequest(
+  input: ResolveApprovalRequestInput,
+  dependencies: ResolveApprovalRequestDependencies
+): Promise<ResolveApprovalRequestResult> {
+  const requestId = input.requestId.trim();
+  const decidedBy = input.decidedBy.trim();
+  const decisionSummary = input.decisionSummary.trim();
+
+  if (requestId.length === 0) {
+    throw new Error("Approval request id is required.");
+  }
+
+  if (decidedBy.length === 0) {
+    throw new Error("Approval decisions require a non-empty actor.");
+  }
+
+  if (decisionSummary.length === 0) {
+    throw new Error("Approval decisions require a non-empty summary.");
+  }
+
+  const repository = dependencies.repository;
+  const logger = dependencies.logger ?? defaultLogger;
+  const clock = dependencies.clock ?? (() => new Date());
+  const resolvedAt = clock();
+  const resolvedAtIso = asIsoTimestamp(resolvedAt);
+  const approvalRequest = await repository.getApprovalRequest(requestId);
+
+  if (!approvalRequest) {
+    throw new Error(`Approval request ${requestId} was not found.`);
+  }
+
+  if (approvalRequest.status !== "pending") {
+    throw new Error(`Approval request ${requestId} is already ${approvalRequest.status}.`);
+  }
+
+  const manifest = await repository.getManifest(approvalRequest.taskId);
+
+  if (!manifest) {
+    throw new Error(`Task manifest ${approvalRequest.taskId} was not found for approval request ${requestId}.`);
+  }
+
+  const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";
+  assertTaskLifecycleTransition(manifest.lifecycleStatus, lifecycleStatus);
+
+  const updatedApprovalRequest = createApprovalRequest({
+    ...approvalRequest,
+    status: input.decision === "approve" ? "approved" : "rejected",
+    decidedBy,
+    decision: input.decision,
+    decisionSummary,
+    comment: input.comment ?? null,
+    updatedAt: resolvedAtIso,
+    resolvedAt: resolvedAtIso
+  });
+  const updatedManifest = taskManifestSchema.parse({
+    ...manifest,
+    lifecycleStatus,
+    evidenceLinks: [
+      ...manifest.evidenceLinks,
+      `db://gate_decision/${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`
+    ],
+    updatedAt: resolvedAtIso
+  });
+  const decisionCode = input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
+  const decisionMessage =
+    input.decision === "approve"
+      ? "Approval granted for downstream execution."
+      : "Approval rejected and the task was cancelled.";
+  const phaseStatus: PhaseLifecycleStatus = input.decision === "approve" ? "passed" : "failed";
+  const runLogger = bindPlanningLogger(logger, {
+    runId: approvalRequest.runId,
+    taskId: approvalRequest.taskId,
+    sourceRepo: manifest.source.repo,
+    approvalRequestId: approvalRequest.requestId
+  });
+
+  await repository.saveApprovalRequest(updatedApprovalRequest);
+  await repository.updateManifest(updatedManifest);
+  await repository.savePhaseRecord(
+    createPhaseRecord({
+      id: `${approvalRequest.taskId}:phase:policy_gate:approval:${approvalRequest.requestId}`,
+      taskId: approvalRequest.taskId,
+      phase: "policy_gate",
+      status: phaseStatus,
+      actor: decidedBy,
+      summary: decisionSummary,
+      details: {
+        requestId: approvalRequest.requestId,
+        decision: input.decision,
+        approvalMode: approvalRequest.approvalMode,
+        comment: input.comment ?? null
+      },
+      createdAt: resolvedAtIso
+    })
+  );
+  await repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`,
+      taskId: approvalRequest.taskId,
+      kind: "gate_decision",
+      title: input.decision === "approve" ? "Approval granted" : "Approval rejected",
+      metadata: {
+        requestId: approvalRequest.requestId,
+        decision: input.decision,
+        decidedBy,
+        decisionSummary,
+        comment: input.comment ?? null,
+        lifecycleStatus
+      },
+      createdAt: resolvedAtIso
+    })
+  );
+  await recordRunEvent({
+    repository,
+    logger: runLogger,
+    eventId: `${approvalRequest.requestId}:${decisionCode}`,
+    taskId: approvalRequest.taskId,
+    runId: approvalRequest.runId,
+    phase: "policy_gate",
+    level: input.decision === "approve" ? "info" : "warn",
+    code: decisionCode,
+    message: decisionMessage,
+    data: {
+      requestId: approvalRequest.requestId,
+      decision: input.decision,
+      decidedBy,
+      decisionSummary,
+      lifecycleStatus,
+      ...(input.comment ? { comment: input.comment } : {})
+    },
+    createdAt: resolvedAtIso
+  });
+
+  return {
+    approvalRequest: updatedApprovalRequest,
+    manifest: updatedManifest
+  };
 }
 
 function createPhaseRecord(input: {

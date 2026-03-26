@@ -86,6 +86,8 @@ export const failureClasses = [
 ] as const;
 export const pipelineRunStatusesForSummary = ["completed", "blocked", "failed"] as const;
 export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
+export const approvalRequestStatuses = ["pending", "approved", "rejected", "cancelled"] as const;
+export const approvalDecisions = ["approve", "reject"] as const;
 
 const isoDateTimeSchema = z.string().datetime({ offset: true });
 
@@ -118,6 +120,8 @@ export const overlapActionSchema = z.enum(overlapActions);
 export const failureClassSchema = z.enum(failureClasses);
 export const pipelineRunStatusSummarySchema = z.enum(pipelineRunStatusesForSummary);
 export const workspaceLifecycleStatusSchema = z.enum(workspaceLifecycleStatuses);
+export const approvalRequestStatusSchema = z.enum(approvalRequestStatuses);
+export const approvalDecisionSchema = z.enum(approvalDecisions);
 
 export const sourceRefSchema = z.object({
   provider: z.literal("github"),
@@ -245,6 +249,36 @@ export const workspaceDescriptorSchema = z.object({
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   destroyedAt: isoDateTimeSchema.nullable()
+});
+
+export const approvalRequestSchema = z.object({
+  requestId: z.string().min(1),
+  taskId: z.string().min(1),
+  runId: z.string().min(1),
+  phase: taskPhaseSchema,
+  approvalMode: approvalModeSchema,
+  status: approvalRequestStatusSchema,
+  riskClass: riskClassSchema,
+  summary: z.string().min(1),
+  requestedCapabilities: z.array(capabilitySchema),
+  allowedPaths: z.array(z.string().min(1)),
+  blockedPhases: z.array(taskPhaseSchema),
+  policyReasons: z.array(z.string().min(1)),
+  requestedBy: z.string().min(1),
+  decidedBy: z.string().min(1).nullable(),
+  decision: approvalDecisionSchema.nullable(),
+  decisionSummary: z.string().min(1).nullable(),
+  comment: z.string().min(1).nullable(),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema,
+  resolvedAt: isoDateTimeSchema.nullable()
+});
+
+export const approvalRequestQuerySchema = z.object({
+  taskId: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  statuses: z.array(approvalRequestStatusSchema).default([]),
+  limit: z.number().int().positive().max(100).default(50)
 });
 
 export const runEventSchema = z.object({
@@ -446,6 +480,10 @@ export type RuntimeInstructionFile = z.infer<typeof runtimeInstructionFileSchema
 export type RuntimeInstructionLayer = z.infer<typeof runtimeInstructionLayerSchema>;
 export type WorkspaceLifecycleStatus = z.infer<typeof workspaceLifecycleStatusSchema>;
 export type WorkspaceDescriptor = z.infer<typeof workspaceDescriptorSchema>;
+export type ApprovalRequestStatus = z.infer<typeof approvalRequestStatusSchema>;
+export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
+export type ApprovalRequestQuery = z.infer<typeof approvalRequestQuerySchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
@@ -467,4 +505,5 @@ export type PipelineRunStatusSummary = z.infer<typeof pipelineRunStatusSummarySc
 export function asIsoTimestamp(date: Date = new Date()): string {
   return date.toISOString();
 }
+
 

@@ -1,5 +1,7 @@
-﻿import {
+import {
+  approvalDecisions,
   approvalModes,
+  approvalRequestStatuses,
   concurrencyStrategies,
   evidenceKinds,
   eventLevels,
@@ -19,6 +21,8 @@ export const taskLifecycleStatusEnum = pgEnum("task_lifecycle_status", taskLifec
 export const phaseLifecycleStatusEnum = pgEnum("phase_lifecycle_status", phaseLifecycleStatuses);
 export const riskClassEnum = pgEnum("risk_class", riskClasses);
 export const approvalModeEnum = pgEnum("approval_mode", approvalModes);
+export const approvalRequestStatusEnum = pgEnum("approval_request_status", approvalRequestStatuses);
+export const approvalDecisionEnum = pgEnum("approval_decision", approvalDecisions);
 export const evidenceKindEnum = pgEnum("evidence_kind", evidenceKinds);
 export const eventLevelEnum = pgEnum("event_level", eventLevels);
 export const failureClassEnum = pgEnum("failure_class", failureClasses);
@@ -141,3 +145,27 @@ export const pipelineRunsTable = pgTable("pipeline_runs", {
   staleAt: timestamp("stale_at", { withTimezone: true }),
   metadata: jsonb("metadata").notNull()
 });
+
+export const approvalRequestsTable = pgTable("approval_requests", {
+  requestId: text("request_id").primaryKey(),
+  taskId: text("task_id").notNull(),
+  runId: text("run_id").notNull(),
+  phase: taskPhaseEnum("phase").notNull(),
+  approvalMode: approvalModeEnum("approval_mode").notNull(),
+  status: approvalRequestStatusEnum("status").notNull(),
+  riskClass: riskClassEnum("risk_class").notNull(),
+  summary: text("summary").notNull(),
+  requestedCapabilities: jsonb("requested_capabilities").notNull(),
+  allowedPaths: jsonb("allowed_paths").notNull(),
+  blockedPhases: jsonb("blocked_phases").notNull(),
+  policyReasons: jsonb("policy_reasons").notNull(),
+  requestedBy: text("requested_by").notNull(),
+  decidedBy: text("decided_by"),
+  decision: approvalDecisionEnum("decision"),
+  decisionSummary: text("decision_summary"),
+  comment: text("comment"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true })
+});
+

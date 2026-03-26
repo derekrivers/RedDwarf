@@ -20,7 +20,7 @@ The board is ordered by implementation priority.
 | 14 | Versioned policy-pack packaging beyond bind mounts | M3 | completed | Extension Points |
 | 15 | Runtime instruction layer generation for OpenClaw workspaces | M3 | completed | Knowledge & Policy Plane, Workspace Context, Runtime Instruction Layer |
 | 16 | Workspace manager and isolated workspace lifecycle | M3 | completed | Execution Plane, Workspace Manager, Isolation and Security Model |
-| 17 | Human approval queue and decision workflow | M3 | planned | Approval and Risk Model, Control Plane |
+| 17 | Human approval queue and decision workflow | M3 | completed | Approval and Risk Model, Control Plane |
 | 18 | Developer phase orchestration with code-write disabled by default | M4 | planned | Execution Plane, Refactored Workflow |
 | 19 | Validation phase runner for lint and test execution in workspaces | M4 | planned | Validation Agent, Execution Plane |
 | 20 | Secrets adapter and scoped credential injection rules | M4 | planned | Integration Plane, Isolation and Security Model |

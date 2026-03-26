@@ -7,6 +7,7 @@ import {
   createWorkspaceContextBundleFromSnapshot,
   destroyTaskWorkspace,
   provisionTaskWorkspace,
+  resolveApprovalRequest,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import {
@@ -179,8 +180,68 @@ describeIfDatabase("postgres planning repository", () => {
     }
   });
 
-  it("marks stale overlapping runs and blocks fresh overlaps in Postgres", async () => {
+  it("persists approval requests and decision outcomes in Postgres", async () => {
     const issueNumber = Date.now() + 1;
+    const repo = `approval-${issueNumber}/platform-${issueNumber}`;
+    const input: PlanningTaskInput = {
+      source: {
+        provider: "github",
+        repo,
+        issueNumber,
+        issueUrl: `https://github.com/${repo}/issues/${issueNumber}`
+      },
+      title: "Persist a human approval workflow",
+      summary:
+        "Persist a planning run that requires human approval, verify the approval queue entry is durable, and confirm approval resolution updates the manifest and evidence state.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Approval request is stored", "Approval decisions update manifest state"],
+      affectedPaths: ["src/approval-flow.ts"],
+      requestedCapabilities: ["can_write_code"],
+      metadata: {}
+    };
+
+    const result = await runPlanningPipeline(input, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-25T18:00:00.000Z"),
+      idGenerator: () => `approval-${issueNumber}`
+    });
+    const snapshot = await repository.getTaskSnapshot(result.manifest.taskId);
+    const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+
+    expect(result.manifest.lifecycleStatus).toBe("blocked");
+    expect(result.approvalRequest?.status).toBe("pending");
+    expect(snapshot.approvalRequests).toHaveLength(1);
+    expect(snapshot.pipelineRuns[0]?.status).toBe("blocked");
+    expect(runSummary?.status).toBe("blocked");
+
+    const resolved = await resolveApprovalRequest(
+      {
+        requestId: result.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for the developer phase once it is implemented.",
+        comment: "Queue is behaving as expected."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
+    const persistedManifest = await repository.getManifest(result.manifest.taskId);
+    const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+
+    expect(resolved.manifest.lifecycleStatus).toBe("ready");
+    expect(persistedRequest?.status).toBe("approved");
+    expect(persistedRequest?.decision).toBe("approve");
+    expect(persistedManifest?.lifecycleStatus).toBe("ready");
+    expect(evidenceRecords.some((record) => record.recordId.includes(":approval-decision:"))).toBe(true);
+  });
+
+  it("marks stale overlapping runs and blocks fresh overlaps in Postgres", async () => {
+    const issueNumber = Date.now() + 2;
     const repo = `concurrency-${issueNumber}/platform-${issueNumber}`;
     const concurrencyKey = `github:${repo}:${issueNumber}`;
     const taskId = `${repo.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()}-${issueNumber}`;

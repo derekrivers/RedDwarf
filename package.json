@@ -29,7 +29,8 @@
     "package:policy-pack": "corepack pnpm build && node scripts/package-policy-pack.mjs",
     "verify:package": "corepack pnpm build && node scripts/verify-packaged-policy-pack.mjs",
     "workspace:destroy": "corepack pnpm build && node scripts/destroy-openclaw-workspace.mjs",
-    "verify:workspace-manager": "corepack pnpm build && node scripts/verify-workspace-manager.mjs"
+    "verify:workspace-manager": "corepack pnpm build && node scripts/verify-workspace-manager.mjs",
+    "verify:approvals": "corepack pnpm build && node scripts/verify-approvals.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

@@ -13,6 +13,7 @@ import {
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
   provisionTaskWorkspace,
+  resolveApprovalRequest,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import { InMemoryPlanningRepository, createPipelineRun } from "@reddwarf/evidence";
@@ -165,7 +166,7 @@ describe("control-plane", () => {
     expect(pipelineRuns[0]?.status).toBe("blocked");
   });
 
-  it("archives planning output but escalates future execution for code-writing tasks", async () => {
+  it("archives planning output but queues a human approval request for code-writing tasks", async () => {
     const repository = new InMemoryPlanningRepository();
     const result = await runPlanningPipeline(
       {
@@ -181,13 +182,97 @@ describe("control-plane", () => {
       }
     );
     const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+    const pipelineRuns = await repository.listPipelineRuns({ taskId: result.manifest.taskId });
+    const approvalRequests = await repository.listApprovalRequests({ taskId: result.manifest.taskId });
 
     expect(result.nextAction).toBe("await_human");
+    expect(result.manifest.lifecycleStatus).toBe("blocked");
     expect(result.policySnapshot?.approvalMode).toBe("human_signoff_required");
+    expect(result.approvalRequest?.status).toBe("pending");
     expect(repository.phaseRecords.find((record) => record.phase === "policy_gate")?.status).toBe(
       "escalated"
     );
-    expect(runSummary?.eventCounts.warn).toBeGreaterThanOrEqual(1);
+    expect(approvalRequests).toHaveLength(1);
+    expect(approvalRequests[0]?.requestedCapabilities).toEqual(["can_write_code"]);
+    expect(pipelineRuns[0]?.status).toBe("blocked");
+    expect(runSummary?.status).toBe("blocked");
+    expect(runSummary?.failureClass).toBeNull();
+    expect(runSummary?.eventCounts.warn).toBeGreaterThanOrEqual(2);
+  });
+
+  it("approves a pending approval request and marks the task ready", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-approve"
+      }
+    );
+
+    const decision = await resolveApprovalRequest(
+      {
+        requestId: result.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for the next execution phase.",
+        comment: "Proceed under supervision."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
+
+    expect(decision.manifest.lifecycleStatus).toBe("ready");
+    expect(persistedRequest?.status).toBe("approved");
+    expect(persistedRequest?.decision).toBe("approve");
+    expect(repository.phaseRecords.some((record) => record.recordId.includes(":approval:"))).toBe(true);
+    expect(repository.runEvents.some((event) => event.code === "APPROVAL_APPROVED")).toBe(true);
+  });
+
+  it("rejects a pending approval request and cancels the task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_open_pr"],
+        affectedPaths: ["docs/release-notes.md"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-reject"
+      }
+    );
+
+    const decision = await resolveApprovalRequest(
+      {
+        requestId: result.approvalRequest!.requestId,
+        decision: "reject",
+        decidedBy: "operator",
+        decisionSummary: "Rejected until SCM workflow exists.",
+        comment: "Wait for the SCM phase feature."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:07:00.000Z")
+      }
+    );
+    const persistedRequest = await repository.getApprovalRequest(result.approvalRequest!.requestId);
+
+    expect(decision.manifest.lifecycleStatus).toBe("cancelled");
+    expect(persistedRequest?.status).toBe("rejected");
+    expect(persistedRequest?.decision).toBe("reject");
+    expect(repository.runEvents.some((event) => event.code === "APPROVAL_REJECTED")).toBe(true);
   });
 
   it("blocks a fresh overlapping run for the same task source", async () => {
