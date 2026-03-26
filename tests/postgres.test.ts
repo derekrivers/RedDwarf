@@ -17,7 +17,7 @@ import {
   runValidationPhase
 } from "@reddwarf/control-plane";
 import {
-  PostgresPlanningRepository,
+  createPostgresPlanningRepository,
   createMemoryRecord,
   createPipelineRun,
   deriveOrganizationId
@@ -30,9 +30,7 @@ const connectionString =
 const describeIfDatabase = connectionString ? describe : describe.skip;
 
 describeIfDatabase("postgres planning repository", () => {
-  const repository = new PostgresPlanningRepository({
-    connectionString: connectionString!
-  });
+  const repository = createPostgresPlanningRepository(connectionString!);
 
   beforeAll(async () => {
     await repository.healthcheck();

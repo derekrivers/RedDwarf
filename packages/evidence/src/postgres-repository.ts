@@ -42,14 +42,19 @@ import {
   type PlanningRepository,
   type PersistedTaskSnapshot
 } from "./repository.js";
+export function createPostgresPlanningRepository(
+  connectionString: string,
+  max?: number
+): PostgresPlanningRepository {
+  const pool = new pg.Pool({ connectionString, max: max ?? 10 });
+  return new PostgresPlanningRepository(pool);
+}
+
 export class PostgresPlanningRepository implements PlanningRepository {
   private readonly pool: pg.Pool;
 
-  constructor(options: { connectionString: string; max?: number }) {
-    this.pool = new pg.Pool({
-      connectionString: options.connectionString,
-      max: options.max ?? 10
-    });
+  constructor(pool: pg.Pool) {
+    this.pool = pool;
   }
 
   async healthcheck(): Promise<void> {
