@@ -35,3 +35,10 @@
 - Environment note: `corepack pnpm verify:evidence` traverses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
 - Updated repository docs and the feature board so feature 22 is marked complete and feature 23 is now the likely next actionable item.
 - Likely next board item: feature 23, retry, escalation, and follow-up issue automation.
+- Completed feature 23 from `FEATURE_BOARD.md`: retry, escalation, and follow-up issue automation.
+- Added automated downstream failure recovery in the control plane so developer, validation, and SCM failures now persist recovery decisions, increment retry state for retryable failures, create pending failure-escalation approval requests after retry exhaustion, and optionally open follow-up GitHub issues without dropping the task from the pipeline.
+- Validation failure handling now blocks the task with `failure.recovery` task memory, `PHASE_RETRY_SCHEDULED` or `PHASE_ESCALATED` run events, and unique failed/escalated phase records so repeated attempts remain queryable instead of overwriting earlier evidence.
+- Extended the GitHub fixture adapter with explicit follow-up issue creation, added focused unit coverage for retry and escalation paths, and added `corepack pnpm verify:recovery` for Postgres-backed verification of retry exhaustion, follow-up issue creation, and pending human escalation state.
+- Environment note: `corepack pnpm verify:recovery` traverses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
+- Updated repository docs and the feature board so feature 23 is marked complete and feature 24 is now the likely next actionable item.
+- Likely next board item: feature 24, operator dashboard or API for runs, approvals, evidence, and blocked tasks.

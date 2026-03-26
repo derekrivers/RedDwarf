@@ -62,6 +62,22 @@ export interface GitHubPullRequestSummary {
   mergedAt: string | null;
 }
 
+export interface GitHubIssueDraft {
+  repo: string;
+  title: string;
+  body: string;
+  labels?: string[];
+}
+
+export interface GitHubCreatedIssueSummary {
+  repo: string;
+  issueNumber: number;
+  url: string;
+  state: GitHubIssueState;
+  title: string;
+  createdAt: string;
+}
+
 export interface GitHubBranchSummary {
   repo: string;
   baseBranch: string;
@@ -106,6 +122,7 @@ export interface GitHubAdapter {
   convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput>;
   addLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
   removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
+  createIssue(input: GitHubIssueDraft): Promise<GitHubCreatedIssueSummary>;
   createBranch(
     repo: string,
     baseBranch: string,
@@ -187,8 +204,10 @@ export class V1MutationDisabledError extends Error {
 }
 
 export interface FixtureGitHubMutationOptions {
+  allowIssueCreation?: boolean;
   allowBranchCreation?: boolean;
   allowPullRequestCreation?: boolean;
+  issueNumberStart?: number;
   pullRequestNumberStart?: number;
 }
 
@@ -197,6 +216,8 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   private readonly statusSnapshots: Map<string, GitHubIssueStatusSnapshot>;
   private readonly mutationOptions: FixtureGitHubMutationOptions;
   private readonly createdBranches: Map<string, GitHubBranchSummary>;
+  private readonly createdIssues: Map<string, GitHubCreatedIssueSummary>;
+  private nextIssueNumber: number;
   private nextPullRequestNumber: number;
 
   constructor(input: {
@@ -212,6 +233,8 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     );
     this.mutationOptions = input.mutations ?? {};
     this.createdBranches = new Map();
+    this.createdIssues = new Map();
+    this.nextIssueNumber = this.mutationOptions.issueNumberStart ?? 1_000;
     this.nextPullRequestNumber = this.mutationOptions.pullRequestNumberStart ?? 1;
   }
 
@@ -272,6 +295,28 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
 
   async removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never> {
     throw new V1MutationDisabledError(`Removing labels ${labels.join(", ")} from ${repo}#${issueNumber}`);
+  }
+
+  async createIssue(
+    input: GitHubIssueDraft
+  ): Promise<GitHubCreatedIssueSummary> {
+    if (this.mutationOptions.allowIssueCreation !== true) {
+      throw new V1MutationDisabledError(`Creating a follow-up issue in ${input.repo}`);
+    }
+
+    const issueNumber = this.nextIssueNumber;
+    this.nextIssueNumber += 1;
+    const summary: GitHubCreatedIssueSummary = {
+      repo: input.repo,
+      issueNumber,
+      url: `https://github.com/${input.repo}/issues/${issueNumber}`,
+      state: "open",
+      title: input.title,
+      createdAt: asIsoTimestamp()
+    };
+
+    this.createdIssues.set(createIssueKey(input.repo, issueNumber), summary);
+    return summary;
   }
 
   async createBranch(

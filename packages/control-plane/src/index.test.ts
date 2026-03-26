@@ -375,7 +375,6 @@ describe("control-plane", () => {
         development.runId
       );
       const handoffMarkdown = await readFile(development.handoffPath!, "utf8");
-
       expect(development.nextAction).toBe("await_validation");
       expect(development.manifest.currentPhase).toBe("development");
       expect(development.manifest.lifecycleStatus).toBe("blocked");
@@ -637,6 +636,7 @@ describe("control-plane", () => {
         planningResult.manifest.taskId,
         validation.runId
       );
+
       const reportMarkdown = await readFile(validation.reportPath!, "utf8");
       const taskMemory = await repository.listMemoryRecords({
         taskId: planningResult.manifest.taskId,
@@ -913,15 +913,174 @@ describe("control-plane", () => {
         planningResult.manifest.taskId,
         "run-validation-failure-phase"
       );
+      const recoveryMemory = repository.memoryRecords.find(
+        (record) => record.key === "failure.recovery"
+      );
 
-      expect(persistedManifest?.lifecycleStatus).toBe("failed");
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
       expect(persistedManifest?.currentPhase).toBe("validation");
-      expect(runSummary?.status).toBe("failed");
+      expect(persistedManifest?.retryCount).toBe(1);
+      expect(runSummary?.status).toBe("blocked");
       expect(runSummary?.failureClass).toBe("validation_failure");
+      expect(recoveryMemory?.value).toMatchObject({
+        action: "retry",
+        phase: "validation",
+        retryCount: 1,
+        retryLimit: 1
+      });
       expect(
         repository.runEvents.some(
           (event) => event.code === "VALIDATION_COMMAND_FAILED"
         )
+      ).toBe(true);
+      expect(
+        repository.runEvents.some((event) => event.code === "PHASE_RETRY_SCHEDULED")
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("escalates validation failures after the retry budget and creates a follow-up issue", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-validation-escalation-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-validation-escalation-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation escalation test.",
+        comment: "Exercise retry exhaustion."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation-escalation"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-validation-escalation-dev"
+        }
+      );
+
+      const failingValidator = {
+        async createPlan() {
+          return {
+            summary: "Force a failing validation command.",
+            commands: [
+              {
+                id: "failing-test",
+                name: "Failing validation command",
+                executable: process.execPath,
+                args: ["-e", "process.exit(9)"]
+              }
+            ]
+          };
+        }
+      };
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-25T18:15:00.000Z"),
+            idGenerator: () => "run-validation-escalation-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            github: new FixtureGitHubAdapter({
+              candidates: [
+                {
+                  repo: planningResult.manifest.source.repo,
+                  issueNumber: 99,
+                  title: planningResult.manifest.title,
+                  body: planningResult.manifest.summary,
+                  labels: ["ai-eligible"],
+                  url: "https://github.com/acme/platform/issues/99",
+                  state: "open"
+                }
+              ],
+              mutations: {
+                allowIssueCreation: true,
+                issueNumberStart: 501
+              }
+            }),
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-validation-escalation-second"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        "run-validation-escalation-second"
+      );
+      const failureRequest = repository.approvalRequests.get(
+        `${planningResult.manifest.taskId}:approval:validation:failure:run-validation-escalation-second`
+      );
+      const followUpIssue = repository.memoryRecords.find(
+        (record) => record.key === "failure.follow_up_issue.validation"
+      );
+
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+      expect(persistedManifest?.currentPhase).toBe("validation");
+      expect(persistedManifest?.retryCount).toBe(1);
+      expect(runSummary?.status).toBe("blocked");
+      expect(failureRequest?.status).toBe("pending");
+      expect(failureRequest?.requestedBy).toBe("failure-automation");
+      expect(followUpIssue?.value).toMatchObject({
+        issueNumber: 501,
+        title: expect.stringContaining("Validation failure")
+      });
+      expect(
+        repository.runEvents.some((event) => event.code === "PHASE_ESCALATED")
+      ).toBe(true);
+      expect(
+        repository.runEvents.some((event) => event.code === "FOLLOW_UP_ISSUE_CREATED")
       ).toBe(true);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

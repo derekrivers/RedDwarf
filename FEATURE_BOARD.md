@@ -26,6 +26,6 @@ The board is ordered by implementation priority.
 | 20       | Secrets adapter and scoped credential injection rules                          | M4        | completed | Integration Plane, Isolation and Security Model                        |
 | 21       | SCM adapter with branch and PR creation behind approval gates                  | M4        | completed | SCM Agent, Integration Plane                                           |
 | 22       | Evidence artifact archival for diffs, logs, test results, and review outputs   | M4        | completed | Evidence Plane                                                         |
-| 23       | Retry, escalation, and follow-up issue automation                              | M4        | planned   | Failure Recovery Model                                                 |
+| 23       | Retry, escalation, and follow-up issue automation                              | M4        | completed | Failure Recovery Model                                                 |
 | 24       | Operator dashboard or API for runs, approvals, evidence, and blocked tasks     | M5        | planned   | Control Plane, Observability Model                                     |
 | 25       | Knowledge ingestion pipeline for ADRs, standards, and curated external context | M5        | planned   | Knowledge & Policy Plane, External Knowledge Retrieval                 |

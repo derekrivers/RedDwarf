@@ -49,6 +49,7 @@ import {
   redactSecretValues,
   type GitHubAdapter,
   type GitHubBranchSummary,
+  type GitHubCreatedIssueSummary,
   type GitHubPullRequestSummary,
   type SecretLease,
   type SecretsAdapter
@@ -113,6 +114,24 @@ const phaseFailureCodeMap: Record<TaskPhase, string> = {
   scm: "SCM_FAILED",
   archive: "ARCHIVE_FAILED"
 };
+
+const failureAutomationRequestedBy = "failure-automation";
+const failureRecoveryMemoryKey = "failure.recovery";
+const followUpIssueMemoryPrefix = "failure.follow_up_issue";
+const failureRecoveryPolicies = {
+  development: {
+    retryLimit: 1,
+    retryableFailureClasses: ["integration_failure"] as FailureClass[]
+  },
+  validation: {
+    retryLimit: 1,
+    retryableFailureClasses: ["validation_failure", "integration_failure"] as FailureClass[]
+  },
+  scm: {
+    retryLimit: 0,
+    retryableFailureClasses: [] as FailureClass[]
+  }
+} as const;
 
 export interface PlanningPipelineLogger {
   info(message: string, context?: Record<string, unknown>): void;
@@ -272,6 +291,7 @@ export interface RunScmPhaseInput {
 export interface DevelopmentPhaseDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  github?: GitHubAdapter;
   secrets?: SecretsAdapter;
   environment?: string;
   logger?: PlanningPipelineLogger;
@@ -283,6 +303,7 @@ export interface DevelopmentPhaseDependencies {
 export interface ValidationPhaseDependencies {
   repository: PlanningRepository;
   validator: ValidationAgent;
+  github?: GitHubAdapter;
   secrets?: SecretsAdapter;
   environment?: string;
   logger?: PlanningPipelineLogger;
@@ -2493,6 +2514,17 @@ export async function runDeveloperPhase(
     );
   }
 
+  const pendingFailureEscalation = findPendingFailureEscalationRequest(
+    snapshot,
+    "development"
+  );
+
+  if (pendingFailureEscalation) {
+    throw new Error(
+      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the developer phase can restart.`
+    );
+  }
+
   const lifecycleAllowsDevelopment =
     snapshot.manifest.lifecycleStatus === "ready" ||
     snapshot.manifest.lifecycleStatus === "active" ||
@@ -3070,7 +3102,7 @@ export async function runDeveloperPhase(
     try {
       await repository.savePhaseRecord(
         createPhaseRecord({
-          id: `${taskId}:phase:development`,
+          id: `${taskId}:phase:development:${runId}:failed`,
           taskId,
           phase: "development",
           status: "failed",
@@ -3116,35 +3148,23 @@ export async function runDeveloperPhase(
         },
         createdAt: failedAtIso
       });
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("development", "PIPELINE_FAILED"),
-        taskId,
-        runId,
-        phase: "development",
-        level: "error",
-        code: "PIPELINE_FAILED",
-        message: "Developer phase failed.",
-        failureClass: pipelineFailure.failureClass,
-        durationMs: getDurationMs(runStartedAt, failedAt),
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
-      });
-      await repository.updateManifest(currentManifest);
-      await persistTrackedRun({
-        status: "failed",
-        lastHeartbeatAt: failedAtIso,
-        completedAt: failedAtIso,
-        metadata: {
-          currentPhase: "development",
-          failureCode: pipelineFailure.code,
-          failureClass: pipelineFailure.failureClass
-        }
-      });
+      currentManifest = (
+        await handleAutomatedPhaseFailure({
+          repository,
+          snapshot,
+          manifest: currentManifest,
+          phase: "development",
+          runId,
+          failure: pipelineFailure,
+          runLogger,
+          nextEventId,
+          runStartedAt,
+          failedAt,
+          failedAtIso,
+          persistTrackedRun,
+          github: dependencies.github
+        })
+      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist developer phase failure evidence.", {
         runId,
@@ -3211,6 +3231,17 @@ export async function runValidationPhase(
   if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
     throw new Error(
       `Task ${taskId} requires an approved request before the validation phase can start.`
+    );
+  }
+
+  const pendingFailureEscalation = findPendingFailureEscalationRequest(
+    snapshot,
+    "validation"
+  );
+
+  if (pendingFailureEscalation) {
+    throw new Error(
+      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the validation phase can restart.`
     );
   }
 
@@ -4011,7 +4042,7 @@ export async function runValidationPhase(
     try {
       await repository.savePhaseRecord(
         createPhaseRecord({
-          id: `${taskId}:phase:validation`,
+          id: `${taskId}:phase:validation:${runId}:failed`,
           taskId,
           phase: "validation",
           status: "failed",
@@ -4057,35 +4088,23 @@ export async function runValidationPhase(
         },
         createdAt: failedAtIso
       });
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("validation", "PIPELINE_FAILED"),
-        taskId,
-        runId,
-        phase: "validation",
-        level: "error",
-        code: "PIPELINE_FAILED",
-        message: "Validation phase failed.",
-        failureClass: pipelineFailure.failureClass,
-        durationMs: getDurationMs(runStartedAt, failedAt),
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
-      });
-      await repository.updateManifest(currentManifest);
-      await persistTrackedRun({
-        status: "failed",
-        lastHeartbeatAt: failedAtIso,
-        completedAt: failedAtIso,
-        metadata: {
-          currentPhase: "validation",
-          failureCode: pipelineFailure.code,
-          failureClass: pipelineFailure.failureClass
-        }
-      });
+      currentManifest = (
+        await handleAutomatedPhaseFailure({
+          repository,
+          snapshot,
+          manifest: currentManifest,
+          phase: "validation",
+          runId,
+          failure: pipelineFailure,
+          runLogger,
+          nextEventId,
+          runStartedAt,
+          failedAt,
+          failedAtIso,
+          persistTrackedRun,
+          github: dependencies.github
+        })
+      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist validation phase failure evidence.", {
         runId,
@@ -5262,6 +5281,17 @@ export async function runScmPhase(
     );
   }
 
+  const pendingFailureEscalation = findPendingFailureEscalationRequest(
+    snapshot,
+    "scm"
+  );
+
+  if (pendingFailureEscalation) {
+    throw new Error(
+      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the SCM phase can restart.`
+    );
+  }
+
   const lifecycleAllowsScm =
     (snapshot.manifest.lifecycleStatus === "blocked" &&
       ["validation", "scm"].includes(snapshot.manifest.currentPhase)) ||
@@ -5929,7 +5959,7 @@ export async function runScmPhase(
     try {
       await repository.savePhaseRecord(
         createPhaseRecord({
-          id: `${taskId}:phase:scm`,
+          id: `${taskId}:phase:scm:${runId}:failed`,
           taskId,
           phase: "scm",
           status: "failed",
@@ -5975,35 +6005,23 @@ export async function runScmPhase(
         },
         createdAt: failedAtIso
       });
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("scm", "PIPELINE_FAILED"),
-        taskId,
-        runId,
-        phase: "scm",
-        level: "error",
-        code: "PIPELINE_FAILED",
-        message: "SCM phase failed.",
-        failureClass: pipelineFailure.failureClass,
-        durationMs: getDurationMs(runStartedAt, failedAt),
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
-      });
-      await repository.updateManifest(currentManifest);
-      await persistTrackedRun({
-        status: "failed",
-        lastHeartbeatAt: failedAtIso,
-        completedAt: failedAtIso,
-        metadata: {
-          currentPhase: "scm",
-          failureCode: pipelineFailure.code,
-          failureClass: pipelineFailure.failureClass
-        }
-      });
+      currentManifest = (
+        await handleAutomatedPhaseFailure({
+          repository,
+          snapshot,
+          manifest: currentManifest,
+          phase: "scm",
+          runId,
+          failure: pipelineFailure,
+          runLogger,
+          nextEventId,
+          runStartedAt,
+          failedAt,
+          failedAtIso,
+          persistTrackedRun,
+          github: github
+        })
+      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist SCM phase failure evidence.", {
         runId,
@@ -6027,6 +6045,465 @@ export async function runScmPhase(
   }
 }
 
+type RecoverablePhase = "development" | "validation" | "scm";
+
+interface AutomatedFailureRecoveryResult {
+  manifest: TaskManifest;
+  recoveryAction: "retry" | "escalate";
+  approvalRequest: ApprovalRequest | null;
+  followUpIssue: GitHubCreatedIssueSummary | null;
+}
+
+function isRecoverablePhase(phase: TaskPhase): phase is RecoverablePhase {
+  return phase === "development" || phase === "validation" || phase === "scm";
+}
+
+function formatPhaseLabel(phase: RecoverablePhase): string {
+  switch (phase) {
+    case "development":
+      return "Development";
+    case "validation":
+      return "Validation";
+    case "scm":
+      return "SCM";
+  }
+}
+
+function findPendingFailureEscalationRequest(
+  snapshot: PersistedTaskSnapshot,
+  phase: RecoverablePhase
+): ApprovalRequest | null {
+  return (
+    snapshot.approvalRequests.find(
+      (request) =>
+        request.phase === phase &&
+        request.status === "pending" &&
+        request.requestedBy === failureAutomationRequestedBy
+    ) ?? null
+  );
+}
+
+function findExistingFollowUpIssue(
+  snapshot: PersistedTaskSnapshot,
+  phase: RecoverablePhase
+): GitHubCreatedIssueSummary | null {
+  const record = snapshot.memoryRecords.find(
+    (entry) => entry.key === `${followUpIssueMemoryPrefix}.${phase}`
+  );
+  const value = record?.value;
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  const issueNumber = objectValue.issueNumber;
+  const url = objectValue.url;
+  const title = objectValue.title;
+  const createdAt = objectValue.createdAt;
+
+  if (
+    typeof issueNumber !== "number" ||
+    typeof url !== "string" ||
+    typeof title !== "string" ||
+    typeof createdAt !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    repo: snapshot.manifest?.source.repo ?? record?.repo ?? "",
+    issueNumber,
+    url,
+    state: "open",
+    title,
+    createdAt
+  };
+}
+
+function buildFailureEscalationSummary(input: {
+  manifest: TaskManifest;
+  phase: RecoverablePhase;
+  failure: PlanningPipelineFailure;
+  retryLimit: number;
+}): string {
+  const sourceIssue =
+    input.manifest.source.issueNumber ?? input.manifest.source.issueId;
+  const sourceLabel =
+    sourceIssue === undefined
+      ? input.manifest.source.repo
+      : `${input.manifest.source.repo}#${sourceIssue}`;
+
+  return `${formatPhaseLabel(input.phase)} failed for ${sourceLabel}. Code ${input.failure.code} (${input.failure.failureClass}). Retry limit ${input.retryLimit} reached or recovery is not retryable.`;
+}
+
+function buildFollowUpIssueBody(input: {
+  manifest: TaskManifest;
+  phase: RecoverablePhase;
+  runId: string;
+  failure: PlanningPipelineFailure;
+  approvalRequest: ApprovalRequest;
+  retryLimit: number;
+}): string {
+  return [
+    `Source task: ${input.manifest.title}`,
+    `Task ID: ${input.manifest.taskId}`,
+    `Source repo: ${input.manifest.source.repo}`,
+    `Source issue: ${input.manifest.source.issueUrl ?? "n/a"}`,
+    `Failed phase: ${input.phase}`,
+    `Run ID: ${input.runId}`,
+    `Failure code: ${input.failure.code}`,
+    `Failure class: ${input.failure.failureClass}`,
+    `Retry count: ${input.manifest.retryCount}`,
+    `Retry limit: ${input.retryLimit}`,
+    `Escalation request: ${input.approvalRequest.requestId}`,
+    "",
+    "Summary:",
+    input.failure.message
+  ].join("\n");
+}
+
+async function handleAutomatedPhaseFailure(input: {
+  repository: PlanningRepository;
+  snapshot: PersistedTaskSnapshot;
+  manifest: TaskManifest;
+  phase: RecoverablePhase;
+  runId: string;
+  failure: PlanningPipelineFailure;
+  runLogger: PlanningPipelineLogger;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+  runStartedAt: Date;
+  failedAt: Date;
+  failedAtIso: string;
+  persistTrackedRun: (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+  ) => Promise<void>;
+  github: GitHubAdapter | undefined;
+}): Promise<AutomatedFailureRecoveryResult> {
+  const { repository, snapshot, manifest, phase, runId, failure } = input;
+  const policy = failureRecoveryPolicies[phase];
+  const retryEligible =
+    policy.retryableFailureClasses.includes(failure.failureClass) &&
+    manifest.retryCount < policy.retryLimit;
+  const organizationId = deriveOrganizationId(manifest.source.repo);
+
+  if (retryEligible) {
+    const retryCount = manifest.retryCount + 1;
+    const nextManifest = taskManifestSchema.parse({
+      ...manifest,
+      currentPhase: phase,
+      lifecycleStatus: "blocked",
+      retryCount,
+      updatedAt: input.failedAtIso
+    });
+    const recoveryMetadata = {
+      phase,
+      action: "retry",
+      runId,
+      failureCode: failure.code,
+      failureClass: failure.failureClass,
+      retryCount,
+      retryLimit: policy.retryLimit
+    };
+
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
+        taskId: manifest.taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: failureRecoveryMemoryKey,
+        title: "Automated failure recovery plan",
+        value: recoveryMetadata,
+        repo: manifest.source.repo,
+        organizationId,
+        tags: ["failure", "recovery", phase],
+        createdAt: input.failedAtIso,
+        updatedAt: input.failedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
+        taskId: manifest.taskId,
+        kind: "gate_decision",
+        title: "Failure recovery decision",
+        metadata: recoveryMetadata,
+        createdAt: input.failedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: input.runLogger,
+      eventId: input.nextEventId(phase, "PHASE_RETRY_SCHEDULED"),
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      level: "warn",
+      code: "PHASE_RETRY_SCHEDULED",
+      message: `${formatPhaseLabel(phase)} failure was classified as retryable and queued for another attempt.`,
+      failureClass: failure.failureClass,
+      data: recoveryMetadata,
+      createdAt: input.failedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: input.runLogger,
+      eventId: input.nextEventId(phase, "PIPELINE_BLOCKED"),
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message: `${formatPhaseLabel(phase)} phase blocked pending a retry attempt.`,
+      failureClass: failure.failureClass,
+      durationMs: getDurationMs(input.runStartedAt, input.failedAt),
+      data: recoveryMetadata,
+      createdAt: input.failedAtIso
+    });
+    await repository.updateManifest(nextManifest);
+    await input.persistTrackedRun({
+      status: "blocked",
+      lastHeartbeatAt: input.failedAtIso,
+      completedAt: input.failedAtIso,
+      metadata: {
+        currentPhase: phase,
+        failureCode: failure.code,
+        failureClass: failure.failureClass,
+        recoveryAction: "retry",
+        retryCount,
+        retryLimit: policy.retryLimit
+      }
+    });
+
+    return {
+      manifest: nextManifest,
+      recoveryAction: "retry",
+      approvalRequest: null,
+      followUpIssue: null
+    };
+  }
+
+  let approvalRequest = findPendingFailureEscalationRequest(snapshot, phase);
+
+  if (!approvalRequest) {
+    approvalRequest = createApprovalRequest({
+      requestId: `${manifest.taskId}:approval:${phase}:failure:${runId}`,
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: manifest.riskClass,
+      summary: buildFailureEscalationSummary({
+        manifest,
+        phase,
+        failure,
+        retryLimit: policy.retryLimit
+      }),
+      requestedCapabilities: manifest.requestedCapabilities,
+      allowedPaths: snapshot.policySnapshot?.allowedPaths ?? [],
+      blockedPhases: [phase],
+      policyReasons: [
+        `${formatPhaseLabel(phase)} failed with ${failure.failureClass}.`,
+        "Human review is required before retrying the phase."
+      ],
+      requestedBy: failureAutomationRequestedBy,
+      createdAt: input.failedAtIso,
+      updatedAt: input.failedAtIso
+    });
+    await repository.saveApprovalRequest(approvalRequest);
+  }
+
+  let followUpIssue = findExistingFollowUpIssue(snapshot, phase);
+
+  if (
+    followUpIssue === null &&
+    input.github &&
+    manifest.source.issueNumber !== undefined
+  ) {
+    try {
+      followUpIssue = await input.github.createIssue({
+        repo: manifest.source.repo,
+        title: `Follow-up: ${formatPhaseLabel(phase)} failure for ${manifest.title}`,
+        body: buildFollowUpIssueBody({
+          manifest,
+          phase,
+          runId,
+          failure,
+          approvalRequest,
+          retryLimit: policy.retryLimit
+        }),
+        labels: ["reddwarf", "follow-up", phase]
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${manifest.taskId}:memory:task:follow-up-issue:${phase}`,
+          taskId: manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: `${followUpIssueMemoryPrefix}.${phase}`,
+          title: "Follow-up issue created for failed phase",
+          value: followUpIssue,
+          repo: manifest.source.repo,
+          organizationId,
+          tags: ["failure", "follow-up", phase],
+          createdAt: input.failedAtIso,
+          updatedAt: input.failedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository,
+        logger: input.runLogger,
+        eventId: input.nextEventId(phase, "FOLLOW_UP_ISSUE_CREATED"),
+        taskId: manifest.taskId,
+        runId,
+        phase,
+        level: "info",
+        code: "FOLLOW_UP_ISSUE_CREATED",
+        message: `Created a follow-up issue for the ${phase} failure.`,
+        data: {
+          followUpIssueNumber: followUpIssue.issueNumber,
+          followUpIssueUrl: followUpIssue.url
+        },
+        createdAt: input.failedAtIso
+      });
+    } catch (error) {
+      await recordRunEvent({
+        repository,
+        logger: input.runLogger,
+        eventId: input.nextEventId(phase, "FOLLOW_UP_ISSUE_SKIPPED"),
+        taskId: manifest.taskId,
+        runId,
+        phase,
+        level: "warn",
+        code: "FOLLOW_UP_ISSUE_SKIPPED",
+        failureClass: failure.failureClass,
+        message: `Failed to create a follow-up issue for the ${phase} failure.`,
+        data: {
+          error: serializeError(error)
+        },
+        createdAt: input.failedAtIso
+      });
+    }
+  }
+
+  const nextManifest = taskManifestSchema.parse({
+    ...manifest,
+    currentPhase: phase,
+    lifecycleStatus: "blocked",
+    updatedAt: input.failedAtIso
+  });
+  const recoveryMetadata = {
+    phase,
+    action: "escalate",
+    runId,
+    failureCode: failure.code,
+    failureClass: failure.failureClass,
+    retryCount: manifest.retryCount,
+    retryLimit: policy.retryLimit,
+    approvalRequestId: approvalRequest.requestId,
+    ...(followUpIssue
+      ? {
+          followUpIssueNumber: followUpIssue.issueNumber,
+          followUpIssueUrl: followUpIssue.url
+        }
+      : {})
+  };
+
+  await repository.savePhaseRecord(
+    createPhaseRecord({
+      id: `${manifest.taskId}:phase:${phase}:escalated:${runId}`,
+      taskId: manifest.taskId,
+      phase,
+      status: "escalated",
+      actor: "control-plane",
+      summary: `${formatPhaseLabel(phase)} failure escalated for human review.`,
+      details: recoveryMetadata,
+      createdAt: input.failedAtIso
+    })
+  );
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
+      taskId: manifest.taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: failureRecoveryMemoryKey,
+      title: "Automated failure recovery plan",
+      value: recoveryMetadata,
+      repo: manifest.source.repo,
+      organizationId,
+      tags: ["failure", "recovery", phase],
+      createdAt: input.failedAtIso,
+      updatedAt: input.failedAtIso
+    })
+  );
+  await repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
+      taskId: manifest.taskId,
+      kind: "gate_decision",
+      title: "Failure recovery decision",
+      metadata: recoveryMetadata,
+      createdAt: input.failedAtIso
+    })
+  );
+  await recordRunEvent({
+    repository,
+    logger: input.runLogger,
+    eventId: input.nextEventId(phase, "PHASE_ESCALATED"),
+    taskId: manifest.taskId,
+    runId,
+    phase,
+    level: "warn",
+    code: "PHASE_ESCALATED",
+    message: `${formatPhaseLabel(phase)} failure escalated for human review.`,
+    failureClass: failure.failureClass,
+    data: recoveryMetadata,
+    createdAt: input.failedAtIso
+  });
+  await recordRunEvent({
+    repository,
+    logger: input.runLogger,
+    eventId: input.nextEventId(phase, "PIPELINE_BLOCKED"),
+    taskId: manifest.taskId,
+    runId,
+    phase,
+    level: "warn",
+    code: "PIPELINE_BLOCKED",
+    message: `${formatPhaseLabel(phase)} phase blocked pending operator review.`,
+    failureClass: failure.failureClass,
+    durationMs: getDurationMs(input.runStartedAt, input.failedAt),
+    data: recoveryMetadata,
+    createdAt: input.failedAtIso
+  });
+  await repository.updateManifest(nextManifest);
+  await input.persistTrackedRun({
+    status: "blocked",
+    lastHeartbeatAt: input.failedAtIso,
+    completedAt: input.failedAtIso,
+    metadata: {
+      currentPhase: phase,
+      failureCode: failure.code,
+      failureClass: failure.failureClass,
+      recoveryAction: "escalate",
+      retryCount: manifest.retryCount,
+      retryLimit: policy.retryLimit,
+      approvalRequestId: approvalRequest.requestId,
+      ...(followUpIssue
+        ? { followUpIssueNumber: followUpIssue.issueNumber }
+        : {})
+    }
+  });
+
+  return {
+    manifest: nextManifest,
+    recoveryAction: "escalate",
+    approvalRequest,
+    followUpIssue
+  };
+}
 function normalizePipelineFailure(
   error: unknown,
   phase: TaskPhase,

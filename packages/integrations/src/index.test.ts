@@ -121,6 +121,28 @@ describe("integrations", () => {
     ).toBe("token=***REDACTED***");
   });
 
+  it("creates fixture-backed follow-up issues only when issue automation is explicitly enabled", async () => {
+    const github = new FixtureGitHubAdapter({
+      candidates: [candidate],
+      mutations: {
+        allowIssueCreation: true,
+        issueNumberStart: 301
+      }
+    });
+
+    const followUp = await github.createIssue({
+      repo: candidate.repo,
+      title: "Follow-up: validation failure",
+      body: "Body",
+      labels: ["reddwarf", "follow-up"]
+    });
+
+    expect(followUp.issueNumber).toBe(301);
+    expect(followUp.url).toBe("https://github.com/acme/platform/issues/301");
+    expect(followUp.state).toBe("open");
+    expect(followUp.title).toBe("Follow-up: validation failure");
+  });
+
   it("creates fixture-backed branches and pull requests only when SCM mutations are explicitly enabled", async () => {
     const github = new FixtureGitHubAdapter({
       candidates: [candidate],
@@ -158,6 +180,13 @@ describe("integrations", () => {
     const ci = new FixtureCiAdapter([]);
     const secrets = new DenyAllSecretsAdapter();
 
+    await expect(
+      github.createIssue({
+        repo: candidate.repo,
+        title: "Follow-up",
+        body: "Body"
+      })
+    ).rejects.toBeInstanceOf(V1MutationDisabledError);
     await expect(
       github.createBranch(candidate.repo, "main", "feature/test")
     ).rejects.toBeInstanceOf(V1MutationDisabledError);
