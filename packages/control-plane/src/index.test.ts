@@ -24,6 +24,7 @@ import {
   InMemoryPlanningRepository,
   createPipelineRun
 } from "@reddwarf/evidence";
+import { FixtureSecretsAdapter } from "@reddwarf/integrations";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
 const eligibleInput: PlanningTaskInput = {
@@ -397,6 +398,168 @@ describe("control-plane", () => {
         repository,
         targetRoot: tempRoot,
         clock: () => new Date("2026-03-25T18:15:00.000Z")
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+
+  it("injects scoped credentials into the developer workspace when policy and adapter both allow them", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-secret-development-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic implementation task that requires scoped credentials for read-only integration access during development.",
+        requestedCapabilities: ["can_write_code", "can_use_secrets"],
+        affectedPaths: ["src/integrations/github.ts"],
+        metadata: {
+          secretScopes: ["github_readonly"]
+        }
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-secret-dev-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for scoped developer credentials.",
+        comment: "Inject the least-privilege lease only."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-secret-dev"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          secrets: new FixtureSecretsAdapter([
+            {
+              scope: "github_readonly",
+              environmentVariables: {
+                GITHUB_TOKEN: "ghs_dev_fixture"
+              },
+              allowedAgents: ["developer", "validation"],
+              allowedEnvironments: ["staging"]
+            }
+          ]),
+          environment: "staging",
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-secret-dev-phase"
+        }
+      );
+      const secretEnv = JSON.parse(
+        await readFile(
+          development.workspace!.descriptor.credentialPolicy.secretEnvFile!,
+          "utf8"
+        )
+      );
+      const toolsMd = await readFile(
+        development.workspace!.instructions.files.toolsMd,
+        "utf8"
+      );
+
+      expect(development.workspace?.descriptor.credentialPolicy.mode).toBe(
+        "scoped_env"
+      );
+      expect(
+        development.workspace?.descriptor.toolPolicy.allowedCapabilities
+      ).toContain("can_use_secrets");
+      expect(
+        development.workspace?.descriptor.credentialPolicy.allowedSecretScopes
+      ).toEqual(["github_readonly"]);
+      expect(
+        development.workspace?.descriptor.credentialPolicy.injectedSecretKeys
+      ).toEqual(["GITHUB_TOKEN"]);
+      expect(secretEnv.environmentVariables.GITHUB_TOKEN).toBe(
+        "ghs_dev_fixture"
+      );
+      expect(toolsMd).toContain("github_readonly");
+      expect(
+        repository.runEvents.some(
+          (event) => event.code === "SECRET_LEASE_ISSUED"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when scoped secrets are approved but no secrets adapter is configured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-secret-missing-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic implementation task that requires scoped credentials for read-only integration access during development.",
+        requestedCapabilities: ["can_write_code", "can_use_secrets"],
+        affectedPaths: ["src/integrations/github.ts"],
+        metadata: {
+          secretScopes: ["github_readonly"]
+        }
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-secret-missing-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for scoped developer credentials.",
+        comment: "Fail if the adapter is unavailable."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await expect(
+        runDeveloperPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            workspaceId: "workspace-secret-missing"
+          },
+          {
+            repository,
+            developer: new DeterministicDeveloperAgent(),
+            clock: () => new Date("2026-03-25T18:10:00.000Z"),
+            idGenerator: () => "run-secret-missing-phase"
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "SECRETS_ADAPTER_REQUIRED"
       });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

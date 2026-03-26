@@ -8,7 +8,8 @@
     { "path": "../contracts" },
     { "path": "../policy" },
     { "path": "../execution-plane" },
-    { "path": "../evidence" }
+    { "path": "../evidence" },
+    { "path": "../integrations" }
   ],
   "include": ["src/**/*.ts"]
 }

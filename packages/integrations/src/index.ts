@@ -113,8 +113,41 @@ export interface CiAdapter {
   attachBuildOutput(taskId: string, artifact: BuildArtifactReference): Promise<never>;
 }
 
+export interface SecretLeaseRequest {
+  taskId: string;
+  repo: string;
+  agentType: string;
+  phase: string;
+  environment: string;
+  riskClass: "low" | "medium" | "high";
+  approvalMode: "auto" | "review_required" | "human_signoff_required" | "disallowed";
+  requestedCapabilities: Capability[];
+  allowedSecretScopes: string[];
+}
+
+export interface SecretLease {
+  leaseId: string;
+  mode: "scoped_env";
+  secretScopes: string[];
+  injectedSecretKeys: string[];
+  environmentVariables: Record<string, string>;
+  issuedAt: string;
+  expiresAt: string | null;
+  notes: string[];
+}
+
+export interface FixtureSecretScope {
+  scope: string;
+  environmentVariables: Record<string, string>;
+  allowedAgents?: string[];
+  allowedEnvironments?: string[];
+  denyHighRisk?: boolean;
+  notes?: string[];
+}
+
 export interface SecretsAdapter {
-  requestSecret(name: string): Promise<never>;
+  requestSecret(name: string): Promise<string>;
+  issueTaskSecrets(request: SecretLeaseRequest): Promise<SecretLease | null>;
 }
 
 export interface GitHubIssueIntakeResult {
@@ -270,9 +303,112 @@ export class NullNotificationAdapter implements NotificationAdapter {
   }
 }
 
+export class FixtureSecretsAdapter implements SecretsAdapter {
+  private readonly scopes: Map<string, FixtureSecretScope>;
+
+  constructor(scopes: FixtureSecretScope[]) {
+    this.scopes = new Map(scopes.map((scope) => [scope.scope, scope]));
+  }
+
+  async requestSecret(name: string): Promise<string> {
+    for (const scope of this.scopes.values()) {
+      const value = scope.environmentVariables[name];
+
+      if (value !== undefined) {
+        return value;
+      }
+    }
+
+    throw new Error(`No fixture secret named ${name} is configured.`);
+  }
+
+  async issueTaskSecrets(
+    request: SecretLeaseRequest
+  ): Promise<SecretLease | null> {
+    if (
+      request.allowedSecretScopes.length === 0 ||
+      !request.requestedCapabilities.includes("can_use_secrets")
+    ) {
+      return null;
+    }
+
+    const issuedScopes: string[] = [];
+    const injectedSecretKeys = new Set<string>();
+    const environmentVariables: Record<string, string> = {};
+    const notes: string[] = [];
+
+    for (const scopeName of request.allowedSecretScopes) {
+      const scope = this.scopes.get(scopeName);
+
+      if (!scope) {
+        throw new Error(`No fixture secret scope ${scopeName} is configured.`);
+      }
+
+      if (scope.denyHighRisk !== false && request.riskClass === "high") {
+        throw new Error(
+          `Secret scope ${scopeName} is denied for high-risk tasks.`
+        );
+      }
+
+      if (
+        scope.allowedAgents &&
+        scope.allowedAgents.length > 0 &&
+        !scope.allowedAgents.includes(request.agentType)
+      ) {
+        throw new Error(
+          `Secret scope ${scopeName} is not allowed for agent ${request.agentType}.`
+        );
+      }
+
+      if (
+        scope.allowedEnvironments &&
+        scope.allowedEnvironments.length > 0 &&
+        !scope.allowedEnvironments.includes(request.environment)
+      ) {
+        throw new Error(
+          `Secret scope ${scopeName} is not allowed in environment ${request.environment}.`
+        );
+      }
+
+      issuedScopes.push(scopeName);
+      for (const [key, value] of Object.entries(scope.environmentVariables)) {
+        environmentVariables[key] = value;
+        injectedSecretKeys.add(key);
+      }
+      if (scope.notes) {
+        notes.push(...scope.notes);
+      }
+    }
+
+    return {
+      leaseId: `${request.taskId}:${request.agentType}:${issuedScopes.join("+")}`,
+      mode: "scoped_env",
+      secretScopes: issuedScopes,
+      injectedSecretKeys: [...injectedSecretKeys].sort(),
+      environmentVariables,
+      issuedAt: asIsoTimestamp(),
+      expiresAt: null,
+      notes: [
+        `Scoped credentials issued for ${request.agentType} during ${request.phase}.`,
+        ...notes
+      ]
+    };
+  }
+}
+
 export class DenyAllSecretsAdapter implements SecretsAdapter {
   async requestSecret(name: string): Promise<never> {
     throw new V1MutationDisabledError(`Secret access for ${name}`);
+  }
+
+  async issueTaskSecrets(request: SecretLeaseRequest): Promise<never> {
+    const scopes =
+      request.allowedSecretScopes.length > 0
+        ? ` scoped to ${request.allowedSecretScopes.join(", ")}`
+        : "";
+    throw new V1MutationDisabledError(
+      `Secret access for ${request.taskId}${scopes}`
+    );
   }
 }
 
@@ -296,6 +432,23 @@ export async function intakeGitHubIssue(input: {
     planningInput,
     ciSnapshot
   };
+}
+
+export function redactSecretValues(
+  value: string,
+  lease: Pick<SecretLease, "environmentVariables">
+): string {
+  let redacted = value;
+
+  for (const secretValue of Object.values(lease.environmentVariables)) {
+    if (secretValue.length === 0) {
+      continue;
+    }
+
+    redacted = redacted.split(secretValue).join("***REDACTED***");
+  }
+
+  return redacted;
 }
 
 export function createPlanningInputFromGitHubIssue(

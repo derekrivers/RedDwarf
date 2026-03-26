@@ -5,9 +5,11 @@ import {
   DenyAllSecretsAdapter,
   FixtureCiAdapter,
   FixtureGitHubAdapter,
+  FixtureSecretsAdapter,
   NullNotificationAdapter,
   V1MutationDisabledError,
-  intakeGitHubIssue
+  intakeGitHubIssue,
+  redactSecretValues
 } from "../packages/integrations/dist/index.js";
 
 const connectionString =
@@ -71,7 +73,17 @@ const ci = new FixtureCiAdapter([
   }
 ]);
 const notifications = new NullNotificationAdapter();
-const secrets = new DenyAllSecretsAdapter();
+const denyAllSecrets = new DenyAllSecretsAdapter();
+const fixtureSecrets = new FixtureSecretsAdapter([
+  {
+    scope: "github_readonly",
+    environmentVariables: {
+      GITHUB_TOKEN: "ghs_fixture_verify_token"
+    },
+    allowedAgents: ["validation"],
+    allowedEnvironments: ["staging"]
+  }
+]);
 
 try {
   const intake = await intakeGitHubIssue({
@@ -104,6 +116,25 @@ try {
   assert.ok(snapshot.spec, "Expected a persisted planning spec.");
   assert.equal(runSummary?.status, "completed");
 
+  const lease = await fixtureSecrets.issueTaskSecrets({
+    taskId: result.manifest.taskId,
+    repo,
+    agentType: "validation",
+    phase: "validation",
+    environment: "staging",
+    riskClass: "medium",
+    approvalMode: "human_signoff_required",
+    requestedCapabilities: ["can_use_secrets"],
+    allowedSecretScopes: ["github_readonly"]
+  });
+
+  assert.equal(lease?.mode, "scoped_env");
+  assert.deepEqual(lease?.secretScopes, ["github_readonly"]);
+  assert.equal(
+    redactSecretValues("token=ghs_fixture_verify_token", lease),
+    "token=***REDACTED***"
+  );
+
   await assert.rejects(
     github.createPullRequest({
       repo,
@@ -116,7 +147,21 @@ try {
   );
   await assert.rejects(github.addLabels(repo, unique, ["triaged"]), V1MutationDisabledError);
   await assert.rejects(ci.triggerWorkflow(repo, "ci.yml", "main"), V1MutationDisabledError);
-  await assert.rejects(secrets.requestSecret("GITHUB_TOKEN"), V1MutationDisabledError);
+  await assert.rejects(denyAllSecrets.requestSecret("GITHUB_TOKEN"), V1MutationDisabledError);
+  await assert.rejects(
+    denyAllSecrets.issueTaskSecrets({
+      taskId: result.manifest.taskId,
+      repo,
+      agentType: "validation",
+      phase: "validation",
+      environment: "staging",
+      riskClass: "medium",
+      approvalMode: "human_signoff_required",
+      requestedCapabilities: ["can_use_secrets"],
+      allowedSecretScopes: ["github_readonly"]
+    }),
+    V1MutationDisabledError
+  );
 
   console.log(
     JSON.stringify(
@@ -128,6 +173,13 @@ try {
         phaseRecordCount: snapshot.phaseRecords.length,
         runEventCount: snapshot.runEvents.length,
         runStatus: runSummary?.status ?? null,
+        scopedSecretLease: lease
+          ? {
+              mode: lease.mode,
+              secretScopes: lease.secretScopes,
+              injectedSecretKeys: lease.injectedSecretKeys
+            }
+          : null,
         mutationGuardsVerified: true
       },
       null,

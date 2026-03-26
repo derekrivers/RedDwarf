@@ -111,6 +111,7 @@ export const workspaceToolModes = [
   "development_readonly",
   "validation_only"
 ] as const;
+export const workspaceCredentialModes = ["none", "scoped_env"] as const;
 export const approvalRequestStatuses = [
   "pending",
   "approved",
@@ -155,6 +156,7 @@ export const workspaceLifecycleStatusSchema = z.enum(
   workspaceLifecycleStatuses
 );
 export const workspaceToolModeSchema = z.enum(workspaceToolModes);
+export const workspaceCredentialModeSchema = z.enum(workspaceCredentialModes);
 export const approvalRequestStatusSchema = z.enum(approvalRequestStatuses);
 export const approvalDecisionSchema = z.enum(approvalDecisions);
 
@@ -220,6 +222,7 @@ export const policySnapshotSchema = z.object({
   approvalMode: approvalModeSchema,
   allowedCapabilities: z.array(capabilitySchema),
   allowedPaths: z.array(z.string().min(1)),
+  allowedSecretScopes: z.array(z.string().min(1)).default([]),
   blockedPhases: z.array(taskPhaseSchema),
   reasons: z.array(z.string().min(1))
 });
@@ -280,8 +283,12 @@ export const workspaceDescriptorSchema = z.object({
     notes: z.array(z.string().min(1))
   }),
   credentialPolicy: z.object({
-    mode: z.literal("none"),
+    mode: workspaceCredentialModeSchema,
     allowedSecretScopes: z.array(z.string().min(1)),
+    injectedSecretKeys: z.array(z.string().min(1)),
+    secretEnvFile: z.string().min(1).nullable(),
+    leaseIssuedAt: isoDateTimeSchema.nullable(),
+    leaseExpiresAt: isoDateTimeSchema.nullable(),
     notes: z.array(z.string().min(1))
   }),
   createdAt: isoDateTimeSchema,
@@ -526,6 +533,9 @@ export type WorkspaceLifecycleStatus = z.infer<
   typeof workspaceLifecycleStatusSchema
 >;
 export type WorkspaceToolMode = z.infer<typeof workspaceToolModeSchema>;
+export type WorkspaceCredentialMode = z.infer<
+  typeof workspaceCredentialModeSchema
+>;
 export type WorkspaceDescriptor = z.infer<typeof workspaceDescriptorSchema>;
 export type ApprovalRequestStatus = z.infer<typeof approvalRequestStatusSchema>;
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;

@@ -87,6 +87,7 @@ describe("contracts", () => {
         approvalMode: "auto",
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
         allowedPaths: ["docs/**"],
+        allowedSecretScopes: [],
         blockedPhases: ["review", "scm"],
         reasons: ["Planning phase is approved for autonomous execution in v1."]
       },
@@ -169,6 +170,10 @@ describe("contracts", () => {
       credentialPolicy: {
         mode: "none",
         allowedSecretScopes: [],
+        injectedSecretKeys: [],
+        secretEnvFile: null,
+        leaseIssuedAt: null,
+        leaseExpiresAt: null,
         notes: ["Secrets adapter is not implemented in v1."]
       },
       createdAt: timestamp,
@@ -225,6 +230,10 @@ describe("contracts", () => {
       credentialPolicy: {
         mode: "none",
         allowedSecretScopes: [],
+        injectedSecretKeys: [],
+        secretEnvFile: null,
+        leaseIssuedAt: null,
+        leaseExpiresAt: null,
         notes: ["Secrets adapter is not implemented in v1."]
       },
       createdAt: timestamp,
@@ -237,6 +246,66 @@ describe("contracts", () => {
     expect(descriptor.toolPolicy.allowedCapabilities).toContain(
       "can_run_tests"
     );
+  });
+
+  it("parses a policy snapshot with allowed secret scopes", () => {
+    const bundle = workspaceContextBundleSchema.parse({
+      manifest: {
+        taskId: "acme-platform-42",
+        source: {
+          provider: "github",
+          repo: "acme/platform",
+          issueNumber: 42,
+          issueUrl: "https://github.com/acme/platform/issues/42"
+        },
+        title: "Plan the docs-only backlog",
+        summary:
+          "Create a deterministic planning package for the docs-only backlog in the platform repo.",
+        priority: 1,
+        riskClass: "medium",
+        approvalMode: "human_signoff_required",
+        currentPhase: "development",
+        lifecycleStatus: "blocked",
+        assignedAgentType: "developer",
+        requestedCapabilities: ["can_write_code", "can_use_secrets"],
+        retryCount: 0,
+        evidenceLinks: ["db://manifest/acme-platform-42"],
+        workspaceId: "workspace-42",
+        branchName: null,
+        prNumber: null,
+        policyVersion: "reddwarf-v1",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      },
+      spec: {
+        specId: "spec-2",
+        taskId: "acme-platform-42",
+        summary: "Plan the work.",
+        assumptions: ["Issue is ready."],
+        affectedAreas: ["src/credential-flow.ts"],
+        constraints: ["No uncontrolled secret access."],
+        acceptanceCriteria: ["Secret scopes are explicit"],
+        testExpectations: ["Schemas validate."],
+        recommendedAgentType: "developer",
+        riskClass: "medium",
+        createdAt: timestamp
+      },
+      policySnapshot: {
+        policyVersion: "reddwarf-v1",
+        approvalMode: "human_signoff_required",
+        allowedCapabilities: ["can_plan", "can_archive_evidence", "can_use_secrets"],
+        allowedPaths: ["src/**"],
+        allowedSecretScopes: ["github_readonly"],
+        blockedPhases: ["review", "scm"],
+        reasons: ["Scoped secrets are allowed after approval."]
+      },
+      acceptanceCriteria: ["Secret scopes are explicit"],
+      allowedPaths: ["src/**"]
+    });
+
+    expect(bundle.policySnapshot.allowedSecretScopes).toEqual([
+      "github_readonly"
+    ]);
   });
 
   it("parses approval requests and queue queries", () => {

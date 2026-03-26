@@ -68,6 +68,7 @@ const policySnapshot: PolicySnapshot = {
   approvalMode: "auto",
   allowedCapabilities: ["can_plan", "can_archive_evidence"],
   allowedPaths: ["docs/**"],
+  allowedSecretScopes: [],
   blockedPhases: ["review", "scm"],
   reasons: ["Planning phase is approved for autonomous execution in v1."]
 };
@@ -236,6 +237,67 @@ describe("workspace context materialization", () => {
         "can_run_tests"
       );
       expect(toolsMd).toContain("can_run_tests");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+
+  it("materializes scoped credential leases into the managed workspace without persisting secret values in the descriptor", async () => {
+    const bundle = createWorkspaceContextBundle({
+      manifest: {
+        ...manifest,
+        currentPhase: "validation",
+        lifecycleStatus: "active",
+        assignedAgentType: "validation",
+        riskClass: "medium",
+        approvalMode: "human_signoff_required",
+        requestedCapabilities: ["can_use_secrets"]
+      },
+      spec,
+      policySnapshot: {
+        ...policySnapshot,
+        approvalMode: "human_signoff_required",
+        allowedCapabilities: ["can_run_tests", "can_archive_evidence", "can_use_secrets"],
+        allowedSecretScopes: ["github_readonly"],
+        reasons: ["Scoped secrets are approved for validation."]
+      }
+    });
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-secret-context-"));
+
+    try {
+      const materialized = await materializeManagedWorkspace({
+        bundle,
+        targetRoot: tempRoot,
+        workspaceId: "workspace-42-secrets",
+        createdAt: timestamp,
+        secretLease: {
+          leaseId: "lease-1",
+          mode: "scoped_env",
+          secretScopes: ["github_readonly"],
+          injectedSecretKeys: ["GITHUB_TOKEN"],
+          environmentVariables: {
+            GITHUB_TOKEN: "ghs_workspace_fixture"
+          },
+          issuedAt: timestamp,
+          expiresAt: null,
+          notes: ["Fixture secret lease"]
+        }
+      });
+      const secretEnv = JSON.parse(
+        await readFile(materialized.descriptor.credentialPolicy.secretEnvFile!, "utf8")
+      );
+      const descriptor = JSON.parse(await readFile(materialized.stateFile, "utf8"));
+
+      expect(materialized.descriptor.credentialPolicy.mode).toBe("scoped_env");
+      expect(materialized.descriptor.credentialPolicy.allowedSecretScopes).toEqual([
+        "github_readonly"
+      ]);
+      expect(materialized.descriptor.credentialPolicy.injectedSecretKeys).toEqual([
+        "GITHUB_TOKEN"
+      ]);
+      expect(secretEnv.environmentVariables.GITHUB_TOKEN).toBe("ghs_workspace_fixture");
+      expect(JSON.stringify(descriptor)).not.toContain("ghs_workspace_fixture");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

@@ -13,3 +13,10 @@
 - Environment note: `corepack pnpm verify:validation` can also hit a sandbox `spawn EPERM` because the validation runner launches workspace-local child processes; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
 - Updated repository docs and the feature board so features 18 and 19 are marked complete and feature 20 is now the likely next actionable item.
 - Likely next board item: feature 20, secrets adapter and scoped credential injection rules.
+- Completed feature 20 from `FEATURE_BOARD.md`: secrets adapter and scoped credential injection rules.
+- Added scoped secret approvals to policy snapshots, runtime tool contracts, workspace descriptors, and approval summaries so approved development and validation runs can express least-privilege secret scopes without persisting secret values in evidence metadata.
+- Added a fixture-backed secrets adapter, workspace-local `.workspace/credentials/secret-env.json` materialization, fail-closed lease issuance, and validation-log redaction so injected values stay out of durable logs while remaining available inside the managed workspace.
+- Added unit coverage plus `corepack pnpm verify:secrets` to exercise scoped lease issuance, workspace credential policy metadata, fail-closed behavior when no adapter is configured, and end-to-end redaction during validation command execution.
+- Environment note: `corepack pnpm verify:secrets` uses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
+- Updated repository docs and the feature board so feature 20 is marked complete and feature 21 is now the likely next actionable item.
+- Likely next board item: feature 21, SCM adapter with branch and PR creation behind approval gates.

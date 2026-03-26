@@ -32,7 +32,8 @@
     "verify:workspace-manager": "corepack pnpm build && node scripts/verify-workspace-manager.mjs",
     "verify:approvals": "corepack pnpm build && node scripts/verify-approvals.mjs",
     "verify:development": "corepack pnpm build && node scripts/verify-development.mjs",
-    "verify:validation": "corepack pnpm build && node scripts/verify-validation.mjs"
+    "verify:validation": "corepack pnpm build && node scripts/verify-validation.mjs",
+    "verify:secrets": "corepack pnpm build && node scripts/verify-secrets.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

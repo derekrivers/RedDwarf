@@ -46,6 +46,11 @@ import {
   type PlanningRepository
 } from "@reddwarf/evidence";
 import {
+  redactSecretValues,
+  type SecretLease,
+  type SecretsAdapter
+} from "@reddwarf/integrations";
+import {
   agentDefinitions,
   assertPhaseExecutable
 } from "@reddwarf/execution-plane";
@@ -232,6 +237,8 @@ export interface RunValidationPhaseInput {
 export interface DevelopmentPhaseDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  secrets?: SecretsAdapter;
+  environment?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -241,6 +248,8 @@ export interface DevelopmentPhaseDependencies {
 export interface ValidationPhaseDependencies {
   repository: PlanningRepository;
   validator: ValidationAgent;
+  secrets?: SecretsAdapter;
+  environment?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -422,6 +431,8 @@ const workspaceStateDirName = ".workspace";
 const workspaceStateFileName = "workspace.json";
 const workspaceScratchDirName = "scratch";
 const workspaceArtifactsDirName = "artifacts";
+const workspaceCredentialsDirName = "credentials";
+const workspaceSecretEnvFileName = "secret-env.json";
 const workspaceLocationPrefix = "workspace://";
 
 const agentInstructionPathByType: Partial<
@@ -457,10 +468,14 @@ const planningWorkspaceCapabilities: Capability[] = [
   "can_plan",
   "can_archive_evidence"
 ];
-const developmentWorkspaceCapabilities: Capability[] = ["can_archive_evidence"];
+const developmentWorkspaceCapabilities: Capability[] = [
+  "can_archive_evidence",
+  "can_use_secrets"
+];
 const validationWorkspaceCapabilities: Capability[] = [
   "can_run_tests",
-  "can_archive_evidence"
+  "can_archive_evidence",
+  "can_use_secrets"
 ];
 
 const planningWorkspaceToolPolicyNotes = [
@@ -478,8 +493,8 @@ const validationWorkspaceToolPolicyNotes = [
   "Run lint, test, and contract validation commands inside the isolated workspace while product code writes remain disabled."
 ] as const;
 
-const workspaceCredentialPolicyNotes = [
-  "Secrets adapter is not implemented in RedDwarf v1.",
+const defaultWorkspaceCredentialPolicyNotes = [
+  "Scoped secrets are disabled unless a task is approved for can_use_secrets and a secrets adapter issues a lease.",
   "No credentials are injected into provisioned workspaces by default."
 ] as const;
 
@@ -835,6 +850,8 @@ export function createWorkspaceDescriptor(input: {
   updatedAt?: string;
   status?: WorkspaceDescriptor["status"];
   destroyedAt?: string | null;
+  secretLease?: SecretLease | null;
+  secretEnvFile?: string | null;
 }): WorkspaceDescriptor {
   const bundle = workspaceContextBundleSchema.parse(input.bundle);
   const workspaceId = input.materialized.workspaceId;
@@ -854,6 +871,11 @@ export function createWorkspaceDescriptor(input: {
     workspaceArtifactsDirName
   );
   const toolPolicy = createWorkspaceToolPolicy(bundle);
+  const credentialPolicy = createWorkspaceCredentialPolicy({
+    bundle,
+    secretLease: input.secretLease ?? null,
+    secretEnvFile: input.secretEnvFile ?? null
+  });
 
   return workspaceDescriptorSchema.parse({
     workspaceId,
@@ -873,11 +895,7 @@ export function createWorkspaceDescriptor(input: {
     taskContractFiles: input.materialized.instructions.taskContractFiles,
     instructionFiles: input.materialized.instructions.files,
     toolPolicy,
-    credentialPolicy: {
-      mode: "none",
-      allowedSecretScopes: [],
-      notes: [...workspaceCredentialPolicyNotes]
-    },
+    credentialPolicy,
     createdAt,
     updatedAt,
     destroyedAt: input.destroyedAt ?? null
@@ -889,6 +907,7 @@ export async function materializeManagedWorkspace(input: {
   targetRoot: string;
   workspaceId?: string;
   createdAt?: string;
+  secretLease?: SecretLease | null;
 }): Promise<MaterializedManagedWorkspace> {
   const bundle = workspaceContextBundleSchema.parse(input.bundle);
   const materializedBundle = workspaceContextBundleSchema.parse({
@@ -915,20 +934,52 @@ export async function materializeManagedWorkspace(input: {
     materialized.workspaceRoot,
     workspaceArtifactsDirName
   );
+  const credentialsDir = join(stateDir, workspaceCredentialsDirName);
+  const secretLease = input.secretLease ?? null;
+  const secretEnvFile = secretLease
+    ? join(credentialsDir, workspaceSecretEnvFileName)
+    : null;
   const descriptor = createWorkspaceDescriptor({
     bundle: materializedBundle,
     materialized,
-    ...(input.createdAt ? { createdAt: input.createdAt } : {})
+    ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    secretLease,
+    secretEnvFile
   });
 
   await Promise.all([
     mkdir(stateDir, { recursive: true }),
     mkdir(scratchDir, { recursive: true }),
-    mkdir(artifactsDir, { recursive: true })
+    mkdir(artifactsDir, { recursive: true }),
+    ...(secretEnvFile ? [mkdir(credentialsDir, { recursive: true })] : [])
   ]);
+
+  if (secretLease && secretEnvFile) {
+    await writeFile(
+      secretEnvFile,
+      `${JSON.stringify(
+        {
+          leaseId: secretLease.leaseId,
+          mode: secretLease.mode,
+          secretScopes: secretLease.secretScopes,
+          injectedSecretKeys: secretLease.injectedSecretKeys,
+          issuedAt: secretLease.issuedAt,
+          expiresAt: secretLease.expiresAt,
+          environmentVariables: secretLease.environmentVariables,
+          notes: secretLease.notes
+        },
+        null,
+        2
+      )}
+`,
+      "utf8"
+    );
+  }
+
   await writeFile(
     stateFile,
-    `${JSON.stringify(descriptor, null, 2)}\n`,
+    `${JSON.stringify(descriptor, null, 2)}
+`,
     "utf8"
   );
 
@@ -1082,6 +1133,102 @@ export async function destroyTaskWorkspace(input: {
     manifest,
     workspace
   };
+}
+
+async function issueWorkspaceSecretLease(input: {
+  bundle: WorkspaceContextBundle;
+  phase: "development" | "validation";
+  secrets?: SecretsAdapter;
+  environment?: string;
+}): Promise<SecretLease | null> {
+  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const allowedSecretScopes = bundle.policySnapshot.allowedSecretScopes;
+  const secretsRequested =
+    bundle.manifest.requestedCapabilities.includes("can_use_secrets") &&
+    bundle.policySnapshot.allowedCapabilities.includes("can_use_secrets") &&
+    allowedSecretScopes.length > 0;
+
+  if (!secretsRequested) {
+    return null;
+  }
+
+  if (!input.secrets) {
+    throw new PlanningPipelineFailure({
+      message: `Task ${bundle.manifest.taskId} is approved for scoped secrets (${allowedSecretScopes.join(", ")}), but no secrets adapter is configured.`,
+      failureClass: phaseFailureClassMap[input.phase],
+      phase: input.phase,
+      code: "SECRETS_ADAPTER_REQUIRED",
+      details: {
+        allowedSecretScopes,
+        requestedCapabilities: bundle.manifest.requestedCapabilities
+      },
+      taskId: bundle.manifest.taskId,
+      runId: null
+    });
+  }
+
+  let lease: SecretLease | null;
+
+  try {
+    lease = await input.secrets.issueTaskSecrets({
+      taskId: bundle.manifest.taskId,
+      repo: bundle.manifest.source.repo,
+      agentType: bundle.manifest.assignedAgentType,
+      phase: input.phase,
+      environment: input.environment ?? "default",
+      riskClass: bundle.manifest.riskClass,
+      approvalMode: bundle.manifest.approvalMode,
+      requestedCapabilities: bundle.manifest.requestedCapabilities,
+      allowedSecretScopes
+    });
+  } catch (error) {
+    throw new PlanningPipelineFailure({
+      message: `Failed to issue scoped secrets for ${bundle.manifest.taskId} during ${input.phase}.`,
+      failureClass: phaseFailureClassMap[input.phase],
+      phase: input.phase,
+      code: "SECRET_LEASE_FAILED",
+      details: {
+        allowedSecretScopes,
+        environment: input.environment ?? "default",
+        cause: serializeError(error)
+      },
+      cause: error,
+      taskId: bundle.manifest.taskId,
+      runId: null
+    });
+  }
+
+  if (!lease) {
+    throw new PlanningPipelineFailure({
+      message: `Scoped secrets were approved for ${bundle.manifest.taskId}, but the secrets adapter returned no lease.`,
+      failureClass: phaseFailureClassMap[input.phase],
+      phase: input.phase,
+      code: "SECRET_LEASE_MISSING",
+      details: {
+        allowedSecretScopes,
+        environment: input.environment ?? "default"
+      },
+      taskId: bundle.manifest.taskId,
+      runId: null
+    });
+  }
+
+  return lease;
+}
+
+function createApprovalRequestSummary(input: {
+  policySnapshot: PolicySnapshot;
+  requestedCapabilities: Capability[];
+}): string {
+  if (!input.requestedCapabilities.includes("can_use_secrets")) {
+    return "Human approval is required before downstream execution can continue.";
+  }
+
+  if (input.policySnapshot.allowedSecretScopes.length > 0) {
+    return `Human approval is required before downstream execution can continue. Approved secret scopes: ${input.policySnapshot.allowedSecretScopes.join(", ")}.`;
+  }
+
+  return "Human approval is required before downstream execution can continue. No secret scopes are currently approved for injection.";
 }
 
 export class DeterministicPlanningAgent implements PlanningAgent {
@@ -1721,6 +1868,7 @@ export async function runPlanningPipeline(
           constraints: spec.constraints,
           policyReasons: policySnapshot.reasons,
           approvalMode,
+          allowedSecretScopes: policySnapshot.allowedSecretScopes,
           ...(approvalRequestId ? { approvalRequestId } : {})
         },
         repo: input.source.repo,
@@ -1746,8 +1894,10 @@ export async function runPlanningPipeline(
             approvalMode,
             status: "pending",
             riskClass,
-            summary:
-              "Human approval is required before downstream execution can continue.",
+            summary: createApprovalRequestSummary({
+              policySnapshot,
+              requestedCapabilities: input.requestedCapabilities
+            }),
             requestedCapabilities: input.requestedCapabilities,
             allowedPaths: policySnapshot.allowedPaths,
             blockedPhases: policySnapshot.blockedPhases,
@@ -1813,7 +1963,8 @@ export async function runPlanningPipeline(
             requestedCapabilities: approvalRequest.requestedCapabilities,
             allowedPaths: approvalRequest.allowedPaths,
             blockedPhases: approvalRequest.blockedPhases,
-            policyReasons: approvalRequest.policyReasons
+            policyReasons: approvalRequest.policyReasons,
+            allowedSecretScopes: policySnapshot.allowedSecretScopes
           },
           createdAt: policyCompletedAtIso
         })
@@ -1840,6 +1991,7 @@ export async function runPlanningPipeline(
         actor: "policy",
         approvalMode,
         reasons: policySnapshot.reasons,
+        allowedSecretScopes: policySnapshot.allowedSecretScopes,
         status: policyStatus,
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
@@ -1862,7 +2014,8 @@ export async function runPlanningPipeline(
           requestId: approvalRequest.requestId,
           approvalMode,
           blockedPhases: approvalRequest.blockedPhases,
-          requestedCapabilities: approvalRequest.requestedCapabilities
+          requestedCapabilities: approvalRequest.requestedCapabilities,
+          allowedSecretScopes: policySnapshot.allowedSecretScopes
         },
         createdAt: policyCompletedAtIso
       });
@@ -2409,6 +2562,14 @@ export async function runDeveloperPhase(
       spec: snapshot.spec,
       policySnapshot: snapshot.policySnapshot
     });
+    const secretLease = await issueWorkspaceSecretLease({
+      bundle,
+      phase: "development",
+      ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+      ...(dependencies.environment
+        ? { environment: dependencies.environment }
+        : {})
+    });
     const workspace = await materializeManagedWorkspace({
       bundle,
       targetRoot: input.targetRoot,
@@ -2416,7 +2577,8 @@ export async function runDeveloperPhase(
         input.workspaceId ??
         currentManifest.workspaceId ??
         `${taskId}-workspace`,
-      createdAt: developmentStartedAtIso
+      createdAt: developmentStartedAtIso,
+      secretLease
     });
     currentManifest = taskManifestSchema.parse({
       ...currentManifest,
@@ -2443,7 +2605,11 @@ export async function runDeveloperPhase(
           stateFile: workspace.stateFile,
           descriptor: workspace.descriptor,
           phase: "development",
-          runId
+          runId,
+          allowedSecretScopes:
+            workspace.descriptor.credentialPolicy.allowedSecretScopes,
+          injectedSecretKeys:
+            workspace.descriptor.credentialPolicy.injectedSecretKeys
         },
         createdAt: developmentStartedAtIso
       })
@@ -2461,10 +2627,38 @@ export async function runDeveloperPhase(
       data: {
         workspaceId: workspace.workspaceId,
         toolPolicyMode: workspace.descriptor.toolPolicy.mode,
-        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+        credentialMode: workspace.descriptor.credentialPolicy.mode,
+        allowedSecretScopes:
+          workspace.descriptor.credentialPolicy.allowedSecretScopes,
+        injectedSecretKeys:
+          workspace.descriptor.credentialPolicy.injectedSecretKeys
       },
       createdAt: developmentStartedAtIso
     });
+    if (secretLease) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", "SECRET_LEASE_ISSUED"),
+        taskId,
+        runId,
+        phase: "development",
+        level: "info",
+        code: "SECRET_LEASE_ISSUED",
+        message: "Scoped developer credentials issued for the managed workspace.",
+        data: {
+          workspaceId: workspace.workspaceId,
+          credentialMode: workspace.descriptor.credentialPolicy.mode,
+          allowedSecretScopes: secretLease.secretScopes,
+          injectedSecretKeys: secretLease.injectedSecretKeys,
+          leaseIssuedAt: secretLease.issuedAt,
+          leaseExpiresAt: secretLease.expiresAt
+        },
+        createdAt: developmentStartedAtIso
+      });
+    }
+
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -3089,11 +3283,20 @@ export async function runValidationPhase(
       spec: snapshot.spec,
       policySnapshot: snapshot.policySnapshot
     });
+    const secretLease = await issueWorkspaceSecretLease({
+      bundle,
+      phase: "validation",
+      ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+      ...(dependencies.environment
+        ? { environment: dependencies.environment }
+        : {})
+    });
     const workspace = await materializeManagedWorkspace({
       bundle,
       targetRoot: input.targetRoot,
       workspaceId,
-      createdAt: validationStartedAtIso
+      createdAt: validationStartedAtIso,
+      secretLease
     });
     currentManifest = taskManifestSchema.parse({
       ...currentManifest,
@@ -3120,7 +3323,11 @@ export async function runValidationPhase(
           stateFile: workspace.stateFile,
           descriptor: workspace.descriptor,
           phase: "validation",
-          runId
+          runId,
+          allowedSecretScopes:
+            workspace.descriptor.credentialPolicy.allowedSecretScopes,
+          injectedSecretKeys:
+            workspace.descriptor.credentialPolicy.injectedSecretKeys
         },
         createdAt: validationStartedAtIso
       })
@@ -3138,10 +3345,38 @@ export async function runValidationPhase(
       data: {
         workspaceId: workspace.workspaceId,
         toolPolicyMode: workspace.descriptor.toolPolicy.mode,
-        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+        credentialMode: workspace.descriptor.credentialPolicy.mode,
+        allowedSecretScopes:
+          workspace.descriptor.credentialPolicy.allowedSecretScopes,
+        injectedSecretKeys:
+          workspace.descriptor.credentialPolicy.injectedSecretKeys
       },
       createdAt: validationStartedAtIso
     });
+
+    if (secretLease) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "SECRET_LEASE_ISSUED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "info",
+        code: "SECRET_LEASE_ISSUED",
+        message: "Scoped validation credentials issued for the managed workspace.",
+        data: {
+          workspaceId: workspace.workspaceId,
+          credentialMode: workspace.descriptor.credentialPolicy.mode,
+          allowedSecretScopes: secretLease.secretScopes,
+          injectedSecretKeys: secretLease.injectedSecretKeys,
+          leaseIssuedAt: secretLease.issuedAt,
+          leaseExpiresAt: secretLease.expiresAt
+        },
+        createdAt: validationStartedAtIso
+      });
+    }
 
     const plan = await validator.createPlan(bundle, {
       manifest: currentManifest,
@@ -3190,7 +3425,8 @@ export async function runValidationPhase(
       const executed = await executeValidationCommand({
         command,
         workspace,
-        startedAt: commandStartedAt
+        startedAt: commandStartedAt,
+        secretLease
       });
       const { stdout: _stdout, stderr: _stderr, ...commandResult } = executed;
       commandResults.push(commandResult);
@@ -3807,10 +4043,91 @@ function bindPlanningLogger(
   };
 }
 
+function createWorkspaceCredentialPolicy(input: {
+  bundle: WorkspaceContextBundle;
+  secretLease?: SecretLease | null;
+  secretEnvFile?: string | null;
+}): WorkspaceDescriptor["credentialPolicy"] {
+  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const allowedSecretScopes = [...new Set(bundle.policySnapshot.allowedSecretScopes)];
+  const secretsAllowedByPolicy =
+    bundle.manifest.requestedCapabilities.includes("can_use_secrets") &&
+    bundle.policySnapshot.allowedCapabilities.includes("can_use_secrets") &&
+    allowedSecretScopes.length > 0;
+
+  if (!secretsAllowedByPolicy) {
+    return {
+      mode: "none",
+      allowedSecretScopes,
+      injectedSecretKeys: [],
+      secretEnvFile: null,
+      leaseIssuedAt: null,
+      leaseExpiresAt: null,
+      notes: [...defaultWorkspaceCredentialPolicyNotes]
+    };
+  }
+
+  const secretLease = input.secretLease ?? null;
+
+  if (!secretLease) {
+    return {
+      mode: "none",
+      allowedSecretScopes,
+      injectedSecretKeys: [],
+      secretEnvFile: null,
+      leaseIssuedAt: null,
+      leaseExpiresAt: null,
+      notes: [
+        `Task is approved for scoped credentials (${allowedSecretScopes.join(", ")}), but no lease has been materialized for this workspace.`
+      ]
+    };
+  }
+
+  if (secretLease.mode !== "scoped_env") {
+    throw new Error(
+      `Unsupported secret lease mode ${secretLease.mode} for workspace credential policy.`
+    );
+  }
+
+  const disallowedScopes = secretLease.secretScopes.filter(
+    (scope) => !allowedSecretScopes.includes(scope)
+  );
+
+  if (disallowedScopes.length > 0) {
+    throw new Error(
+      `Secret lease requested scopes outside policy approval: ${disallowedScopes.join(", ")}.`
+    );
+  }
+
+  if (!input.secretEnvFile) {
+    throw new Error(
+      "A scoped secret lease requires a workspace-local credential file path."
+    );
+  }
+
+  return {
+    mode: "scoped_env",
+    allowedSecretScopes,
+    injectedSecretKeys: [...secretLease.injectedSecretKeys].sort(),
+    secretEnvFile: input.secretEnvFile,
+    leaseIssuedAt: secretLease.issuedAt,
+    leaseExpiresAt: secretLease.expiresAt,
+    notes: [
+      ...secretLease.notes,
+      "Scoped credentials are materialized into a workspace-local lease file and never persisted in evidence metadata."
+    ]
+  };
+}
+
 function createWorkspaceToolPolicy(
   bundleInput: WorkspaceContextBundle
 ): WorkspaceDescriptor["toolPolicy"] {
   const bundle = workspaceContextBundleSchema.parse(bundleInput);
+  const secretsCapability =
+    bundle.policySnapshot.allowedCapabilities.includes("can_use_secrets") &&
+    bundle.policySnapshot.allowedSecretScopes.length > 0
+      ? (["can_use_secrets"] as Capability[])
+      : [];
 
   if (
     bundle.manifest.currentPhase === "validation" ||
@@ -3819,7 +4136,12 @@ function createWorkspaceToolPolicy(
     return {
       mode: "validation_only",
       codeWriteEnabled: false,
-      allowedCapabilities: [...validationWorkspaceCapabilities],
+      allowedCapabilities: [
+        ...validationWorkspaceCapabilities.filter(
+          (capability) => capability !== "can_use_secrets"
+        ),
+        ...secretsCapability
+      ],
       blockedPhases: bundle.policySnapshot.blockedPhases,
       notes: [...validationWorkspaceToolPolicyNotes]
     };
@@ -3832,7 +4154,12 @@ function createWorkspaceToolPolicy(
     return {
       mode: "development_readonly",
       codeWriteEnabled: false,
-      allowedCapabilities: [...developmentWorkspaceCapabilities],
+      allowedCapabilities: [
+        ...developmentWorkspaceCapabilities.filter(
+          (capability) => capability !== "can_use_secrets"
+        ),
+        ...secretsCapability
+      ],
       blockedPhases: bundle.policySnapshot.blockedPhases,
       notes: [...developmentWorkspaceToolPolicyNotes]
     };
@@ -3861,6 +4188,8 @@ function renderDevelopmentHandoffMarkdown(input: {
     `- Run ID: ${input.runId}`,
     `- Workspace ID: ${input.workspace.workspaceId}`,
     `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
+    `- Credential policy mode: ${input.workspace.descriptor.credentialPolicy.mode}`,
+    `- Approved secret scopes: ${formatLiteralList(input.workspace.descriptor.credentialPolicy.allowedSecretScopes)}`,
     `- Code writing enabled: ${input.codeWriteEnabled ? "yes" : "no"}`,
     "",
     "## Summary",
@@ -3895,6 +4224,8 @@ function renderValidationReportMarkdown(input: {
     `- Run ID: ${input.runId}`,
     `- Workspace ID: ${input.workspace.workspaceId}`,
     `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
+    `- Credential policy mode: ${input.workspace.descriptor.credentialPolicy.mode}`,
+    `- Approved secret scopes: ${formatLiteralList(input.workspace.descriptor.credentialPolicy.allowedSecretScopes)}`,
     "",
     "## Summary",
     "",
@@ -3959,6 +4290,9 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
     'if (!tools.includes("can_run_tests")) {',
     '  throw new Error("Runtime TOOLS.md must describe can_run_tests for validation.");',
     "}",
+    'if (descriptor.credentialPolicy.mode === "scoped_env" && !descriptor.credentialPolicy.secretEnvFile) {',
+    '  throw new Error("Scoped credential leases must declare a workspace-local secretEnvFile.");',
+    "}",
     'console.log("Validated workspace contract for the validation phase.");'
   ].join("\n");
 }
@@ -3972,6 +4306,7 @@ async function executeValidationCommand(input: {
   command: ValidationCommand;
   workspace: MaterializedManagedWorkspace;
   startedAt: Date;
+  secretLease?: SecretLease | null;
 }): Promise<ExecutedValidationCommandResult> {
   const { command, workspace, startedAt } = input;
   const logPath = join(workspace.artifactsDir, `validation-${command.id}.log`);
@@ -3986,6 +4321,7 @@ async function executeValidationCommand(input: {
       cwd: workspace.workspaceRoot,
       env: {
         ...process.env,
+        ...(input.secretLease?.environmentVariables ?? {}),
         REDDWARF_WORKSPACE_ID: workspace.workspaceId,
         REDDWARF_WORKSPACE_ROOT: workspace.workspaceRoot
       },
@@ -4017,6 +4353,12 @@ async function executeValidationCommand(input: {
   });
 
   const durationMs = getDurationMs(startedAt, execution.completedAt);
+  const stdout = input.secretLease
+    ? redactSecretValues(execution.stdout, input.secretLease)
+    : execution.stdout;
+  const stderr = input.secretLease
+    ? redactSecretValues(execution.stderr, input.secretLease)
+    : execution.stderr;
   await writeFile(
     logPath,
     [
@@ -4032,11 +4374,11 @@ async function executeValidationCommand(input: {
       "",
       "## Stdout",
       "",
-      execution.stdout.length > 0 ? execution.stdout.trimEnd() : "(empty)",
+      stdout.length > 0 ? stdout.trimEnd() : "(empty)",
       "",
       "## Stderr",
       "",
-      execution.stderr.length > 0 ? execution.stderr.trimEnd() : "(empty)",
+      stderr.length > 0 ? stderr.trimEnd() : "(empty)",
       ""
     ].join("\n"),
     "utf8"
@@ -4052,8 +4394,8 @@ async function executeValidationCommand(input: {
     durationMs,
     status: execution.exitCode === 0 ? "passed" : "failed",
     logPath,
-    stdout: execution.stdout,
-    stderr: execution.stderr
+    stdout,
+    stderr
   };
 }
 
@@ -4182,6 +4524,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     `- Allowed capabilities now: ${formatLiteralList(toolPolicy.allowedCapabilities)}`,
     `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
     `- Requested but denied: ${formatLiteralList(requestedButDenied)}`,
+    `- Allowed secret scopes: ${formatLiteralList(bundle.policySnapshot.allowedSecretScopes)}`,
     "",
     "## Tool Policy Notes",
     "",
@@ -4195,6 +4538,15 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
       capabilityGuidance[capability],
       ""
     ]),
+    "## Credential Guardrails",
+    "",
+    ...(bundle.policySnapshot.allowedSecretScopes.length > 0
+      ? [
+          `- Approved secret scopes: ${formatLiteralList(bundle.policySnapshot.allowedSecretScopes)}`,
+          `- When a secrets adapter issues a lease, credentials are mounted at \`${workspaceStateDirName}/${workspaceCredentialsDirName}/${workspaceSecretEnvFileName}\` and only the key names are persisted in metadata.`
+        ]
+      : ["- No secret scopes are approved for this task."]),
+    "",
     "## Path Guardrails",
     "",
     ...(bundle.allowedPaths.length > 0
@@ -4211,7 +4563,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     "",
     "- writing product code",
     "- opening pull requests or mutating remote systems",
-    "- using secrets or other sensitive credentials",
+    "- using secrets outside approved scopes or without an injected lease",
     "- touching paths outside the allowed scope",
     ""
   ].join("\n");

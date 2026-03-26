@@ -68,6 +68,7 @@ const bundle = {
     approvalMode: "auto",
     allowedCapabilities: ["can_plan", "can_archive_evidence"],
     allowedPaths: ["prompts/**"],
+    allowedSecretScopes: [],
     blockedPhases: ["review", "scm"],
     reasons: ["Packaged policy pack verification run."]
   },

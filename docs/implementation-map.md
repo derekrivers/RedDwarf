@@ -13,14 +13,14 @@ RedDwarf operationalizes the architecture document as a mountable Dev Squad defi
 - Observability is first-class in the planning path: every run gets a durable `runId`, per-phase event stream, explicit failure classification, a queryable run summary, and approval-decision events for human-gated work.
 - Concurrency is enforced with durable pipeline-run records, serialized overlap strategy, heartbeat-based stale-run retirement, and explicit blocking of fresh overlaps for the same task source.
 - Memory is partitioned into task, project, organization, and external retrieval scopes so OpenClaw can materialize context without mixing ephemeral task state and broader organizational knowledge.
-- The integration plane is modeled as read-only in v1: GitHub issue intake and CI status reads exist as deterministic adapters, while PR, branch, label, workflow, and secret mutation calls remain hard-blocked.
+- The integration plane is modeled as read-only in v1: GitHub issue intake and CI status reads exist as deterministic adapters, while PR, branch, label, workflow, and remote secret mutation calls remain hard-blocked; approved development and validation tasks can now receive scoped workspace-local secret leases.
 - Policy-pack packaging now produces a manifest-backed immutable runtime root with built packages, mounted assets, and a self-contained runtime dependency tree, so OpenClaw can run without a live source checkout.
 
 ## Package Map
 
 - `packages/contracts`: canonical task, evidence, lifecycle, context, failure, run-summary, and partitioned-memory contracts
 - `packages/policy`: deterministic guardrails and approval logic
-- `packages/control-plane`: planning pipeline, developer- and validation-phase orchestration, state transitions, concurrency/stale-run enforcement, approval queue and decision workflow helpers, workspace context and runtime instruction materialization, managed workspace lifecycle helpers, structured observability logging, and policy-pack packaging helpers
+- `packages/control-plane`: planning pipeline, developer- and validation-phase orchestration, scoped secret lease injection, state transitions, concurrency/stale-run enforcement, approval queue and decision workflow helpers, workspace context and runtime instruction materialization, managed workspace lifecycle helpers, structured observability logging, and policy-pack packaging helpers
 - `packages/execution-plane`: agent identities and disabled future execution phases
 - `packages/evidence`: persistence schema, policy snapshot storage, approval-request persistence/query helpers, partitioned memory storage/query helpers, pipeline-run persistence, event modeling, and run-summary queries
-- `packages/integrations`: GitHub and CI adapter contracts, issue-intake conversion helpers, fixture-backed verification adapters, and mutation guards
+- `packages/integrations`: GitHub, CI, and secrets adapter contracts, issue-intake conversion helpers, fixture-backed verification adapters, scoped lease redaction helpers, and mutation guards

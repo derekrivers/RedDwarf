@@ -46,7 +46,10 @@ describe("policy", () => {
       false
     );
     expect(
-      capabilitiesAllowedForPhase("development", ["can_archive_evidence"])
+      capabilitiesAllowedForPhase("development", [
+        "can_archive_evidence",
+        "can_use_secrets"
+      ])
     ).toBe(true);
   });
 
@@ -54,7 +57,8 @@ describe("policy", () => {
     expect(
       capabilitiesAllowedForPhase("validation", [
         "can_run_tests",
-        "can_archive_evidence"
+        "can_archive_evidence",
+        "can_use_secrets"
       ])
     ).toBe(true);
     expect(capabilitiesAllowedForPhase("validation", ["can_write_code"])).toBe(
@@ -65,6 +69,27 @@ describe("policy", () => {
   it("builds a policy snapshot with blocked future phases", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
     expect(snapshot.blockedPhases).toEqual(["review", "scm"]);
+  });
+
+  it("grants scoped secrets only to non-high-risk tasks with explicit scopes", () => {
+    const snapshot = buildPolicySnapshot(
+      {
+        ...baseInput,
+        affectedPaths: ["src/integrations/secrets.ts"],
+        requestedCapabilities: ["can_use_secrets"],
+        metadata: {
+          secretScopes: ["github_readonly", "npm_readonly"]
+        }
+      },
+      "medium",
+      "human_signoff_required"
+    );
+
+    expect(snapshot.allowedCapabilities).toContain("can_use_secrets");
+    expect(snapshot.allowedSecretScopes).toEqual([
+      "github_readonly",
+      "npm_readonly"
+    ]);
   });
 
   it("blocks tasks without the AI eligibility label", () => {

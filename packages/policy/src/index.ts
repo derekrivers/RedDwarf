@@ -20,10 +20,14 @@ const highRiskPatterns = [
 ];
 const disabledPhases: TaskPhase[] = ["review", "scm"];
 const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
-const developmentCapabilities: Capability[] = ["can_archive_evidence"];
+const developmentCapabilities: Capability[] = [
+  "can_archive_evidence",
+  "can_use_secrets"
+];
 const validationCapabilities: Capability[] = [
   "can_run_tests",
-  "can_archive_evidence"
+  "can_archive_evidence",
+  "can_use_secrets"
 ];
 
 export interface EligibilityAssessment {
@@ -72,12 +76,9 @@ export function classifyRisk(input: PlanningTaskInput): RiskClass {
     );
   const requestsSensitiveCapability = input.requestedCapabilities.some(
     (capability) =>
-      [
-        "can_use_secrets",
-        "can_open_pr",
-        "can_touch_sensitive_paths",
-        "can_modify_schema"
-      ].includes(capability)
+      ["can_open_pr", "can_touch_sensitive_paths", "can_modify_schema"].includes(
+        capability
+      )
   );
 
   if (touchesHighRiskPath || requestsSensitiveCapability) {
@@ -178,6 +179,13 @@ export function buildPolicySnapshot(
   riskClass: RiskClass,
   approvalMode: ApprovalMode
 ): PolicySnapshot {
+  const allowedSecretScopes = createAllowedSecretScopes(input, riskClass);
+  const allowedCapabilities = [
+    ...planningCapabilities,
+    ...(allowedSecretScopes.length > 0
+      ? (["can_use_secrets"] as Capability[])
+      : [])
+  ];
   const reasons =
     approvalMode === "auto"
       ? ["Planning phase is approved for autonomous execution in v1."]
@@ -185,14 +193,57 @@ export function buildPolicySnapshot(
           "Developer orchestration may continue after human intervention, validation can run read-only checks, and review/SCM remain blocked in v1."
         ];
 
+  if (
+    input.requestedCapabilities.includes("can_use_secrets") &&
+    allowedSecretScopes.length > 0
+  ) {
+    reasons.push(
+      `Scoped credentials are limited to ${allowedSecretScopes.join(", ")} after approval.`
+    );
+  } else if (input.requestedCapabilities.includes("can_use_secrets")) {
+    reasons.push(
+      riskClass === "high"
+        ? "High-risk tasks do not receive secrets in RedDwarf v1."
+        : "No approved secret scopes were supplied, so no credentials can be injected."
+    );
+  }
+
   return {
     policyVersion: V1_POLICY_VERSION,
     approvalMode,
-    allowedCapabilities: planningCapabilities,
+    allowedCapabilities,
     allowedPaths: createAllowedPaths(input, riskClass),
+    allowedSecretScopes,
     blockedPhases: disabledPhases,
     reasons
   };
+}
+
+function createAllowedSecretScopes(
+  input: PlanningTaskInput,
+  riskClass: RiskClass
+): string[] {
+  if (
+    !input.requestedCapabilities.includes("can_use_secrets") ||
+    riskClass === "high"
+  ) {
+    return [];
+  }
+
+  const configured = input.metadata.secretScopes;
+
+  if (!Array.isArray(configured)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      configured
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  ];
 }
 
 export function phaseEnabledInV1(phase: TaskPhase): boolean {

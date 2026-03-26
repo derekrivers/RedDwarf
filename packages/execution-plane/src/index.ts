@@ -15,7 +15,7 @@ export const agentDefinitions: AgentDefinition[] = [
     id: "developer-default",
     displayName: "Developer Agent",
     type: "developer",
-    capabilities: ["can_archive_evidence"],
+    capabilities: ["can_archive_evidence", "can_use_secrets"],
     activePhases: ["development"],
     enabled: true,
     description:
@@ -25,7 +25,7 @@ export const agentDefinitions: AgentDefinition[] = [
     id: "validation-default",
     displayName: "Validation Agent",
     type: "validation",
-    capabilities: ["can_run_tests", "can_archive_evidence"],
+    capabilities: ["can_run_tests", "can_archive_evidence", "can_use_secrets"],
     activePhases: ["validation"],
     enabled: true,
     description:

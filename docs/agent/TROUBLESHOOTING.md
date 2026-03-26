@@ -18,8 +18,8 @@
 
 ## Workspace-local validation commands hit `spawn EPERM` in the sandbox
 
-- Symptom: `corepack pnpm verify:validation` or direct `runValidationPhase(...)` executions fail with a `PlanningPipelineFailure` whose root cause is `spawn EPERM` when the validation runner launches workspace-local commands.
+- Symptom: `corepack pnpm verify:validation`, `corepack pnpm verify:secrets`, or direct `runValidationPhase(...)` executions fail with a `PlanningPipelineFailure` whose root cause is `spawn EPERM` when the validation runner launches workspace-local commands.
 - Root cause: the Windows sandbox can block child-process creation from Node even when the command being launched is just `process.execPath -e ...` inside the managed workspace.
 - Failing approach: running validation-phase command execution inside the default sandbox.
-- Working workaround: rerun validation orchestration outside the sandbox when `spawn EPERM` appears; in this repo that means rerunning `corepack pnpm verify:validation` with escalated permissions.
-- Verification: `corepack pnpm typecheck`, `corepack pnpm test`, and `corepack pnpm verify:validation` all pass once the validation runner is allowed to spawn its workspace-local commands.
+- Working workaround: rerun validation orchestration outside the sandbox when `spawn EPERM` appears; in this repo that means rerunning `corepack pnpm verify:validation` or `corepack pnpm verify:secrets` with escalated permissions.
+- Verification: `corepack pnpm typecheck`, `corepack pnpm test`, `corepack pnpm verify:validation`, and `corepack pnpm verify:secrets` all pass once the validation runner is allowed to spawn its workspace-local commands.

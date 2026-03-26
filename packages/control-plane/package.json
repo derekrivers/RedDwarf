@@ -14,6 +14,7 @@
     "@reddwarf/contracts": "workspace:*",
     "@reddwarf/evidence": "workspace:*",
     "@reddwarf/execution-plane": "workspace:*",
+    "@reddwarf/integrations": "workspace:*",
     "@reddwarf/policy": "workspace:*",
     "pino": "^9.6.0"
   }

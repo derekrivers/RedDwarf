@@ -65,6 +65,9 @@ importers:
       '@reddwarf/execution-plane':
         specifier: workspace:*
         version: link:../execution-plane
+      '@reddwarf/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@reddwarf/policy':
         specifier: workspace:*
         version: link:../policy
