@@ -303,10 +303,8 @@ export function renderPlanningSpecMarkdown(
 }
 
 export function createWorkspaceContextArtifacts(
-  bundleInput: WorkspaceContextBundle
+  bundle: WorkspaceContextBundle
 ): WorkspaceContextArtifacts {
-  const bundle = workspaceContextBundleSchema.parse(bundleInput);
-
   return {
     taskJson: `${JSON.stringify(bundle.manifest, null, 2)}\n`,
     specMarkdown: renderPlanningSpecMarkdown(bundle),
@@ -317,9 +315,8 @@ export function createWorkspaceContextArtifacts(
 }
 
 export function createRuntimeInstructionLayer(
-  bundleInput: WorkspaceContextBundle
+  bundle: WorkspaceContextBundle
 ): RuntimeInstructionLayer {
-  const bundle = workspaceContextBundleSchema.parse(bundleInput);
   const canonicalSources = buildCanonicalSources(bundle);
   const toolPolicy = createWorkspaceToolPolicy(bundle);
 
@@ -360,10 +357,8 @@ export function createRuntimeInstructionLayer(
 }
 
 export function createRuntimeInstructionArtifacts(
-  layerInput: RuntimeInstructionLayer
+  layer: RuntimeInstructionLayer
 ): RuntimeInstructionArtifacts {
-  const layer = runtimeInstructionLayerSchema.parse(layerInput);
-
   return {
     soulMd: getRuntimeInstructionContent(
       layer,
@@ -389,7 +384,7 @@ export async function materializeWorkspaceContext(input: {
   targetRoot: string;
   workspaceId?: string;
 }): Promise<MaterializedWorkspaceContext> {
-  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const bundle = input.bundle;
   const workspaceId =
     input.workspaceId ?? bundle.manifest.workspaceId ?? bundle.manifest.taskId;
   const workspaceRoot = resolve(input.targetRoot, workspaceId);
@@ -483,7 +478,7 @@ export function createWorkspaceDescriptor(input: {
   secretLease?: SecretLease | null;
   secretEnvFile?: string | null;
 }): WorkspaceDescriptor {
-  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const bundle = input.bundle;
   const workspaceId = input.materialized.workspaceId;
   const createdAt = input.createdAt ?? asIsoTimestamp();
   const updatedAt = input.updatedAt ?? createdAt;
@@ -539,15 +534,14 @@ export async function materializeManagedWorkspace(input: {
   createdAt?: string;
   secretLease?: SecretLease | null;
 }): Promise<MaterializedManagedWorkspace> {
-  const bundle = workspaceContextBundleSchema.parse(input.bundle);
   const materializedBundle = workspaceContextBundleSchema.parse({
-    ...bundle,
+    ...input.bundle,
     manifest: {
-      ...bundle.manifest,
+      ...input.bundle.manifest,
       workspaceId:
         input.workspaceId ??
-        bundle.manifest.workspaceId ??
-        `${bundle.manifest.taskId}-workspace`
+        input.bundle.manifest.workspaceId ??
+        `${input.bundle.manifest.taskId}-workspace`
     }
   });
   const materialized = await materializeWorkspaceContext({
@@ -849,9 +843,8 @@ export function buildArchivedArtifactMetadata(input: {
 // ============================================================
 
 export function createWorkspaceToolPolicy(
-  bundleInput: WorkspaceContextBundle
+  bundle: WorkspaceContextBundle
 ): WorkspaceDescriptor["toolPolicy"] {
-  const bundle = workspaceContextBundleSchema.parse(bundleInput);
   const secretsCapability =
     bundle.policySnapshot.allowedCapabilities.includes("can_use_secrets") &&
     bundle.policySnapshot.allowedSecretScopes.length > 0
@@ -921,7 +914,7 @@ export function createWorkspaceCredentialPolicy(input: {
   secretLease?: SecretLease | null;
   secretEnvFile?: string | null;
 }): WorkspaceDescriptor["credentialPolicy"] {
-  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const bundle = input.bundle;
   const allowedSecretScopes = [...new Set(bundle.policySnapshot.allowedSecretScopes)];
   const secretsAllowedByPolicy =
     bundle.manifest.requestedCapabilities.includes("can_use_secrets") &&
