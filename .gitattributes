@@ -1,0 +1,8 @@
+# Normalise all text files to LF in the working tree and repository.
+# This suppresses the LF→CRLF conversion warning on Windows and keeps
+# line endings consistent across contributors on different operating systems.
+* text=auto eol=lf
+
+# Windows-specific files that must use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
