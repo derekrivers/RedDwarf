@@ -1,4 +1,4 @@
-import { asIsoTimestamp, type ApprovalMode, type Capability, type PlanningTaskInput, type RiskClass } from "@reddwarf/contracts";
+import { asIsoTimestamp, capabilities, type ApprovalMode, type Capability, type PlanningTaskInput, type RiskClass } from "@reddwarf/contracts";
 
 export const ciCheckStatuses = ["success", "failure", "pending", "skipped"] as const;
 export const githubIssueStates = ["open", "closed"] as const;
@@ -772,15 +772,5 @@ function dedupeCapabilities(values: Capability[]): Capability[] {
 }
 
 function isCapability(value: string): value is Capability {
-  return [
-    "can_plan",
-    "can_write_code",
-    "can_run_tests",
-    "can_open_pr",
-    "can_modify_schema",
-    "can_touch_sensitive_paths",
-    "can_use_secrets",
-    "can_review",
-    "can_archive_evidence"
-  ].includes(value);
+  return (capabilities as readonly string[]).includes(value);
 }
