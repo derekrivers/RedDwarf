@@ -551,17 +551,20 @@ export function redactSecretValues(
   value: string,
   lease: Pick<SecretLease, "environmentVariables">
 ): string {
-  let redacted = value;
+  const secretValues = Object.values(lease.environmentVariables).filter(
+    (secretValue) => secretValue.length > 0
+  );
 
-  for (const secretValue of Object.values(lease.environmentVariables)) {
-    if (secretValue.length === 0) {
-      continue;
-    }
-
-    redacted = redacted.split(secretValue).join("***REDACTED***");
+  if (secretValues.length === 0) {
+    return value;
   }
 
-  return redacted;
+  const pattern = new RegExp(
+    secretValues.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    "g"
+  );
+
+  return value.replace(pattern, "***REDACTED***");
 }
 
 export function createPlanningInputFromGitHubIssue(

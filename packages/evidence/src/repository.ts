@@ -164,26 +164,17 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     const parsed = normalizeMemoryQuery(query);
 
     return this.memoryRecords
-      .filter((record) => (parsed.scope ? record.scope === parsed.scope : true))
-      .filter((record) =>
-        parsed.taskId ? record.taskId === parsed.taskId : true
-      )
-      .filter((record) => (parsed.repo ? record.repo === parsed.repo : true))
-      .filter((record) =>
-        parsed.organizationId
-          ? record.organizationId === parsed.organizationId
-          : true
-      )
-      .filter((record) =>
-        parsed.sourceUri ? record.sourceUri === parsed.sourceUri : true
-      )
-      .filter((record) =>
-        parsed.keyPrefix ? record.key.startsWith(parsed.keyPrefix) : true
-      )
-      .filter((record) =>
-        parsed.tags.length > 0
-          ? parsed.tags.every((tag) => record.tags.includes(tag))
-          : true
+      .filter(
+        (record) =>
+          (!parsed.scope || record.scope === parsed.scope) &&
+          (!parsed.taskId || record.taskId === parsed.taskId) &&
+          (!parsed.repo || record.repo === parsed.repo) &&
+          (!parsed.organizationId ||
+            record.organizationId === parsed.organizationId) &&
+          (!parsed.sourceUri || record.sourceUri === parsed.sourceUri) &&
+          (!parsed.keyPrefix || record.key.startsWith(parsed.keyPrefix)) &&
+          (parsed.tags.length === 0 ||
+            parsed.tags.every((tag) => record.tags.includes(tag)))
       )
       .sort(compareMemoryRecords)
       .slice(0, parsed.limit);
