@@ -230,20 +230,38 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   }
 
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
+    const [
+      manifest,
+      spec,
+      policySnapshot,
+      phaseRecords,
+      evidenceRecords,
+      runEvents,
+      memoryRecords,
+      pipelineRuns,
+      approvalRequests
+    ] = await Promise.all([
+      this.getManifest(taskId),
+      this.getPlanningSpec(taskId),
+      this.getPolicySnapshot(taskId),
+      this.listPhaseRecords(taskId),
+      this.listEvidenceRecords(taskId),
+      this.listRunEvents(taskId),
+      this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
+      this.listPipelineRuns({ taskId, limit: 100 }),
+      this.listApprovalRequests({ taskId, limit: 100 })
+    ]);
+
     return {
-      manifest: await this.getManifest(taskId),
-      spec: await this.getPlanningSpec(taskId),
-      policySnapshot: await this.getPolicySnapshot(taskId),
-      phaseRecords: await this.listPhaseRecords(taskId),
-      evidenceRecords: await this.listEvidenceRecords(taskId),
-      runEvents: await this.listRunEvents(taskId),
-      memoryRecords: await this.listMemoryRecords({
-        taskId,
-        scope: "task",
-        limit: 100
-      }),
-      pipelineRuns: await this.listPipelineRuns({ taskId, limit: 100 }),
-      approvalRequests: await this.listApprovalRequests({ taskId, limit: 100 })
+      manifest,
+      spec,
+      policySnapshot,
+      phaseRecords,
+      evidenceRecords,
+      runEvents,
+      memoryRecords,
+      pipelineRuns,
+      approvalRequests
     };
   }
 
