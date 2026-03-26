@@ -1292,8 +1292,6 @@ export async function runPlanningPipeline(
 
     activePhase = "archive";
     const archiveStartedAt = clock();
-    const archiveCompletedAt = clock();
-    const archiveCompletedAtIso = asIsoTimestamp(archiveCompletedAt);
     await repository.savePhaseRecord(
       createPhaseRecord({
         id: `${taskId}:phase:archive`,
@@ -1305,9 +1303,11 @@ export async function runPlanningPipeline(
         details: approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {},
-        createdAt: archiveCompletedAtIso
+        createdAt: asIsoTimestamp(archiveStartedAt)
       })
     );
+    const archiveCompletedAt = clock();
+    const archiveCompletedAtIso = asIsoTimestamp(archiveCompletedAt);
     await recordRunEvent({
       repository,
       logger: runLogger,
