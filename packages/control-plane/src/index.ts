@@ -1630,41 +1630,15 @@ export async function runPlanningPipeline(
     await repository.savePipelineRun(trackedRun);
   };
 
-  const overlappingRuns = await repository.listPipelineRuns({
+  const { staleRunIds, blockedByRun } = await detectOverlappingRuns({
+    repository,
     concurrencyKey,
-    statuses: ["active"],
-    limit: 25
+    runId,
+    runStartedAt,
+    runStartedAtIso,
+    staleAfterMs: concurrency.staleAfterMs,
+    strategy: concurrency.strategy
   });
-  const staleRunIds: string[] = [];
-  let blockedByRun: PipelineRun | null = null;
-
-  for (const overlap of overlappingRuns) {
-    if (overlap.runId === runId) {
-      continue;
-    }
-
-    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
-      await repository.savePipelineRun(
-        createPipelineRun({
-          ...overlap,
-          status: "stale",
-          lastHeartbeatAt: runStartedAtIso,
-          completedAt: runStartedAtIso,
-          staleAt: runStartedAtIso,
-          overlapReason: `Marked stale by run ${runId}`,
-          metadata: {
-            ...overlap.metadata,
-            staleDetectedByRunId: runId
-          }
-        })
-      );
-      staleRunIds.push(overlap.runId);
-      continue;
-    }
-
-    blockedByRun = overlap;
-    break;
-  }
 
   if (blockedByRun) {
     concurrencyDecision = createConcurrencyDecision({
@@ -2600,41 +2574,15 @@ export async function runDeveloperPhase(
     await repository.savePipelineRun(trackedRun);
   };
 
-  const overlappingRuns = await repository.listPipelineRuns({
+  const { staleRunIds, blockedByRun } = await detectOverlappingRuns({
+    repository,
     concurrencyKey,
-    statuses: ["active"],
-    limit: 25
+    runId,
+    runStartedAt,
+    runStartedAtIso,
+    staleAfterMs: concurrency.staleAfterMs,
+    strategy: concurrency.strategy
   });
-  const staleRunIds: string[] = [];
-  let blockedByRun: PipelineRun | null = null;
-
-  for (const overlap of overlappingRuns) {
-    if (overlap.runId === runId) {
-      continue;
-    }
-
-    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
-      await repository.savePipelineRun(
-        createPipelineRun({
-          ...overlap,
-          status: "stale",
-          lastHeartbeatAt: runStartedAtIso,
-          completedAt: runStartedAtIso,
-          staleAt: runStartedAtIso,
-          overlapReason: `Marked stale by run ${runId}`,
-          metadata: {
-            ...overlap.metadata,
-            staleDetectedByRunId: runId
-          }
-        })
-      );
-      staleRunIds.push(overlap.runId);
-      continue;
-    }
-
-    blockedByRun = overlap;
-    break;
-  }
 
   if (blockedByRun) {
     concurrencyDecision = createConcurrencyDecision({
@@ -3339,41 +3287,15 @@ export async function runValidationPhase(
     await repository.savePipelineRun(trackedRun);
   };
 
-  const overlappingRuns = await repository.listPipelineRuns({
+  const { staleRunIds, blockedByRun } = await detectOverlappingRuns({
+    repository,
     concurrencyKey,
-    statuses: ["active"],
-    limit: 25
+    runId,
+    runStartedAt,
+    runStartedAtIso,
+    staleAfterMs: concurrency.staleAfterMs,
+    strategy: concurrency.strategy
   });
-  const staleRunIds: string[] = [];
-  let blockedByRun: PipelineRun | null = null;
-
-  for (const overlap of overlappingRuns) {
-    if (overlap.runId === runId) {
-      continue;
-    }
-
-    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
-      await repository.savePipelineRun(
-        createPipelineRun({
-          ...overlap,
-          status: "stale",
-          lastHeartbeatAt: runStartedAtIso,
-          completedAt: runStartedAtIso,
-          staleAt: runStartedAtIso,
-          overlapReason: `Marked stale by run ${runId}`,
-          metadata: {
-            ...overlap.metadata,
-            staleDetectedByRunId: runId
-          }
-        })
-      );
-      staleRunIds.push(overlap.runId);
-      continue;
-    }
-
-    blockedByRun = overlap;
-    break;
-  }
 
   if (blockedByRun) {
     concurrencyDecision = createConcurrencyDecision({
@@ -4326,6 +4248,63 @@ function isPipelineRunStale(
   staleAfterMs: number
 ): boolean {
   return now.getTime() - new Date(run.lastHeartbeatAt).getTime() > staleAfterMs;
+}
+
+async function detectOverlappingRuns(input: {
+  repository: PlanningRepository;
+  concurrencyKey: string;
+  runId: string;
+  runStartedAt: Date;
+  runStartedAtIso: string;
+  staleAfterMs: number;
+  strategy: ConcurrencyStrategy;
+}): Promise<{ staleRunIds: string[]; blockedByRun: PipelineRun | null }> {
+  const {
+    repository,
+    concurrencyKey,
+    runId,
+    runStartedAt,
+    runStartedAtIso,
+    staleAfterMs
+  } = input;
+
+  const overlappingRuns = await repository.listPipelineRuns({
+    concurrencyKey,
+    statuses: ["active"],
+    limit: 25
+  });
+  const staleRunIds: string[] = [];
+  let blockedByRun: PipelineRun | null = null;
+
+  for (const overlap of overlappingRuns) {
+    if (overlap.runId === runId) {
+      continue;
+    }
+
+    if (isPipelineRunStale(overlap, runStartedAt, staleAfterMs)) {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...overlap,
+          status: "stale",
+          lastHeartbeatAt: runStartedAtIso,
+          completedAt: runStartedAtIso,
+          staleAt: runStartedAtIso,
+          overlapReason: `Marked stale by run ${runId}`,
+          metadata: {
+            ...overlap.metadata,
+            staleDetectedByRunId: runId
+          }
+        })
+      );
+      staleRunIds.push(overlap.runId);
+      continue;
+    }
+
+    blockedByRun = overlap;
+    break;
+  }
+
+  return { staleRunIds, blockedByRun };
 }
 
 function createTaskId(input: PlanningTaskInput, runId: string): string {
@@ -5390,41 +5369,15 @@ export async function runScmPhase(
     await repository.savePipelineRun(trackedRun);
   };
 
-  const overlappingRuns = await repository.listPipelineRuns({
+  const { staleRunIds, blockedByRun } = await detectOverlappingRuns({
+    repository,
     concurrencyKey,
-    statuses: ["active"],
-    limit: 25
+    runId,
+    runStartedAt,
+    runStartedAtIso,
+    staleAfterMs: concurrency.staleAfterMs,
+    strategy: concurrency.strategy
   });
-  const staleRunIds: string[] = [];
-  let blockedByRun: PipelineRun | null = null;
-
-  for (const overlap of overlappingRuns) {
-    if (overlap.runId === runId) {
-      continue;
-    }
-
-    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
-      await repository.savePipelineRun(
-        createPipelineRun({
-          ...overlap,
-          status: "stale",
-          lastHeartbeatAt: runStartedAtIso,
-          completedAt: runStartedAtIso,
-          staleAt: runStartedAtIso,
-          overlapReason: `Marked stale by run ${runId}`,
-          metadata: {
-            ...overlap.metadata,
-            staleDetectedByRunId: runId
-          }
-        })
-      );
-      staleRunIds.push(overlap.runId);
-      continue;
-    }
-
-    blockedByRun = overlap;
-    break;
-  }
 
   if (blockedByRun) {
     concurrencyDecision = createConcurrencyDecision({
