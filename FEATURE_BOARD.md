@@ -44,3 +44,5 @@ The board is ordered by implementation priority.
 | 38       | Optimize InMemoryPlanningRepository filter chain and redactSecretValues        | M6        | completed | Evidence Plane, Integration Plane                                      |
 | 39       | Split PlanningRepository interface into read and write contracts               | M7        | todo      | Evidence Plane                                                         |
 | 40       | Inject pg.Pool dependency into PostgresPlanningRepository constructor          | M7        | todo      | Evidence Plane                                                         |
+| 41       | Move agent interfaces and draft types to contracts to unblock F32              | M7        | todo      | Contracts, Execution Plane, Control Plane                              |
+| 42       | Move deterministic agent classes to execution-plane (unblocked by F41)        | M7        | todo      | Execution Plane, Control Plane                                         |
