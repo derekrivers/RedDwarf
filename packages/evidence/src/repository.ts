@@ -27,7 +27,7 @@ import {
   type TaskManifest
 } from "@reddwarf/contracts";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
-export interface PlanningRepository {
+export interface PlanningCommandRepository {
   saveManifest(manifest: TaskManifest): Promise<void>;
   updateManifest(manifest: TaskManifest): Promise<void>;
   savePhaseRecord(record: PhaseRecord): Promise<void>;
@@ -38,6 +38,9 @@ export interface PlanningRepository {
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+}
+
+export interface PlanningQueryRepository {
   getManifest(taskId: string): Promise<TaskManifest | null>;
   getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
   listApprovalRequests(
@@ -46,6 +49,8 @@ export interface PlanningRepository {
   getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
 }
+
+export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;
 
 export interface PersistedTaskSnapshot {
   manifest: TaskManifest | null;
