@@ -13,7 +13,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 
 - `packages/contracts`: shared domain schemas and types, including partitioned memory contracts
 - `packages/policy`: eligibility, risk, approval, and guardrail logic
-- `packages/control-plane`: lifecycle, planning pipeline orchestration, concurrency/stale-run enforcement, OpenClaw context materialization helpers, and structured observability hooks
+- `packages/control-plane`: lifecycle, planning pipeline orchestration, concurrency/stale-run enforcement, OpenClaw context and runtime instruction materialization helpers, and structured observability hooks
 - `packages/execution-plane`: agent definitions and disabled future phases
 - `packages/evidence`: persistence schema, SQL migrations, policy snapshot storage, partitioned memory persistence/query helpers, pipeline-run persistence, Postgres-backed repository implementations, and run summaries
 - `packages/integrations`: read-only GitHub and CI adapter contracts, deterministic issue-intake helpers, and v1 mutation guards
@@ -35,7 +35,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - `postgres` stores manifests, planning specs, policy snapshots, evidence metadata, run events, durable pipeline-run records for overlap control, derived run summaries, and partitioned memory across task, project, organization, and external scopes.
 - Host-side verification uses `POSTGRES_HOST_PORT` and defaults to `55432` to avoid collisions with an existing local Postgres on `5432`.
 - Host-side DB clients should use `127.0.0.1` instead of `localhost` on this Windows setup because `localhost` can resolve through `wslrelay` and miss the Docker-bound listener.
-- Host-side context materialization defaults to `REDDWARF_HOST_WORKSPACE_ROOT=runtime-data/workspaces`.
+- Host-side context materialization defaults to `REDDWARF_HOST_WORKSPACE_ROOT=runtime-data/workspaces` and writes `.context/` plus generated `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and `skills/reddwarf-task/SKILL.md` files into each workspace.
 - GitHub and CI integrations are modeled as read-only adapters in v1. Issue intake and status reads are supported; branch, PR, label, workflow, and secret mutations stay blocked behind explicit `V1MutationDisabledError` guards.
 - Concurrency is conservative by default: overlapping active runs for the same task source are serialized, stale runs are retired based on heartbeat age, and fresh overlaps are blocked with durable run-level evidence.
 - `runtime-workspace` and `runtime-evidence` are separate writable volumes for container runtime use.

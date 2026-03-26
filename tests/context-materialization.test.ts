@@ -1,14 +1,22 @@
-﻿import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createRuntimeInstructionArtifacts,
+  createRuntimeInstructionLayer,
   createWorkspaceContextArtifacts,
   createWorkspaceContextBundle,
   createWorkspaceContextBundleFromSnapshot,
   materializeWorkspaceContext
 } from "@reddwarf/control-plane";
-import { asIsoTimestamp, type PersistedTaskSnapshot, type PolicySnapshot, type TaskManifest, type PlanningSpec } from "@reddwarf/contracts";
+import {
+  asIsoTimestamp,
+  type PersistedTaskSnapshot,
+  type PlanningSpec,
+  type PolicySnapshot,
+  type TaskManifest
+} from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
 const manifest: TaskManifest = {
@@ -62,9 +70,11 @@ const policySnapshot: PolicySnapshot = {
 };
 
 describe("workspace context materialization", () => {
-  it("creates the expected OpenClaw context artifacts", () => {
+  it("creates the expected OpenClaw context artifacts and runtime instructions", () => {
     const bundle = createWorkspaceContextBundle({ manifest, spec, policySnapshot });
     const artifacts = createWorkspaceContextArtifacts(bundle);
+    const runtimeInstructionLayer = createRuntimeInstructionLayer(bundle);
+    const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(runtimeInstructionLayer);
 
     expect(JSON.parse(artifacts.taskJson).taskId).toBe(manifest.taskId);
     expect(JSON.parse(artifacts.policySnapshotJson).approvalMode).toBe("auto");
@@ -72,9 +82,19 @@ describe("workspace context materialization", () => {
     expect(JSON.parse(artifacts.acceptanceCriteriaJson)).toEqual(["Spec is produced"]);
     expect(artifacts.specMarkdown).toContain("# Planning Spec");
     expect(artifacts.specMarkdown).toContain("## Acceptance Criteria");
+    expect(runtimeInstructionLayer.files.map((file) => file.relativePath)).toEqual([
+      "SOUL.md",
+      "AGENTS.md",
+      "TOOLS.md",
+      "skills/reddwarf-task/SKILL.md"
+    ]);
+    expect(runtimeInstructionArtifacts.soulMd).toContain("RedDwarf Runtime Soul");
+    expect(runtimeInstructionArtifacts.agentsMd).toContain("Architect Agent");
+    expect(runtimeInstructionArtifacts.toolsMd).toContain("can_plan");
+    expect(runtimeInstructionArtifacts.taskSkillMd).toContain(".context/task.json");
   });
 
-  it("materializes the .context directory to disk", async () => {
+  it("materializes the .context directory and runtime instruction layer to disk", async () => {
     const bundle = createWorkspaceContextBundle({ manifest, spec, policySnapshot });
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-context-"));
 
@@ -87,10 +107,19 @@ describe("workspace context materialization", () => {
 
       const taskJson = JSON.parse(await readFile(materialized.files.taskJson, "utf8"));
       const specMarkdown = await readFile(materialized.files.specMarkdown, "utf8");
+      const soulMd = await readFile(materialized.instructions.files.soulMd, "utf8");
+      const agentsMd = await readFile(materialized.instructions.files.agentsMd, "utf8");
+      const toolsMd = await readFile(materialized.instructions.files.toolsMd, "utf8");
+      const taskSkillMd = await readFile(materialized.instructions.files.taskSkillMd, "utf8");
 
       expect(taskJson.taskId).toBe(manifest.taskId);
       expect(taskJson.workspaceId).toBe("workspace-42");
       expect(specMarkdown).toContain("Plan the work.");
+      expect(materialized.instructions.canonicalSources).toContain("standards/engineering.md");
+      expect(soulMd).toContain("workspace-42");
+      expect(agentsMd).toContain("Architect Agent");
+      expect(toolsMd).toContain("docs/**");
+      expect(taskSkillMd).toContain("prompts/planning-system.md");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -110,4 +139,3 @@ describe("workspace context materialization", () => {
     expect(bundle.policySnapshot.allowedPaths).toEqual(["docs/**"]);
   });
 });
-

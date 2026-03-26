@@ -1,10 +1,12 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   DeterministicPlanningAgent,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
   createBufferedPlanningLogger,
+  createRuntimeInstructionArtifacts,
+  createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
@@ -62,11 +64,18 @@ describe("control-plane", () => {
       spec: result.spec!,
       policySnapshot: result.policySnapshot!
     });
+    const runtimeInstructionLayer = createRuntimeInstructionLayer(bundle);
+    const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(runtimeInstructionLayer);
     const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
     const taskMemory = await repository.listMemoryRecords({ taskId: result.manifest.taskId, scope: "task" });
     const pipelineRuns = await repository.listPipelineRuns({ taskId: result.manifest.taskId });
 
     expect(bundle.allowedPaths).toEqual(["docs/guide.md"]);
+    expect(runtimeInstructionLayer.files.map((file) => file.relativePath)).toContain("SOUL.md");
+    expect(runtimeInstructionLayer.canonicalSources).toContain("standards/engineering.md");
+    expect(runtimeInstructionArtifacts.soulMd).toContain("RedDwarf Runtime Soul");
+    expect(runtimeInstructionArtifacts.toolsMd).toContain("can_plan");
+    expect(runtimeInstructionArtifacts.taskSkillMd).toContain(".context/task.json");
     expect(runSummary?.status).toBe("completed");
     expect(runSummary?.phaseDurations.planning).toBe(0);
     expect(runSummary?.eventCounts.info).toBeGreaterThanOrEqual(6);

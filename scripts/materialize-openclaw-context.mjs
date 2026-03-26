@@ -36,7 +36,7 @@ try {
     ...bundle.manifest,
     workspaceId,
     updatedAt: new Date().toISOString(),
-    evidenceLinks: [...new Set([...bundle.manifest.evidenceLinks, materialized.contextDir])]
+    evidenceLinks: [...new Set([...bundle.manifest.evidenceLinks, materialized.workspaceRoot, materialized.contextDir])]
   };
 
   await repository.updateManifest(updatedManifest);
@@ -45,11 +45,14 @@ try {
       recordId: `${taskId}:context:${workspaceId}`,
       taskId,
       kind: "file_artifact",
-      title: "OpenClaw context bundle",
-      location: materialized.contextDir,
+      title: "OpenClaw context bundle and runtime instruction layer",
+      location: materialized.workspaceRoot,
       metadata: {
         workspaceId,
-        files: materialized.files
+        contextDir: materialized.contextDir,
+        contextFiles: materialized.files,
+        instructionFiles: materialized.instructions.files,
+        canonicalSources: materialized.instructions.canonicalSources
       }
     })
   );

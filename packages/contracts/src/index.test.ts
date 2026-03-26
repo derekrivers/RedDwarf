@@ -9,6 +9,7 @@ import {
   policyPackManifestSchema,
   runEventSchema,
   runSummarySchema,
+  runtimeInstructionLayerSchema,
   workspaceContextBundleSchema
 } from "@reddwarf/contracts";
 
@@ -89,6 +90,33 @@ describe("contracts", () => {
     });
 
     expect(bundle.policySnapshot.blockedPhases).toContain("development");
+  });
+
+  it("parses a runtime instruction layer", () => {
+    const layer = runtimeInstructionLayerSchema.parse({
+      taskId: "acme-platform-42",
+      assignedAgentType: "architect",
+      recommendedAgentType: "architect",
+      approvalMode: "auto",
+      allowedCapabilities: ["can_plan", "can_archive_evidence"],
+      blockedPhases: ["development", "validation", "review", "scm"],
+      canonicalSources: ["standards/engineering.md", "prompts/planning-system.md"],
+      contextFiles: [".context/task.json", ".context/spec.md"],
+      files: [
+        {
+          relativePath: "SOUL.md",
+          description: "Workspace operating posture and source hierarchy.",
+          content: "# RedDwarf Runtime Soul"
+        },
+        {
+          relativePath: "skills/reddwarf-task/SKILL.md",
+          description: "Task skill",
+          content: "# RedDwarf Task Runtime Skill"
+        }
+      ]
+    });
+
+    expect(layer.files.map((file) => file.relativePath)).toContain("SOUL.md");
   });
 
   it("parses run events and summaries with failure metadata", () => {

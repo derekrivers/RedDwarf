@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { createPolicyPackPackage, validatePolicyPackRoot } from "./lib/policy-packaging.mjs";
 
@@ -12,7 +12,7 @@ const manifestModule = await import(
   pathToFileURL(`${packaged.packageRoot.replace(/\\/g, "/")}/packages/contracts/dist/index.js`).href
 );
 
-const artifacts = controlPlaneModule.createWorkspaceContextArtifacts({
+const bundle = {
   manifest: {
     taskId: "packaged-verify-1",
     source: {
@@ -62,14 +62,21 @@ const artifacts = controlPlaneModule.createWorkspaceContextArtifacts({
   },
   acceptanceCriteria: ["Spec markdown renders", "Manifest validates"],
   allowedPaths: ["prompts/**"]
-});
+};
 
+const artifacts = controlPlaneModule.createWorkspaceContextArtifacts(bundle);
+const instructionLayer = controlPlaneModule.createRuntimeInstructionLayer(bundle);
+const instructionArtifacts = controlPlaneModule.createRuntimeInstructionArtifacts(instructionLayer);
 const parsedManifest = manifestModule.policyPackManifestSchema.parse(packaged.manifest);
 
 assert.equal(parsedManifest.policyPackId, "reddwarf-policy-pack");
 assert.match(artifacts.specMarkdown, /# Planning Spec/);
 assert.match(artifacts.taskJson, /packaged-verify-1/);
 assert.equal(artifacts.acceptanceCriteriaJson.includes("Spec markdown renders"), true);
+assert.match(instructionArtifacts.soulMd, /RedDwarf Runtime Soul/);
+assert.match(instructionArtifacts.agentsMd, /Architect Agent/);
+assert.match(instructionArtifacts.taskSkillMd, /\.context\/task\.json/);
+assert.equal(instructionLayer.canonicalSources.includes("prompts/planning-system.md"), true);
 
 console.log(
   JSON.stringify(

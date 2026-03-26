@@ -5,12 +5,15 @@ import pino from "pino";
 import type { DestinationStream, Logger as PinoLogger } from "pino";
 import {
   asIsoTimestamp,
+  capabilities,
   concurrencyDecisionSchema,
   phaseRecordSchema,
   planningSpecSchema,
   planningTaskInputSchema,
+  runtimeInstructionLayerSchema,
   taskManifestSchema,
   workspaceContextBundleSchema,
+  type Capability,
   type ConcurrencyDecision,
   type ConcurrencyStrategy,
   type FailureClass,
@@ -20,6 +23,7 @@ import {
   type PlanningSpec,
   type PlanningTaskInput,
   type PolicySnapshot,
+  type RuntimeInstructionLayer,
   type RunEvent,
   type TaskLifecycleStatus,
   type TaskManifest,
@@ -35,7 +39,7 @@ import {
   type PersistedTaskSnapshot,
   type PlanningRepository
 } from "@reddwarf/evidence";
-import { assertPhaseExecutable } from "@reddwarf/execution-plane";
+import { agentDefinitions, assertPhaseExecutable } from "@reddwarf/execution-plane";
 import {
   assessEligibility,
   buildPolicySnapshot,
@@ -146,6 +150,20 @@ export interface WorkspaceContextArtifacts {
   acceptanceCriteriaJson: string;
 }
 
+export interface RuntimeInstructionArtifacts {
+  soulMd: string;
+  agentsMd: string;
+  toolsMd: string;
+  taskSkillMd: string;
+}
+
+export interface MaterializedRuntimeInstructionFiles {
+  soulMd: string;
+  agentsMd: string;
+  toolsMd: string;
+  taskSkillMd: string;
+}
+
 export interface MaterializedWorkspaceContext {
   workspaceId: string;
   workspaceRoot: string;
@@ -156,6 +174,11 @@ export interface MaterializedWorkspaceContext {
     policySnapshotJson: string;
     allowedPathsJson: string;
     acceptanceCriteriaJson: string;
+  };
+  instructions: {
+    canonicalSources: string[];
+    taskContractFiles: string[];
+    files: MaterializedRuntimeInstructionFiles;
   };
 }
 
@@ -206,6 +229,38 @@ const defaultLogger: PlanningPipelineLogger = {
   child() {
     return defaultLogger;
   }
+};
+
+const taskContractRelativePaths = [
+  ".context/task.json",
+  ".context/spec.md",
+  ".context/policy_snapshot.json",
+  ".context/allowed_paths.json",
+  ".context/acceptance_criteria.json"
+] as const;
+
+const runtimeInstructionRelativePaths = {
+  soulMd: "SOUL.md",
+  agentsMd: "AGENTS.md",
+  toolsMd: "TOOLS.md",
+  taskSkillMd: "skills/reddwarf-task/SKILL.md"
+} as const;
+
+const agentInstructionPathByType: Partial<Record<TaskManifest["assignedAgentType"], string>> = {
+  architect: "agents/architect.md",
+  developer: "agents/developer.md"
+};
+
+const capabilityGuidance: Record<Capability, string> = {
+  can_plan: "Inspect task context, policy inputs, and mounted standards to produce deterministic planning output.",
+  can_write_code: "Write or modify product code only after the development phase is enabled and policy grants it.",
+  can_run_tests: "Run validation commands only when the validation phase and policy both allow test execution.",
+  can_open_pr: "Create branches, commits, or pull requests only behind explicit SCM approval gates.",
+  can_modify_schema: "Change schemas or migrations only with explicit approval for sensitive surfaces.",
+  can_touch_sensitive_paths: "Touch restricted repo areas only after path-level approval is granted.",
+  can_use_secrets: "Use scoped credentials only when a secrets adapter has injected them for this task.",
+  can_review: "Review generated work and compare it to requirements when the review phase is enabled.",
+  can_archive_evidence: "Persist structured logs, specs, diffs, and verification output as durable evidence."
 };
 
 export function createPinoPlanningLogger(options: PinoPlanningLoggerOptions = {}): PlanningPipelineLogger {
@@ -381,6 +436,59 @@ export function createWorkspaceContextArtifacts(
   };
 }
 
+export function createRuntimeInstructionLayer(
+  bundleInput: WorkspaceContextBundle
+): RuntimeInstructionLayer {
+  const bundle = workspaceContextBundleSchema.parse(bundleInput);
+  const canonicalSources = buildCanonicalSources(bundle);
+
+  return runtimeInstructionLayerSchema.parse({
+    taskId: bundle.manifest.taskId,
+    assignedAgentType: bundle.manifest.assignedAgentType,
+    recommendedAgentType: bundle.spec.recommendedAgentType,
+    approvalMode: bundle.policySnapshot.approvalMode,
+    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+    blockedPhases: bundle.policySnapshot.blockedPhases,
+    canonicalSources,
+    contextFiles: [...taskContractRelativePaths],
+    files: [
+      {
+        relativePath: runtimeInstructionRelativePaths.soulMd,
+        description: "Workspace operating posture and source hierarchy.",
+        content: renderRuntimeSoulMarkdown(bundle, canonicalSources)
+      },
+      {
+        relativePath: runtimeInstructionRelativePaths.agentsMd,
+        description: "Runtime agent roster and task routing guidance.",
+        content: renderRuntimeAgentsMarkdown(bundle)
+      },
+      {
+        relativePath: runtimeInstructionRelativePaths.toolsMd,
+        description: "Capability, path, and escalation guardrails for the workspace.",
+        content: renderRuntimeToolsMarkdown(bundle)
+      },
+      {
+        relativePath: runtimeInstructionRelativePaths.taskSkillMd,
+        description: "Task-scoped skill that tells agents how to use the context bundle and policy pack.",
+        content: renderRuntimeTaskSkillMarkdown(bundle, canonicalSources)
+      }
+    ]
+  });
+}
+
+export function createRuntimeInstructionArtifacts(
+  layerInput: RuntimeInstructionLayer
+): RuntimeInstructionArtifacts {
+  const layer = runtimeInstructionLayerSchema.parse(layerInput);
+
+  return {
+    soulMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.soulMd),
+    agentsMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.agentsMd),
+    toolsMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.toolsMd),
+    taskSkillMd: getRuntimeInstructionContent(layer, runtimeInstructionRelativePaths.taskSkillMd)
+  };
+}
+
 export async function materializeWorkspaceContext(input: {
   bundle: WorkspaceContextBundle;
   targetRoot: string;
@@ -405,21 +513,39 @@ export async function materializeWorkspaceContext(input: {
     }
   });
   const artifacts = createWorkspaceContextArtifacts(materializedBundle);
+  const runtimeInstructionLayer = createRuntimeInstructionLayer(materializedBundle);
+  const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(runtimeInstructionLayer);
+  const instructionFiles = {
+    soulMd: join(workspaceRoot, runtimeInstructionRelativePaths.soulMd),
+    agentsMd: join(workspaceRoot, runtimeInstructionRelativePaths.agentsMd),
+    toolsMd: join(workspaceRoot, runtimeInstructionRelativePaths.toolsMd),
+    taskSkillMd: join(workspaceRoot, ...runtimeInstructionRelativePaths.taskSkillMd.split("/"))
+  };
 
   await mkdir(contextDir, { recursive: true });
+  await mkdir(join(workspaceRoot, "skills", "reddwarf-task"), { recursive: true });
   await Promise.all([
     writeFile(files.taskJson, artifacts.taskJson, "utf8"),
     writeFile(files.specMarkdown, artifacts.specMarkdown, "utf8"),
     writeFile(files.policySnapshotJson, artifacts.policySnapshotJson, "utf8"),
     writeFile(files.allowedPathsJson, artifacts.allowedPathsJson, "utf8"),
-    writeFile(files.acceptanceCriteriaJson, artifacts.acceptanceCriteriaJson, "utf8")
+    writeFile(files.acceptanceCriteriaJson, artifacts.acceptanceCriteriaJson, "utf8"),
+    writeFile(instructionFiles.soulMd, runtimeInstructionArtifacts.soulMd, "utf8"),
+    writeFile(instructionFiles.agentsMd, runtimeInstructionArtifacts.agentsMd, "utf8"),
+    writeFile(instructionFiles.toolsMd, runtimeInstructionArtifacts.toolsMd, "utf8"),
+    writeFile(instructionFiles.taskSkillMd, runtimeInstructionArtifacts.taskSkillMd, "utf8")
   ]);
 
   return {
     workspaceId,
     workspaceRoot,
     contextDir,
-    files
+    files,
+    instructions: {
+      canonicalSources: runtimeInstructionLayer.canonicalSources,
+      taskContractFiles: Object.values(files),
+      files: instructionFiles
+    }
   };
 }
 
@@ -1357,6 +1483,181 @@ function bindPlanningLogger(
   };
 }
 
+function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
+  const canonicalSources = new Set<string>([
+    "openclaw_ai_dev_team_v_2_architecture.md",
+    "docs/implementation-map.md",
+    "standards/engineering.md",
+    "prompts/planning-system.md"
+  ]);
+  const assignedAgentSource = agentInstructionPathByType[bundle.manifest.assignedAgentType];
+  const recommendedAgentSource = agentInstructionPathByType[bundle.spec.recommendedAgentType];
+
+  if (assignedAgentSource) {
+    canonicalSources.add(assignedAgentSource);
+  }
+
+  if (recommendedAgentSource) {
+    canonicalSources.add(recommendedAgentSource);
+  }
+
+  return [...canonicalSources];
+}
+
+function getRuntimeInstructionContent(layer: RuntimeInstructionLayer, relativePath: string): string {
+  const file = layer.files.find((entry) => entry.relativePath === relativePath);
+
+  if (!file) {
+    throw new Error(`Missing runtime instruction file ${relativePath}.`);
+  }
+
+  return file.content.endsWith("\n") ? file.content : `${file.content}\n`;
+}
+
+function renderRuntimeSoulMarkdown(
+  bundle: WorkspaceContextBundle,
+  canonicalSources: string[]
+): string {
+  return [
+    "# RedDwarf Runtime Soul",
+    "",
+    `This workspace is provisioned for task \`${bundle.manifest.taskId}\` under policy \`${bundle.policySnapshot.policyVersion}\`.`,
+    "",
+    "## Task Frame",
+    "",
+    `- Assigned agent: \`${bundle.manifest.assignedAgentType}\``,
+    `- Recommended agent: \`${bundle.spec.recommendedAgentType}\``,
+    `- Workspace ID: \`${bundle.manifest.workspaceId ?? bundle.manifest.taskId}\``,
+    `- Current phase in manifest: \`${bundle.manifest.currentPhase}\``,
+    `- Risk class: \`${bundle.manifest.riskClass}\``,
+    `- Approval mode: \`${bundle.policySnapshot.approvalMode}\``,
+    "",
+    "## First Reads",
+    "",
+    ...taskContractRelativePaths.map((path) => `- \`${path}\``),
+    "",
+    "## Canonical Sources",
+    "",
+    ...canonicalSources.map((path) => `- \`${path}\``),
+    "",
+    "## Guardrails",
+    "",
+    `- Allowed capabilities: ${formatLiteralList(bundle.policySnapshot.allowedCapabilities)}`,
+    `- Allowed paths: ${formatLiteralList(bundle.allowedPaths)}`,
+    `- Blocked phases in v1: ${formatLiteralList(bundle.policySnapshot.blockedPhases)}`,
+    "- Escalate rather than write product code, open PRs, use secrets, or exceed the allowed path scope.",
+    "- Treat `.context/` as the task contract and the policy-pack docs as the canonical source of engineering rules.",
+    ""
+  ].join("\n");
+}
+
+function renderRuntimeAgentsMarkdown(bundle: WorkspaceContextBundle): string {
+  const enabledAgents = agentDefinitions.filter((agent) => agent.enabled).map((agent) => agent.type);
+
+  return [
+    "# Agent Instructions",
+    "",
+    `- Assigned agent for this task: \`${bundle.manifest.assignedAgentType}\``,
+    `- Recommended agent from planning: \`${bundle.spec.recommendedAgentType}\``,
+    `- Enabled autonomous agents in v1: ${formatLiteralList(enabledAgents)}`,
+    "",
+    ...agentDefinitions.flatMap((agent) => {
+      const instructionPath = agentInstructionPathByType[agent.type];
+
+      return [
+        `## ${agent.displayName}`,
+        "",
+        `- Type: \`${agent.type}\``,
+        `- Enabled: ${agent.enabled ? "yes" : "no"}`,
+        `- Active phases: ${formatLiteralList(agent.activePhases)}`,
+        `- Capabilities: ${formatLiteralList(agent.capabilities)}`,
+        `- Description: ${agent.description}`,
+        instructionPath
+          ? `- Canonical role file: \`${instructionPath}\``
+          : "- Canonical role file: no dedicated markdown asset is versioned yet; use this roster entry.",
+        ""
+      ];
+    })
+  ].join("\n");
+}
+
+function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
+  const deniedCapabilities = capabilities.filter(
+    (capability) => !bundle.policySnapshot.allowedCapabilities.includes(capability)
+  );
+  const requestedButDenied = bundle.manifest.requestedCapabilities.filter(
+    (capability) => !bundle.policySnapshot.allowedCapabilities.includes(capability)
+  );
+
+  return [
+    "# Tool Contract",
+    "",
+    `- Requested capabilities: ${formatLiteralList(bundle.manifest.requestedCapabilities)}`,
+    `- Allowed capabilities now: ${formatLiteralList(bundle.policySnapshot.allowedCapabilities)}`,
+    `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
+    `- Requested but denied: ${formatLiteralList(requestedButDenied)}`,
+    "",
+    "## Allowed Capability Guidance",
+    "",
+    ...bundle.policySnapshot.allowedCapabilities.flatMap((capability) => [
+      `### \`${capability}\``,
+      "",
+      capabilityGuidance[capability],
+      ""
+    ]),
+    "## Path Guardrails",
+    "",
+    ...(bundle.allowedPaths.length > 0
+      ? bundle.allowedPaths.map((path) => `- \`${path}\``)
+      : ["- No product-repo paths are pre-authorized. Escalate before modifying any surface."]),
+    "",
+    "## Blocked Phases",
+    "",
+    ...bundle.policySnapshot.blockedPhases.map((phase) => `- \`${phase}\``),
+    "",
+    "## Escalate Instead Of",
+    "",
+    "- writing product code",
+    "- opening pull requests or mutating remote systems",
+    "- using secrets or other sensitive credentials",
+    "- touching paths outside the allowed scope",
+    ""
+  ].join("\n");
+}
+
+function renderRuntimeTaskSkillMarkdown(
+  bundle: WorkspaceContextBundle,
+  canonicalSources: string[]
+): string {
+  return [
+    "# RedDwarf Task Runtime Skill",
+    "",
+    `Use this skill before taking action on task \`${bundle.manifest.taskId}\`.`,
+    "",
+    "## Workflow",
+    "",
+    "1. Read `.context/task.json`, `.context/spec.md`, and `.context/policy_snapshot.json` before proposing or executing work.",
+    "2. Confirm that the requested action stays within the allowed capabilities and allowed paths.",
+    `3. Use the assigned role instructions first: \`${agentInstructionPathByType[bundle.manifest.assignedAgentType] ?? "AGENTS.md"}\`.`,
+    `4. Use the recommended role instructions from planning: \`${agentInstructionPathByType[bundle.spec.recommendedAgentType] ?? "AGENTS.md"}\`.`,
+    "5. Produce evidence-friendly output that traces assumptions, affected areas, constraints, acceptance criteria, and verification intent.",
+    "6. Escalate whenever the task would require code-writing, secrets, PR creation, or a blocked phase in v1.",
+    "",
+    "## Canonical Sources",
+    "",
+    ...canonicalSources.map((path) => `- \`${path}\``),
+    ""
+  ].join("\n");
+}
+
+function formatLiteralList(items: readonly string[]): string {
+  if (items.length === 0) {
+    return "none";
+  }
+
+  return items.map((item) => `\`${item}\``).join(", ");
+}
+
 function normalizePipelineFailure(
   error: unknown,
   phase: TaskPhase,
@@ -1470,3 +1771,4 @@ async function recordRunEvent(input: {
 
   return event;
 }
+

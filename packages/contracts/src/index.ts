@@ -189,6 +189,24 @@ export const workspaceContextBundleSchema = z.object({
   allowedPaths: z.array(z.string().min(1))
 });
 
+export const runtimeInstructionFileSchema = z.object({
+  relativePath: z.string().min(1),
+  description: z.string().min(1),
+  content: z.string().min(1)
+});
+
+export const runtimeInstructionLayerSchema = z.object({
+  taskId: z.string().min(1),
+  assignedAgentType: agentTypeSchema,
+  recommendedAgentType: agentTypeSchema,
+  approvalMode: approvalModeSchema,
+  allowedCapabilities: z.array(capabilitySchema),
+  blockedPhases: z.array(taskPhaseSchema),
+  canonicalSources: z.array(z.string().min(1)),
+  contextFiles: z.array(z.string().min(1)),
+  files: z.array(runtimeInstructionFileSchema).min(1)
+});
+
 export const runEventSchema = z.object({
   eventId: z.string().min(1),
   taskId: z.string().min(1),
@@ -384,6 +402,8 @@ export type PlanningSpec = z.infer<typeof planningSpecSchema>;
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
 export type WorkspaceContextBundle = z.infer<typeof workspaceContextBundleSchema>;
+export type RuntimeInstructionFile = z.infer<typeof runtimeInstructionFileSchema>;
+export type RuntimeInstructionLayer = z.infer<typeof runtimeInstructionLayerSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;

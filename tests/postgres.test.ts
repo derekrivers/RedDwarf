@@ -1,4 +1,4 @@
-﻿import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -30,7 +30,7 @@ describeIfDatabase("postgres planning repository", () => {
     await repository.close();
   });
 
-  it("persists a planning pipeline run and can read back audit, observability, memory, and pipeline run records", async () => {
+  it("persists a planning pipeline run and can read back audit, observability, memory, pipeline run records, and workspace instructions", async () => {
     const issueNumber = Date.now();
     const repo = `acme-${issueNumber}/platform-${issueNumber}`;
     const input: PlanningTaskInput = {
@@ -42,7 +42,7 @@ describeIfDatabase("postgres planning repository", () => {
       },
       title: "Persist a docs-safe planning run",
       summary:
-        "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, and pipeline-run records are queryable.",
+        "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, pipeline-run records, and generated workspace instructions are queryable.",
       priority: 1,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["The planning spec exists", "Audit records can be queried"],
@@ -145,8 +145,14 @@ describeIfDatabase("postgres planning repository", () => {
         workspaceId: `${result.manifest.taskId}-integration`
       });
       const policySnapshot = JSON.parse(await readFile(materialized.files.policySnapshotJson, "utf8"));
+      const soulMd = await readFile(materialized.instructions.files.soulMd, "utf8");
+      const toolsMd = await readFile(materialized.instructions.files.toolsMd, "utf8");
+      const taskSkillMd = await readFile(materialized.instructions.files.taskSkillMd, "utf8");
 
       expect(policySnapshot.allowedPaths).toEqual(["docs/postgres-verification.md"]);
+      expect(soulMd).toContain(result.manifest.taskId);
+      expect(toolsMd).toContain("can_archive_evidence");
+      expect(taskSkillMd).toContain(".context/spec.md");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
