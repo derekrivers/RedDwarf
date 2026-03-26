@@ -59,8 +59,18 @@ import {
 } from "@reddwarf/integrations";
 import {
   agentDefinitions,
-  assertPhaseExecutable
+  assertPhaseExecutable,
+  DeterministicDeveloperAgent,
+  DeterministicPlanningAgent,
+  DeterministicScmAgent,
+  DeterministicValidationAgent
 } from "@reddwarf/execution-plane";
+export {
+  DeterministicDeveloperAgent,
+  DeterministicPlanningAgent,
+  DeterministicScmAgent,
+  DeterministicValidationAgent
+};
 import {
   assessEligibility,
   buildPolicySnapshot,
@@ -394,124 +404,6 @@ function createApprovalRequestSummary(input: {
   }
 
   return "Human approval is required before downstream execution can continue. No secret scopes are currently approved for injection.";
-}
-
-export class DeterministicPlanningAgent implements PlanningAgent {
-  async createSpec(
-    input: PlanningTaskInput,
-    context: { manifest: TaskManifest; runId: string }
-  ): Promise<PlanningDraft> {
-    return {
-      summary: `Plan task ${context.manifest.taskId} for ${input.source.repo}: ${input.title}`,
-      assumptions: [
-        "The task source is trustworthy and labels accurately reflect readiness.",
-        "Human approval remains mandatory before any future code-writing or PR mutation."
-      ],
-      affectedAreas:
-        input.affectedPaths.length > 0
-          ? input.affectedPaths
-          : ["planning-surface-only"],
-      constraints: [
-        "Do not write product code in RedDwarf v1.",
-        "Archive all planning outputs as durable evidence."
-      ],
-      testExpectations: [
-        "Validate schemas for manifest, spec, and workspace context bundle.",
-        "Verify policy gate output and lifecycle records for the task."
-      ]
-    };
-  }
-}
-
-export class DeterministicDeveloperAgent implements DevelopmentAgent {
-  async createHandoff(
-    bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-      codeWriteEnabled: boolean;
-    }
-  ): Promise<DevelopmentDraft> {
-    return {
-      summary: `Prepare workspace ${context.workspace.workspaceId} for task ${context.manifest.taskId} without mutating product code.`,
-      implementationNotes: [
-        `Inspect the allowed paths ${formatLiteralList(bundle.allowedPaths)} before proposing any edits.`,
-        "Capture implementation intent and evidence in the workspace artifacts directory while product writes remain disabled.",
-        "Keep the developer handoff aligned with the planning constraints and acceptance criteria from the task contract."
-      ],
-      blockedActions: [
-        "Product code writes remain disabled by default in the development phase.",
-        "Review automation remains blocked in RedDwarf v1 for tasks that do not request SCM handoff."
-      ],
-      nextActions: [
-        "Run the validation phase against the managed workspace before asking for review or SCM handoff.",
-        "Escalate if the task truly requires code-write access before downstream phases land."
-      ]
-    };
-  }
-}
-
-export class DeterministicValidationAgent implements ValidationAgent {
-  async createPlan(
-    _bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-    }
-  ): Promise<ValidationDraft> {
-    return {
-      summary: `Run deterministic lint and test checks for workspace ${context.workspace.workspaceId} before review or SCM handoff.`,
-      commands: [
-        {
-          id: "lint",
-          name: "Lint workspace artifacts",
-          executable: process.execPath,
-          args: ["-e", createValidationNodeScript("lint")]
-        },
-        {
-          id: "test",
-          name: "Validate workspace contracts",
-          executable: process.execPath,
-          args: ["-e", createValidationNodeScript("test")]
-        }
-      ]
-    };
-  }
-}
-
-export class DeterministicScmAgent implements ScmAgent {
-  async createPullRequest(
-    bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-      baseBranch: string;
-      validationSummary: string;
-      validationReportPath: string;
-    }
-  ): Promise<ScmDraft> {
-    const branchName = createScmBranchName(context.manifest.taskId, context.runId);
-
-    return {
-      summary: `Create approved branch ${branchName} and a pull request for task ${context.manifest.taskId}.`,
-      baseBranch: context.baseBranch,
-      branchName,
-      pullRequestTitle: `[RedDwarf] ${context.manifest.title}`,
-      pullRequestBody: createScmPullRequestBody({
-        bundle,
-        validationSummary: context.validationSummary,
-        validationReportPath: context.validationReportPath,
-        branchName,
-        baseBranch: context.baseBranch,
-        workspace: context.workspace,
-        runId: context.runId
-      }),
-      labels: ["reddwarf", "automation", `risk:${context.manifest.riskClass}`]
-    };
-  }
 }
 
 export async function runPlanningPipeline(
