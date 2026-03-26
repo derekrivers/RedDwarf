@@ -42,3 +42,10 @@
 - Environment note: `corepack pnpm verify:recovery` traverses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
 - Updated repository docs and the feature board so feature 23 is marked complete and feature 24 is now the likely next actionable item.
 - Likely next board item: feature 24, operator dashboard or API for runs, approvals, evidence, and blocked tasks.
+- Completed feature 24 from `FEATURE_BOARD.md`: operator dashboard or API for runs, approvals, evidence, and blocked tasks.
+- Added `createOperatorApiServer(config, deps)` to the control-plane package, backed by Node's built-in `http` module (no new external dependencies), exposing: `GET /health`, `GET /runs`, `GET /approvals`, `GET /approvals/:requestId`, `POST /approvals/:requestId/resolve`, `GET /tasks/:taskId/evidence`, `GET /tasks/:taskId/snapshot`, and `GET /blocked`.
+- The server tracks its actual bound port after `start()` so callers can use `port: 0` for OS-assigned ports in tests.
+- Added 4 focused unit tests covering: empty-repository responses, run/approval filtering by status, single-approval fetch and resolve via POST, and task evidence and snapshot retrieval.
+- Added `corepack pnpm verify:operator-api` for Postgres-backed end-to-end verification of all 8 endpoints including the full approval-resolve flow.
+- Updated repository docs and the feature board so feature 24 is marked complete and feature 25 is now the likely next actionable item.
+- Likely next board item: feature 25, knowledge ingestion pipeline for ADRs, standards, and curated external context.

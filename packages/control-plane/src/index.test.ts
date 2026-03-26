@@ -1,4 +1,5 @@
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import {
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
   createBufferedPlanningLogger,
+  createOperatorApiServer,
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
@@ -1245,5 +1247,308 @@ describe("control-plane", () => {
     expect(
       bufferedLogger.records.some((record) => record.level === "error")
     ).toBe(true);
+  });
+});
+
+function operatorGet(
+  port: number,
+  path: string
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { hostname: "127.0.0.1", port, path, method: "GET" },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function operatorPost(
+  port: number,
+  path: string,
+  body: unknown
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload)
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+describe("operator API server", () => {
+  it("serves health, runs, and blocked endpoints with an empty repository", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1" },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const health = await operatorGet(port, "/health");
+      expect(health.status).toBe(200);
+      expect((health.body as Record<string, unknown>)["status"]).toBe("ok");
+      expect((health.body as Record<string, unknown>)["timestamp"]).toBe(
+        "2026-03-26T12:00:00.000Z"
+      );
+
+      const runs = await operatorGet(port, "/runs");
+      expect(runs.status).toBe(200);
+      expect((runs.body as Record<string, unknown>)["total"]).toBe(0);
+      expect((runs.body as Record<string, unknown>)["runs"]).toEqual([]);
+
+      const approvals = await operatorGet(port, "/approvals");
+      expect(approvals.status).toBe(200);
+      expect((approvals.body as Record<string, unknown>)["total"]).toBe(0);
+
+      const blocked = await operatorGet(port, "/blocked");
+      expect(blocked.status).toBe(200);
+      expect(
+        (blocked.body as Record<string, unknown>)["totalBlockedRuns"]
+      ).toBe(0);
+      expect(
+        (blocked.body as Record<string, unknown>)["totalPendingApprovals"]
+      ).toBe(0);
+
+      const notFound = await operatorGet(port, "/unknown-route");
+      expect(notFound.status).toBe(404);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns runs and approvals filtered by status after a planning run", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/api.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-001"
+      }
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1" },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const runs = await operatorGet(
+        port,
+        `/runs?taskId=${planResult.manifest.taskId}`
+      );
+      expect(runs.status).toBe(200);
+      expect((runs.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const blockedRuns = await operatorGet(port, "/runs?statuses=blocked");
+      expect(blockedRuns.status).toBe(200);
+      expect((blockedRuns.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const completedRuns = await operatorGet(
+        port,
+        "/runs?statuses=completed"
+      );
+      expect(completedRuns.status).toBe(200);
+      expect((completedRuns.body as Record<string, unknown>)["total"]).toBe(0);
+
+      const approvals = await operatorGet(
+        port,
+        `/approvals?taskId=${planResult.manifest.taskId}&statuses=pending`
+      );
+      expect(approvals.status).toBe(200);
+      expect((approvals.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const blocked = await operatorGet(port, "/blocked");
+      expect(blocked.status).toBe(200);
+      expect(
+        (blocked.body as Record<string, unknown>)["totalBlockedRuns"]
+      ).toBe(1);
+      expect(
+        (blocked.body as Record<string, unknown>)["totalPendingApprovals"]
+      ).toBe(1);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("serves a single approval by ID and supports resolve via POST", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-002"
+      }
+    );
+
+    const requestId = planResult.approvalRequest!.requestId;
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1" },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const getApproval = await operatorGet(
+        port,
+        `/approvals/${requestId}`
+      );
+      expect(getApproval.status).toBe(200);
+      expect(
+        (
+          (getApproval.body as Record<string, unknown>)[
+            "approval"
+          ] as Record<string, unknown>
+        )["status"]
+      ).toBe("pending");
+
+      const missing = await operatorGet(port, "/approvals/nonexistent-id");
+      expect(missing.status).toBe(404);
+
+      const badResolve = await operatorPost(
+        port,
+        `/approvals/${requestId}/resolve`,
+        { decision: "approve" }
+      );
+      expect(badResolve.status).toBe(400);
+
+      const resolved = await operatorPost(
+        port,
+        `/approvals/${requestId}/resolve`,
+        {
+          decision: "approve",
+          decidedBy: "operator-test",
+          decisionSummary: "Approved via operator API test."
+        }
+      );
+      expect(resolved.status).toBe(200);
+      expect(
+        (
+          (resolved.body as Record<string, unknown>)[
+            "approval"
+          ] as Record<string, unknown>
+        )["status"]
+      ).toBe("approved");
+      expect(
+        (
+          (resolved.body as Record<string, unknown>)[
+            "manifest"
+          ] as Record<string, unknown>
+        )["lifecycleStatus"]
+      ).toBe("ready");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("serves task evidence and snapshot endpoints", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-26T12:00:00.000Z"),
+      idGenerator: () => "op-run-003"
+    });
+
+    const taskId = planResult.manifest.taskId;
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1" },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const evidence = await operatorGet(
+        port,
+        `/tasks/${taskId}/evidence`
+      );
+      expect(evidence.status).toBe(200);
+      expect(
+        (evidence.body as Record<string, unknown>)["taskId"]
+      ).toBe(taskId);
+      expect(
+        (evidence.body as Record<string, unknown>)["total"]
+      ).toBeGreaterThan(0);
+
+      const snapshot = await operatorGet(
+        port,
+        `/tasks/${taskId}/snapshot`
+      );
+      expect(snapshot.status).toBe(200);
+      expect(
+        (
+          (snapshot.body as Record<string, unknown>)[
+            "manifest"
+          ] as Record<string, unknown>
+        )["taskId"]
+      ).toBe(taskId);
+      expect(
+        (snapshot.body as Record<string, unknown>)["phaseRecords"]
+      ).toBeDefined();
+
+      const missingTask = await operatorGet(
+        port,
+        "/tasks/nonexistent-task/evidence"
+      );
+      expect(missingTask.status).toBe(404);
+    } finally {
+      await apiServer.stop();
+    }
   });
 });
