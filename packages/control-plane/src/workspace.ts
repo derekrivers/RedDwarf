@@ -23,6 +23,7 @@ import {
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
   type Capability,
+  type MaterializedManagedWorkspace,
   type PlanningSpec,
   type PolicySnapshot,
   type RuntimeInstructionLayer,
@@ -30,6 +31,8 @@ import {
   type WorkspaceContextBundle,
   type WorkspaceDescriptor
 } from "@reddwarf/contracts";
+
+export type { MaterializedManagedWorkspace };
 import {
   createEvidenceRecord,
   type PersistedTaskSnapshot,
@@ -86,14 +89,6 @@ export interface MaterializedWorkspaceContext {
     taskContractFiles: string[];
     files: MaterializedRuntimeInstructionFiles;
   };
-}
-
-export interface MaterializedManagedWorkspace extends MaterializedWorkspaceContext {
-  stateDir: string;
-  stateFile: string;
-  scratchDir: string;
-  artifactsDir: string;
-  descriptor: WorkspaceDescriptor;
 }
 
 export interface DestroyedManagedWorkspace {

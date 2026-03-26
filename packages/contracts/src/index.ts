@@ -567,3 +567,140 @@ export type PipelineRunStatusSummary = z.infer<
 export function asIsoTimestamp(date: Date = new Date()): string {
   return date.toISOString();
 }
+
+// ============================================================
+// Managed workspace interface (shared across packages)
+// ============================================================
+
+export interface MaterializedManagedWorkspace {
+  workspaceId: string;
+  workspaceRoot: string;
+  contextDir: string;
+  files: {
+    taskJson: string;
+    specMarkdown: string;
+    policySnapshotJson: string;
+    allowedPathsJson: string;
+    acceptanceCriteriaJson: string;
+  };
+  instructions: {
+    canonicalSources: string[];
+    taskContractFiles: string[];
+    files: {
+      soulMd: string;
+      agentsMd: string;
+      toolsMd: string;
+      taskSkillMd: string;
+    };
+  };
+  stateDir: string;
+  stateFile: string;
+  scratchDir: string;
+  artifactsDir: string;
+  descriptor: WorkspaceDescriptor;
+}
+
+// ============================================================
+// Agent draft types
+// ============================================================
+
+export interface PlanningDraft {
+  summary: string;
+  assumptions: string[];
+  affectedAreas: string[];
+  constraints: string[];
+  testExpectations: string[];
+}
+
+export interface DevelopmentDraft {
+  summary: string;
+  implementationNotes: string[];
+  blockedActions: string[];
+  nextActions: string[];
+}
+
+export interface ValidationCommand {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+}
+
+export interface ValidationDraft {
+  summary: string;
+  commands: ValidationCommand[];
+}
+
+export interface ValidationCommandResult {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+  exitCode: number;
+  signal: NodeJS.Signals | null;
+  durationMs: number;
+  status: "passed" | "failed";
+  logPath: string;
+}
+
+export interface ValidationReport {
+  summary: string;
+  commandResults: ValidationCommandResult[];
+}
+
+export interface ScmDraft {
+  summary: string;
+  baseBranch: string;
+  branchName: string;
+  pullRequestTitle: string;
+  pullRequestBody: string;
+  labels: string[];
+}
+
+// ============================================================
+// Agent interfaces
+// ============================================================
+
+export interface PlanningAgent {
+  createSpec(
+    input: PlanningTaskInput,
+    context: { manifest: TaskManifest; runId: string }
+  ): Promise<PlanningDraft>;
+}
+
+export interface DevelopmentAgent {
+  createHandoff(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      codeWriteEnabled: boolean;
+    }
+  ): Promise<DevelopmentDraft>;
+}
+
+export interface ValidationAgent {
+  createPlan(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+    }
+  ): Promise<ValidationDraft>;
+}
+
+export interface ScmAgent {
+  createPullRequest(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      baseBranch: string;
+      validationSummary: string;
+      validationReportPath: string;
+    }
+  ): Promise<ScmDraft>;
+}

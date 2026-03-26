@@ -15,16 +15,27 @@ import {
   type Capability,
   type ConcurrencyDecision,
   type ConcurrencyStrategy,
+  type DevelopmentAgent,
+  type DevelopmentDraft,
   type FailureClass,
   type PhaseLifecycleStatus,
   type PhaseRecord,
   type PipelineRun,
+  type PlanningAgent,
+  type PlanningDraft,
   type PlanningSpec,
   type PlanningTaskInput,
   type PolicySnapshot,
   type RunEvent,
+  type ScmAgent,
+  type ScmDraft,
   type TaskManifest,
   type TaskPhase,
+  type ValidationAgent,
+  type ValidationCommand,
+  type ValidationCommandResult,
+  type ValidationDraft,
+  type ValidationReport,
   type WorkspaceContextBundle
 } from "@reddwarf/contracts";
 import {
@@ -126,21 +137,6 @@ const failureRecoveryPolicies = {
   }
 } as const;
 
-export interface PlanningDraft {
-  summary: string;
-  assumptions: string[];
-  affectedAreas: string[];
-  constraints: string[];
-  testExpectations: string[];
-}
-
-export interface PlanningAgent {
-  createSpec(
-    input: PlanningTaskInput,
-    context: { manifest: TaskManifest; runId: string }
-  ): Promise<PlanningDraft>;
-}
-
 export interface PlanningConcurrencyOptions {
   strategy?: ConcurrencyStrategy;
   staleAfterMs?: number;
@@ -163,88 +159,6 @@ export interface PlanningPipelineResult {
   approvalRequest?: ApprovalRequest;
   nextAction: "complete" | "await_human" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
-}
-
-export interface DevelopmentDraft {
-  summary: string;
-  implementationNotes: string[];
-  blockedActions: string[];
-  nextActions: string[];
-}
-
-export interface DevelopmentAgent {
-  createHandoff(
-    bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-      codeWriteEnabled: boolean;
-    }
-  ): Promise<DevelopmentDraft>;
-}
-
-export interface ValidationCommand {
-  id: string;
-  name: string;
-  executable: string;
-  args: string[];
-}
-
-export interface ValidationDraft {
-  summary: string;
-  commands: ValidationCommand[];
-}
-
-export interface ValidationAgent {
-  createPlan(
-    bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-    }
-  ): Promise<ValidationDraft>;
-}
-
-export interface ValidationCommandResult {
-  id: string;
-  name: string;
-  executable: string;
-  args: string[];
-  exitCode: number;
-  signal: NodeJS.Signals | null;
-  durationMs: number;
-  status: "passed" | "failed";
-  logPath: string;
-}
-
-export interface ValidationReport {
-  summary: string;
-  commandResults: ValidationCommandResult[];
-}
-
-export interface ScmDraft {
-  summary: string;
-  baseBranch: string;
-  branchName: string;
-  pullRequestTitle: string;
-  pullRequestBody: string;
-  labels: string[];
-}
-
-export interface ScmAgent {
-  createPullRequest(
-    bundle: WorkspaceContextBundle,
-    context: {
-      manifest: TaskManifest;
-      runId: string;
-      workspace: MaterializedManagedWorkspace;
-      baseBranch: string;
-      validationSummary: string;
-      validationReportPath: string;
-    }
-  ): Promise<ScmDraft>;
 }
 
 export interface RunDeveloperPhaseInput {
