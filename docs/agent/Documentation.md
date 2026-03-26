@@ -56,3 +56,20 @@
 - Added 5 unit tests covering full-batch ingestion, sourceUri filtering, tag filtering, scope filtering, idempotency, and end-to-end appearance in `getMemoryContext`.
 - Added `corepack pnpm verify:knowledge-ingestion` for Postgres-backed verification of all ingestion modes plus planning-pipeline context injection.
 - Updated repository docs and the feature board so feature 25 is marked complete. All board items through M5 are now delivered.
+- Completed a full codebase code review (2026-03-26) covering all 6 packages across code smells, optimisations, and SOLID violations.
+- 18 findings recorded as feature board items 26–40 (M6/M7) in `FEATURE_BOARD.md`.
+- Full report with problem descriptions, affected line ranges, and concrete fix guidance is at `docs/code-review-m6.md` — read this before picking up any M6 item.
+- Likely next board item: feature 26, extract shared concurrency gate utility.
+- Completed features 26–31 from `FEATURE_BOARD.md` (M6 refactor pass).
+  - Feature 26: extracted `detectOverlappingRuns` helper from the four duplicated stale-run detection loops in `pipeline.ts`.
+  - Feature 27: split `control-plane/src/index.ts` (~7000 lines) into `lifecycle.ts`, `logger.ts`, `workspace.ts`, `operator-api.ts`, `knowledge.ts`, `pipeline.ts`, with `index.ts` as a barrel.
+  - Feature 28: split `evidence/src/index.ts` (~1519 lines) into `repository.ts`, `postgres-repository.ts`, `factories.ts`, `summarize.ts`, with `index.ts` as a barrel.
+  - Feature 29: exported 4 capability constants from `@reddwarf/policy`; imported them in `control-plane/workspace.ts` with aliases, removing duplicated definitions.
+  - Feature 30: replaced sequential awaits in `InMemoryPlanningRepository.getTaskSnapshot` with `Promise.all`.
+  - Feature 31: removed redundant `workspaceContextBundleSchema.parse` and `runtimeInstructionLayerSchema.parse` calls where the input was already typed as the correct interface.
+- Feature 32 (move deterministic agents to execution-plane) is blocked by a circular dependency constraint.
+  - `DeterministicDeveloperAgent`, `DeterministicValidationAgent`, and `DeterministicScmAgent` depend on `MaterializedManagedWorkspace` and `WorkspaceContextBundle` (and helpers like `formatLiteralList`, `createScmBranchName`, `createValidationNodeScript`) which live in `control-plane/workspace.ts` and `control-plane/pipeline.ts`.
+  - `control-plane` already depends on `execution-plane`; adding the reverse dependency creates a circular package graph.
+  - `DeterministicPlanningAgent` only uses contracts types, but its `PlanningAgent` interface and `PlanningDraft` type are defined in `pipeline.ts` — moving it requires also moving those types.
+  - Unblocking options for a future M7 pass: (a) move agent interfaces (`PlanningAgent`, `DevelopmentAgent`, `ValidationAgent`, `ScmAgent`) and draft types to `@reddwarf/contracts`; (b) move `MaterializedManagedWorkspace` and related types to `@reddwarf/contracts`; or (c) introduce a new `@reddwarf/agents` package that sits between `execution-plane` and `control-plane`.
+- Likely next board items: features 33–38 (policy phase-map, type fixes in integrations, disabled-phases constant, archive duration, filter/redact optimisations).
