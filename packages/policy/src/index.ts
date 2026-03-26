@@ -19,17 +19,17 @@ const highRiskPatterns = [
   /migration/i
 ];
 const disabledPhases: TaskPhase[] = ["review"];
-const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
-const developmentCapabilities: Capability[] = [
+export const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
+export const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
   "can_use_secrets"
 ];
-const validationCapabilities: Capability[] = [
+export const validationCapabilities: Capability[] = [
   "can_run_tests",
   "can_archive_evidence",
   "can_use_secrets"
 ];
-const scmCapabilities: Capability[] = ["can_open_pr", "can_archive_evidence"];
+export const scmCapabilities: Capability[] = ["can_open_pr", "can_archive_evidence"];
 
 export interface EligibilityAssessment {
   eligible: boolean;

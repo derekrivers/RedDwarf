@@ -37,6 +37,12 @@ import {
 } from "@reddwarf/evidence";
 import { type SecretLease } from "@reddwarf/integrations";
 import { agentDefinitions } from "@reddwarf/execution-plane";
+import {
+  planningCapabilities as planningWorkspaceCapabilities,
+  developmentCapabilities as developmentWorkspaceCapabilities,
+  validationCapabilities as validationWorkspaceCapabilities,
+  scmCapabilities as scmWorkspaceCapabilities
+} from "@reddwarf/policy";
 
 // ============================================================
 // Workspace interfaces
@@ -182,24 +188,6 @@ const capabilityGuidance: Record<Capability, string> = {
   can_archive_evidence:
     "Persist structured logs, specs, diffs, and verification output as durable evidence."
 };
-
-const planningWorkspaceCapabilities: Capability[] = [
-  "can_plan",
-  "can_archive_evidence"
-];
-const developmentWorkspaceCapabilities: Capability[] = [
-  "can_archive_evidence",
-  "can_use_secrets"
-];
-const validationWorkspaceCapabilities: Capability[] = [
-  "can_run_tests",
-  "can_archive_evidence",
-  "can_use_secrets"
-];
-const scmWorkspaceCapabilities: Capability[] = [
-  "can_open_pr",
-  "can_archive_evidence"
-];
 
 const planningWorkspaceToolPolicyNotes = [
   "Workspace execution is constrained to planning-only capabilities in RedDwarf v1.",
