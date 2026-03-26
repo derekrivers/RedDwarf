@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,8 @@ import {
   createWorkspaceContextArtifacts,
   createWorkspaceContextBundle,
   createWorkspaceContextBundleFromSnapshot,
+  destroyManagedWorkspace,
+  materializeManagedWorkspace,
   materializeWorkspaceContext
 } from "@reddwarf/control-plane";
 import {
@@ -125,6 +127,39 @@ describe("workspace context materialization", () => {
     }
   });
 
+  it("materializes and destroys a managed workspace lifecycle", async () => {
+    const bundle = createWorkspaceContextBundle({ manifest, spec, policySnapshot });
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-managed-context-"));
+
+    try {
+      const materialized = await materializeManagedWorkspace({
+        bundle,
+        targetRoot: tempRoot,
+        workspaceId: "workspace-42-managed",
+        createdAt: timestamp
+      });
+      const descriptor = JSON.parse(await readFile(materialized.stateFile, "utf8"));
+
+      expect(materialized.descriptor.status).toBe("provisioned");
+      expect(materialized.descriptor.toolPolicy.mode).toBe("planning_only");
+      expect(materialized.descriptor.credentialPolicy.mode).toBe("none");
+      expect(descriptor.workspaceId).toBe("workspace-42-managed");
+      expect(descriptor.stateFile).toBe(materialized.stateFile);
+
+      const destroyed = await destroyManagedWorkspace({
+        targetRoot: tempRoot,
+        workspaceId: "workspace-42-managed",
+        destroyedAt: asIsoTimestamp(new Date("2026-03-25T18:05:00.000Z"))
+      });
+
+      expect(destroyed.removed).toBe(true);
+      expect(destroyed.descriptor?.status).toBe("destroyed");
+      await expect(access(materialized.workspaceRoot)).rejects.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rebuilds the bundle from a persisted snapshot", () => {
     const snapshot: PersistedTaskSnapshot = {
       manifest,
@@ -132,7 +167,9 @@ describe("workspace context materialization", () => {
       policySnapshot,
       phaseRecords: [],
       evidenceRecords: [],
-      runEvents: []
+      runEvents: [],
+      memoryRecords: [],
+      pipelineRuns: []
     };
 
     const bundle = createWorkspaceContextBundleFromSnapshot(snapshot);

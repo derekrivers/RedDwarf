@@ -10,7 +10,8 @@ import {
   runEventSchema,
   runSummarySchema,
   runtimeInstructionLayerSchema,
-  workspaceContextBundleSchema
+  workspaceContextBundleSchema,
+  workspaceDescriptorSchema
 } from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
@@ -117,6 +118,49 @@ describe("contracts", () => {
     });
 
     expect(layer.files.map((file) => file.relativePath)).toContain("SOUL.md");
+  });
+
+  it("parses a workspace descriptor", () => {
+    const descriptor = workspaceDescriptorSchema.parse({
+      workspaceId: "workspace-42",
+      taskId: "acme-platform-42",
+      workspaceRoot: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42",
+      contextDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context",
+      stateFile: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.workspace/workspace.json",
+      scratchDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/scratch",
+      artifactsDir: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/artifacts",
+      status: "provisioned",
+      assignedAgentType: "architect",
+      recommendedAgentType: "architect",
+      allowedCapabilities: ["can_plan", "can_archive_evidence"],
+      allowedPaths: ["docs/**"],
+      blockedPhases: ["development", "validation", "review", "scm"],
+      canonicalSources: ["standards/engineering.md"],
+      taskContractFiles: ["C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context/task.json"],
+      instructionFiles: {
+        soulMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/SOUL.md",
+        agentsMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/AGENTS.md",
+        toolsMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/TOOLS.md",
+        taskSkillMd: "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/skills/reddwarf-task/SKILL.md"
+      },
+      toolPolicy: {
+        mode: "planning_only",
+        allowedCapabilities: ["can_plan", "can_archive_evidence"],
+        blockedPhases: ["development", "validation", "review", "scm"],
+        notes: ["Planning-only workspace."]
+      },
+      credentialPolicy: {
+        mode: "none",
+        allowedSecretScopes: [],
+        notes: ["Secrets adapter is not implemented in v1."]
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      destroyedAt: null
+    });
+
+    expect(descriptor.status).toBe("provisioned");
+    expect(descriptor.toolPolicy.mode).toBe("planning_only");
   });
 
   it("parses run events and summaries with failure metadata", () => {

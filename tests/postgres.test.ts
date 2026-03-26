@@ -1,11 +1,12 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DeterministicPlanningAgent,
   createWorkspaceContextBundleFromSnapshot,
-  materializeWorkspaceContext,
+  destroyTaskWorkspace,
+  provisionTaskWorkspace,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import {
@@ -30,7 +31,7 @@ describeIfDatabase("postgres planning repository", () => {
     await repository.close();
   });
 
-  it("persists a planning pipeline run and can read back audit, observability, memory, pipeline run records, and workspace instructions", async () => {
+  it("persists a planning pipeline run and can provision and destroy a managed workspace", async () => {
     const issueNumber = Date.now();
     const repo = `acme-${issueNumber}/platform-${issueNumber}`;
     const input: PlanningTaskInput = {
@@ -42,7 +43,7 @@ describeIfDatabase("postgres planning repository", () => {
       },
       title: "Persist a docs-safe planning run",
       summary:
-        "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, pipeline-run records, and generated workspace instructions are queryable.",
+        "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, pipeline-run records, and managed workspace lifecycle are queryable.",
       priority: 1,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["The planning spec exists", "Audit records can be queried"],
@@ -139,20 +140,40 @@ describeIfDatabase("postgres planning repository", () => {
       expect(memoryContext.externalMemory).toHaveLength(1);
 
       const bundle = createWorkspaceContextBundleFromSnapshot(snapshot);
-      const materialized = await materializeWorkspaceContext({
-        bundle,
+      const provisioned = await provisionTaskWorkspace({
+        snapshot,
+        repository,
         targetRoot: tempRoot,
         workspaceId: `${result.manifest.taskId}-integration`
       });
-      const policySnapshot = JSON.parse(await readFile(materialized.files.policySnapshotJson, "utf8"));
-      const soulMd = await readFile(materialized.instructions.files.soulMd, "utf8");
-      const toolsMd = await readFile(materialized.instructions.files.toolsMd, "utf8");
-      const taskSkillMd = await readFile(materialized.instructions.files.taskSkillMd, "utf8");
+      const descriptor = JSON.parse(await readFile(provisioned.workspace.stateFile, "utf8"));
+      const policySnapshot = JSON.parse(await readFile(provisioned.workspace.files.policySnapshotJson, "utf8"));
+      const soulMd = await readFile(provisioned.workspace.instructions.files.soulMd, "utf8");
+      const toolsMd = await readFile(provisioned.workspace.instructions.files.toolsMd, "utf8");
+      const taskSkillMd = await readFile(provisioned.workspace.instructions.files.taskSkillMd, "utf8");
 
+      expect(bundle.allowedPaths).toEqual(["docs/postgres-verification.md"]);
       expect(policySnapshot.allowedPaths).toEqual(["docs/postgres-verification.md"]);
+      expect(descriptor.status).toBe("provisioned");
       expect(soulMd).toContain(result.manifest.taskId);
       expect(toolsMd).toContain("can_archive_evidence");
       expect(taskSkillMd).toContain(".context/spec.md");
+
+      const destroyed = await destroyTaskWorkspace({
+        manifest: provisioned.manifest,
+        repository,
+        targetRoot: tempRoot
+      });
+      const persistedManifest = await repository.getManifest(result.manifest.taskId);
+      const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+
+      expect(destroyed.manifest.workspaceId).toBeNull();
+      expect(destroyed.workspace.removed).toBe(true);
+      expect(destroyed.workspace.descriptor?.status).toBe("destroyed");
+      expect(persistedManifest?.workspaceId).toBeNull();
+      expect(evidenceRecords.some((record) => record.recordId.endsWith(":provisioned"))).toBe(true);
+      expect(evidenceRecords.some((record) => record.recordId.endsWith(":destroyed"))).toBe(true);
+      await expect(access(provisioned.workspace.workspaceRoot)).rejects.toThrow();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

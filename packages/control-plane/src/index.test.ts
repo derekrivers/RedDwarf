@@ -1,3 +1,6 @@
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DeterministicPlanningAgent,
@@ -8,6 +11,8 @@ import {
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
+  destroyTaskWorkspace,
+  provisionTaskWorkspace,
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import { InMemoryPlanningRepository, createPipelineRun } from "@reddwarf/evidence";
@@ -89,6 +94,50 @@ describe("control-plane", () => {
         (record) => record.bindings.code === "PIPELINE_COMPLETED" && record.level === "info"
       )
     ).toBe(true);
+  });
+
+  it("provisions and destroys a managed workspace with manifest and evidence updates", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-managed-workspace-"));
+    const planningResult = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-25T18:00:00.000Z"),
+      idGenerator: () => "run-workspace"
+    });
+
+    try {
+      const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const provisioned = await provisionTaskWorkspace({
+        snapshot,
+        repository,
+        targetRoot: tempRoot,
+        workspaceId: "workspace-001",
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      });
+      const descriptor = JSON.parse(await readFile(provisioned.workspace.stateFile, "utf8"));
+
+      expect(provisioned.manifest.workspaceId).toBe("workspace-001");
+      expect(descriptor.status).toBe("provisioned");
+      expect(descriptor.toolPolicy.mode).toBe("planning_only");
+      expect(provisioned.workspace.descriptor.credentialPolicy.mode).toBe("none");
+      expect(repository.evidenceRecords.some((record) => record.recordId.endsWith(":provisioned"))).toBe(true);
+
+      const destroyed = await destroyTaskWorkspace({
+        manifest: provisioned.manifest,
+        repository,
+        targetRoot: tempRoot,
+        clock: () => new Date("2026-03-25T18:10:00.000Z")
+      });
+
+      expect(destroyed.manifest.workspaceId).toBeNull();
+      expect(destroyed.workspace.removed).toBe(true);
+      expect(destroyed.workspace.descriptor?.status).toBe("destroyed");
+      expect(repository.evidenceRecords.some((record) => record.recordId.endsWith(":destroyed"))).toBe(true);
+      await expect(access(provisioned.workspace.workspaceRoot)).rejects.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("blocks ineligible tasks before planning and persists a blocked run summary", async () => {

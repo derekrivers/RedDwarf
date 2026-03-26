@@ -19,7 +19,7 @@ The board is ordered by implementation priority.
 | 13 | Concurrency strategy contracts and stale-run detection | M3 | completed | Concurrency and Conflict Handling |
 | 14 | Versioned policy-pack packaging beyond bind mounts | M3 | completed | Extension Points |
 | 15 | Runtime instruction layer generation for OpenClaw workspaces | M3 | completed | Knowledge & Policy Plane, Workspace Context, Runtime Instruction Layer |
-| 16 | Workspace manager and isolated workspace lifecycle | M3 | planned | Execution Plane, Workspace Manager, Isolation and Security Model |
+| 16 | Workspace manager and isolated workspace lifecycle | M3 | completed | Execution Plane, Workspace Manager, Isolation and Security Model |
 | 17 | Human approval queue and decision workflow | M3 | planned | Approval and Risk Model, Control Plane |
 | 18 | Developer phase orchestration with code-write disabled by default | M4 | planned | Execution Plane, Refactored Workflow |
 | 19 | Validation phase runner for lint and test execution in workspaces | M4 | planned | Validation Agent, Execution Plane |
@@ -29,4 +29,5 @@ The board is ordered by implementation priority.
 | 23 | Retry, escalation, and follow-up issue automation | M4 | planned | Failure Recovery Model |
 | 24 | Operator dashboard or API for runs, approvals, evidence, and blocked tasks | M5 | planned | Control Plane, Observability Model |
 | 25 | Knowledge ingestion pipeline for ADRs, standards, and curated external context | M5 | planned | Knowledge & Policy Plane, External Knowledge Retrieval |
+
 

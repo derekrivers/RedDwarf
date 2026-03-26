@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { createWorkspaceContextBundleFromSnapshot, provisionTaskWorkspace } from "../packages/control-plane/dist/index.js";
+import { destroyTaskWorkspace } from "../packages/control-plane/dist/index.js";
 import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 
 const connectionString =
@@ -16,22 +16,26 @@ const targetRoot = resolve(
 );
 
 if (!taskId) {
-  throw new Error("Usage: node scripts/materialize-openclaw-context.mjs <taskId> [targetRoot] [workspaceId]");
+  throw new Error("Usage: node scripts/destroy-openclaw-workspace.mjs <taskId> [targetRoot] [workspaceId]");
 }
 
 const repository = new PostgresPlanningRepository({ connectionString });
 
 try {
-  const snapshot = await repository.getTaskSnapshot(taskId);
-  createWorkspaceContextBundleFromSnapshot(snapshot);
-  const provisioned = await provisionTaskWorkspace({
-    snapshot,
+  const manifest = await repository.getManifest(taskId);
+
+  if (!manifest) {
+    throw new Error(`Task ${taskId} does not have a persisted manifest.`);
+  }
+
+  const destroyed = await destroyTaskWorkspace({
+    manifest,
     repository,
     targetRoot,
     workspaceId: requestedWorkspaceId
   });
 
-  console.log(JSON.stringify(provisioned.workspace, null, 2));
+  console.log(JSON.stringify(destroyed.workspace, null, 2));
 } finally {
   await repository.close();
 }

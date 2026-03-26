@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import pino from "pino";
 import type { DestinationStream, Logger as PinoLogger } from "pino";
 import {
@@ -13,6 +13,7 @@ import {
   runtimeInstructionLayerSchema,
   taskManifestSchema,
   workspaceContextBundleSchema,
+  workspaceDescriptorSchema,
   type Capability,
   type ConcurrencyDecision,
   type ConcurrencyStrategy,
@@ -25,6 +26,7 @@ import {
   type PolicySnapshot,
   type RuntimeInstructionLayer,
   type RunEvent,
+  type WorkspaceDescriptor,
   type TaskLifecycleStatus,
   type TaskManifest,
   type TaskPhase,
@@ -182,6 +184,31 @@ export interface MaterializedWorkspaceContext {
   };
 }
 
+export interface MaterializedManagedWorkspace extends MaterializedWorkspaceContext {
+  stateDir: string;
+  stateFile: string;
+  scratchDir: string;
+  artifactsDir: string;
+  descriptor: WorkspaceDescriptor;
+}
+
+export interface DestroyedManagedWorkspace {
+  workspaceId: string;
+  workspaceRoot: string;
+  removed: boolean;
+  descriptor: WorkspaceDescriptor | null;
+}
+
+export interface ProvisionWorkspaceResult {
+  manifest: TaskManifest;
+  workspace: MaterializedManagedWorkspace;
+}
+
+export interface DestroyWorkspaceResult {
+  manifest: TaskManifest;
+  workspace: DestroyedManagedWorkspace;
+}
+
 export interface PinoPlanningLoggerOptions {
   level?: RunEvent["level"];
   baseBindings?: Record<string, unknown>;
@@ -246,6 +273,12 @@ const runtimeInstructionRelativePaths = {
   taskSkillMd: "skills/reddwarf-task/SKILL.md"
 } as const;
 
+const workspaceStateDirName = ".workspace";
+const workspaceStateFileName = "workspace.json";
+const workspaceScratchDirName = "scratch";
+const workspaceArtifactsDirName = "artifacts";
+const workspaceLocationPrefix = "workspace://";
+
 const agentInstructionPathByType: Partial<Record<TaskManifest["assignedAgentType"], string>> = {
   architect: "agents/architect.md",
   developer: "agents/developer.md"
@@ -262,6 +295,16 @@ const capabilityGuidance: Record<Capability, string> = {
   can_review: "Review generated work and compare it to requirements when the review phase is enabled.",
   can_archive_evidence: "Persist structured logs, specs, diffs, and verification output as durable evidence."
 };
+
+const workspaceToolPolicyNotes = [
+  "Workspace execution is constrained to planning-only capabilities in RedDwarf v1.",
+  "Filesystem access should stay inside the isolated workspace plus policy-approved product paths."
+] as const;
+
+const workspaceCredentialPolicyNotes = [
+  "Secrets adapter is not implemented in RedDwarf v1.",
+  "No credentials are injected into provisioned workspaces by default."
+] as const;
 
 export function createPinoPlanningLogger(options: PinoPlanningLoggerOptions = {}): PlanningPipelineLogger {
   const logger = pino(
@@ -546,6 +589,228 @@ export async function materializeWorkspaceContext(input: {
       taskContractFiles: Object.values(files),
       files: instructionFiles
     }
+  };
+}
+
+export function createWorkspaceDescriptor(input: {
+  bundle: WorkspaceContextBundle;
+  materialized: MaterializedWorkspaceContext;
+  createdAt?: string;
+  updatedAt?: string;
+  status?: WorkspaceDescriptor["status"];
+  destroyedAt?: string | null;
+}): WorkspaceDescriptor {
+  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const workspaceId = input.materialized.workspaceId;
+  const createdAt = input.createdAt ?? asIsoTimestamp();
+  const updatedAt = input.updatedAt ?? createdAt;
+  const stateDir = join(input.materialized.workspaceRoot, workspaceStateDirName);
+  const stateFile = join(stateDir, workspaceStateFileName);
+  const scratchDir = join(input.materialized.workspaceRoot, workspaceScratchDirName);
+  const artifactsDir = join(input.materialized.workspaceRoot, workspaceArtifactsDirName);
+
+  return workspaceDescriptorSchema.parse({
+    workspaceId,
+    taskId: bundle.manifest.taskId,
+    workspaceRoot: input.materialized.workspaceRoot,
+    contextDir: input.materialized.contextDir,
+    stateFile,
+    scratchDir,
+    artifactsDir,
+    status: input.status ?? "provisioned",
+    assignedAgentType: bundle.manifest.assignedAgentType,
+    recommendedAgentType: bundle.spec.recommendedAgentType,
+    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+    allowedPaths: bundle.allowedPaths,
+    blockedPhases: bundle.policySnapshot.blockedPhases,
+    canonicalSources: input.materialized.instructions.canonicalSources,
+    taskContractFiles: input.materialized.instructions.taskContractFiles,
+    instructionFiles: input.materialized.instructions.files,
+    toolPolicy: {
+      mode: "planning_only",
+      allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+      blockedPhases: bundle.policySnapshot.blockedPhases,
+      notes: [...workspaceToolPolicyNotes]
+    },
+    credentialPolicy: {
+      mode: "none",
+      allowedSecretScopes: [],
+      notes: [...workspaceCredentialPolicyNotes]
+    },
+    createdAt,
+    updatedAt,
+    destroyedAt: input.destroyedAt ?? null
+  });
+}
+
+export async function materializeManagedWorkspace(input: {
+  bundle: WorkspaceContextBundle;
+  targetRoot: string;
+  workspaceId?: string;
+  createdAt?: string;
+}): Promise<MaterializedManagedWorkspace> {
+  const bundle = workspaceContextBundleSchema.parse(input.bundle);
+  const materializedBundle = workspaceContextBundleSchema.parse({
+    ...bundle,
+    manifest: {
+      ...bundle.manifest,
+      workspaceId: input.workspaceId ?? bundle.manifest.workspaceId ?? `${bundle.manifest.taskId}-workspace`
+    }
+  });
+  const materialized = await materializeWorkspaceContext({
+    bundle: materializedBundle,
+    targetRoot: input.targetRoot,
+    ...(materializedBundle.manifest.workspaceId
+      ? { workspaceId: materializedBundle.manifest.workspaceId }
+      : {})
+  });
+  const stateDir = join(materialized.workspaceRoot, workspaceStateDirName);
+  const stateFile = join(stateDir, workspaceStateFileName);
+  const scratchDir = join(materialized.workspaceRoot, workspaceScratchDirName);
+  const artifactsDir = join(materialized.workspaceRoot, workspaceArtifactsDirName);
+  const descriptor = createWorkspaceDescriptor({
+    bundle: materializedBundle,
+    materialized,
+    ...(input.createdAt ? { createdAt: input.createdAt } : {})
+  });
+
+  await Promise.all([
+    mkdir(stateDir, { recursive: true }),
+    mkdir(scratchDir, { recursive: true }),
+    mkdir(artifactsDir, { recursive: true })
+  ]);
+  await writeFile(stateFile, `${JSON.stringify(descriptor, null, 2)}\n`, "utf8");
+
+  return {
+    ...materialized,
+    stateDir,
+    stateFile,
+    scratchDir,
+    artifactsDir,
+    descriptor
+  };
+}
+
+export async function provisionTaskWorkspace(input: {
+  snapshot: PersistedTaskSnapshot;
+  repository: PlanningRepository;
+  targetRoot: string;
+  workspaceId?: string;
+  clock?: () => Date;
+}): Promise<ProvisionWorkspaceResult> {
+  const bundle = createWorkspaceContextBundleFromSnapshot(input.snapshot);
+  const now = asIsoTimestamp((input.clock ?? (() => new Date()))());
+  const workspace = await materializeManagedWorkspace({
+    bundle,
+    targetRoot: input.targetRoot,
+    createdAt: now,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {})
+  });
+  const manifest = taskManifestSchema.parse({
+    ...bundle.manifest,
+    workspaceId: workspace.workspaceId,
+    updatedAt: now,
+    evidenceLinks: [...new Set([...bundle.manifest.evidenceLinks, `${workspaceLocationPrefix}${workspace.workspaceId}`])]
+  });
+
+  await input.repository.updateManifest(manifest);
+  await input.repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${bundle.manifest.taskId}:workspace:${workspace.workspaceId}:provisioned`,
+      taskId: bundle.manifest.taskId,
+      kind: "file_artifact",
+      title: "Managed workspace provisioned",
+      location: `${workspaceLocationPrefix}${workspace.workspaceId}`,
+      metadata: {
+        status: workspace.descriptor.status,
+        workspaceRoot: workspace.workspaceRoot,
+        stateFile: workspace.stateFile,
+        descriptor: workspace.descriptor
+      },
+      createdAt: now
+    })
+  );
+
+  return {
+    manifest,
+    workspace
+  };
+}
+
+export async function destroyManagedWorkspace(input: {
+  targetRoot: string;
+  workspaceId: string;
+  destroyedAt?: string;
+}): Promise<DestroyedManagedWorkspace> {
+  const destroyedAt = input.destroyedAt ?? asIsoTimestamp();
+  const workspaceRoot = resolve(input.targetRoot, input.workspaceId);
+
+  assertWorkspacePathWithinRoot(input.targetRoot, workspaceRoot);
+
+  const stateFile = join(workspaceRoot, workspaceStateDirName, workspaceStateFileName);
+  const descriptor = await readWorkspaceDescriptorForDestroy(stateFile, destroyedAt);
+  const removed = await pathExists(workspaceRoot);
+
+  if (removed) {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+
+  return {
+    workspaceId: input.workspaceId,
+    workspaceRoot,
+    removed,
+    descriptor
+  };
+}
+
+export async function destroyTaskWorkspace(input: {
+  manifest: TaskManifest;
+  repository: PlanningRepository;
+  targetRoot: string;
+  workspaceId?: string;
+  clock?: () => Date;
+}): Promise<DestroyWorkspaceResult> {
+  const workspaceId = input.workspaceId ?? input.manifest.workspaceId;
+
+  if (!workspaceId) {
+    throw new Error(`Cannot destroy workspace for ${input.manifest.taskId} without a workspaceId.`);
+  }
+
+  const destroyedAt = asIsoTimestamp((input.clock ?? (() => new Date()))());
+  const workspace = await destroyManagedWorkspace({
+    targetRoot: input.targetRoot,
+    workspaceId,
+    destroyedAt
+  });
+  const manifest = taskManifestSchema.parse({
+    ...input.manifest,
+    workspaceId: null,
+    updatedAt: destroyedAt,
+    evidenceLinks: [...new Set([...input.manifest.evidenceLinks, `${workspaceLocationPrefix}${workspaceId}`])]
+  });
+
+  await input.repository.updateManifest(manifest);
+  await input.repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${input.manifest.taskId}:workspace:${workspaceId}:destroyed`,
+      taskId: input.manifest.taskId,
+      kind: "file_artifact",
+      title: "Managed workspace destroyed",
+      location: `${workspaceLocationPrefix}${workspaceId}`,
+      metadata: {
+        status: workspace.descriptor?.status ?? "destroyed",
+        workspaceRoot: workspace.workspaceRoot,
+        removed: workspace.removed,
+        descriptor: workspace.descriptor,
+        destroyedAt
+      },
+      createdAt: destroyedAt
+    })
+  );
+
+  return {
+    manifest,
+    workspace
   };
 }
 
@@ -1658,6 +1923,55 @@ function formatLiteralList(items: readonly string[]): string {
   return items.map((item) => `\`${item}\``).join(", ");
 }
 
+async function readWorkspaceDescriptorForDestroy(
+  stateFile: string,
+  destroyedAt: string
+): Promise<WorkspaceDescriptor | null> {
+  try {
+    const descriptor = workspaceDescriptorSchema.parse(JSON.parse(await readFile(stateFile, "utf8")));
+
+    return workspaceDescriptorSchema.parse({
+      ...descriptor,
+      status: "destroyed",
+      updatedAt: destroyedAt,
+      destroyedAt
+    });
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+function assertWorkspacePathWithinRoot(targetRoot: string, workspaceRoot: string): void {
+  const resolvedTargetRoot = resolve(targetRoot);
+  const resolvedWorkspaceRoot = resolve(workspaceRoot);
+  const relativePath = relative(resolvedTargetRoot, resolvedWorkspaceRoot);
+
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Workspace path ${resolvedWorkspaceRoot} escapes configured root ${resolvedTargetRoot}.`);
+  }
+}
+
+function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
 function normalizePipelineFailure(
   error: unknown,
   phase: TaskPhase,
@@ -1771,4 +2085,10 @@ async function recordRunEvent(input: {
 
   return event;
 }
+
+
+
+
+
+
 

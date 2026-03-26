@@ -9,7 +9,7 @@ RedDwarf operationalizes the architecture document as a mountable Dev Squad defi
 - Postgres is the authoritative store for manifests, planning specs, policy snapshots, evidence metadata, run events, derived run summaries, and partitioned memory records.
 - Task workspaces and file evidence are isolated from the repo through separate writable volumes.
 - V1 only activates `intake -> eligibility -> planning -> policy_gate -> archive`.
-- Workspace materialization writes the `.context` bundle expected by the architecture doc: `task.json`, `spec.md`, `policy_snapshot.json`, `allowed_paths.json`, and `acceptance_criteria.json`, plus root-level runtime instruction files such as `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and `skills/reddwarf-task/SKILL.md`.
+- Workspace materialization writes the `.context` bundle expected by the architecture doc: `task.json`, `spec.md`, `policy_snapshot.json`, `allowed_paths.json`, and `acceptance_criteria.json`, plus root-level runtime instruction files such as `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and `skills/reddwarf-task/SKILL.md`. The workspace manager also provisions `.workspace/workspace.json`, isolated `scratch/`, and `artifacts/` directories and supports explicit teardown.
 - Observability is first-class in the planning path: every run gets a durable `runId`, per-phase event stream, explicit failure classification, and a queryable run summary.
 - Concurrency is enforced with durable pipeline-run records, serialized overlap strategy, heartbeat-based stale-run retirement, and explicit blocking of fresh overlaps for the same task source.
 - Memory is partitioned into task, project, organization, and external retrieval scopes so OpenClaw can materialize context without mixing ephemeral task state and broader organizational knowledge.
@@ -20,7 +20,8 @@ RedDwarf operationalizes the architecture document as a mountable Dev Squad defi
 
 - `packages/contracts`: canonical task, evidence, lifecycle, context, failure, run-summary, and partitioned-memory contracts
 - `packages/policy`: deterministic guardrails and approval logic
-- `packages/control-plane`: planning pipeline, state transitions, concurrency/stale-run enforcement, workspace context and runtime instruction materialization, structured observability logging, and policy-pack packaging helpers
+- `packages/control-plane`: planning pipeline, state transitions, concurrency/stale-run enforcement, workspace context and runtime instruction materialization, managed workspace lifecycle helpers, structured observability logging, and policy-pack packaging helpers
 - `packages/execution-plane`: agent identities and disabled future execution phases
 - `packages/evidence`: persistence schema, policy snapshot storage, partitioned memory storage/query helpers, pipeline-run persistence, event modeling, and run-summary queries
 - `packages/integrations`: GitHub and CI adapter contracts, issue-intake conversion helpers, fixture-backed verification adapters, and mutation guards
+

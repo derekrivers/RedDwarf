@@ -85,6 +85,7 @@ export const failureClasses = [
   "execution_loop"
 ] as const;
 export const pipelineRunStatusesForSummary = ["completed", "blocked", "failed"] as const;
+export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
 
 const isoDateTimeSchema = z.string().datetime({ offset: true });
 
@@ -116,6 +117,7 @@ export const pipelineRunStatusSchema = z.enum(pipelineRunStatuses);
 export const overlapActionSchema = z.enum(overlapActions);
 export const failureClassSchema = z.enum(failureClasses);
 export const pipelineRunStatusSummarySchema = z.enum(pipelineRunStatusesForSummary);
+export const workspaceLifecycleStatusSchema = z.enum(workspaceLifecycleStatuses);
 
 export const sourceRefSchema = z.object({
   provider: z.literal("github"),
@@ -205,6 +207,44 @@ export const runtimeInstructionLayerSchema = z.object({
   canonicalSources: z.array(z.string().min(1)),
   contextFiles: z.array(z.string().min(1)),
   files: z.array(runtimeInstructionFileSchema).min(1)
+});
+
+export const workspaceDescriptorSchema = z.object({
+  workspaceId: z.string().min(1),
+  taskId: z.string().min(1),
+  workspaceRoot: z.string().min(1),
+  contextDir: z.string().min(1),
+  stateFile: z.string().min(1),
+  scratchDir: z.string().min(1),
+  artifactsDir: z.string().min(1),
+  status: workspaceLifecycleStatusSchema,
+  assignedAgentType: agentTypeSchema,
+  recommendedAgentType: agentTypeSchema,
+  allowedCapabilities: z.array(capabilitySchema),
+  allowedPaths: z.array(z.string().min(1)),
+  blockedPhases: z.array(taskPhaseSchema),
+  canonicalSources: z.array(z.string().min(1)),
+  taskContractFiles: z.array(z.string().min(1)),
+  instructionFiles: z.object({
+    soulMd: z.string().min(1),
+    agentsMd: z.string().min(1),
+    toolsMd: z.string().min(1),
+    taskSkillMd: z.string().min(1)
+  }),
+  toolPolicy: z.object({
+    mode: z.literal("planning_only"),
+    allowedCapabilities: z.array(capabilitySchema),
+    blockedPhases: z.array(taskPhaseSchema),
+    notes: z.array(z.string().min(1))
+  }),
+  credentialPolicy: z.object({
+    mode: z.literal("none"),
+    allowedSecretScopes: z.array(z.string().min(1)),
+    notes: z.array(z.string().min(1))
+  }),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema,
+  destroyedAt: isoDateTimeSchema.nullable()
 });
 
 export const runEventSchema = z.object({
@@ -404,6 +444,8 @@ export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
 export type WorkspaceContextBundle = z.infer<typeof workspaceContextBundleSchema>;
 export type RuntimeInstructionFile = z.infer<typeof runtimeInstructionFileSchema>;
 export type RuntimeInstructionLayer = z.infer<typeof runtimeInstructionLayerSchema>;
+export type WorkspaceLifecycleStatus = z.infer<typeof workspaceLifecycleStatusSchema>;
+export type WorkspaceDescriptor = z.infer<typeof workspaceDescriptorSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
@@ -425,3 +467,4 @@ export type PipelineRunStatusSummary = z.infer<typeof pipelineRunStatusSummarySc
 export function asIsoTimestamp(date: Date = new Date()): string {
   return date.toISOString();
 }
+

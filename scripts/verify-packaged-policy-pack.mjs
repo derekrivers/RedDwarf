@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createPolicyPackPackage, validatePolicyPackRoot } from "./lib/policy-packaging.mjs";
 
@@ -68,26 +71,47 @@ const artifacts = controlPlaneModule.createWorkspaceContextArtifacts(bundle);
 const instructionLayer = controlPlaneModule.createRuntimeInstructionLayer(bundle);
 const instructionArtifacts = controlPlaneModule.createRuntimeInstructionArtifacts(instructionLayer);
 const parsedManifest = manifestModule.policyPackManifestSchema.parse(packaged.manifest);
+const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-packaged-workspace-"));
 
-assert.equal(parsedManifest.policyPackId, "reddwarf-policy-pack");
-assert.match(artifacts.specMarkdown, /# Planning Spec/);
-assert.match(artifacts.taskJson, /packaged-verify-1/);
-assert.equal(artifacts.acceptanceCriteriaJson.includes("Spec markdown renders"), true);
-assert.match(instructionArtifacts.soulMd, /RedDwarf Runtime Soul/);
-assert.match(instructionArtifacts.agentsMd, /Architect Agent/);
-assert.match(instructionArtifacts.taskSkillMd, /\.context\/task\.json/);
-assert.equal(instructionLayer.canonicalSources.includes("prompts/planning-system.md"), true);
+try {
+  const managedWorkspace = await controlPlaneModule.materializeManagedWorkspace({
+    bundle,
+    targetRoot: tempRoot,
+    workspaceId: "packaged-workspace-1",
+    createdAt: packaged.manifest.createdAt
+  });
+  const destroyed = await controlPlaneModule.destroyManagedWorkspace({
+    targetRoot: tempRoot,
+    workspaceId: "packaged-workspace-1",
+    destroyedAt: packaged.manifest.createdAt
+  });
 
-console.log(
-  JSON.stringify(
-    {
-      policyPackVersion: packaged.manifest.policyPackVersion,
-      packageRoot: packaged.packageRoot,
-      manifestPath: packaged.manifestPath,
-      contentHash: packaged.manifest.contentHash,
-      includedEntryCount: packaged.manifest.includedEntries.length
-    },
-    null,
-    2
-  )
-);
+  assert.equal(parsedManifest.policyPackId, "reddwarf-policy-pack");
+  assert.match(artifacts.specMarkdown, /# Planning Spec/);
+  assert.match(artifacts.taskJson, /packaged-verify-1/);
+  assert.equal(artifacts.acceptanceCriteriaJson.includes("Spec markdown renders"), true);
+  assert.match(instructionArtifacts.soulMd, /RedDwarf Runtime Soul/);
+  assert.match(instructionArtifacts.agentsMd, /Architect Agent/);
+  assert.match(instructionArtifacts.taskSkillMd, /\.context\/task\.json/);
+  assert.equal(instructionLayer.canonicalSources.includes("prompts/planning-system.md"), true);
+  assert.equal(managedWorkspace.descriptor.status, "provisioned");
+  assert.equal(destroyed.descriptor?.status, "destroyed");
+  assert.equal(destroyed.removed, true);
+  await assert.rejects(access(managedWorkspace.workspaceRoot));
+
+  console.log(
+    JSON.stringify(
+      {
+        policyPackVersion: packaged.manifest.policyPackVersion,
+        packageRoot: packaged.packageRoot,
+        manifestPath: packaged.manifestPath,
+        contentHash: packaged.manifest.contentHash,
+        includedEntryCount: packaged.manifest.includedEntries.length
+      },
+      null,
+      2
+    )
+  );
+} finally {
+  await rm(tempRoot, { recursive: true, force: true });
+}

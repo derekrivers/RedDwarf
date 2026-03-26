@@ -1,50 +1,52 @@
 {
-    "name":  "@reddwarf/root",
-    "version":  "0.1.0",
-    "private":  true,
-    "type":  "module",
-    "packageManager":  "pnpm@10.7.0",
-    "engines":  {
-                    "node":  "\u003e=22.0.0"
-                },
-    "scripts":  {
-                    "build":  "tsc -b",
-                    "typecheck":  "tsc -b --pretty false",
-                    "test":  "vitest run",
-                    "test:postgres":  "vitest run tests/postgres.test.ts",
-                    "lint":  "eslint .",
-                    "format:check":  "prettier --check .",
-                    "db:generate":  "drizzle-kit generate",
-                    "db:migrate":  "node scripts/apply-sql-migrations.mjs",
-                    "compose:up":  "docker compose -f infra/docker/docker-compose.yml up -d",
-                    "compose:down":  "docker compose -f infra/docker/docker-compose.yml down",
-                    "validate:policy-pack":  "node scripts/validate-policy-pack.mjs",
-                    "verify:postgres":  "corepack pnpm build \u0026\u0026 node scripts/verify-postgres-pipeline.mjs",
-                    "workspace:materialize":  "corepack pnpm build \u0026\u0026 node scripts/materialize-openclaw-context.mjs",
-                    "verify:context":  "corepack pnpm build \u0026\u0026 node scripts/verify-openclaw-context.mjs",
-                    "verify:observability":  "corepack pnpm build \u0026\u0026 node scripts/verify-observability.mjs",
-                    "verify:integrations":  "corepack pnpm build \u0026\u0026 node scripts/verify-integrations.mjs",
-                    "verify:memory":  "corepack pnpm build \u0026\u0026 node scripts/verify-memory.mjs",
-                    "verify:concurrency":  "corepack pnpm build \u0026\u0026 node scripts/verify-concurrency.mjs",
-                    "package:policy-pack":  "corepack pnpm build \u0026\u0026 node scripts/package-policy-pack.mjs",
-                    "verify:package":  "corepack pnpm build \u0026\u0026 node scripts/verify-packaged-policy-pack.mjs"
-                },
-    "devDependencies":  {
-                            "@types/node":  "^22.13.10",
-                            "@types/pg":  "^8.11.11",
-                            "@typescript-eslint/eslint-plugin":  "^8.26.1",
-                            "@typescript-eslint/parser":  "^8.26.1",
-                            "drizzle-kit":  "^0.31.0",
-                            "eslint":  "^9.23.0",
-                            "prettier":  "^3.5.3",
-                            "tsx":  "^4.19.3",
-                            "typescript":  "^5.8.2",
-                            "vitest":  "^3.0.9"
-                        },
-    "dependencies":  {
-                         "drizzle-orm":  "^0.40.0",
-                         "pg":  "^8.14.1",
-                         "pino":  "^9.6.0",
-                         "zod":  "^3.24.2"
-                     }
+  "name": "@reddwarf/root",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.7.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:postgres": "vitest run tests/postgres.test.ts",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node scripts/apply-sql-migrations.mjs",
+    "compose:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "compose:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "validate:policy-pack": "node scripts/validate-policy-pack.mjs",
+    "verify:postgres": "corepack pnpm build && node scripts/verify-postgres-pipeline.mjs",
+    "workspace:materialize": "corepack pnpm build && node scripts/materialize-openclaw-context.mjs",
+    "verify:context": "corepack pnpm build && node scripts/verify-openclaw-context.mjs",
+    "verify:observability": "corepack pnpm build && node scripts/verify-observability.mjs",
+    "verify:integrations": "corepack pnpm build && node scripts/verify-integrations.mjs",
+    "verify:memory": "corepack pnpm build && node scripts/verify-memory.mjs",
+    "verify:concurrency": "corepack pnpm build && node scripts/verify-concurrency.mjs",
+    "package:policy-pack": "corepack pnpm build && node scripts/package-policy-pack.mjs",
+    "verify:package": "corepack pnpm build && node scripts/verify-packaged-policy-pack.mjs",
+    "workspace:destroy": "corepack pnpm build && node scripts/destroy-openclaw-workspace.mjs",
+    "verify:workspace-manager": "corepack pnpm build && node scripts/verify-workspace-manager.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "@typescript-eslint/eslint-plugin": "^8.26.1",
+    "@typescript-eslint/parser": "^8.26.1",
+    "drizzle-kit": "^0.31.0",
+    "eslint": "^9.23.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.40.0",
+    "pg": "^8.14.1",
+    "pino": "^9.6.0",
+    "zod": "^3.24.2"
+  }
 }
