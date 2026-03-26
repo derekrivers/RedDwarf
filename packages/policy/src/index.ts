@@ -131,35 +131,26 @@ export function resolveApprovalMode(
   return "auto";
 }
 
+const phaseCapabilityMap: Partial<Record<TaskPhase, Capability[]>> = {
+  planning: planningCapabilities,
+  development: developmentCapabilities,
+  validation: validationCapabilities,
+  scm: scmCapabilities
+};
+
 export function capabilitiesAllowedForPhase(
   phase: TaskPhase,
   requestedCapabilities: Capability[]
 ): boolean {
-  if (phase === "planning") {
-    return requestedCapabilities.every((capability) =>
-      planningCapabilities.includes(capability)
-    );
+  const allowed = phaseCapabilityMap[phase];
+
+  if (allowed === undefined) {
+    return true;
   }
 
-  if (phase === "development") {
-    return requestedCapabilities.every((capability) =>
-      developmentCapabilities.includes(capability)
-    );
-  }
-
-  if (phase === "validation") {
-    return requestedCapabilities.every((capability) =>
-      validationCapabilities.includes(capability)
-    );
-  }
-
-  if (phase === "scm") {
-    return requestedCapabilities.every((capability) =>
-      scmCapabilities.includes(capability)
-    );
-  }
-
-  return true;
+  return requestedCapabilities.every((capability) =>
+    allowed.includes(capability)
+  );
 }
 
 export function createAllowedPaths(
