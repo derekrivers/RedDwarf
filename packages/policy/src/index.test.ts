@@ -50,9 +50,21 @@ describe("policy", () => {
     ).toBe(true);
   });
 
+  it("allows read-only validation capabilities during the validation phase", () => {
+    expect(
+      capabilitiesAllowedForPhase("validation", [
+        "can_run_tests",
+        "can_archive_evidence"
+      ])
+    ).toBe(true);
+    expect(capabilitiesAllowedForPhase("validation", ["can_write_code"])).toBe(
+      false
+    );
+  });
+
   it("builds a policy snapshot with blocked future phases", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
-    expect(snapshot.blockedPhases).toEqual(["validation", "review", "scm"]);
+    expect(snapshot.blockedPhases).toEqual(["review", "scm"]);
   });
 
   it("blocks tasks without the AI eligibility label", () => {

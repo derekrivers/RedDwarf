@@ -22,13 +22,14 @@ export const agentDefinitions: AgentDefinition[] = [
       "Runs the developer phase inside an isolated workspace while product code writes remain disabled by default."
   },
   {
-    id: "validation-placeholder",
+    id: "validation-default",
     displayName: "Validation Agent",
     type: "validation",
-    capabilities: ["can_run_tests"],
+    capabilities: ["can_run_tests", "can_archive_evidence"],
     activePhases: ["validation"],
-    enabled: false,
-    description: "Declared for future validation gates, disabled in v1."
+    enabled: true,
+    description:
+      "Runs deterministic lint and test commands inside the managed workspace before review."
   },
   {
     id: "reviewer-placeholder",
@@ -50,7 +51,7 @@ export const agentDefinitions: AgentDefinition[] = [
   }
 ];
 
-const disabledPhases = new Set<TaskPhase>(["validation", "review", "scm"]);
+const disabledPhases = new Set<TaskPhase>(["review", "scm"]);
 
 export function phaseIsExecutable(phase: TaskPhase): boolean {
   return !disabledPhases.has(phase);

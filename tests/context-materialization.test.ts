@@ -68,7 +68,7 @@ const policySnapshot: PolicySnapshot = {
   approvalMode: "auto",
   allowedCapabilities: ["can_plan", "can_archive_evidence"],
   allowedPaths: ["docs/**"],
-  blockedPhases: ["validation", "review", "scm"],
+  blockedPhases: ["review", "scm"],
   reasons: ["Planning phase is approved for autonomous execution in v1."]
 };
 
@@ -195,6 +195,47 @@ describe("workspace context materialization", () => {
       expect(materialized.descriptor.taskContractFiles.length).toBeGreaterThan(
         0
       );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a validation workspace descriptor with test execution enabled and code writing disabled", async () => {
+    const bundle = createWorkspaceContextBundle({
+      manifest: {
+        ...manifest,
+        currentPhase: "validation",
+        lifecycleStatus: "active",
+        assignedAgentType: "validation"
+      },
+      spec,
+      policySnapshot: {
+        ...policySnapshot,
+        allowedCapabilities: ["can_run_tests", "can_archive_evidence"]
+      }
+    });
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-validation-context-")
+    );
+
+    try {
+      const materialized = await materializeManagedWorkspace({
+        bundle,
+        targetRoot: tempRoot,
+        workspaceId: "workspace-42-validation",
+        createdAt: timestamp
+      });
+      const toolsMd = await readFile(
+        materialized.instructions.files.toolsMd,
+        "utf8"
+      );
+
+      expect(materialized.descriptor.toolPolicy.mode).toBe("validation_only");
+      expect(materialized.descriptor.toolPolicy.codeWriteEnabled).toBe(false);
+      expect(materialized.descriptor.toolPolicy.allowedCapabilities).toContain(
+        "can_run_tests"
+      );
+      expect(toolsMd).toContain("can_run_tests");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

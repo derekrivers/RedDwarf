@@ -5,12 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicValidationAgent,
   createWorkspaceContextBundleFromSnapshot,
   destroyTaskWorkspace,
   provisionTaskWorkspace,
   resolveApprovalRequest,
   runDeveloperPhase,
-  runPlanningPipeline
+  runPlanningPipeline,
+  runValidationPhase
 } from "@reddwarf/control-plane";
 import {
   PostgresPlanningRepository,
@@ -407,8 +409,128 @@ describeIfDatabase("postgres planning repository", () => {
     }
   });
 
-  it("marks stale overlapping runs and blocks fresh overlaps in Postgres", async () => {
+  it("persists validation phase results and blocks pending review", async () => {
     const issueNumber = Date.now() + 3;
+    const repo = `validation-${issueNumber}/platform-${issueNumber}`;
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-postgres-validation-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        source: {
+          provider: "github",
+          repo,
+          issueNumber,
+          issueUrl: `https://github.com/${repo}/issues/${issueNumber}`
+        },
+        title: "Persist validation phase orchestration",
+        summary:
+          "Persist a validation-phase run after developer handoff, verify deterministic command results are archived, and confirm the task blocks cleanly pending review.",
+        priority: 1,
+        labels: ["ai-eligible"],
+        acceptanceCriteria: [
+          "Validation commands are archived",
+          "Validation summary is queryable"
+        ],
+        affectedPaths: ["src/validation-phase.ts"],
+        requestedCapabilities: ["can_write_code"],
+        metadata: {}
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => `validation-plan-${issueNumber}`
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation orchestration.",
+        comment: "Run deterministic validation checks."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: `${planningResult.manifest.taskId}-validation`
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => `validation-dev-${issueNumber}`
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => `validation-run-${issueNumber}`
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const snapshot = await repository.getTaskSnapshot(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        validation.runId
+      );
+      const reportMarkdown = await readFile(validation.reportPath!, "utf8");
+
+      expect(validation.nextAction).toBe("await_review");
+      expect(validation.workspace?.descriptor.toolPolicy.mode).toBe(
+        "validation_only"
+      );
+      expect(persistedManifest?.currentPhase).toBe("validation");
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+      expect(
+        snapshot.phaseRecords.some((record) => record.phase === "validation")
+      ).toBe(true);
+      expect(
+        snapshot.memoryRecords.some(
+          (record) => record.key === "validation.summary"
+        )
+      ).toBe(true);
+      expect(
+        snapshot.evidenceRecords.some((record) =>
+          record.recordId.includes(":validation:")
+        )
+      ).toBe(true);
+      expect(runSummary?.status).toBe("blocked");
+      expect(runSummary?.latestPhase).toBe("validation");
+      expect(reportMarkdown).toContain("Validation Report");
+
+      await destroyTaskWorkspace({
+        manifest: validation.manifest,
+        repository,
+        targetRoot: tempRoot
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("marks stale overlapping runs and blocks fresh overlaps in Postgres", async () => {
+    const issueNumber = Date.now() + 4;
     const repo = `concurrency-${issueNumber}/platform-${issueNumber}`;
     const concurrencyKey = `github:${repo}:${issueNumber}`;
     const taskId = `${repo.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()}-${issueNumber}`;

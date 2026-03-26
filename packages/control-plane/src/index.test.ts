@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicValidationAgent,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
@@ -16,7 +17,8 @@ import {
   provisionTaskWorkspace,
   resolveApprovalRequest,
   runDeveloperPhase,
-  runPlanningPipeline
+  runPlanningPipeline,
+  runValidationPhase
 } from "@reddwarf/control-plane";
 import {
   InMemoryPlanningRepository,
@@ -396,6 +398,214 @@ describe("control-plane", () => {
         targetRoot: tempRoot,
         clock: () => new Date("2026-03-25T18:15:00.000Z")
       });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("runs validation commands in the managed workspace and blocks pending review", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-validation-workspace-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-validation-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation orchestration.",
+        comment: "Proceed through validation."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-validation-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-validation-phase"
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        validation.runId
+      );
+      const reportMarkdown = await readFile(validation.reportPath!, "utf8");
+      const taskMemory = await repository.listMemoryRecords({
+        taskId: planningResult.manifest.taskId,
+        scope: "task"
+      });
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(validation.nextAction).toBe("await_review");
+      expect(validation.manifest.currentPhase).toBe("validation");
+      expect(validation.manifest.lifecycleStatus).toBe("blocked");
+      expect(validation.workspace?.descriptor.toolPolicy.mode).toBe(
+        "validation_only"
+      );
+      expect(
+        validation.workspace?.descriptor.toolPolicy.allowedCapabilities
+      ).toContain("can_run_tests");
+      expect(reportMarkdown).toContain("Validation Report");
+      expect(
+        repository.phaseRecords.some((record) => record.phase === "validation")
+      ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) => event.code === "VALIDATION_COMMAND_PASSED"
+        )
+      ).toBe(true);
+      expect(persistedManifest?.assignedAgentType).toBe("validation");
+      expect(runSummary?.status).toBe("blocked");
+      expect(runSummary?.latestPhase).toBe("validation");
+      expect(
+        taskMemory.some((record) => record.key === "validation.summary")
+      ).toBe(true);
+
+      await destroyTaskWorkspace({
+        manifest: validation.manifest,
+        repository,
+        targetRoot: tempRoot,
+        clock: () => new Date("2026-03-25T18:20:00.000Z")
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the validation phase when a validation command exits non-zero", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-validation-failure-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-validation-failure-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation failure test.",
+        comment: "Exercise the failure path."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation-failure"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-validation-failure-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary: "Force a failing validation command.",
+                  commands: [
+                    {
+                      id: "failing-test",
+                      name: "Failing validation command",
+                      executable: process.execPath,
+                      args: ["-e", "process.exit(7)"]
+                    }
+                  ]
+                };
+              }
+            },
+            clock: () => new Date("2026-03-25T18:15:00.000Z"),
+            idGenerator: () => "run-validation-failure-phase"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        "run-validation-failure-phase"
+      );
+
+      expect(persistedManifest?.lifecycleStatus).toBe("failed");
+      expect(persistedManifest?.currentPhase).toBe("validation");
+      expect(runSummary?.status).toBe("failed");
+      expect(runSummary?.failureClass).toBe("validation_failure");
+      expect(
+        repository.runEvents.some(
+          (event) => event.code === "VALIDATION_COMMAND_FAILED"
+        )
+      ).toBe(true);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

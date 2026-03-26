@@ -108,7 +108,8 @@ export const pipelineRunStatusesForSummary = [
 export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
 export const workspaceToolModes = [
   "planning_only",
-  "development_readonly"
+  "development_readonly",
+  "validation_only"
 ] as const;
 export const approvalRequestStatuses = [
   "pending",

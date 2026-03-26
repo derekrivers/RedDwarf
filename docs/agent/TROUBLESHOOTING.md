@@ -8,10 +8,18 @@
 - Working workaround: use narrow PowerShell or inline Python file edits, then immediately rerun `corepack pnpm typecheck` and the affected test/verify commands.
 - Verification: `corepack pnpm typecheck`, `corepack pnpm test`, and any feature-specific Postgres verification still pass after the scripted edit.
 
-## `corepack pnpm test:postgres` fails or skips in the sandbox
+## Vitest commands fail or skip in the sandbox
 
-- Symptom: `corepack pnpm test:postgres` fails with `spawn EPERM` while loading `vitest.config.ts`, or the file runs but all Postgres tests are skipped.
-- Root cause: in this Windows sandbox, Vitest/Vite may not be allowed to spawn the esbuild helper process, and the test file only enables the Postgres suite when `HOST_DATABASE_URL` or `DATABASE_URL` is present.
-- Failing approach: rerunning `corepack pnpm test:postgres` inside the default sandbox without the DB env vars.
-- Working workaround: rerun `corepack pnpm test:postgres` with escalated permissions when the spawn error appears, and use `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, and `corepack pnpm verify:development` for live database verification when the env-gated Vitest file is skipped.
-- Verification: `corepack pnpm typecheck`, `corepack pnpm test`, `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, `corepack pnpm verify:workspace-manager`, and `corepack pnpm verify:development`.
+- Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.
+- Root cause: in this Windows sandbox, Vitest/Vite may not be allowed to spawn the esbuild helper process, and the Postgres test file only enables the DB suite when `HOST_DATABASE_URL` or `DATABASE_URL` is present.
+- Failing approach: rerunning Vitest-based commands inside the default sandbox, especially without the DB env vars for `test:postgres`.
+- Working workaround: rerun Vitest commands with escalated permissions when the spawn error appears. For DB-backed coverage, prefer `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, `corepack pnpm verify:development`, and `corepack pnpm verify:validation` when `test:postgres` is skipped by missing env vars.
+- Verification: `corepack pnpm typecheck`, `corepack pnpm test`, focused `corepack pnpm test -- ...` suites, `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, `corepack pnpm verify:workspace-manager`, `corepack pnpm verify:development`, and `corepack pnpm verify:validation`.
+
+## Workspace-local validation commands hit `spawn EPERM` in the sandbox
+
+- Symptom: `corepack pnpm verify:validation` or direct `runValidationPhase(...)` executions fail with a `PlanningPipelineFailure` whose root cause is `spawn EPERM` when the validation runner launches workspace-local commands.
+- Root cause: the Windows sandbox can block child-process creation from Node even when the command being launched is just `process.execPath -e ...` inside the managed workspace.
+- Failing approach: running validation-phase command execution inside the default sandbox.
+- Working workaround: rerun validation orchestration outside the sandbox when `spawn EPERM` appears; in this repo that means rerunning `corepack pnpm verify:validation` with escalated permissions.
+- Verification: `corepack pnpm typecheck`, `corepack pnpm test`, and `corepack pnpm verify:validation` all pass once the validation runner is allowed to spawn its workspace-local commands.

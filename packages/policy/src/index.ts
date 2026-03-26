@@ -18,9 +18,13 @@ const highRiskPatterns = [
   /deploy/i,
   /migration/i
 ];
-const disabledPhases: TaskPhase[] = ["validation", "review", "scm"];
+const disabledPhases: TaskPhase[] = ["review", "scm"];
 const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
 const developmentCapabilities: Capability[] = ["can_archive_evidence"];
+const validationCapabilities: Capability[] = [
+  "can_run_tests",
+  "can_archive_evidence"
+];
 
 export interface EligibilityAssessment {
   eligible: boolean;
@@ -141,6 +145,12 @@ export function capabilitiesAllowedForPhase(
     );
   }
 
+  if (phase === "validation") {
+    return requestedCapabilities.every((capability) =>
+      validationCapabilities.includes(capability)
+    );
+  }
+
   return true;
 }
 
@@ -172,7 +182,7 @@ export function buildPolicySnapshot(
     approvalMode === "auto"
       ? ["Planning phase is approved for autonomous execution in v1."]
       : [
-          "Developer orchestration may continue after human intervention, but code writing remains disabled by default in v1."
+          "Developer orchestration may continue after human intervention, validation can run read-only checks, and review/SCM remain blocked in v1."
         ];
 
   return {

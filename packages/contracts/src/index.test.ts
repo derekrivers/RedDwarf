@@ -87,18 +87,14 @@ describe("contracts", () => {
         approvalMode: "auto",
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
         allowedPaths: ["docs/**"],
-        blockedPhases: ["validation", "review", "scm"],
+        blockedPhases: ["review", "scm"],
         reasons: ["Planning phase is approved for autonomous execution in v1."]
       },
       acceptanceCriteria: ["Spec is produced"],
       allowedPaths: ["docs/**"]
     });
 
-    expect(bundle.policySnapshot.blockedPhases).toEqual([
-      "validation",
-      "review",
-      "scm"
-    ]);
+    expect(bundle.policySnapshot.blockedPhases).toEqual(["review", "scm"]);
   });
 
   it("parses a runtime instruction layer", () => {
@@ -108,7 +104,7 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       approvalMode: "auto",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
-      blockedPhases: ["validation", "review", "scm"],
+      blockedPhases: ["review", "scm"],
       canonicalSources: [
         "standards/engineering.md",
         "prompts/planning-system.md"
@@ -149,7 +145,7 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
       allowedPaths: ["docs/**"],
-      blockedPhases: ["validation", "review", "scm"],
+      blockedPhases: ["review", "scm"],
       canonicalSources: ["standards/engineering.md"],
       taskContractFiles: [
         "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42/.context/task.json"
@@ -167,7 +163,7 @@ describe("contracts", () => {
         mode: "planning_only",
         codeWriteEnabled: false,
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
-        blockedPhases: ["validation", "review", "scm"],
+        blockedPhases: ["review", "scm"],
         notes: ["Planning-only workspace."]
       },
       credentialPolicy: {
@@ -185,6 +181,64 @@ describe("contracts", () => {
     expect(descriptor.toolPolicy.codeWriteEnabled).toBe(false);
   });
 
+  it("parses a validation workspace descriptor", () => {
+    const descriptor = workspaceDescriptorSchema.parse({
+      workspaceId: "workspace-42-validation",
+      taskId: "acme-platform-42",
+      workspaceRoot:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation",
+      contextDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/.context",
+      stateFile:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/.workspace/workspace.json",
+      scratchDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/scratch",
+      artifactsDir:
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/artifacts",
+      status: "provisioned",
+      assignedAgentType: "validation",
+      recommendedAgentType: "developer",
+      allowedCapabilities: ["can_run_tests", "can_archive_evidence"],
+      allowedPaths: ["src/**"],
+      blockedPhases: ["review", "scm"],
+      canonicalSources: ["agents/validation.md"],
+      taskContractFiles: [
+        "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/.context/task.json"
+      ],
+      instructionFiles: {
+        soulMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/SOUL.md",
+        agentsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/AGENTS.md",
+        toolsMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/TOOLS.md",
+        taskSkillMd:
+          "C:/Dev/RedDwarf/runtime-data/workspaces/workspace-42-validation/skills/reddwarf-task/SKILL.md"
+      },
+      toolPolicy: {
+        mode: "validation_only",
+        codeWriteEnabled: false,
+        allowedCapabilities: ["can_run_tests", "can_archive_evidence"],
+        blockedPhases: ["review", "scm"],
+        notes: ["Validation-only workspace."]
+      },
+      credentialPolicy: {
+        mode: "none",
+        allowedSecretScopes: [],
+        notes: ["Secrets adapter is not implemented in v1."]
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      destroyedAt: null
+    });
+
+    expect(descriptor.assignedAgentType).toBe("validation");
+    expect(descriptor.toolPolicy.mode).toBe("validation_only");
+    expect(descriptor.toolPolicy.allowedCapabilities).toContain(
+      "can_run_tests"
+    );
+  });
+
   it("parses approval requests and queue queries", () => {
     const request = approvalRequestSchema.parse({
       requestId: "approval-1",
@@ -197,7 +251,7 @@ describe("contracts", () => {
       summary: "Human approval is required before downstream execution.",
       requestedCapabilities: ["can_write_code"],
       allowedPaths: ["src/**"],
-      blockedPhases: ["validation", "review", "scm"],
+      blockedPhases: ["review", "scm"],
       policyReasons: [
         "Developer orchestration may continue after human intervention, but code writing remains disabled by default in v1."
       ],

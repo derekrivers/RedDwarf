@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -176,7 +177,53 @@ export interface DevelopmentAgent {
   ): Promise<DevelopmentDraft>;
 }
 
+export interface ValidationCommand {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+}
+
+export interface ValidationDraft {
+  summary: string;
+  commands: ValidationCommand[];
+}
+
+export interface ValidationAgent {
+  createPlan(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+    }
+  ): Promise<ValidationDraft>;
+}
+
+export interface ValidationCommandResult {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+  exitCode: number;
+  signal: NodeJS.Signals | null;
+  durationMs: number;
+  status: "passed" | "failed";
+  logPath: string;
+}
+
+export interface ValidationReport {
+  summary: string;
+  commandResults: ValidationCommandResult[];
+}
+
 export interface RunDeveloperPhaseInput {
+  taskId: string;
+  targetRoot: string;
+  workspaceId?: string;
+}
+
+export interface RunValidationPhaseInput {
   taskId: string;
   targetRoot: string;
   workspaceId?: string;
@@ -191,6 +238,15 @@ export interface DevelopmentPhaseDependencies {
   concurrency?: PlanningConcurrencyOptions;
 }
 
+export interface ValidationPhaseDependencies {
+  repository: PlanningRepository;
+  validator: ValidationAgent;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  concurrency?: PlanningConcurrencyOptions;
+}
+
 export interface DevelopmentPhaseResult {
   runId: string;
   manifest: TaskManifest;
@@ -198,6 +254,16 @@ export interface DevelopmentPhaseResult {
   handoff?: DevelopmentDraft;
   handoffPath?: string;
   nextAction: "await_validation" | "task_blocked";
+  concurrencyDecision: ConcurrencyDecision;
+}
+
+export interface ValidationPhaseResult {
+  runId: string;
+  manifest: TaskManifest;
+  workspace?: MaterializedManagedWorkspace;
+  report?: ValidationReport;
+  reportPath?: string;
+  nextAction: "await_review" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
 }
 
@@ -362,7 +428,8 @@ const agentInstructionPathByType: Partial<
   Record<TaskManifest["assignedAgentType"], string>
 > = {
   architect: "agents/architect.md",
-  developer: "agents/developer.md"
+  developer: "agents/developer.md",
+  validation: "agents/validation.md"
 };
 
 const capabilityGuidance: Record<Capability, string> = {
@@ -386,6 +453,16 @@ const capabilityGuidance: Record<Capability, string> = {
     "Persist structured logs, specs, diffs, and verification output as durable evidence."
 };
 
+const planningWorkspaceCapabilities: Capability[] = [
+  "can_plan",
+  "can_archive_evidence"
+];
+const developmentWorkspaceCapabilities: Capability[] = ["can_archive_evidence"];
+const validationWorkspaceCapabilities: Capability[] = [
+  "can_run_tests",
+  "can_archive_evidence"
+];
+
 const planningWorkspaceToolPolicyNotes = [
   "Workspace execution is constrained to planning-only capabilities in RedDwarf v1.",
   "Filesystem access should stay inside the isolated workspace plus policy-approved product paths."
@@ -393,7 +470,12 @@ const planningWorkspaceToolPolicyNotes = [
 
 const developmentWorkspaceToolPolicyNotes = [
   "Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default.",
-  "Use the isolated workspace for inspection, handoff artifacts, and evidence capture until validation automation lands."
+  "Use the isolated workspace for inspection, handoff artifacts, and evidence capture before validation checks run."
+] as const;
+
+const validationWorkspaceToolPolicyNotes = [
+  "Validation orchestration is enabled in RedDwarf v1 for deterministic workspace-local checks.",
+  "Run lint, test, and contract validation commands inside the isolated workspace while product code writes remain disabled."
 ] as const;
 
 const workspaceCredentialPolicyNotes = [
@@ -594,14 +676,15 @@ export function createRuntimeInstructionLayer(
 ): RuntimeInstructionLayer {
   const bundle = workspaceContextBundleSchema.parse(bundleInput);
   const canonicalSources = buildCanonicalSources(bundle);
+  const toolPolicy = createWorkspaceToolPolicy(bundle);
 
   return runtimeInstructionLayerSchema.parse({
     taskId: bundle.manifest.taskId,
     assignedAgentType: bundle.manifest.assignedAgentType,
     recommendedAgentType: bundle.spec.recommendedAgentType,
     approvalMode: bundle.policySnapshot.approvalMode,
-    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
-    blockedPhases: bundle.policySnapshot.blockedPhases,
+    allowedCapabilities: toolPolicy.allowedCapabilities,
+    blockedPhases: toolPolicy.blockedPhases,
     canonicalSources,
     contextFiles: [...taskContractRelativePaths],
     files: [
@@ -770,6 +853,7 @@ export function createWorkspaceDescriptor(input: {
     input.materialized.workspaceRoot,
     workspaceArtifactsDirName
   );
+  const toolPolicy = createWorkspaceToolPolicy(bundle);
 
   return workspaceDescriptorSchema.parse({
     workspaceId,
@@ -782,13 +866,13 @@ export function createWorkspaceDescriptor(input: {
     status: input.status ?? "provisioned",
     assignedAgentType: bundle.manifest.assignedAgentType,
     recommendedAgentType: bundle.spec.recommendedAgentType,
-    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+    allowedCapabilities: toolPolicy.allowedCapabilities,
     allowedPaths: bundle.allowedPaths,
-    blockedPhases: bundle.policySnapshot.blockedPhases,
+    blockedPhases: toolPolicy.blockedPhases,
     canonicalSources: input.materialized.instructions.canonicalSources,
     taskContractFiles: input.materialized.instructions.taskContractFiles,
     instructionFiles: input.materialized.instructions.files,
-    toolPolicy: createWorkspaceToolPolicy(bundle),
+    toolPolicy,
     credentialPolicy: {
       mode: "none",
       allowedSecretScopes: [],
@@ -1046,11 +1130,40 @@ export class DeterministicDeveloperAgent implements DevelopmentAgent {
       ],
       blockedActions: [
         "Product code writes remain disabled by default in the development phase.",
-        "Validation, review, and SCM automation are still blocked in RedDwarf v1."
+        "Review and SCM automation remain blocked in RedDwarf v1 after validation completes."
       ],
       nextActions: [
-        "Wait for validation orchestration before attempting automated checks.",
+        "Run the validation phase against the managed workspace before asking for review.",
         "Escalate if the task truly requires code-write access before downstream phases land."
+      ]
+    };
+  }
+}
+
+export class DeterministicValidationAgent implements ValidationAgent {
+  async createPlan(
+    _bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+    }
+  ): Promise<ValidationDraft> {
+    return {
+      summary: `Run deterministic lint and test checks for workspace ${context.workspace.workspaceId} before the review phase.`,
+      commands: [
+        {
+          id: "lint",
+          name: "Lint workspace artifacts",
+          executable: process.execPath,
+          args: ["-e", createValidationNodeScript("lint")]
+        },
+        {
+          id: "test",
+          name: "Validate workspace contracts",
+          executable: process.execPath,
+          args: ["-e", createValidationNodeScript("test")]
+        }
       ]
     };
   }
@@ -2492,7 +2605,7 @@ export async function runDeveloperPhase(
       level: "warn",
       code: "PIPELINE_BLOCKED",
       message:
-        "Developer phase completed, but validation automation is not implemented yet.",
+        "Developer phase completed and is ready for validation execution.",
       durationMs: getDurationMs(runStartedAt, blockedAt),
       data: {
         nextPhase: "validation",
@@ -2626,6 +2739,802 @@ export async function runDeveloperPhase(
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist developer phase failure evidence.", {
+        runId,
+        taskId,
+        failureClass: pipelineFailure.failureClass,
+        code: pipelineFailure.code,
+        persistenceError: serializeError(persistenceError)
+      });
+    }
+
+    throw new PlanningPipelineFailure({
+      message: pipelineFailure.message,
+      failureClass: pipelineFailure.failureClass,
+      phase: pipelineFailure.phase,
+      code: pipelineFailure.code,
+      details: pipelineFailure.details,
+      cause: pipelineFailure,
+      taskId,
+      runId
+    });
+  }
+}
+
+export async function runValidationPhase(
+  input: RunValidationPhaseInput,
+  dependencies: ValidationPhaseDependencies
+): Promise<ValidationPhaseResult> {
+  const taskId = input.taskId.trim();
+
+  if (taskId.length === 0) {
+    throw new Error("Task id is required to run the validation phase.");
+  }
+
+  const repository = dependencies.repository;
+  const validator = dependencies.validator;
+  const logger = dependencies.logger ?? defaultLogger;
+  const clock = dependencies.clock ?? (() => new Date());
+  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
+  const concurrency = {
+    strategy: dependencies.concurrency?.strategy ?? "serialize",
+    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+  } satisfies Required<PlanningConcurrencyOptions>;
+  const snapshot = await repository.getTaskSnapshot(taskId);
+
+  if (!snapshot.manifest) {
+    throw new Error(`Task manifest ${taskId} was not found.`);
+  }
+
+  if (!snapshot.spec) {
+    throw new Error(`Planning spec for ${taskId} was not found.`);
+  }
+
+  if (!snapshot.policySnapshot) {
+    throw new Error(`Policy snapshot for ${taskId} was not found.`);
+  }
+
+  const approvedRequest =
+    snapshot.manifest.approvalMode === "auto"
+      ? null
+      : (snapshot.approvalRequests.find(
+          (request) => request.status === "approved"
+        ) ?? null);
+
+  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
+    throw new Error(
+      `Task ${taskId} requires an approved request before the validation phase can start.`
+    );
+  }
+
+  const lifecycleAllowsValidation =
+    (snapshot.manifest.lifecycleStatus === "blocked" &&
+      ["development", "validation"].includes(snapshot.manifest.currentPhase)) ||
+    (snapshot.manifest.lifecycleStatus === "active" &&
+      snapshot.manifest.currentPhase === "validation");
+
+  if (!lifecycleAllowsValidation) {
+    throw new Error(
+      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter validation.`
+    );
+  }
+
+  if (
+    input.workspaceId &&
+    snapshot.manifest.workspaceId &&
+    input.workspaceId !== snapshot.manifest.workspaceId
+  ) {
+    throw new Error(
+      `Validation must reuse workspace ${snapshot.manifest.workspaceId}; received ${input.workspaceId}.`
+    );
+  }
+
+  const workspaceId = snapshot.manifest.workspaceId ?? input.workspaceId;
+
+  if (!workspaceId) {
+    throw new Error(
+      `Task ${taskId} requires a managed workspace from the developer phase before validation can start.`
+    );
+  }
+
+  assertPhaseExecutable("validation");
+
+  const runId = idGenerator();
+  const runStartedAt = clock();
+  const runStartedAtIso = asIsoTimestamp(runStartedAt);
+  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  let currentManifest = taskManifestSchema.parse(snapshot.manifest);
+  let concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds: [],
+    reason: null
+  });
+  let trackedRun = createPipelineRun({
+    runId,
+    taskId,
+    concurrencyKey,
+    strategy: concurrency.strategy,
+    status: "active",
+    startedAt: runStartedAtIso,
+    lastHeartbeatAt: runStartedAtIso,
+    metadata: {
+      sourceRepo: currentManifest.source.repo,
+      phase: "validation",
+      workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    }
+  });
+  const runLogger = bindPlanningLogger(logger, {
+    runId,
+    taskId,
+    sourceRepo: currentManifest.source.repo,
+    phase: "validation"
+  });
+  let eventSequence = 0;
+  const nextEventId = (phase: TaskPhase, code: string): string => {
+    const sequence = String(eventSequence).padStart(3, "0");
+    eventSequence += 1;
+    return `${runId}:${sequence}:${phase}:${code}`;
+  };
+  const persistTrackedRun = async (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+  ): Promise<void> => {
+    trackedRun = createPipelineRun({
+      ...trackedRun,
+      ...patch,
+      metadata: {
+        ...trackedRun.metadata,
+        ...(patch.metadata ?? {})
+      }
+    });
+    await repository.savePipelineRun(trackedRun);
+  };
+
+  const overlappingRuns = await repository.listPipelineRuns({
+    concurrencyKey,
+    statuses: ["active"],
+    limit: 25
+  });
+  const staleRunIds: string[] = [];
+  let blockedByRun: PipelineRun | null = null;
+
+  for (const overlap of overlappingRuns) {
+    if (overlap.runId === runId) {
+      continue;
+    }
+
+    if (isPipelineRunStale(overlap, runStartedAt, concurrency.staleAfterMs)) {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...overlap,
+          status: "stale",
+          lastHeartbeatAt: runStartedAtIso,
+          completedAt: runStartedAtIso,
+          staleAt: runStartedAtIso,
+          overlapReason: `Marked stale by run ${runId}`,
+          metadata: {
+            ...overlap.metadata,
+            staleDetectedByRunId: runId
+          }
+        })
+      );
+      staleRunIds.push(overlap.runId);
+      continue;
+    }
+
+    blockedByRun = overlap;
+    break;
+  }
+
+  if (blockedByRun) {
+    concurrencyDecision = createConcurrencyDecision({
+      action: "block",
+      strategy: concurrency.strategy,
+      blockedByRunId: blockedByRun.runId,
+      staleRunIds,
+      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    });
+    await repository.savePipelineRun(
+      createPipelineRun({
+        ...trackedRun,
+        status: "blocked",
+        blockedByRunId: blockedByRun.runId,
+        overlapReason: concurrencyDecision.reason,
+        completedAt: runStartedAtIso,
+        metadata: {
+          ...trackedRun.metadata,
+          staleRunIds
+        }
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:validation:concurrency:${runId}`,
+        taskId,
+        kind: "gate_decision",
+        title: "Validation concurrency gate decision",
+        metadata: concurrencyDecision,
+        createdAt: runStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "RUN_BLOCKED_BY_OVERLAP"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "warn",
+      code: "RUN_BLOCKED_BY_OVERLAP",
+      message:
+        concurrencyDecision.reason ??
+        "Validation phase blocked by an overlapping run.",
+      failureClass: "execution_loop",
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId,
+        staleRunIds
+      },
+      createdAt: runStartedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "PIPELINE_BLOCKED"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message: "Validation phase blocked by concurrency controls.",
+      failureClass: "execution_loop",
+      durationMs: getDurationMs(runStartedAt, runStartedAt),
+      data: {
+        concurrencyKey,
+        strategy: concurrency.strategy,
+        blockedByRunId: blockedByRun.runId
+      },
+      createdAt: runStartedAtIso
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      nextAction: "task_blocked",
+      concurrencyDecision
+    };
+  }
+
+  concurrencyDecision = createConcurrencyDecision({
+    action: "start",
+    strategy: concurrency.strategy,
+    blockedByRunId: null,
+    staleRunIds,
+    reason:
+      staleRunIds.length > 0
+        ? `Marked ${staleRunIds.length} stale overlapping run(s) before starting.`
+        : null
+  });
+  await persistTrackedRun({ metadata: { staleRunIds } });
+
+  try {
+    if (staleRunIds.length > 0) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "STALE_RUNS_DETECTED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "info",
+        code: "STALE_RUNS_DETECTED",
+        message:
+          "Stale overlapping runs were marked before the validation phase started.",
+        data: {
+          concurrencyKey,
+          staleRunIds,
+          strategy: concurrency.strategy
+        },
+        createdAt: runStartedAtIso
+      });
+    }
+
+    const validationStartedAt = clock();
+    const validationStartedAtIso = asIsoTimestamp(validationStartedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "validation",
+      lifecycleStatus: "active",
+      assignedAgentType: "validation",
+      workspaceId,
+      updatedAt: validationStartedAtIso
+    });
+    await repository.updateManifest(currentManifest);
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "PHASE_RUNNING"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "info",
+      code: "PHASE_RUNNING",
+      message: "Validation phase started.",
+      data: {
+        actor: "validation",
+        workspaceId,
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      },
+      createdAt: validationStartedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: validationStartedAtIso,
+      metadata: {
+        currentPhase: "validation",
+        workspaceId,
+        ...(approvedRequest
+          ? { approvalRequestId: approvedRequest.requestId }
+          : {})
+      }
+    });
+
+    const bundle = createWorkspaceContextBundle({
+      manifest: currentManifest,
+      spec: snapshot.spec,
+      policySnapshot: snapshot.policySnapshot
+    });
+    const workspace = await materializeManagedWorkspace({
+      bundle,
+      targetRoot: input.targetRoot,
+      workspaceId,
+      createdAt: validationStartedAtIso
+    });
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      workspaceId: workspace.workspaceId,
+      updatedAt: validationStartedAtIso,
+      evidenceLinks: [
+        ...new Set([
+          ...currentManifest.evidenceLinks,
+          `${workspaceLocationPrefix}${workspace.workspaceId}`
+        ])
+      ]
+    });
+    await repository.updateManifest(currentManifest);
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:workspace:${workspace.workspaceId}:validation:${runId}`,
+        taskId,
+        kind: "file_artifact",
+        title: "Managed workspace prepared for validation",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}`,
+        metadata: {
+          status: workspace.descriptor.status,
+          workspaceRoot: workspace.workspaceRoot,
+          stateFile: workspace.stateFile,
+          descriptor: workspace.descriptor,
+          phase: "validation",
+          runId
+        },
+        createdAt: validationStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "WORKSPACE_PREPARED"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "info",
+      code: "WORKSPACE_PREPARED",
+      message: "Validation workspace prepared.",
+      data: {
+        workspaceId: workspace.workspaceId,
+        toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      },
+      createdAt: validationStartedAtIso
+    });
+
+    const plan = await validator.createPlan(bundle, {
+      manifest: currentManifest,
+      runId,
+      workspace
+    });
+
+    if (plan.commands.length === 0) {
+      throw new PlanningPipelineFailure({
+        message: "Validation plan did not provide any commands.",
+        failureClass: "validation_failure",
+        phase: "validation",
+        code: "VALIDATION_PLAN_EMPTY",
+        details: {
+          workspaceId: workspace.workspaceId
+        },
+        taskId,
+        runId
+      });
+    }
+
+    const commandResults: ValidationCommandResult[] = [];
+
+    for (const command of plan.commands) {
+      const commandStartedAt = clock();
+      const commandStartedAtIso = asIsoTimestamp(commandStartedAt);
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "VALIDATION_COMMAND_STARTED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "info",
+        code: "VALIDATION_COMMAND_STARTED",
+        message: `Validation command ${command.id} started.`,
+        data: {
+          commandId: command.id,
+          commandName: command.name,
+          executable: command.executable,
+          args: command.args,
+          workspaceId: workspace.workspaceId
+        },
+        createdAt: commandStartedAtIso
+      });
+      const executed = await executeValidationCommand({
+        command,
+        workspace,
+        startedAt: commandStartedAt
+      });
+      const { stdout: _stdout, stderr: _stderr, ...commandResult } = executed;
+      commandResults.push(commandResult);
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:validation:${runId}:command:${command.id}`,
+          taskId,
+          kind: "file_artifact",
+          title: `Validation command log: ${command.name}`,
+          location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-${command.id}.log`,
+          metadata: {
+            runId,
+            workspaceId: workspace.workspaceId,
+            commandId: command.id,
+            commandName: command.name,
+            exitCode: commandResult.exitCode,
+            signal: commandResult.signal,
+            durationMs: commandResult.durationMs,
+            status: commandResult.status,
+            logPath: commandResult.logPath
+          },
+          createdAt: commandStartedAtIso
+        })
+      );
+
+      if (commandResult.exitCode !== 0) {
+        await recordRunEvent({
+          repository,
+          logger: runLogger,
+          eventId: nextEventId("validation", "VALIDATION_COMMAND_FAILED"),
+          taskId,
+          runId,
+          phase: "validation",
+          level: "error",
+          code: "VALIDATION_COMMAND_FAILED",
+          message: `Validation command ${command.id} failed.`,
+          failureClass: "validation_failure",
+          durationMs: commandResult.durationMs,
+          data: {
+            commandId: command.id,
+            commandName: command.name,
+            exitCode: commandResult.exitCode,
+            signal: commandResult.signal,
+            logPath: commandResult.logPath,
+            workspaceId: workspace.workspaceId
+          },
+          createdAt: commandStartedAtIso
+        });
+        throw new PlanningPipelineFailure({
+          message: `Validation command ${command.id} failed with exit code ${commandResult.exitCode}.`,
+          failureClass: "validation_failure",
+          phase: "validation",
+          code: "VALIDATION_COMMAND_FAILED",
+          details: {
+            commandId: command.id,
+            commandName: command.name,
+            exitCode: commandResult.exitCode,
+            signal: commandResult.signal,
+            logPath: commandResult.logPath,
+            workspaceId: workspace.workspaceId
+          },
+          taskId,
+          runId
+        });
+      }
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "VALIDATION_COMMAND_PASSED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "info",
+        code: "VALIDATION_COMMAND_PASSED",
+        message: `Validation command ${command.id} passed.`,
+        durationMs: commandResult.durationMs,
+        data: {
+          commandId: command.id,
+          commandName: command.name,
+          exitCode: commandResult.exitCode,
+          logPath: commandResult.logPath,
+          workspaceId: workspace.workspaceId
+        },
+        createdAt: commandStartedAtIso
+      });
+      await persistTrackedRun({
+        lastHeartbeatAt: commandStartedAtIso,
+        metadata: {
+          currentPhase: "validation",
+          workspaceId: workspace.workspaceId,
+          lastValidationCommandId: command.id
+        }
+      });
+    }
+
+    const report: ValidationReport = {
+      summary: plan.summary,
+      commandResults
+    };
+    const validationCompletedAt = clock();
+    const validationCompletedAtIso = asIsoTimestamp(validationCompletedAt);
+    const reportPath = join(workspace.artifactsDir, "validation-report.md");
+    await writeFile(
+      reportPath,
+      renderValidationReportMarkdown({
+        bundle,
+        report,
+        workspace,
+        runId
+      }),
+      "utf8"
+    );
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:validation`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "validation.summary",
+        title: "Validation summary",
+        value: {
+          summary: report.summary,
+          commandResults,
+          runId,
+          workspaceId: workspace.workspaceId,
+          reportPath
+        },
+        repo: currentManifest.source.repo,
+        organizationId: deriveOrganizationId(currentManifest.source.repo),
+        tags: ["validation", "task"],
+        createdAt: validationCompletedAtIso,
+        updatedAt: validationCompletedAtIso
+      })
+    );
+    await repository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${taskId}:phase:validation`,
+        taskId,
+        phase: "validation",
+        status: "passed",
+        actor: "validation",
+        summary:
+          "Validation phase completed with deterministic workspace-local checks.",
+        details: {
+          workspaceId: workspace.workspaceId,
+          reportPath,
+          commandResults,
+          ...(approvedRequest
+            ? { approvalRequestId: approvedRequest.requestId }
+            : {})
+        },
+        createdAt: validationCompletedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:validation:${runId}:report`,
+        taskId,
+        kind: "file_artifact",
+        title: "Validation report",
+        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-report.md`,
+        metadata: {
+          runId,
+          workspaceId: workspace.workspaceId,
+          summary: report.summary,
+          commandResults
+        },
+        createdAt: validationCompletedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "PHASE_PASSED"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "info",
+      code: "PHASE_PASSED",
+      message: "Validation checks passed in the managed workspace.",
+      durationMs: getDurationMs(validationStartedAt, validationCompletedAt),
+      data: {
+        actor: "validation",
+        workspaceId: workspace.workspaceId,
+        reportPath,
+        commandCount: commandResults.length
+      },
+      createdAt: validationCompletedAtIso
+    });
+    await persistTrackedRun({
+      lastHeartbeatAt: validationCompletedAtIso,
+      metadata: {
+        currentPhase: "validation",
+        workspaceId: workspace.workspaceId,
+        reportPath
+      }
+    });
+
+    const blockedAt = clock();
+    const blockedAtIso = asIsoTimestamp(blockedAt);
+    await recordRunEvent({
+      repository,
+      logger: runLogger,
+      eventId: nextEventId("validation", "PIPELINE_BLOCKED"),
+      taskId,
+      runId,
+      phase: "validation",
+      level: "warn",
+      code: "PIPELINE_BLOCKED",
+      message:
+        "Validation phase completed, but review automation is not implemented yet.",
+      durationMs: getDurationMs(runStartedAt, blockedAt),
+      data: {
+        nextPhase: "review",
+        workspaceId: workspace.workspaceId,
+        reportPath
+      },
+      createdAt: blockedAtIso
+    });
+
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "validation",
+      lifecycleStatus: "blocked",
+      updatedAt: blockedAtIso
+    });
+    await repository.updateManifest(currentManifest);
+    await persistTrackedRun({
+      status: "blocked",
+      lastHeartbeatAt: blockedAtIso,
+      completedAt: blockedAtIso,
+      metadata: {
+        currentPhase: "validation",
+        nextAction: "await_review",
+        workspaceId: workspace.workspaceId,
+        reportPath
+      }
+    });
+
+    return {
+      runId,
+      manifest: currentManifest,
+      workspace,
+      report,
+      reportPath,
+      nextAction: "await_review",
+      concurrencyDecision
+    };
+  } catch (error) {
+    const pipelineFailure = normalizePipelineFailure(
+      error,
+      "validation",
+      taskId,
+      runId
+    );
+    const failedAt = clock();
+    const failedAtIso = asIsoTimestamp(failedAt);
+    currentManifest = taskManifestSchema.parse({
+      ...currentManifest,
+      currentPhase: "validation",
+      lifecycleStatus: "failed",
+      updatedAt: failedAtIso
+    });
+
+    try {
+      await repository.savePhaseRecord(
+        createPhaseRecord({
+          id: `${taskId}:phase:validation`,
+          taskId,
+          phase: "validation",
+          status: "failed",
+          actor: "control-plane",
+          summary: pipelineFailure.message,
+          details: {
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            ...pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:validation:failure:${runId}`,
+          taskId,
+          kind: "run_event",
+          title: "Validation phase failure",
+          metadata: {
+            runId,
+            code: pipelineFailure.code,
+            failureClass: pipelineFailure.failureClass,
+            details: pipelineFailure.details
+          },
+          createdAt: failedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "PHASE_FAILED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "error",
+        code: "PHASE_FAILED",
+        message: pipelineFailure.message,
+        failureClass: pipelineFailure.failureClass,
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("validation", "PIPELINE_FAILED"),
+        taskId,
+        runId,
+        phase: "validation",
+        level: "error",
+        code: "PIPELINE_FAILED",
+        message: "Validation phase failed.",
+        failureClass: pipelineFailure.failureClass,
+        durationMs: getDurationMs(runStartedAt, failedAt),
+        data: {
+          causeCode: pipelineFailure.code,
+          details: pipelineFailure.details
+        },
+        createdAt: failedAtIso
+      });
+      await repository.updateManifest(currentManifest);
+      await persistTrackedRun({
+        status: "failed",
+        lastHeartbeatAt: failedAtIso,
+        completedAt: failedAtIso,
+        metadata: {
+          currentPhase: "validation",
+          failureCode: pipelineFailure.code,
+          failureClass: pipelineFailure.failureClass
+        }
+      });
+    } catch (persistenceError) {
+      runLogger.error("Failed to persist validation phase failure evidence.", {
         runId,
         taskId,
         failureClass: pipelineFailure.failureClass,
@@ -2902,22 +3811,39 @@ function createWorkspaceToolPolicy(
   bundleInput: WorkspaceContextBundle
 ): WorkspaceDescriptor["toolPolicy"] {
   const bundle = workspaceContextBundleSchema.parse(bundleInput);
-  const mode =
+
+  if (
+    bundle.manifest.currentPhase === "validation" ||
+    bundle.manifest.assignedAgentType === "validation"
+  ) {
+    return {
+      mode: "validation_only",
+      codeWriteEnabled: false,
+      allowedCapabilities: [...validationWorkspaceCapabilities],
+      blockedPhases: bundle.policySnapshot.blockedPhases,
+      notes: [...validationWorkspaceToolPolicyNotes]
+    };
+  }
+
+  if (
     bundle.manifest.currentPhase === "development" ||
     bundle.manifest.assignedAgentType === "developer"
-      ? "development_readonly"
-      : "planning_only";
-  const notes =
-    mode === "development_readonly"
-      ? [...developmentWorkspaceToolPolicyNotes]
-      : [...planningWorkspaceToolPolicyNotes];
+  ) {
+    return {
+      mode: "development_readonly",
+      codeWriteEnabled: false,
+      allowedCapabilities: [...developmentWorkspaceCapabilities],
+      blockedPhases: bundle.policySnapshot.blockedPhases,
+      notes: [...developmentWorkspaceToolPolicyNotes]
+    };
+  }
 
   return {
-    mode,
+    mode: "planning_only",
     codeWriteEnabled: false,
-    allowedCapabilities: bundle.policySnapshot.allowedCapabilities,
+    allowedCapabilities: [...planningWorkspaceCapabilities],
     blockedPhases: bundle.policySnapshot.blockedPhases,
-    notes
+    notes: [...planningWorkspaceToolPolicyNotes]
   };
 }
 
@@ -2954,6 +3880,181 @@ function renderDevelopmentHandoffMarkdown(input: {
     ...input.handoff.nextActions.map((item) => `- ${item}`),
     ""
   ].join("\n");
+}
+
+function renderValidationReportMarkdown(input: {
+  bundle: WorkspaceContextBundle;
+  report: ValidationReport;
+  workspace: MaterializedManagedWorkspace;
+  runId: string;
+}): string {
+  return [
+    "# Validation Report",
+    "",
+    `- Task ID: ${input.bundle.manifest.taskId}`,
+    `- Run ID: ${input.runId}`,
+    `- Workspace ID: ${input.workspace.workspaceId}`,
+    `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
+    "",
+    "## Summary",
+    "",
+    input.report.summary,
+    "",
+    "## Command Results",
+    "",
+    ...input.report.commandResults.flatMap((result) => [
+      `### ${result.name}`,
+      "",
+      `- Command ID: ${result.id}`,
+      `- Status: ${result.status}`,
+      `- Exit Code: ${result.exitCode}`,
+      `- Duration (ms): ${result.durationMs}`,
+      `- Log Path: ${relative(input.workspace.workspaceRoot, result.logPath).replace(/\\/g, "/")}`,
+      ""
+    ])
+  ].join("\n");
+}
+
+function createValidationNodeScript(kind: "lint" | "test"): string {
+  if (kind === "lint") {
+    return [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'const handoffPath = path.join(process.cwd(), "artifacts", "developer-handoff.md");',
+      'const handoff = fs.readFileSync(handoffPath, "utf8");',
+      'const requiredHeadings = ["# Development Handoff", "## Summary", "## Implementation Notes", "## Blocked Actions", "## Next Actions"];',
+      "for (const heading of requiredHeadings) {",
+      "  if (!handoff.includes(heading)) {",
+      "    throw new Error(`Missing heading ${heading} in ${handoffPath}.`);",
+      "  }",
+      "}",
+      'if (!handoff.includes("Code writing enabled: no")) {',
+      '  throw new Error("Developer handoff must confirm code writing stays disabled.");',
+      "}",
+      'console.log("Validated developer handoff headings and guardrails.");'
+    ].join("\n");
+  }
+
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    'const task = JSON.parse(fs.readFileSync(path.join(process.cwd(), ".context", "task.json"), "utf8"));',
+    'const descriptor = JSON.parse(fs.readFileSync(path.join(process.cwd(), ".workspace", "workspace.json"), "utf8"));',
+    'const tools = fs.readFileSync(path.join(process.cwd(), "TOOLS.md"), "utf8");',
+    'if (task.currentPhase !== "validation") {',
+    "  throw new Error(`Expected validation phase in task.json, received ${task.currentPhase}.`);",
+    "}",
+    'if (task.assignedAgentType !== "validation") {',
+    "  throw new Error(`Expected validation agent assignment, received ${task.assignedAgentType}.`);",
+    "}",
+    'if (descriptor.toolPolicy.mode !== "validation_only") {',
+    "  throw new Error(`Expected validation_only tool mode, received ${descriptor.toolPolicy.mode}.`);",
+    "}",
+    "if (descriptor.toolPolicy.codeWriteEnabled !== false) {",
+    '  throw new Error("Validation workspace must keep code writing disabled.");',
+    "}",
+    'if (!descriptor.toolPolicy.allowedCapabilities.includes("can_run_tests")) {',
+    '  throw new Error("Validation workspace must allow can_run_tests.");',
+    "}",
+    'if (!tools.includes("can_run_tests")) {',
+    '  throw new Error("Runtime TOOLS.md must describe can_run_tests for validation.");',
+    "}",
+    'console.log("Validated workspace contract for the validation phase.");'
+  ].join("\n");
+}
+
+interface ExecutedValidationCommandResult extends ValidationCommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+async function executeValidationCommand(input: {
+  command: ValidationCommand;
+  workspace: MaterializedManagedWorkspace;
+  startedAt: Date;
+}): Promise<ExecutedValidationCommandResult> {
+  const { command, workspace, startedAt } = input;
+  const logPath = join(workspace.artifactsDir, `validation-${command.id}.log`);
+  const execution = await new Promise<{
+    exitCode: number;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+    completedAt: Date;
+  }>((resolveCommand, rejectCommand) => {
+    const child = spawn(command.executable, command.args, {
+      cwd: workspace.workspaceRoot,
+      env: {
+        ...process.env,
+        REDDWARF_WORKSPACE_ID: workspace.workspaceId,
+        REDDWARF_WORKSPACE_ROOT: workspace.workspaceRoot
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      stdoutChunks.push(chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrChunks.push(chunk);
+    });
+    child.on("error", (error) => {
+      rejectCommand(error);
+    });
+    child.on("close", (exitCode, signal) => {
+      resolveCommand({
+        exitCode: exitCode ?? 1,
+        signal: signal ?? null,
+        stdout: stdoutChunks.join(""),
+        stderr: stderrChunks.join(""),
+        completedAt: new Date()
+      });
+    });
+  });
+
+  const durationMs = getDurationMs(startedAt, execution.completedAt);
+  await writeFile(
+    logPath,
+    [
+      "# Validation Command Log",
+      "",
+      `- Command ID: ${command.id}`,
+      `- Name: ${command.name}`,
+      `- Executable: ${command.executable}`,
+      `- Args: ${JSON.stringify(command.args)}`,
+      `- Exit Code: ${execution.exitCode}`,
+      `- Signal: ${execution.signal ?? "none"}`,
+      `- Duration (ms): ${durationMs}`,
+      "",
+      "## Stdout",
+      "",
+      execution.stdout.length > 0 ? execution.stdout.trimEnd() : "(empty)",
+      "",
+      "## Stderr",
+      "",
+      execution.stderr.length > 0 ? execution.stderr.trimEnd() : "(empty)",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+
+  return {
+    id: command.id,
+    name: command.name,
+    executable: command.executable,
+    args: [...command.args],
+    exitCode: execution.exitCode,
+    signal: execution.signal,
+    durationMs,
+    status: execution.exitCode === 0 ? "passed" : "failed",
+    logPath,
+    stdout: execution.stdout,
+    stderr: execution.stderr
+  };
 }
 
 function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
@@ -2996,6 +4097,8 @@ function renderRuntimeSoulMarkdown(
   bundle: WorkspaceContextBundle,
   canonicalSources: string[]
 ): string {
+  const toolPolicy = createWorkspaceToolPolicy(bundle);
+
   return [
     "# RedDwarf Runtime Soul",
     "",
@@ -3020,9 +4123,9 @@ function renderRuntimeSoulMarkdown(
     "",
     "## Guardrails",
     "",
-    `- Allowed capabilities: ${formatLiteralList(bundle.policySnapshot.allowedCapabilities)}`,
+    `- Allowed capabilities: ${formatLiteralList(toolPolicy.allowedCapabilities)}`,
     `- Allowed paths: ${formatLiteralList(bundle.allowedPaths)}`,
-    `- Blocked phases in v1: ${formatLiteralList(bundle.policySnapshot.blockedPhases)}`,
+    `- Blocked phases in v1: ${formatLiteralList(toolPolicy.blockedPhases)}`,
     "- Escalate rather than write product code, open PRs, use secrets, or exceed the allowed path scope.",
     "- Treat `.context/` as the task contract and the policy-pack docs as the canonical source of engineering rules.",
     ""
@@ -3062,15 +4165,13 @@ function renderRuntimeAgentsMarkdown(bundle: WorkspaceContextBundle): string {
 }
 
 function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
+  const toolPolicy = createWorkspaceToolPolicy(bundle);
   const deniedCapabilities = capabilities.filter(
-    (capability) =>
-      !bundle.policySnapshot.allowedCapabilities.includes(capability)
+    (capability) => !toolPolicy.allowedCapabilities.includes(capability)
   );
   const requestedButDenied = bundle.manifest.requestedCapabilities.filter(
-    (capability) =>
-      !bundle.policySnapshot.allowedCapabilities.includes(capability)
+    (capability) => !toolPolicy.allowedCapabilities.includes(capability)
   );
-  const toolPolicy = createWorkspaceToolPolicy(bundle);
 
   return [
     "# Tool Contract",
@@ -3078,7 +4179,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     `- Tool policy mode: \`${toolPolicy.mode}\``,
     `- Code writing enabled: ${toolPolicy.codeWriteEnabled ? "yes" : "no"}`,
     `- Requested capabilities: ${formatLiteralList(bundle.manifest.requestedCapabilities)}`,
-    `- Allowed capabilities now: ${formatLiteralList(bundle.policySnapshot.allowedCapabilities)}`,
+    `- Allowed capabilities now: ${formatLiteralList(toolPolicy.allowedCapabilities)}`,
     `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
     `- Requested but denied: ${formatLiteralList(requestedButDenied)}`,
     "",
@@ -3088,7 +4189,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     "",
     "## Allowed Capability Guidance",
     "",
-    ...bundle.policySnapshot.allowedCapabilities.flatMap((capability) => [
+    ...toolPolicy.allowedCapabilities.flatMap((capability) => [
       `### \`${capability}\``,
       "",
       capabilityGuidance[capability],
@@ -3104,7 +4205,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     "",
     "## Blocked Phases",
     "",
-    ...bundle.policySnapshot.blockedPhases.map((phase) => `- \`${phase}\``),
+    ...toolPolicy.blockedPhases.map((phase) => `- \`${phase}\``),
     "",
     "## Escalate Instead Of",
     "",
@@ -3128,7 +4229,7 @@ function renderRuntimeTaskSkillMarkdown(
     "## Workflow",
     "",
     "1. Read `.context/task.json`, `.context/spec.md`, and `.context/policy_snapshot.json` before proposing or executing work.",
-    "2. Confirm that the requested action stays within the allowed capabilities and allowed paths.",
+    "2. Confirm that the requested action stays within the current tool-policy capabilities and allowed paths.",
     `3. Use the assigned role instructions first: \`${agentInstructionPathByType[bundle.manifest.assignedAgentType] ?? "AGENTS.md"}\`.`,
     `4. Use the recommended role instructions from planning: \`${agentInstructionPathByType[bundle.spec.recommendedAgentType] ?? "AGENTS.md"}\`.`,
     "5. Produce evidence-friendly output that traces assumptions, affected areas, constraints, acceptance criteria, and verification intent.",
