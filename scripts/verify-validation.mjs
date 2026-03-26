@@ -22,9 +22,14 @@ const baseTargetRoot = resolve(
   process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
     join(tmpdir(), "reddwarf-validation-verify")
 );
+const baseEvidenceRoot = resolve(
+  process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
+    join(tmpdir(), "reddwarf-runtime-evidence-validation-verify")
+);
 const repository = new PostgresPlanningRepository({ connectionString });
 const issueNumber = Date.now();
 const targetRoot = resolve(baseTargetRoot, `verify-${issueNumber}`);
+const evidenceRoot = resolve(baseEvidenceRoot, `verify-${issueNumber}`);
 const repo = `validation-${issueNumber}/platform-${issueNumber}`;
 
 try {
@@ -75,7 +80,8 @@ try {
     {
       taskId: planningResult.manifest.taskId,
       targetRoot,
-      workspaceId: `${planningResult.manifest.taskId}-validation-verify`
+      workspaceId: `${planningResult.manifest.taskId}-validation-verify`,
+      evidenceRoot
     },
     {
       repository,
@@ -87,7 +93,8 @@ try {
   const validation = await runValidationPhase(
     {
       taskId: planningResult.manifest.taskId,
-      targetRoot
+      targetRoot,
+      evidenceRoot
     },
     {
       repository,
@@ -131,7 +138,8 @@ try {
   await destroyTaskWorkspace({
     manifest: validation.manifest,
     repository,
-    targetRoot
+    targetRoot,
+    evidenceRoot
   });
 
   console.log(
@@ -152,5 +160,6 @@ try {
   );
 } finally {
   await rm(targetRoot, { recursive: true, force: true }).catch(() => {});
+  await rm(evidenceRoot, { recursive: true, force: true }).catch(() => {});
   await repository.close();
 }

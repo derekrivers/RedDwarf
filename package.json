@@ -34,7 +34,8 @@
     "verify:development": "corepack pnpm build && node scripts/verify-development.mjs",
     "verify:validation": "corepack pnpm build && node scripts/verify-validation.mjs",
     "verify:secrets": "corepack pnpm build && node scripts/verify-secrets.mjs",
-    "verify:scm": "corepack pnpm build && node scripts/verify-scm.mjs"
+    "verify:scm": "corepack pnpm build && node scripts/verify-scm.mjs",
+    "verify:evidence": "corepack pnpm build && node scripts/verify-evidence.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

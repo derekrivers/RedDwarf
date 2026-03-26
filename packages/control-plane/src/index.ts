@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { access, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import pino from "pino";
 import type { DestinationStream, Logger as PinoLogger } from "pino";
 import {
@@ -252,18 +252,21 @@ export interface RunDeveloperPhaseInput {
   taskId: string;
   targetRoot: string;
   workspaceId?: string;
+  evidenceRoot?: string | undefined;
 }
 
 export interface RunValidationPhaseInput {
   taskId: string;
   targetRoot: string;
   workspaceId?: string;
+  evidenceRoot?: string | undefined;
 }
 
 export interface RunScmPhaseInput {
   taskId: string;
   targetRoot: string;
   workspaceId?: string;
+  evidenceRoot?: string | undefined;
 }
 
 export interface DevelopmentPhaseDependencies {
@@ -414,6 +417,23 @@ export interface DestroyWorkspaceResult {
   workspace: DestroyedManagedWorkspace;
 }
 
+type ArchivedArtifactClass =
+  | "handoff"
+  | "log"
+  | "test_result"
+  | "report"
+  | "diff"
+  | "review_output";
+
+interface ArchivedEvidenceArtifact {
+  evidenceRoot: string;
+  archivePath: string;
+  relativePath: string;
+  location: string;
+  byteSize: number;
+  sha256: string;
+}
+
 export interface PinoPlanningLoggerOptions {
   level?: RunEvent["level"];
   baseBindings?: Record<string, unknown>;
@@ -488,6 +508,9 @@ const workspaceArtifactsDirName = "artifacts";
 const workspaceCredentialsDirName = "credentials";
 const workspaceSecretEnvFileName = "secret-env.json";
 const workspaceLocationPrefix = "workspace://";
+const evidenceLocationPrefix = "evidence://";
+const defaultEvidenceDirName = "evidence";
+const evidenceTasksDirName = "tasks";
 
 const agentInstructionPathByType: Partial<
   Record<TaskManifest["assignedAgentType"], string>
@@ -1145,6 +1168,7 @@ export async function destroyTaskWorkspace(input: {
   repository: PlanningRepository;
   targetRoot: string;
   workspaceId?: string;
+  evidenceRoot?: string | undefined;
   clock?: () => Date;
 }): Promise<DestroyWorkspaceResult> {
   const workspaceId = input.workspaceId ?? input.manifest.workspaceId;
@@ -1195,6 +1219,77 @@ export async function destroyTaskWorkspace(input: {
   return {
     manifest,
     workspace
+  };
+}
+
+function resolveEvidenceRoot(targetRoot: string, evidenceRoot?: string): string {
+  return resolve(
+    evidenceRoot ??
+      process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
+      join(targetRoot, "..", defaultEvidenceDirName)
+  );
+}
+
+function sanitizeEvidencePathSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return sanitized.length > 0 ? sanitized : "artifact";
+}
+
+async function archiveEvidenceArtifact(input: {
+  taskId: string;
+  runId: string;
+  phase: TaskPhase;
+  sourcePath: string;
+  targetRoot: string;
+  evidenceRoot?: string | undefined;
+  fileName?: string;
+}): Promise<ArchivedEvidenceArtifact> {
+  const evidenceRoot = resolveEvidenceRoot(input.targetRoot, input.evidenceRoot);
+  const relativePath = [
+    evidenceTasksDirName,
+    sanitizeEvidencePathSegment(input.taskId),
+    sanitizeEvidencePathSegment(input.phase),
+    sanitizeEvidencePathSegment(input.runId),
+    input.fileName ?? basename(input.sourcePath)
+  ].join("/");
+  const archivePath = resolve(evidenceRoot, ...relativePath.split("/"));
+
+  await mkdir(dirname(archivePath), { recursive: true });
+  await copyFile(input.sourcePath, archivePath);
+
+  const archiveContents = await readFile(archivePath);
+  const archiveStats = await stat(archivePath);
+
+  return {
+    evidenceRoot,
+    archivePath,
+    relativePath,
+    location: `${evidenceLocationPrefix}${relativePath}`,
+    byteSize: archiveStats.size,
+    sha256: createHash("sha256").update(archiveContents).digest("hex")
+  };
+}
+
+function buildArchivedArtifactMetadata(input: {
+  archivedArtifact: ArchivedEvidenceArtifact;
+  artifactClass: ArchivedArtifactClass;
+  sourceLocation: string;
+  sourcePath: string;
+}): Record<string, unknown> {
+  return {
+    artifactClass: input.artifactClass,
+    sourceLocation: input.sourceLocation,
+    sourcePath: input.sourcePath,
+    evidenceRoot: input.archivedArtifact.evidenceRoot,
+    archivePath: input.archivedArtifact.archivePath,
+    archiveRelativePath: input.archivedArtifact.relativePath,
+    byteSize: input.archivedArtifact.byteSize,
+    sha256: input.archivedArtifact.sha256
   };
 }
 
@@ -2795,6 +2890,16 @@ export async function runDeveloperPhase(
       }),
       "utf8"
     );
+    const handoffSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/developer-handoff.md`;
+    const archivedHandoff = await archiveEvidenceArtifact({
+      taskId,
+      runId,
+      phase: "development",
+      sourcePath: handoffPath,
+      targetRoot: input.targetRoot,
+      evidenceRoot: input.evidenceRoot,
+      fileName: "developer-handoff.md"
+    });
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${taskId}:memory:task:development`,
@@ -2810,7 +2915,9 @@ export async function runDeveloperPhase(
           nextActions: handoff.nextActions,
           runId,
           workspaceId: workspace.workspaceId,
-          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+          archiveLocation: archivedHandoff.location,
+          archivePath: archivedHandoff.archivePath
         },
         repo: currentManifest.source.repo,
         organizationId: deriveOrganizationId(currentManifest.source.repo),
@@ -2845,13 +2952,19 @@ export async function runDeveloperPhase(
         taskId,
         kind: "file_artifact",
         title: "Developer handoff",
-        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/developer-handoff.md`,
+        location: archivedHandoff.location,
         metadata: {
           runId,
           workspaceId: workspace.workspaceId,
           toolPolicyMode: workspace.descriptor.toolPolicy.mode,
           codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
-          summary: handoff.summary
+          summary: handoff.summary,
+          ...buildArchivedArtifactMetadata({
+            archivedArtifact: archivedHandoff,
+            artifactClass: "handoff",
+            sourceLocation: handoffSourceLocation,
+            sourcePath: handoffPath
+          })
         },
         createdAt: developmentCompletedAtIso
       })
@@ -2871,6 +2984,7 @@ export async function runDeveloperPhase(
         actor: "developer",
         workspaceId: workspace.workspaceId,
         handoffPath,
+        handoffArchiveLocation: archivedHandoff.location,
         codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
       },
       createdAt: developmentCompletedAtIso
@@ -2880,7 +2994,8 @@ export async function runDeveloperPhase(
       metadata: {
         currentPhase: "development",
         workspaceId: workspace.workspaceId,
-        handoffPath
+        handoffPath,
+        handoffArchiveLocation: archivedHandoff.location
       }
     });
 
@@ -2901,7 +3016,8 @@ export async function runDeveloperPhase(
       data: {
         nextPhase: "validation",
         workspaceId: workspace.workspaceId,
-        handoffPath
+        handoffPath,
+        handoffArchiveLocation: archivedHandoff.location
       },
       createdAt: blockedAtIso
     });
@@ -2921,7 +3037,8 @@ export async function runDeveloperPhase(
         currentPhase: "development",
         nextAction: "await_validation",
         workspaceId: workspace.workspaceId,
-        handoffPath
+        handoffPath,
+        handoffArchiveLocation: archivedHandoff.location
       }
     });
 
@@ -3527,13 +3644,23 @@ export async function runValidationPhase(
       });
       const { stdout: _stdout, stderr: _stderr, ...commandResult } = executed;
       commandResults.push(commandResult);
+      const commandLogSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-${command.id}.log`;
+      const archivedCommandLog = await archiveEvidenceArtifact({
+        taskId,
+        runId,
+        phase: "validation",
+        sourcePath: commandResult.logPath,
+        targetRoot: input.targetRoot,
+        evidenceRoot: input.evidenceRoot,
+        fileName: `validation-${command.id}.log`
+      });
       await repository.saveEvidenceRecord(
         createEvidenceRecord({
           recordId: `${taskId}:validation:${runId}:command:${command.id}`,
           taskId,
           kind: "file_artifact",
           title: `Validation command log: ${command.name}`,
-          location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-${command.id}.log`,
+          location: archivedCommandLog.location,
           metadata: {
             runId,
             workspaceId: workspace.workspaceId,
@@ -3543,7 +3670,13 @@ export async function runValidationPhase(
             signal: commandResult.signal,
             durationMs: commandResult.durationMs,
             status: commandResult.status,
-            logPath: commandResult.logPath
+            logPath: commandResult.logPath,
+            ...buildArchivedArtifactMetadata({
+              archivedArtifact: archivedCommandLog,
+              artifactClass: "log",
+              sourceLocation: commandLogSourceLocation,
+              sourcePath: commandResult.logPath
+            })
           },
           createdAt: commandStartedAtIso
         })
@@ -3636,6 +3769,43 @@ export async function runValidationPhase(
       }),
       "utf8"
     );
+    const resultsPath = join(workspace.artifactsDir, "validation-results.json");
+    await writeFile(
+      resultsPath,
+      `${JSON.stringify(
+        {
+          taskId,
+          runId,
+          workspaceId: workspace.workspaceId,
+          summary: report.summary,
+          commandResults
+        },
+        null,
+        2
+      )}
+`,
+      "utf8"
+    );
+    const reportSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-report.md`;
+    const resultsSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-results.json`;
+    const archivedReport = await archiveEvidenceArtifact({
+      taskId,
+      runId,
+      phase: "validation",
+      sourcePath: reportPath,
+      targetRoot: input.targetRoot,
+      evidenceRoot: input.evidenceRoot,
+      fileName: "validation-report.md"
+    });
+    const archivedResults = await archiveEvidenceArtifact({
+      taskId,
+      runId,
+      phase: "validation",
+      sourcePath: resultsPath,
+      targetRoot: input.targetRoot,
+      evidenceRoot: input.evidenceRoot,
+      fileName: "validation-results.json"
+    });
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${taskId}:memory:task:validation`,
@@ -3649,7 +3819,10 @@ export async function runValidationPhase(
           commandResults,
           runId,
           workspaceId: workspace.workspaceId,
-          reportPath
+          reportPath,
+          resultsPath,
+          reportArchiveLocation: archivedReport.location,
+          resultsArchiveLocation: archivedResults.location
         },
         repo: currentManifest.source.repo,
         organizationId: deriveOrganizationId(currentManifest.source.repo),
@@ -3670,6 +3843,9 @@ export async function runValidationPhase(
         details: {
           workspaceId: workspace.workspaceId,
           reportPath,
+          resultsPath,
+          reportArchiveLocation: archivedReport.location,
+          resultsArchiveLocation: archivedResults.location,
           commandResults,
           ...(approvedRequest
             ? { approvalRequestId: approvedRequest.requestId }
@@ -3684,12 +3860,40 @@ export async function runValidationPhase(
         taskId,
         kind: "file_artifact",
         title: "Validation report",
-        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-report.md`,
+        location: archivedReport.location,
         metadata: {
           runId,
           workspaceId: workspace.workspaceId,
           summary: report.summary,
-          commandResults
+          commandResults,
+          ...buildArchivedArtifactMetadata({
+            archivedArtifact: archivedReport,
+            artifactClass: "report",
+            sourceLocation: reportSourceLocation,
+            sourcePath: reportPath
+          })
+        },
+        createdAt: validationCompletedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:validation:${runId}:results`,
+        taskId,
+        kind: "file_artifact",
+        title: "Validation test results",
+        location: archivedResults.location,
+        metadata: {
+          runId,
+          workspaceId: workspace.workspaceId,
+          summary: report.summary,
+          commandResults,
+          ...buildArchivedArtifactMetadata({
+            archivedArtifact: archivedResults,
+            artifactClass: "test_result",
+            sourceLocation: resultsSourceLocation,
+            sourcePath: resultsPath
+          })
         },
         createdAt: validationCompletedAtIso
       })
@@ -3709,6 +3913,8 @@ export async function runValidationPhase(
         actor: "validation",
         workspaceId: workspace.workspaceId,
         reportPath,
+        reportArchiveLocation: archivedReport.location,
+        resultsArchiveLocation: archivedResults.location,
         commandCount: commandResults.length
       },
       createdAt: validationCompletedAtIso
@@ -3718,7 +3924,9 @@ export async function runValidationPhase(
       metadata: {
         currentPhase: "validation",
         workspaceId: workspace.workspaceId,
-        reportPath
+        reportPath,
+        reportArchiveLocation: archivedReport.location,
+        resultsArchiveLocation: archivedResults.location
       }
     });
 
@@ -3747,7 +3955,9 @@ export async function runValidationPhase(
         nextPhase,
         nextAction,
         workspaceId: workspace.workspaceId,
-        reportPath
+        reportPath,
+        reportArchiveLocation: archivedReport.location,
+        resultsArchiveLocation: archivedResults.location
       },
       createdAt: blockedAtIso
     });
@@ -3767,7 +3977,9 @@ export async function runValidationPhase(
         currentPhase: "validation",
         nextAction,
         workspaceId: workspace.workspaceId,
-        reportPath
+        reportPath,
+        reportArchiveLocation: archivedReport.location,
+        resultsArchiveLocation: archivedResults.location
       }
     });
 
@@ -4539,6 +4751,37 @@ function renderScmReportMarkdown(input: {
     ...(input.draft.labels.length > 0
       ? input.draft.labels.map((label) => `- ${label}`)
       : ["- none"]),
+    ""
+  ].join("\n");
+}
+
+function renderScmDiffMarkdown(input: {
+  bundle: WorkspaceContextBundle;
+  branch: GitHubBranchSummary;
+  pullRequest: GitHubPullRequestSummary;
+  validationSummary: string;
+}): string {
+  return [
+    "# SCM Diff Summary",
+    "",
+    `- Task ID: ${input.bundle.manifest.taskId}`,
+    `- Base branch: ${input.branch.baseBranch}`,
+    `- Head branch: ${input.branch.branchName}`,
+    `- Pull Request URL: ${input.pullRequest.url}`,
+    "",
+    "## Planned Change Surface",
+    "",
+    ...(input.bundle.spec.affectedAreas.length > 0
+      ? input.bundle.spec.affectedAreas.map((area) => `- ${area}`)
+      : ["- planning-surface-only"]),
+    "",
+    "## Validation Summary",
+    "",
+    input.validationSummary,
+    "",
+    "## Diff Availability",
+    "",
+    "No product-repo diff patch was generated because RedDwarf still keeps product code writes disabled by default. This summary preserves the approved change intent and SCM metadata until code-writing lands.",
     ""
   ].join("\n");
 }
@@ -5435,6 +5678,37 @@ export async function runScmPhase(
       }),
       "utf8"
     );
+    const diffPath = join(workspace.artifactsDir, "scm-diff.md");
+    await writeFile(
+      diffPath,
+      renderScmDiffMarkdown({
+        bundle,
+        branch,
+        pullRequest,
+        validationSummary
+      }),
+      "utf8"
+    );
+    const reportSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/scm-report.md`;
+    const diffSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/scm-diff.md`;
+    const archivedScmReport = await archiveEvidenceArtifact({
+      taskId,
+      runId,
+      phase: "scm",
+      sourcePath: reportPath,
+      targetRoot: input.targetRoot,
+      evidenceRoot: input.evidenceRoot,
+      fileName: "scm-report.md"
+    });
+    const archivedScmDiff = await archiveEvidenceArtifact({
+      taskId,
+      runId,
+      phase: "scm",
+      sourcePath: diffPath,
+      targetRoot: input.targetRoot,
+      evidenceRoot: input.evidenceRoot,
+      fileName: "scm-diff.md"
+    });
     currentManifest = taskManifestSchema.parse({
       ...currentManifest,
       currentPhase: "scm",
@@ -5467,7 +5741,10 @@ export async function runScmPhase(
           runId,
           workspaceId: workspace.workspaceId,
           validationReportPath,
-          reportPath
+          reportPath,
+          diffPath,
+          reportArchiveLocation: archivedScmReport.location,
+          diffArchiveLocation: archivedScmDiff.location
         },
         repo: currentManifest.source.repo,
         organizationId: deriveOrganizationId(currentManifest.source.repo),
@@ -5489,7 +5766,10 @@ export async function runScmPhase(
           branch,
           pullRequest,
           reportPath,
+          diffPath,
           validationReportPath,
+          reportArchiveLocation: archivedScmReport.location,
+          diffArchiveLocation: archivedScmDiff.location,
           ...(approvedRequest
             ? { approvalRequestId: approvedRequest.requestId }
             : {})
@@ -5503,7 +5783,7 @@ export async function runScmPhase(
         taskId,
         kind: "file_artifact",
         title: "SCM report",
-        location: `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/scm-report.md`,
+        location: archivedScmReport.location,
         metadata: {
           runId,
           workspaceId: workspace.workspaceId,
@@ -5511,7 +5791,37 @@ export async function runScmPhase(
           branch,
           pullRequest,
           validationReportPath,
-          reportPath
+          reportPath,
+          ...buildArchivedArtifactMetadata({
+            archivedArtifact: archivedScmReport,
+            artifactClass: "report",
+            sourceLocation: reportSourceLocation,
+            sourcePath: reportPath
+          })
+        },
+        createdAt: scmCompletedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:scm:${runId}:diff`,
+        taskId,
+        kind: "file_artifact",
+        title: "SCM diff summary",
+        location: archivedScmDiff.location,
+        metadata: {
+          runId,
+          workspaceId: workspace.workspaceId,
+          branch,
+          pullRequest,
+          validationReportPath,
+          diffPath,
+          ...buildArchivedArtifactMetadata({
+            archivedArtifact: archivedScmDiff,
+            artifactClass: "diff",
+            sourceLocation: diffSourceLocation,
+            sourcePath: diffPath
+          })
         },
         createdAt: scmCompletedAtIso
       })
@@ -5551,7 +5861,9 @@ export async function runScmPhase(
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
         prNumber: pullRequest.number,
-        reportPath
+        reportPath,
+        reportArchiveLocation: archivedScmReport.location,
+        diffArchiveLocation: archivedScmDiff.location
       },
       createdAt: scmCompletedAtIso
     });
@@ -5570,7 +5882,9 @@ export async function runScmPhase(
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
         prNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.url
+        pullRequestUrl: pullRequest.url,
+        reportArchiveLocation: archivedScmReport.location,
+        diffArchiveLocation: archivedScmDiff.location
       },
       createdAt: scmCompletedAtIso
     });
@@ -5584,7 +5898,9 @@ export async function runScmPhase(
         branchName: branch.branchName,
         prNumber: pullRequest.number,
         pullRequestUrl: pullRequest.url,
-        reportPath
+        reportPath,
+        reportArchiveLocation: archivedScmReport.location,
+        diffArchiveLocation: archivedScmDiff.location
       }
     });
 

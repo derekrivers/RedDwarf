@@ -536,6 +536,7 @@ describeIfDatabase("postgres planning repository", () => {
     const issueNumber = Date.now() + 5;
     const repo = `scm-${issueNumber}/platform-${issueNumber}`;
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-postgres-scm-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-postgres-evidence-"));
     const planningResult = await runPlanningPipeline(
       {
         source: {
@@ -588,7 +589,8 @@ describeIfDatabase("postgres planning repository", () => {
         {
           taskId: planningResult.manifest.taskId,
           targetRoot: tempRoot,
-          workspaceId: `${planningResult.manifest.taskId}-scm`
+          workspaceId: `${planningResult.manifest.taskId}-scm`,
+          evidenceRoot
         },
         {
           repository,
@@ -600,7 +602,8 @@ describeIfDatabase("postgres planning repository", () => {
       const validation = await runValidationPhase(
         {
           taskId: planningResult.manifest.taskId,
-          targetRoot: tempRoot
+          targetRoot: tempRoot,
+          evidenceRoot
         },
         {
           repository,
@@ -612,7 +615,8 @@ describeIfDatabase("postgres planning repository", () => {
       const scm = await runScmPhase(
         {
           taskId: planningResult.manifest.taskId,
-          targetRoot: tempRoot
+          targetRoot: tempRoot,
+          evidenceRoot
         },
         {
           repository,
@@ -640,6 +644,9 @@ describeIfDatabase("postgres planning repository", () => {
         }
       );
       const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const archivedArtifacts = snapshot.evidenceRecords.filter(
+        (record) => typeof record.metadata.archivePath === "string"
+      );
       const runSummary = await repository.getRunSummary(
         planningResult.manifest.taskId,
         scm.runId
@@ -654,14 +661,26 @@ describeIfDatabase("postgres planning repository", () => {
       expect(snapshot.memoryRecords.some((record) => record.key === "scm.summary")).toBe(true);
       expect(runSummary?.status).toBe("completed");
       expect(runSummary?.latestPhase).toBe("scm");
+      expect(
+        archivedArtifacts.map((record) => record.metadata.artifactClass)
+      ).toEqual(
+        expect.arrayContaining(["handoff", "log", "report", "test_result", "diff"])
+      );
 
       await destroyTaskWorkspace({
         manifest: scm.manifest,
         repository,
-        targetRoot: tempRoot
+        targetRoot: tempRoot,
+        evidenceRoot
       });
+
+      for (const record of archivedArtifacts) {
+        await expect(access(record.metadata.archivePath as string)).resolves.toBeUndefined();
+        expect(record.location.startsWith("evidence://")).toBe(true);
+      }
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
     }
   });
 

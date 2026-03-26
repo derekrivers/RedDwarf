@@ -683,6 +683,7 @@ describe("control-plane", () => {
   it("routes approved PR tasks from validation into SCM and completes the task", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-evidence-"));
     const planningResult = await runPlanningPipeline(
       {
         ...eligibleInput,
@@ -718,7 +719,8 @@ describe("control-plane", () => {
         {
           taskId: planningResult.manifest.taskId,
           targetRoot: tempRoot,
-          workspaceId: "workspace-scm"
+          workspaceId: "workspace-scm",
+          evidenceRoot
         },
         {
           repository,
@@ -730,7 +732,8 @@ describe("control-plane", () => {
       const validation = await runValidationPhase(
         {
           taskId: planningResult.manifest.taskId,
-          targetRoot: tempRoot
+          targetRoot: tempRoot,
+          evidenceRoot
         },
         {
           repository,
@@ -742,7 +745,8 @@ describe("control-plane", () => {
       const scm = await runScmPhase(
         {
           taskId: planningResult.manifest.taskId,
-          targetRoot: tempRoot
+          targetRoot: tempRoot,
+          evidenceRoot
         },
         {
           repository,
@@ -777,6 +781,11 @@ describe("control-plane", () => {
         scm.runId
       );
       const reportMarkdown = await readFile(scm.reportPath!, "utf8");
+      const archivedArtifacts = repository.evidenceRecords.filter(
+        (record) =>
+          record.taskId === planningResult.manifest.taskId &&
+          typeof record.metadata.archivePath === "string"
+      );
 
       expect(validation.nextAction).toBe("await_scm");
       expect(scm.nextAction).toBe("complete");
@@ -796,15 +805,27 @@ describe("control-plane", () => {
       expect(
         repository.runEvents.some((event) => event.code === "PULL_REQUEST_CREATED")
       ).toBe(true);
+      expect(
+        archivedArtifacts.map((record) => record.metadata.artifactClass)
+      ).toEqual(
+        expect.arrayContaining(["handoff", "log", "report", "test_result", "diff"])
+      );
 
       await destroyTaskWorkspace({
         manifest: scm.manifest,
         repository,
         targetRoot: tempRoot,
+        evidenceRoot,
         clock: () => new Date("2026-03-25T18:25:00.000Z")
       });
+
+      for (const record of archivedArtifacts) {
+        await expect(access(record.metadata.archivePath as string)).resolves.toBeUndefined();
+        expect(record.location.startsWith("evidence://")).toBe(true);
+      }
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
     }
   });
 

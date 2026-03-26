@@ -7,13 +7,13 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - planning-first
 - human-gated
 - durable and auditable
-- developer orchestration, workspace-local validation, scoped secret leases, and approval-gated SCM handoff are available, while product code-writing still remains disabled by default
+- developer orchestration, workspace-local validation, durable evidence archival, scoped secret leases, and approval-gated SCM handoff are available, while product code-writing still remains disabled by default
 
 ## Repository Shape
 
 - `packages/contracts`: shared domain schemas and types, including partitioned memory contracts
 - `packages/policy`: eligibility, risk, approval, and guardrail logic
-- `packages/control-plane`: lifecycle, planning pipeline orchestration, developer- and validation-phase orchestration, scoped secret lease injection, concurrency/stale-run enforcement, approval queue and decision helpers, OpenClaw context and runtime instruction materialization helpers, managed workspace lifecycle helpers, and structured observability hooks
+- `packages/control-plane`: lifecycle, planning pipeline orchestration, developer- and validation-phase orchestration, durable evidence archival, scoped secret lease injection, concurrency/stale-run enforcement, approval queue and decision helpers, OpenClaw context and runtime instruction materialization helpers, managed workspace lifecycle helpers, and structured observability hooks
 - `packages/execution-plane`: agent definitions and disabled future phases
 - `packages/evidence`: persistence schema, SQL migrations, policy snapshot storage, approval-request persistence, partitioned memory persistence/query helpers, pipeline-run persistence, Postgres-backed repository implementations, and run summaries
 - `packages/integrations`: read-only GitHub, CI, and secrets adapter contracts, deterministic issue-intake helpers, scoped lease redaction helpers, and v1 mutation guards
@@ -27,7 +27,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 3. Copy env file: `Copy-Item .env.example .env`
 4. Start the local stack: `docker compose -f infra/docker/docker-compose.yml up -d`
 5. Apply DB schema: `corepack pnpm db:migrate`
-6. Run checks: `corepack pnpm typecheck`, `corepack pnpm test`, `corepack pnpm verify:postgres`, `corepack pnpm verify:context`, `corepack pnpm verify:workspace-manager`, `corepack pnpm verify:approvals`, `corepack pnpm verify:development`, `corepack pnpm verify:validation`, `corepack pnpm verify:secrets`, `corepack pnpm verify:scm`, `corepack pnpm verify:observability`, `corepack pnpm verify:integrations`, `corepack pnpm verify:memory`, `corepack pnpm verify:concurrency`, and `corepack pnpm verify:package`
+6. Run checks: `corepack pnpm typecheck`, `corepack pnpm test`, `corepack pnpm verify:postgres`, `corepack pnpm verify:context`, `corepack pnpm verify:workspace-manager`, `corepack pnpm verify:approvals`, `corepack pnpm verify:development`, `corepack pnpm verify:validation`, `corepack pnpm verify:evidence`, `corepack pnpm verify:secrets`, `corepack pnpm verify:scm`, `corepack pnpm verify:observability`, `corepack pnpm verify:integrations`, `corepack pnpm verify:memory`, `corepack pnpm verify:concurrency`, and `corepack pnpm verify:package`
 
 ## Runtime Model
 
@@ -38,6 +38,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - Host-side context materialization defaults to `REDDWARF_HOST_WORKSPACE_ROOT=runtime-data/workspaces` and writes `.context/` plus generated `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and `skills/reddwarf-task/SKILL.md` files into each workspace. Managed workspaces also receive `.workspace/workspace.json`, isolated `scratch/`, and `artifacts/` directories and can be explicitly destroyed through the workspace manager.
 - GitHub and CI integrations are modeled conservatively in v1. Issue intake and status reads are supported; the SCM phase can create approved branches and pull requests through the GitHub adapter after validation, while labels, issue comments, workflow triggers, and remote secret mutations still stay blocked behind explicit `V1MutationDisabledError` guards. Approved tasks can also receive workspace-local scoped secret leases from the secrets adapter.
 - Concurrency is conservative by default: overlapping active runs for the same task source are serialized, stale runs are retired based on heartbeat age, and fresh overlaps are blocked with durable run-level evidence. Planning runs that require downstream mutation open a durable approval queue entry, approved tasks can enter the developer phase in an isolated workspace while code-writing still stays disabled by default, the validation phase can then run deterministic workspace-local lint and test checks, and approved `can_open_pr` tasks can continue into SCM branch/PR creation while review remains blocked.
+- Workspace-generated handoffs, validation logs and results, and SCM reports and diff summaries are archived into the evidence root (`REDDWARF_HOST_EVIDENCE_ROOT` or the `runtime-evidence` volume) before temporary workspaces are destroyed.
 - `runtime-workspace` and `runtime-evidence` are separate writable volumes for container runtime use. Standard lifecycle commands are `corepack pnpm workspace:materialize` and `corepack pnpm workspace:destroy`.
 - This repo is the Dev Squad definition repo, not the product code repo.
 

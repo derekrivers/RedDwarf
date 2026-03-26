@@ -28,3 +28,10 @@
 - Environment note: `corepack pnpm verify:scm` traverses the validation runner first and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
 - Updated repository docs and the feature board so feature 21 is marked complete and feature 22 is now the likely next actionable item.
 - Likely next board item: feature 22, evidence artifact archival for diffs, logs, test results, and review outputs.
+- Completed feature 22 from `FEATURE_BOARD.md`: evidence artifact archival for diffs, logs, test results, and review outputs.
+- Added durable evidence archival helpers in the control plane so developer handoffs, validation logs and results, validation reports, SCM reports, and SCM diff summaries are copied out of temporary workspaces into the evidence root before workspace teardown, with file hashes, byte sizes, source locations, and archived `evidence://` links persisted in evidence metadata.
+- Added `corepack pnpm verify:evidence` plus unit and Postgres-backed coverage for archived artifact persistence across workspace destruction, including explicit checks for handoff, log, report, test-result, and diff artifact classes.
+- Updated the development and validation verifiers to use dedicated evidence roots and clean them up explicitly because archived artifacts now live outside the managed workspace root.
+- Environment note: `corepack pnpm verify:evidence` traverses the validation runner and can hit the same Windows sandbox `spawn EPERM` behavior as `corepack pnpm verify:validation`; rerun it outside the sandbox and prefer the documented workaround in `docs/agent/TROUBLESHOOTING.md`.
+- Updated repository docs and the feature board so feature 22 is marked complete and feature 23 is now the likely next actionable item.
+- Likely next board item: feature 23, retry, escalation, and follow-up issue automation.
