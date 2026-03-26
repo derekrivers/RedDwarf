@@ -1,4 +1,4 @@
-import { asIsoTimestamp, type Capability, type PlanningTaskInput } from "@reddwarf/contracts";
+import { asIsoTimestamp, type ApprovalMode, type Capability, type PlanningTaskInput, type RiskClass } from "@reddwarf/contracts";
 
 export const ciCheckStatuses = ["success", "failure", "pending", "skipped"] as const;
 export const githubIssueStates = ["open", "closed"] as const;
@@ -149,8 +149,8 @@ export interface SecretLeaseRequest {
   agentType: string;
   phase: string;
   environment: string;
-  riskClass: "low" | "medium" | "high";
-  approvalMode: "auto" | "review_required" | "human_signoff_required" | "disallowed";
+  riskClass: RiskClass;
+  approvalMode: ApprovalMode;
   requestedCapabilities: Capability[];
   allowedSecretScopes: string[];
 }
