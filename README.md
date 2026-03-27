@@ -22,12 +22,69 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 
 ## Quick Start
 
-1. Enable Corepack if needed: `corepack enable`
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose plugin)
+- Node.js ≥ 22 (`node --version`)
+- Corepack (`corepack enable`)
+- Git
+
+### OpenClaw registry access
+
+The Docker Compose stack pulls `ghcr.io/openclaw/openclaw:latest` from the GitHub Container Registry. If the image is not yet publicly available, you will need to authenticate:
+
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u <your-github-username> --password-stdin
+```
+
+Contact the openclaw organisation if you do not have access.
+
+### One-command bootstrap (recommended)
+
+```bash
+git clone <repo-url>
+cd RedDwarf
+corepack enable
+corepack pnpm install
+cp .env.example .env          # review and edit as needed
+corepack pnpm setup           # compose:up → wait for Postgres → db:migrate → health check
+```
+
+`pnpm setup` is idempotent — safe to re-run if the stack is already running.
+
+### Manual steps (if preferred)
+
+1. Enable Corepack: `corepack enable`
 2. Install dependencies: `corepack pnpm install`
-3. Copy env file: `Copy-Item .env.example .env`
-4. Start the local stack: `docker compose -f infra/docker/docker-compose.yml up -d`
+3. Copy env file: `cp .env.example .env` (Windows: `Copy-Item .env.example .env`)
+4. Start the local stack: `corepack pnpm compose:up`
 5. Apply DB schema: `corepack pnpm db:migrate`
-6. Run checks: `corepack pnpm typecheck`, `corepack pnpm test`, `corepack pnpm verify:postgres`, `corepack pnpm verify:context`, `corepack pnpm verify:workspace-manager`, `corepack pnpm verify:approvals`, `corepack pnpm verify:development`, `corepack pnpm verify:validation`, `corepack pnpm verify:evidence`, `corepack pnpm verify:secrets`, `corepack pnpm verify:scm`, `corepack pnpm verify:observability`, `corepack pnpm verify:integrations`, `corepack pnpm verify:memory`, `corepack pnpm verify:concurrency`, and `corepack pnpm verify:package`
+6. Confirm the stack is healthy: `corepack pnpm verify:postgres`
+
+### Run all verification checks
+
+```bash
+corepack pnpm verify:all      # runs all 18 feature verification scripts in sequence
+```
+
+Or run individual checks:
+
+```bash
+corepack pnpm typecheck        # TypeScript compilation
+corepack pnpm test             # unit tests
+corepack pnpm verify:postgres  # planning pipeline + Postgres integration
+corepack pnpm verify:package   # packaged policy-pack integrity
+```
+
+### Windows-specific notes
+
+- Use `127.0.0.1` instead of `localhost` in database connection strings when running host-side scripts on Windows with WSL2. `localhost` resolves via the WSL relay and misses the Docker-bound Postgres listener. The default `.env` already uses `127.0.0.1`.
+- Postgres is exposed on port `55432` (not the standard `5432`) to avoid conflicts with any locally installed Postgres.
+- Some verification scripts spawn child processes. If you see `spawn EPERM` errors inside a sandboxed environment (e.g., Claude Code terminal), re-run the command with elevated permissions or outside the sandbox. See `docs/agent/TROUBLESHOOTING.md` for documented workarounds.
+
+## Demo
+
+For a complete walkthrough from a fresh clone to a real planning cycle with GitHub inputs and an LLM-generated plan, see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
 
 ## Runtime Model
 
