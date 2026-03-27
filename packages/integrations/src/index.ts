@@ -777,3 +777,284 @@ function dedupeCapabilities(values: Capability[]): Capability[] {
 function isCapability(value: string): value is Capability {
   return (capabilities as readonly string[]).includes(value);
 }
+
+// ============================================================
+// Minimal GitHub REST API response shapes (internal)
+// ============================================================
+
+interface GitHubApiIssueLabel {
+  name?: string;
+}
+
+interface GitHubApiIssue {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  html_url: string;
+  labels: Array<GitHubApiIssueLabel | string>;
+  assignees: Array<{ login: string }>;
+  user: { login: string } | null;
+  updated_at: string | null;
+  milestone: { title: string } | null;
+}
+
+interface GitHubApiRepository {
+  default_branch: string;
+}
+
+interface GitHubApiCreatedIssue {
+  number: number;
+  html_url: string;
+  created_at: string;
+}
+
+interface GitHubApiRef {
+  ref: string;
+  url: string;
+  object: { sha: string };
+}
+
+interface GitHubApiPullRequest {
+  number: number;
+  html_url: string;
+  state: string;
+  base: { ref: string };
+  head: { ref: string };
+  title: string;
+  merged_at: string | null;
+}
+
+// ============================================================
+// RestGitHubAdapter — live GitHub REST API implementation
+// ============================================================
+
+export interface RestGitHubAdapterOptions {
+  token: string;
+  baseUrl?: string;
+}
+
+export class RestGitHubAdapter implements GitHubAdapter {
+  private readonly token: string;
+  private readonly baseUrl: string;
+
+  constructor(options: RestGitHubAdapterOptions) {
+    this.token = options.token;
+    this.baseUrl = options.baseUrl ?? "https://api.github.com";
+  }
+
+  private parseRepo(repo: string): { owner: string; repoName: string } {
+    const slash = repo.indexOf("/");
+    if (slash <= 0 || slash >= repo.length - 1) {
+      throw new Error(`Invalid repo format: "${repo}". Expected "owner/name".`);
+    }
+    return { owner: repo.slice(0, slash), repoName: repo.slice(slash + 1) };
+  }
+
+  private apiHeaders(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "reddwarf/0.1.0"
+    };
+  }
+
+  private async apiGet<T>(path: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: "GET",
+      headers: this.apiHeaders()
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async apiPost<T>(path: string, payload: unknown): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: this.apiHeaders(),
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private labelNames(labels: Array<GitHubApiIssueLabel | string>): string[] {
+    return labels
+      .map((l) => (typeof l === "string" ? l : (l.name ?? "")))
+      .filter((n) => n.length > 0);
+  }
+
+  private apiIssueToCandidate(repo: string, issue: GitHubApiIssue): GitHubIssueCandidate {
+    return {
+      repo,
+      issueNumber: issue.number,
+      title: issue.title,
+      body: issue.body ?? "",
+      labels: this.labelNames(issue.labels),
+      url: issue.html_url,
+      state: issue.state === "open" ? "open" : "closed",
+      ...(issue.user?.login !== undefined ? { author: issue.user.login } : {}),
+      ...(issue.updated_at !== null ? { updatedAt: issue.updated_at } : {})
+    };
+  }
+
+  async fetchIssueCandidate(repo: string, issueNumber: number): Promise<GitHubIssueCandidate> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const issue = await this.apiGet<GitHubApiIssue>(
+      `/repos/${owner}/${repoName}/issues/${issueNumber}`
+    );
+    return this.apiIssueToCandidate(repo, issue);
+  }
+
+  async listIssueCandidates(query: GitHubIssueQuery): Promise<GitHubIssueCandidate[]> {
+    const { owner, repoName } = this.parseRepo(query.repo);
+    const params = new URLSearchParams();
+    const states = query.states ?? [];
+    if (states.includes("open") && states.includes("closed")) {
+      params.set("state", "all");
+    } else if (states.includes("closed")) {
+      params.set("state", "closed");
+    } else {
+      params.set("state", "open");
+    }
+    if (query.labels && query.labels.length > 0) {
+      params.set("labels", query.labels.join(","));
+    }
+    params.set("per_page", String(Math.min(query.limit ?? 30, 100)));
+    const issues = await this.apiGet<GitHubApiIssue[]>(
+      `/repos/${owner}/${repoName}/issues?${params.toString()}`
+    );
+    const candidates = issues
+      .map((issue) => this.apiIssueToCandidate(query.repo, issue))
+      .slice(0, query.limit ?? issues.length);
+    return candidates;
+  }
+
+  async readIssueStatus(repo: string, issueNumber: number): Promise<GitHubIssueStatusSnapshot> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const [issue, repoData] = await Promise.all([
+      this.apiGet<GitHubApiIssue>(`/repos/${owner}/${repoName}/issues/${issueNumber}`),
+      this.apiGet<GitHubApiRepository>(`/repos/${owner}/${repoName}`)
+    ]);
+    return {
+      repo,
+      issueNumber: issue.number,
+      url: issue.html_url,
+      state: issue.state === "open" ? "open" : "closed",
+      labels: this.labelNames(issue.labels),
+      assignees: issue.assignees.map((a) => a.login),
+      milestone: issue.milestone?.title ?? null,
+      defaultBranch: repoData.default_branch,
+      updatedAt: issue.updated_at ?? null
+    };
+  }
+
+  async convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput> {
+    return createPlanningInputFromGitHubIssue(candidate);
+  }
+
+  async addLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<never> {
+    throw new V1MutationDisabledError(`Adding labels [${labels.join(", ")}] is disabled in RedDwarf v1`);
+  }
+
+  async removeLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<never> {
+    throw new V1MutationDisabledError(`Removing labels [${labels.join(", ")}] is disabled in RedDwarf v1`);
+  }
+
+  async createIssue(input: GitHubIssueDraft): Promise<GitHubCreatedIssueSummary> {
+    const { owner, repoName } = this.parseRepo(input.repo);
+    const created = await this.apiPost<GitHubApiCreatedIssue>(
+      `/repos/${owner}/${repoName}/issues`,
+      { title: input.title, body: input.body, labels: input.labels ?? [] }
+    );
+    return {
+      repo: input.repo,
+      issueNumber: created.number,
+      url: created.html_url,
+      state: "open",
+      title: input.title,
+      createdAt: created.created_at
+    };
+  }
+
+  async commentOnIssue(comment: GitHubIssueComment): Promise<never> {
+    throw new V1MutationDisabledError(
+      `Commenting on ${comment.repo}#${comment.issueNumber} is disabled in RedDwarf v1`
+    );
+  }
+
+  async createBranch(
+    repo: string,
+    baseBranch: string,
+    branchName: string
+  ): Promise<GitHubBranchSummary> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const baseRef = await this.apiGet<GitHubApiRef>(
+      `/repos/${owner}/${repoName}/git/ref/heads/${baseBranch}`
+    );
+    const sha = baseRef.object.sha;
+    await this.apiPost<GitHubApiRef>(`/repos/${owner}/${repoName}/git/refs`, {
+      ref: `refs/heads/${branchName}`,
+      sha
+    });
+    return {
+      repo,
+      baseBranch,
+      branchName,
+      ref: `refs/heads/${branchName}`,
+      url: `https://github.com/${owner}/${repoName}/tree/${encodeURIComponent(branchName)}`,
+      createdAt: asIsoTimestamp()
+    };
+  }
+
+  async createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary> {
+    const { owner, repoName } = this.parseRepo(input.repo);
+    const pr = await this.apiPost<GitHubApiPullRequest>(
+      `/repos/${owner}/${repoName}/pulls`,
+      {
+        title: input.title,
+        body: input.body,
+        base: input.baseBranch,
+        head: input.headBranch,
+        labels: input.labels ?? []
+      }
+    );
+    return {
+      repo: input.repo,
+      number: pr.number,
+      url: pr.html_url,
+      state: pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open",
+      baseBranch: pr.base.ref,
+      headBranch: pr.head.ref,
+      title: pr.title,
+      mergedAt: pr.merged_at
+    };
+  }
+}
+
+/**
+ * Create a RestGitHubAdapter from environment variables or explicit options.
+ * Reads GITHUB_TOKEN from the environment when no token is provided.
+ */
+export function createRestGitHubAdapter(
+  options: { token?: string; baseUrl?: string } = {}
+): RestGitHubAdapter {
+  const token = options.token ?? process.env["GITHUB_TOKEN"];
+  if (!token) {
+    throw new Error(
+      "RestGitHubAdapter requires a GitHub token. Set the GITHUB_TOKEN environment variable or pass token explicitly."
+    );
+  }
+  return new RestGitHubAdapter({
+    token,
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {})
+  });
+}
