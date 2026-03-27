@@ -6,11 +6,7 @@ import {
 } from "../packages/control-plane/dist/index.js";
 import { PostgresPlanningRepository, deriveOrganizationId } from "../packages/evidence/dist/index.js";
 import { FixtureKnowledgeIngestionAdapter } from "../packages/integrations/dist/index.js";
-
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
+import { connectionString } from "./lib/config.mjs";
 
 const unique = Date.now();
 const repo = `acme-knowledge-${unique}/platform-${unique}`;

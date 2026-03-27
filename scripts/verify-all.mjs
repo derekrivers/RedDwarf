@@ -7,10 +7,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { join } from "node:path";
+import { scriptsDir } from "./lib/config.mjs";
 
 const scripts = [
   "verify-postgres-pipeline.mjs",
@@ -40,7 +38,7 @@ for (const script of scripts) {
   const startMs = Date.now();
 
   try {
-    execFileSync(process.execPath, [join(__dirname, script)], {
+    execFileSync(process.execPath, [join(scriptsDir, script)], {
       stdio: "inherit",
       env: process.env
     });

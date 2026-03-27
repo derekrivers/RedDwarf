@@ -8,11 +8,9 @@
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString } from "./lib/config.mjs";
 
 const port = parseInt(process.argv[2] ?? "8080", 10);
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
 
 const repository = createPostgresPlanningRepository(connectionString);
 const server = createOperatorApiServer({ port }, { repository });

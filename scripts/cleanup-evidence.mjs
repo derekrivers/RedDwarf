@@ -34,11 +34,8 @@
  */
 
 import { readdir, rm, stat } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(__dirname, "..");
+import { join, resolve } from "node:path";
+import { repoRoot, createScriptLogger, formatError } from "./lib/config.mjs";
 
 // ── Parse CLI arguments ────────────────────────────────────────────────────
 
@@ -87,9 +84,7 @@ if (Number.isNaN(maxAgeDays) || maxAgeDays < 0) {
 const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1_000;
 const cutoffDate = new Date(Date.now() - maxAgeMs);
 
-function log(message) {
-  process.stdout.write(`[cleanup-evidence] ${message}\n`);
-}
+const { log } = createScriptLogger("cleanup-evidence");
 
 // ── Walk evidence root ─────────────────────────────────────────────────────
 
@@ -166,7 +161,7 @@ for (const entry of taskDirs) {
       deletedBytes += dirBytes;
       log(`  DELETE ${entry.name}  (${ageDays.toFixed(1)}d old, ${sizeMb} MB) — removed`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatError(err);
       errors.push({ name: entry.name, message });
       log(`  DELETE ${entry.name}  (${ageDays.toFixed(1)}d old, ${sizeMb} MB) — FAILED: ${message}`);
     }

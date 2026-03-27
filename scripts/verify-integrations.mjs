@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { DeterministicPlanningAgent, runPlanningPipeline } from "../packages/control-plane/dist/index.js";
 import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import {
+import { connectionString } from "./lib/config.mjs";
   DenyAllSecretsAdapter,
   FixtureCiAdapter,
   FixtureGitHubAdapter,

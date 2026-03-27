@@ -21,31 +21,17 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import pg from "pg";
+import { connectionString, repoRoot, scriptsDir, createScriptLogger, formatError } from "./lib/config.mjs";
 
 const { Client } = pg;
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(__dirname, "..");
-
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
 
 const COMPOSE_FILE = join(repoRoot, "infra", "docker", "docker-compose.yml");
 const POLL_INTERVAL_MS = 2_000;
 const MAX_WAIT_MS = 60_000;
 
-function log(message) {
-  process.stdout.write(`[setup] ${message}\n`);
-}
-
-function logError(message) {
-  process.stderr.write(`[setup] ERROR: ${message}\n`);
-}
+const { log, logError } = createScriptLogger("setup");
 
 // ── Step 1: Start the Docker Compose stack ─────────────────────────────────
 
@@ -57,7 +43,7 @@ try {
   });
   log("Docker Compose stack started.");
 } catch (err) {
-  logError(`docker compose up failed: ${err instanceof Error ? err.message : String(err)}`);
+  logError(`docker compose up failed: ${formatError(err)}`);
   logError("Ensure Docker Desktop (or Docker Engine) is running and try again.");
   process.exit(1);
 }
@@ -95,14 +81,14 @@ log("Postgres is reachable.");
 
 log("Applying database migrations...");
 try {
-  execFileSync(process.execPath, [join(__dirname, "apply-sql-migrations.mjs")], {
+  execFileSync(process.execPath, [join(scriptsDir, "apply-sql-migrations.mjs")], {
     stdio: "inherit",
     env: process.env,
     cwd: repoRoot
   });
   log("Migrations applied.");
 } catch (err) {
-  logError(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
+  logError(`Migration failed: ${formatError(err)}`);
   process.exit(1);
 }
 
@@ -120,7 +106,7 @@ try {
 
   log(`Health check passed. Public tables: ${tables.length > 0 ? tables.join(", ") : "(none yet)"}`);
 } catch (err) {
-  logError(`Health check failed: ${err instanceof Error ? err.message : String(err)}`);
+  logError(`Health check failed: ${formatError(err)}`);
   process.exit(1);
 }
 

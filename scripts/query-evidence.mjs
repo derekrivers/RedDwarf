@@ -6,12 +6,9 @@
 // With a task-id argument, prints phase records and run events for that task.
 
 import pg from "pg";
+import { connectionString } from "./lib/config.mjs";
 
 const { Client } = pg;
-
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
 
 const taskIdArg = process.argv[2];
 

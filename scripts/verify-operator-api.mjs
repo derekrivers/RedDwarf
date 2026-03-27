@@ -7,11 +7,8 @@ import {
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString } from "./lib/config.mjs";
 
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
 const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
 const repository = createPostgresPlanningRepository(connectionString);

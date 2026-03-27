@@ -13,6 +13,7 @@ import {
 } from "../packages/control-plane/dist/index.js";
 import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { FixtureSecretsAdapter } from "../packages/integrations/dist/index.js";
+import { connectionString } from "./lib/config.mjs";
 
 const connectionString =
   process.env.HOST_DATABASE_URL ??
