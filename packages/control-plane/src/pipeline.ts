@@ -1417,77 +1417,12 @@ export async function runDeveloperPhase(
   });
 
   if (blockedByRun) {
-    concurrencyDecision = createConcurrencyDecision({
-      action: "block",
-      strategy: concurrency.strategy,
-      blockedByRunId: blockedByRun.runId,
-      staleRunIds,
-      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    concurrencyDecision = await persistConcurrencyBlock({
+      repository, trackedRun, concurrencyKey,
+      strategy: concurrency.strategy, taskId, runId,
+      phase: "development", runStartedAt, runStartedAtIso,
+      blockedByRun, staleRunIds, runLogger, nextEventId
     });
-    await repository.savePipelineRun(
-      createPipelineRun({
-        ...trackedRun,
-        status: "blocked",
-        blockedByRunId: blockedByRun.runId,
-        overlapReason: concurrencyDecision.reason,
-        completedAt: runStartedAtIso,
-        metadata: {
-          ...trackedRun.metadata,
-          staleRunIds
-        }
-      })
-    );
-    await repository.saveEvidenceRecord(
-      createEvidenceRecord({
-        recordId: `${taskId}:development:concurrency:${runId}`,
-        taskId,
-        kind: "gate_decision",
-        title: "Development concurrency gate decision",
-        metadata: concurrencyDecision,
-        createdAt: runStartedAtIso
-      })
-    );
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("development", "RUN_BLOCKED_BY_OVERLAP"),
-      taskId,
-      runId,
-      phase: "development",
-      level: "warn",
-      code: "RUN_BLOCKED_BY_OVERLAP",
-      message:
-        concurrencyDecision.reason ??
-        "Developer phase blocked by an overlapping run.",
-      failureClass: "execution_loop",
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId,
-        staleRunIds
-      },
-      createdAt: runStartedAtIso
-    });
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("development", "PIPELINE_BLOCKED"),
-      taskId,
-      runId,
-      phase: "development",
-      level: "warn",
-      code: "PIPELINE_BLOCKED",
-      message: "Developer phase blocked by concurrency controls.",
-      failureClass: "execution_loop",
-      durationMs: getDurationMs(runStartedAt, runStartedAt),
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId
-      },
-      createdAt: runStartedAtIso
-    });
-
     return {
       runId,
       manifest: currentManifest,
@@ -1887,71 +1822,12 @@ export async function runDeveloperPhase(
     });
 
     try {
-      await repository.savePhaseRecord(
-        createPhaseRecord({
-          id: `${taskId}:phase:development:${runId}:failed`,
-          taskId,
-          phase: "development",
-          status: "failed",
-          actor: "control-plane",
-          summary: pipelineFailure.message,
-          details: {
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            ...pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await repository.saveEvidenceRecord(
-        createEvidenceRecord({
-          recordId: `${taskId}:development:failure:${runId}`,
-          taskId,
-          kind: "run_event",
-          title: "Developer phase failure",
-          metadata: {
-            runId,
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            details: pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("development", "PHASE_FAILED"),
-        taskId,
-        runId,
-        phase: "development",
-        level: "error",
-        code: "PHASE_FAILED",
-        message: pipelineFailure.message,
-        failureClass: pipelineFailure.failureClass,
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
+      currentManifest = await persistPhaseFailure({
+        repository, snapshot, manifest: currentManifest,
+        phase: "development", runId, failure: pipelineFailure,
+        runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
+        persistTrackedRun, github: dependencies.github
       });
-      currentManifest = (
-        await handleAutomatedPhaseFailure({
-          repository,
-          snapshot,
-          manifest: currentManifest,
-          phase: "development",
-          runId,
-          failure: pipelineFailure,
-          runLogger,
-          nextEventId,
-          runStartedAt,
-          failedAt,
-          failedAtIso,
-          persistTrackedRun,
-          github: dependencies.github
-        })
-      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist developer phase failure evidence.", {
         runId,
@@ -2091,77 +1967,12 @@ export async function runValidationPhase(
   });
 
   if (blockedByRun) {
-    concurrencyDecision = createConcurrencyDecision({
-      action: "block",
-      strategy: concurrency.strategy,
-      blockedByRunId: blockedByRun.runId,
-      staleRunIds,
-      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    concurrencyDecision = await persistConcurrencyBlock({
+      repository, trackedRun, concurrencyKey,
+      strategy: concurrency.strategy, taskId, runId,
+      phase: "validation", runStartedAt, runStartedAtIso,
+      blockedByRun, staleRunIds, runLogger, nextEventId
     });
-    await repository.savePipelineRun(
-      createPipelineRun({
-        ...trackedRun,
-        status: "blocked",
-        blockedByRunId: blockedByRun.runId,
-        overlapReason: concurrencyDecision.reason,
-        completedAt: runStartedAtIso,
-        metadata: {
-          ...trackedRun.metadata,
-          staleRunIds
-        }
-      })
-    );
-    await repository.saveEvidenceRecord(
-      createEvidenceRecord({
-        recordId: `${taskId}:validation:concurrency:${runId}`,
-        taskId,
-        kind: "gate_decision",
-        title: "Validation concurrency gate decision",
-        metadata: concurrencyDecision,
-        createdAt: runStartedAtIso
-      })
-    );
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("validation", "RUN_BLOCKED_BY_OVERLAP"),
-      taskId,
-      runId,
-      phase: "validation",
-      level: "warn",
-      code: "RUN_BLOCKED_BY_OVERLAP",
-      message:
-        concurrencyDecision.reason ??
-        "Validation phase blocked by an overlapping run.",
-      failureClass: "execution_loop",
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId,
-        staleRunIds
-      },
-      createdAt: runStartedAtIso
-    });
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("validation", "PIPELINE_BLOCKED"),
-      taskId,
-      runId,
-      phase: "validation",
-      level: "warn",
-      code: "PIPELINE_BLOCKED",
-      message: "Validation phase blocked by concurrency controls.",
-      failureClass: "execution_loop",
-      durationMs: getDurationMs(runStartedAt, runStartedAt),
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId
-      },
-      createdAt: runStartedAtIso
-    });
-
     return {
       runId,
       manifest: currentManifest,
@@ -2762,71 +2573,12 @@ export async function runValidationPhase(
     });
 
     try {
-      await repository.savePhaseRecord(
-        createPhaseRecord({
-          id: `${taskId}:phase:validation:${runId}:failed`,
-          taskId,
-          phase: "validation",
-          status: "failed",
-          actor: "control-plane",
-          summary: pipelineFailure.message,
-          details: {
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            ...pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await repository.saveEvidenceRecord(
-        createEvidenceRecord({
-          recordId: `${taskId}:validation:failure:${runId}`,
-          taskId,
-          kind: "run_event",
-          title: "Validation phase failure",
-          metadata: {
-            runId,
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            details: pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("validation", "PHASE_FAILED"),
-        taskId,
-        runId,
-        phase: "validation",
-        level: "error",
-        code: "PHASE_FAILED",
-        message: pipelineFailure.message,
-        failureClass: pipelineFailure.failureClass,
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
+      currentManifest = await persistPhaseFailure({
+        repository, snapshot, manifest: currentManifest,
+        phase: "validation", runId, failure: pipelineFailure,
+        runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
+        persistTrackedRun, github: dependencies.github
       });
-      currentManifest = (
-        await handleAutomatedPhaseFailure({
-          repository,
-          snapshot,
-          manifest: currentManifest,
-          phase: "validation",
-          runId,
-          failure: pipelineFailure,
-          runLogger,
-          nextEventId,
-          runStartedAt,
-          failedAt,
-          failedAtIso,
-          persistTrackedRun,
-          github: dependencies.github
-        })
-      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist validation phase failure evidence.", {
         runId,
@@ -3752,76 +3504,12 @@ export async function runScmPhase(
   });
 
   if (blockedByRun) {
-    concurrencyDecision = createConcurrencyDecision({
-      action: "block",
-      strategy: concurrency.strategy,
-      blockedByRunId: blockedByRun.runId,
-      staleRunIds,
-      reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
+    concurrencyDecision = await persistConcurrencyBlock({
+      repository, trackedRun, concurrencyKey,
+      strategy: concurrency.strategy, taskId, runId,
+      phase: "scm", runStartedAt, runStartedAtIso,
+      blockedByRun, staleRunIds, runLogger, nextEventId
     });
-    await repository.savePipelineRun(
-      createPipelineRun({
-        ...trackedRun,
-        status: "blocked",
-        blockedByRunId: blockedByRun.runId,
-        overlapReason: concurrencyDecision.reason,
-        completedAt: runStartedAtIso,
-        metadata: {
-          ...trackedRun.metadata,
-          staleRunIds
-        }
-      })
-    );
-    await repository.saveEvidenceRecord(
-      createEvidenceRecord({
-        recordId: `${taskId}:scm:concurrency:${runId}`,
-        taskId,
-        kind: "gate_decision",
-        title: "SCM concurrency gate decision",
-        metadata: concurrencyDecision,
-        createdAt: runStartedAtIso
-      })
-    );
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("scm", "RUN_BLOCKED_BY_OVERLAP"),
-      taskId,
-      runId,
-      phase: "scm",
-      level: "warn",
-      code: "RUN_BLOCKED_BY_OVERLAP",
-      message:
-        concurrencyDecision.reason ?? "SCM phase blocked by an overlapping run.",
-      failureClass: "execution_loop",
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId,
-        staleRunIds
-      },
-      createdAt: runStartedAtIso
-    });
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("scm", "PIPELINE_BLOCKED"),
-      taskId,
-      runId,
-      phase: "scm",
-      level: "warn",
-      code: "PIPELINE_BLOCKED",
-      message: "SCM phase blocked by concurrency controls.",
-      failureClass: "execution_loop",
-      durationMs: getDurationMs(runStartedAt, runStartedAt),
-      data: {
-        concurrencyKey,
-        strategy: concurrency.strategy,
-        blockedByRunId: blockedByRun.runId
-      },
-      createdAt: runStartedAtIso
-    });
-
     return {
       runId,
       manifest: currentManifest,
@@ -4289,71 +3977,12 @@ export async function runScmPhase(
     });
 
     try {
-      await repository.savePhaseRecord(
-        createPhaseRecord({
-          id: `${taskId}:phase:scm:${runId}:failed`,
-          taskId,
-          phase: "scm",
-          status: "failed",
-          actor: "control-plane",
-          summary: pipelineFailure.message,
-          details: {
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            ...pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await repository.saveEvidenceRecord(
-        createEvidenceRecord({
-          recordId: `${taskId}:scm:failure:${runId}`,
-          taskId,
-          kind: "run_event",
-          title: "SCM phase failure",
-          metadata: {
-            runId,
-            code: pipelineFailure.code,
-            failureClass: pipelineFailure.failureClass,
-            details: pipelineFailure.details
-          },
-          createdAt: failedAtIso
-        })
-      );
-      await recordRunEvent({
-        repository,
-        logger: runLogger,
-        eventId: nextEventId("scm", "PHASE_FAILED"),
-        taskId,
-        runId,
-        phase: "scm",
-        level: "error",
-        code: "PHASE_FAILED",
-        message: pipelineFailure.message,
-        failureClass: pipelineFailure.failureClass,
-        data: {
-          causeCode: pipelineFailure.code,
-          details: pipelineFailure.details
-        },
-        createdAt: failedAtIso
+      currentManifest = await persistPhaseFailure({
+        repository, snapshot, manifest: currentManifest,
+        phase: "scm", runId, failure: pipelineFailure,
+        runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
+        persistTrackedRun, github
       });
-      currentManifest = (
-        await handleAutomatedPhaseFailure({
-          repository,
-          snapshot,
-          manifest: currentManifest,
-          phase: "scm",
-          runId,
-          failure: pipelineFailure,
-          runLogger,
-          nextEventId,
-          runStartedAt,
-          failedAt,
-          failedAtIso,
-          persistTrackedRun,
-          github: github
-        })
-      ).manifest;
     } catch (persistenceError) {
       runLogger.error("Failed to persist SCM phase failure evidence.", {
         runId,
@@ -4902,6 +4531,196 @@ function getDurationMs(start: Date, end: Date): number {
   return Math.max(0, end.getTime() - start.getTime());
 }
 
+
+// ── Shared phase orchestration sub-steps ─────────────────────────────────────
+
+interface ConcurrencyBlockedContext {
+  repository: PlanningRepository;
+  trackedRun: PipelineRun;
+  concurrencyKey: string;
+  strategy: ConcurrencyStrategy;
+  taskId: string;
+  runId: string;
+  phase: TaskPhase;
+  runStartedAt: Date;
+  runStartedAtIso: string;
+  blockedByRun: PipelineRun;
+  staleRunIds: string[];
+  runLogger: PlanningPipelineLogger;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+}
+
+async function persistConcurrencyBlock(
+  ctx: ConcurrencyBlockedContext
+): Promise<ConcurrencyDecision> {
+  const decision = createConcurrencyDecision({
+    action: "block",
+    strategy: ctx.strategy,
+    blockedByRunId: ctx.blockedByRun.runId,
+    staleRunIds: ctx.staleRunIds,
+    reason: `Active overlapping run ${ctx.blockedByRun.runId} already owns ${ctx.concurrencyKey}.`
+  });
+  await ctx.repository.savePipelineRun(
+    createPipelineRun({
+      ...ctx.trackedRun,
+      status: "blocked",
+      blockedByRunId: ctx.blockedByRun.runId,
+      overlapReason: decision.reason,
+      completedAt: ctx.runStartedAtIso,
+      metadata: {
+        ...ctx.trackedRun.metadata,
+        staleRunIds: ctx.staleRunIds
+      }
+    })
+  );
+  const phaseLabel =
+    ctx.phase === "scm"
+      ? "SCM"
+      : ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1);
+  await ctx.repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${ctx.taskId}:${ctx.phase}:concurrency:${ctx.runId}`,
+      taskId: ctx.taskId,
+      kind: "gate_decision",
+      title: `${phaseLabel} concurrency gate decision`,
+      metadata: decision,
+      createdAt: ctx.runStartedAtIso
+    })
+  );
+  await recordRunEvent({
+    repository: ctx.repository,
+    logger: ctx.runLogger,
+    eventId: ctx.nextEventId(ctx.phase, "RUN_BLOCKED_BY_OVERLAP"),
+    taskId: ctx.taskId,
+    runId: ctx.runId,
+    phase: ctx.phase,
+    level: "warn",
+    code: "RUN_BLOCKED_BY_OVERLAP",
+    message:
+      decision.reason ?? `${phaseLabel} phase blocked by an overlapping run.`,
+    failureClass: "execution_loop",
+    data: {
+      concurrencyKey: ctx.concurrencyKey,
+      strategy: ctx.strategy,
+      blockedByRunId: ctx.blockedByRun.runId,
+      staleRunIds: ctx.staleRunIds
+    },
+    createdAt: ctx.runStartedAtIso
+  });
+  await recordRunEvent({
+    repository: ctx.repository,
+    logger: ctx.runLogger,
+    eventId: ctx.nextEventId(ctx.phase, "PIPELINE_BLOCKED"),
+    taskId: ctx.taskId,
+    runId: ctx.runId,
+    phase: ctx.phase,
+    level: "warn",
+    code: "PIPELINE_BLOCKED",
+    message: `${phaseLabel} phase blocked by concurrency controls.`,
+    failureClass: "execution_loop",
+    durationMs: getDurationMs(ctx.runStartedAt, ctx.runStartedAt),
+    data: {
+      concurrencyKey: ctx.concurrencyKey,
+      strategy: ctx.strategy,
+      blockedByRunId: ctx.blockedByRun.runId
+    },
+    createdAt: ctx.runStartedAtIso
+  });
+  return decision;
+}
+
+interface PhaseFailureContext {
+  repository: PlanningRepository;
+  snapshot: PersistedTaskSnapshot;
+  manifest: TaskManifest;
+  phase: TaskPhase;
+  runId: string;
+  failure: PlanningPipelineFailure;
+  runLogger: PlanningPipelineLogger;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+  runStartedAt: Date;
+  failedAt: Date;
+  failedAtIso: string;
+  persistTrackedRun: (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+  ) => Promise<void>;
+  github?: GitHubAdapter | undefined;
+}
+
+async function persistPhaseFailure(
+  ctx: PhaseFailureContext
+): Promise<TaskManifest> {
+  const taskId = ctx.manifest.taskId;
+  await ctx.repository.savePhaseRecord(
+    createPhaseRecord({
+      id: `${taskId}:phase:${ctx.phase}:${ctx.runId}:failed`,
+      taskId,
+      phase: ctx.phase,
+      status: "failed",
+      actor: "control-plane",
+      summary: ctx.failure.message,
+      details: {
+        code: ctx.failure.code,
+        failureClass: ctx.failure.failureClass,
+        ...ctx.failure.details
+      },
+      createdAt: ctx.failedAtIso
+    })
+  );
+  await ctx.repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${taskId}:${ctx.phase}:failure:${ctx.runId}`,
+      taskId,
+      kind: "run_event",
+      title: `${ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1)} phase failure`,
+      metadata: {
+        runId: ctx.runId,
+        code: ctx.failure.code,
+        failureClass: ctx.failure.failureClass,
+        details: ctx.failure.details
+      },
+      createdAt: ctx.failedAtIso
+    })
+  );
+  await recordRunEvent({
+    repository: ctx.repository,
+    logger: ctx.runLogger,
+    eventId: ctx.nextEventId(ctx.phase, "PHASE_FAILED"),
+    taskId,
+    runId: ctx.runId,
+    phase: ctx.phase,
+    level: "error",
+    code: "PHASE_FAILED",
+    message: ctx.failure.message,
+    failureClass: ctx.failure.failureClass,
+    data: {
+      causeCode: ctx.failure.code,
+      details: ctx.failure.details
+    },
+    createdAt: ctx.failedAtIso
+  });
+  const recoverable: RecoverablePhase[] = ["development", "validation", "scm"];
+  if (recoverable.includes(ctx.phase as RecoverablePhase)) {
+    return (
+      await handleAutomatedPhaseFailure({
+        repository: ctx.repository,
+        snapshot: ctx.snapshot,
+        manifest: ctx.manifest,
+        phase: ctx.phase as RecoverablePhase,
+        runId: ctx.runId,
+        failure: ctx.failure,
+        runLogger: ctx.runLogger,
+        nextEventId: ctx.nextEventId,
+        runStartedAt: ctx.runStartedAt,
+        failedAt: ctx.failedAt,
+        failedAtIso: ctx.failedAtIso,
+        persistTrackedRun: ctx.persistTrackedRun,
+        github: ctx.github
+      })
+    ).manifest;
+  }
+  return ctx.manifest;
+}
 
 async function recordRunEvent(input: {
   repository: PlanningRepository;
