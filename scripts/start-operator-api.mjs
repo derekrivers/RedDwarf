@@ -6,8 +6,8 @@
 // Default DB:   postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf
 //               (override with HOST_DATABASE_URL env var)
 
-import { createOperatorApiServer } from "./packages/control-plane/dist/index.js";
-import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
+import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 
 const port = parseInt(process.argv[2] ?? "8080", 10);
 const connectionString =
