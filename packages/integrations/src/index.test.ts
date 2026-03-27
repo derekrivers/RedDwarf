@@ -3,6 +3,7 @@ import {
   DenyAllSecretsAdapter,
   FixtureCiAdapter,
   FixtureGitHubAdapter,
+  FixtureOpenClawDispatchAdapter,
   FixtureSecretsAdapter,
   OPENCLAW_BASE_URL_ENV,
   OPENCLAW_HOOK_TOKEN_ENV,
@@ -258,5 +259,52 @@ describe("integrations", () => {
         allowedSecretScopes: ["github_readonly"]
       })
     ).rejects.toBeInstanceOf(V1MutationDisabledError);
+  });
+});
+
+describe("FixtureOpenClawDispatchAdapter", () => {
+  it("accepts dispatches and records them for inspection", async () => {
+    const adapter = new FixtureOpenClawDispatchAdapter();
+    const result = await adapter.dispatch({
+      sessionKey: "github:issue:acme/repo:42",
+      agentId: "reddwarf-analyst",
+      prompt: "Analyze the codebase for issue #42"
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.sessionKey).toBe("github:issue:acme/repo:42");
+    expect(result.agentId).toBe("reddwarf-analyst");
+    expect(result.sessionId).toBe("fixture-session-001");
+    expect(adapter.dispatches).toHaveLength(1);
+    expect(adapter.dispatches[0]?.prompt).toBe("Analyze the codebase for issue #42");
+  });
+
+  it("rejects all dispatches when rejectAll is true", async () => {
+    const adapter = new FixtureOpenClawDispatchAdapter({ rejectAll: true });
+    const result = await adapter.dispatch({
+      sessionKey: "test:session",
+      agentId: "reddwarf-coordinator",
+      prompt: "Test dispatch"
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(result.sessionId).toBeNull();
+    expect(result.statusMessage).toContain("rejected");
+    expect(adapter.dispatches).toHaveLength(1);
+  });
+
+  it("uses custom session ID and status message when provided", async () => {
+    const adapter = new FixtureOpenClawDispatchAdapter({
+      fixedSessionId: "custom-session-xyz",
+      statusMessage: "Dispatch queued"
+    });
+    const result = await adapter.dispatch({
+      sessionKey: "test:key",
+      agentId: "reddwarf-validator",
+      prompt: "Validate workspace"
+    });
+
+    expect(result.sessionId).toBe("custom-session-xyz");
+    expect(result.statusMessage).toBe("Dispatch queued");
   });
 });

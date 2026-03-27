@@ -64,7 +64,7 @@ The board is ordered by implementation priority.
 | 83       | Update docs/openclaw to reflect Anthropic as primary provider with model equivalents across all five docs | M10 | completed | Knowledge & Policy Plane                                              |
 | 57       | openclaw.json generation from RedDwarf policy configuration with per-agent workspace paths, tool profiles, and skipBootstrap | M10 | completed | System Context, Knowledge & Policy Plane, Integration Plane           |
 | 58       | Hook token secret wiring through EnvVarSecretsAdapter with .env.example and runbook documentation | M10 | completed | Integration Plane, Isolation and Security Model                       |
-| 59       | OpenClawDispatchAdapter contract and fixture adapter registered alongside existing integration adapters | M10 | pending | Integration Plane, Execution Plane                                    |
+| 59       | OpenClawDispatchAdapter contract and fixture adapter registered alongside existing integration adapters | M10 | completed | Integration Plane, Execution Plane                                    |
 | 60       | HTTP implementation of OpenClawDispatchAdapter posting to /hooks/agent with sessionKey, agentId, bearer auth, and retry | M10 | pending | Integration Plane, Execution Plane                                    |
 | 61       | Session result and transcript capture reading OpenClaw session JSONL and persisting agent output as phase evidence | M10 | pending | Integration Plane, Evidence Plane, Observability Model                |
 | 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | pending | Execution Plane, Control Plane, Integration Plane                     |

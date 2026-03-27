@@ -1245,3 +1245,101 @@ export function createRestGitHubAdapter(
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {})
   });
 }
+
+// ============================================================
+// OpenClawDispatchAdapter — contract for dispatching work to OpenClaw
+// ============================================================
+
+/**
+ * Request payload for dispatching work to an OpenClaw agent.
+ * Maps to the `POST /hooks/agent` webhook endpoint.
+ */
+export interface OpenClawDispatchRequest {
+  /** Deterministic session key for continuity — e.g. `github:issue:acme/repo:42`. */
+  sessionKey: string;
+  /** The OpenClaw agent ID to dispatch to — e.g. `reddwarf-analyst`. */
+  agentId: string;
+  /** The task prompt or instruction to execute. */
+  prompt: string;
+  /** Optional metadata attached to the dispatch for evidence/tracing. */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Response from an OpenClaw dispatch operation.
+ */
+export interface OpenClawDispatchResult {
+  /** Whether the dispatch was accepted by the gateway. */
+  accepted: boolean;
+  /** Session key echoed back for correlation. */
+  sessionKey: string;
+  /** Agent that handled the dispatch. */
+  agentId: string;
+  /** Gateway-assigned session or request ID. */
+  sessionId: string | null;
+  /** Timestamp of the dispatch response. */
+  respondedAt: string;
+  /** Optional status message from the gateway. */
+  statusMessage: string | null;
+}
+
+/**
+ * Adapter contract for dispatching bounded work to OpenClaw agents.
+ *
+ * RedDwarf owns intake, policy, risk, and approvals. This adapter is
+ * the handoff point where approved work enters the OpenClaw execution
+ * runtime. Implementers must authenticate with the gateway hook token
+ * and return a dispatch result for evidence capture.
+ */
+export interface OpenClawDispatchAdapter {
+  /**
+   * Dispatch a task prompt to the specified OpenClaw agent.
+   * Throws on network or auth failures.
+   */
+  dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult>;
+}
+
+// ============================================================
+// FixtureOpenClawDispatchAdapter — in-memory fixture for tests
+// ============================================================
+
+export interface FixtureOpenClawDispatchAdapterOptions {
+  /** When true, all dispatches are rejected. Defaults to false. */
+  rejectAll?: boolean;
+  /** Fixed session ID returned for all dispatches. */
+  fixedSessionId?: string;
+  /** Custom status message to include in the result. */
+  statusMessage?: string;
+}
+
+/**
+ * A fixture-backed OpenClawDispatchAdapter for tests and deterministic
+ * pipeline runs. Records all dispatches for later inspection.
+ */
+export class FixtureOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
+  private readonly rejectAll: boolean;
+  private readonly fixedSessionId: string;
+  private readonly statusMessage: string | null;
+  public readonly dispatches: OpenClawDispatchRequest[] = [];
+
+  constructor(options: FixtureOpenClawDispatchAdapterOptions = {}) {
+    this.rejectAll = options.rejectAll ?? false;
+    this.fixedSessionId = options.fixedSessionId ?? "fixture-session-001";
+    this.statusMessage = options.statusMessage ?? null;
+  }
+
+  async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
+    this.dispatches.push(request);
+
+    return {
+      accepted: !this.rejectAll,
+      sessionKey: request.sessionKey,
+      agentId: request.agentId,
+      sessionId: this.rejectAll ? null : this.fixedSessionId,
+      respondedAt: asIsoTimestamp(),
+      statusMessage: this.rejectAll
+        ? "Fixture: dispatch rejected (rejectAll=true)"
+        : this.statusMessage
+    };
+  }
+}
