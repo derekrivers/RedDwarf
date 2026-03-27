@@ -204,6 +204,127 @@ export class DeterministicScmAgent implements ScmAgent {
 }
 
 // ============================================================
+// Live LLM planning agent — Anthropic Messages API
+// ============================================================
+
+const DEFAULT_PLANNING_SYSTEM_PROMPT = [
+  "You are operating inside the RedDwarf Dev Squad policy pack.",
+  "",
+  "Focus on deterministic planning:",
+  "- refine acceptance criteria",
+  "- identify affected surfaces",
+  "- classify risk",
+  "- respect restricted paths",
+  "- produce evidence-friendly output",
+  "",
+  "Do not write product code or create PRs in v1.",
+  "",
+  "Respond with a JSON object — no markdown fences, no commentary — with exactly these fields:",
+  '  "summary": string (one or two sentences describing the plan)',
+  '  "assumptions": string[] (key assumptions the plan relies on)',
+  '  "affectedAreas": string[] (file paths or surface areas that will change)',
+  '  "constraints": string[] (hard constraints the implementation must honour)',
+  '  "testExpectations": string[] (what tests or checks should be added or updated)'
+].join("\n");
+
+export interface AnthropicPlanningAgentOptions {
+  apiKey?: string;
+  model?: string;
+  maxTokens?: number;
+  systemPrompt?: string;
+  baseUrl?: string;
+}
+
+interface AnthropicMessagesResponse {
+  content: Array<{ type: string; text?: string }>;
+}
+
+export class AnthropicPlanningAgent implements PlanningAgent {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly maxTokens: number;
+  private readonly systemPrompt: string;
+  private readonly baseUrl: string;
+
+  constructor(options: AnthropicPlanningAgentOptions = {}) {
+    const apiKey = options.apiKey ?? process.env["ANTHROPIC_API_KEY"];
+    if (!apiKey) {
+      throw new Error(
+        "AnthropicPlanningAgent requires an API key. " +
+          "Set the ANTHROPIC_API_KEY environment variable or pass apiKey explicitly."
+      );
+    }
+    this.apiKey = apiKey;
+    this.model = options.model ?? "claude-sonnet-4-6";
+    this.maxTokens = options.maxTokens ?? 2048;
+    this.systemPrompt = options.systemPrompt ?? DEFAULT_PLANNING_SYSTEM_PROMPT;
+    this.baseUrl = options.baseUrl ?? "https://api.anthropic.com";
+  }
+
+  async createSpec(
+    input: PlanningTaskInput,
+    context: { manifest: TaskManifest; runId: string }
+  ): Promise<PlanningDraft> {
+    const userMessage = buildPlanningUserMessage(input, context);
+
+    const response = await fetch(`${this.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: this.maxTokens,
+        system: this.systemPrompt,
+        messages: [{ role: "user", content: userMessage }]
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Anthropic API returned ${response.status}: ${body}`);
+    }
+
+    const result = (await response.json()) as AnthropicMessagesResponse;
+    const block = result.content.find((b) => b.type === "text");
+    if (!block?.text) {
+      throw new Error("Anthropic response contained no text content block.");
+    }
+    return parsePlanningDraft(block.text, input, context);
+  }
+}
+
+/**
+ * Create an AnthropicPlanningAgent from environment variables or explicit options.
+ * Reads ANTHROPIC_API_KEY from the environment when no apiKey is provided.
+ */
+export function createAnthropicPlanningAgent(
+  options: AnthropicPlanningAgentOptions = {}
+): AnthropicPlanningAgent {
+  return new AnthropicPlanningAgent(options);
+}
+
+export type PlanningAgentConfig =
+  | { type: "deterministic" }
+  | { type: "anthropic"; options?: AnthropicPlanningAgentOptions };
+
+/**
+ * Factory for selecting between the deterministic stub and the live Anthropic
+ * planning agent based on a configuration object.
+ *
+ * Use `{ type: "deterministic" }` for tests and CI environments where no API
+ * key is available. Use `{ type: "anthropic" }` for real planning runs.
+ */
+export function createPlanningAgent(config: PlanningAgentConfig): PlanningAgent {
+  if (config.type === "anthropic") {
+    return new AnthropicPlanningAgent(config.options);
+  }
+  return new DeterministicPlanningAgent();
+}
+
+// ============================================================
 // Private helpers
 // ============================================================
 
@@ -261,6 +382,90 @@ function createScmPullRequestBody(input: {
     ...input.bundle.acceptanceCriteria.map((item) => `- ${item}`),
     ""
   ].join("\n");
+}
+
+function buildPlanningUserMessage(
+  input: PlanningTaskInput,
+  context: { manifest: TaskManifest; runId: string }
+): string {
+  const lines: string[] = [
+    `Task ID: ${context.manifest.taskId}`,
+    `Run ID: ${context.runId}`,
+    `Repository: ${input.source.repo}`,
+    ...(input.source.issueNumber !== undefined
+      ? [`Issue: #${input.source.issueNumber}`]
+      : []),
+    `Title: ${input.title}`,
+    `Summary: ${input.summary}`,
+    `Priority: ${input.priority}`,
+    ...(input.labels.length > 0 ? [`Labels: ${input.labels.join(", ")}`] : []),
+    `Requested capabilities: ${input.requestedCapabilities.join(", ")}`
+  ];
+
+  if (input.affectedPaths.length > 0) {
+    lines.push(`Affected paths: ${input.affectedPaths.join(", ")}`);
+  }
+
+  if (input.acceptanceCriteria.length > 0) {
+    lines.push("", "Acceptance criteria:");
+    for (const criterion of input.acceptanceCriteria) {
+      lines.push(`- ${criterion}`);
+    }
+  }
+
+  lines.push(
+    "",
+    "Produce a planning spec as a JSON object with fields: summary, assumptions, affectedAreas, constraints, testExpectations."
+  );
+
+  return lines.join("\n");
+}
+
+function parsePlanningDraft(
+  text: string,
+  input: PlanningTaskInput,
+  context: { manifest: TaskManifest; runId: string }
+): PlanningDraft {
+  const candidates: string[] = [text.trim()];
+  const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  const codeBlockText = codeBlockMatch?.[1];
+  if (codeBlockText) {
+    candidates.unshift(codeBlockText.trim());
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (isValidPlanningDraft(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // try the next candidate
+    }
+  }
+
+  return {
+    summary: `Planning pass for task ${context.manifest.taskId}: ${input.title}`,
+    assumptions: ["LLM response could not be parsed as structured JSON; manual review required."],
+    affectedAreas: input.affectedPaths.length > 0 ? [...input.affectedPaths] : ["to-be-determined"],
+    constraints: [
+      "Do not write product code in RedDwarf v1.",
+      "Archive all planning outputs as durable evidence."
+    ],
+    testExpectations: ["Validate planning spec structure and evidence archival."]
+  };
+}
+
+function isValidPlanningDraft(value: unknown): value is PlanningDraft {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v["summary"] === "string" &&
+    Array.isArray(v["assumptions"]) &&
+    Array.isArray(v["affectedAreas"]) &&
+    Array.isArray(v["constraints"]) &&
+    Array.isArray(v["testExpectations"])
+  );
 }
 
 function createValidationNodeScript(kind: "lint" | "test"): string {
