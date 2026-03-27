@@ -112,11 +112,13 @@ Create a demo script at the repo root (not committed — this is a one-off demo)
 // demo-run.mjs
 import { runPlanningPipeline } from "./packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-import { intakeGitHubIssue } from "./packages/integrations/dist/index.js";
-import { createRestGitHubAdapter, createAnthropicPlanningAgent } from "@reddwarf/integrations";
-// Note: import from dist for now; in a packaged deploy these come from the policy-pack
+import {
+  intakeGitHubIssue,
+  createRestGitHubAdapter,
+  createAnthropicPlanningAgent
+} from "./packages/integrations/dist/index.js";
 
-const repo = "your-org/demo-repo"; // Replace with your repo
+const repo = "your-org/demo-repo"; // owner/repo format — NOT a full GitHub URL
 const issueNumber = 42;            // Replace with your issue number
 
 const github = createRestGitHubAdapter();          // reads GITHUB_TOKEN from env
