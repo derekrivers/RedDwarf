@@ -6,7 +6,8 @@ import {
   openClawAgentRoleSchema,
   openClawBootstrapFileKindSchema,
   openClawToolProfileSchema,
-  openClawSandboxModeSchema
+  openClawSandboxModeSchema,
+  OPENCLAW_BOOTSTRAP_FILE_COUNT
 } from "./enums.js";
 import type {
   WorkspaceContextBundle,
@@ -53,7 +54,7 @@ export const openClawAgentRoleDefinitionSchema = z.object({
   displayName: z.string().min(1),
   purpose: z.string().min(1),
   runtimePolicy: openClawAgentRuntimePolicySchema,
-  bootstrapFiles: z.array(openClawBootstrapFileSchema).length(5),
+  bootstrapFiles: z.array(openClawBootstrapFileSchema).length(OPENCLAW_BOOTSTRAP_FILE_COUNT),
   canonicalSources: z.array(z.string().min(1)).min(1)
 });
 

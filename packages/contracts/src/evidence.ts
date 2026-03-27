@@ -14,7 +14,9 @@ import {
   pipelineRunStatusSchema,
   overlapActionSchema,
   policyPackEntryKindSchema,
-  githubIssuePollingCursorStatusSchema
+  githubIssuePollingCursorStatusSchema,
+  QUERY_LIMIT_MAX,
+  QUERY_LIMIT_DEFAULT
 } from "./enums.js";
 
 export const phaseRecordSchema = z.object({
@@ -124,7 +126,7 @@ export const memoryQuerySchema = z.object({
   scope: memoryScopeSchema.optional(),
   tags: z.array(z.string().min(1)).default([]),
   keyPrefix: z.string().min(1).optional(),
-  limit: z.number().int().positive().max(100).default(50)
+  limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
 });
 
 export const memoryContextSchema = z.object({
@@ -156,7 +158,7 @@ export const pipelineRunQuerySchema = z.object({
   taskId: z.string().min(1).optional(),
   concurrencyKey: z.string().min(1).optional(),
   statuses: z.array(pipelineRunStatusSchema).default([]),
-  limit: z.number().int().positive().max(100).default(50)
+  limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
 });
 
 export const concurrencyDecisionSchema = z.object({

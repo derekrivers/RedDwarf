@@ -135,6 +135,16 @@ export const openClawBootstrapFileKinds = [
 export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
 export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
 
+// ── Schema validation constants ─────────────────────────────────────────────
+
+export const TITLE_MIN_LENGTH = 5;
+export const SUMMARY_MIN_LENGTH = 20;
+export const PRIORITY_MIN = 0;
+export const PRIORITY_MAX = 100;
+export const QUERY_LIMIT_MAX = 100;
+export const QUERY_LIMIT_DEFAULT = 50;
+export const OPENCLAW_BOOTSTRAP_FILE_COUNT = 5;
+
 // ── Shared utility schemas ──────────────────────────────────────────────────
 
 export const isoDateTimeSchema = z.string().datetime({ offset: true });

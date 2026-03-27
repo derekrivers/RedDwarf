@@ -6,7 +6,9 @@ import {
   taskPhaseSchema,
   approvalRequestStatusSchema,
   approvalDecisionSchema,
-  riskClassSchema
+  riskClassSchema,
+  QUERY_LIMIT_MAX,
+  QUERY_LIMIT_DEFAULT
 } from "./enums.js";
 
 export const policySnapshotSchema = z.object({
@@ -46,7 +48,7 @@ export const approvalRequestQuerySchema = z.object({
   taskId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
   statuses: z.array(approvalRequestStatusSchema).default([]),
-  limit: z.number().int().positive().max(100).default(50)
+  limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
 });
 
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;

@@ -7,7 +7,11 @@ import {
   approvalModeSchema,
   taskPhaseSchema,
   taskLifecycleStatusSchema,
-  agentTypeSchema
+  agentTypeSchema,
+  TITLE_MIN_LENGTH,
+  SUMMARY_MIN_LENGTH,
+  PRIORITY_MIN,
+  PRIORITY_MAX
 } from "./enums.js";
 
 export const sourceRefSchema = z.object({
@@ -20,9 +24,9 @@ export const sourceRefSchema = z.object({
 
 export const planningTaskInputSchema = z.object({
   source: sourceRefSchema,
-  title: z.string().min(5),
-  summary: z.string().min(20),
-  priority: z.number().int().min(0).max(100),
+  title: z.string().min(TITLE_MIN_LENGTH),
+  summary: z.string().min(SUMMARY_MIN_LENGTH),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX),
   labels: z.array(z.string().min(1)).default([]),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   affectedPaths: z.array(z.string().min(1)).default([]),
@@ -49,9 +53,9 @@ export const planningSpecSchema = z.object({
 export const taskManifestSchema = z.object({
   taskId: z.string().min(1),
   source: sourceRefSchema,
-  title: z.string().min(5),
-  summary: z.string().min(20),
-  priority: z.number().int().min(0).max(100),
+  title: z.string().min(TITLE_MIN_LENGTH),
+  summary: z.string().min(SUMMARY_MIN_LENGTH),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX),
   riskClass: riskClassSchema,
   approvalMode: approvalModeSchema,
   currentPhase: taskPhaseSchema,

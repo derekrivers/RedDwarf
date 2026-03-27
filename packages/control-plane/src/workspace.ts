@@ -22,6 +22,7 @@ import {
   runtimeInstructionLayerSchema,
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
+  workspaceToolModes,
   type Capability,
   type MaterializedManagedWorkspace,
   type PlanningSpec,
@@ -50,6 +51,8 @@ import {
 // ============================================================
 // Workspace interfaces
 // ============================================================
+
+const [TOOL_MODE_PLANNING, TOOL_MODE_DEVELOPMENT, TOOL_MODE_VALIDATION, TOOL_MODE_SCM] = workspaceToolModes;
 
 export interface WorkspaceContextArtifacts {
   taskJson: string;
@@ -851,7 +854,7 @@ export function createWorkspaceToolPolicy(
     bundle.manifest.assignedAgentType === "validation"
   ) {
     return {
-      mode: "validation_only",
+      mode: TOOL_MODE_VALIDATION,
       codeWriteEnabled: false,
       allowedCapabilities: [
         ...validationWorkspaceCapabilities.filter(
@@ -869,7 +872,7 @@ export function createWorkspaceToolPolicy(
     bundle.manifest.assignedAgentType === "developer"
   ) {
     return {
-      mode: "development_readonly",
+      mode: TOOL_MODE_DEVELOPMENT,
       codeWriteEnabled: false,
       allowedCapabilities: [
         ...developmentWorkspaceCapabilities.filter(
@@ -887,7 +890,7 @@ export function createWorkspaceToolPolicy(
     bundle.manifest.assignedAgentType === "scm"
   ) {
     return {
-      mode: "scm_only",
+      mode: TOOL_MODE_SCM,
       codeWriteEnabled: false,
       allowedCapabilities: [...scmWorkspaceCapabilities],
       blockedPhases: bundle.policySnapshot.blockedPhases,
@@ -896,7 +899,7 @@ export function createWorkspaceToolPolicy(
   }
 
   return {
-    mode: "planning_only",
+    mode: TOOL_MODE_PLANNING,
     codeWriteEnabled: false,
     allowedCapabilities: [...planningWorkspaceCapabilities],
     blockedPhases: bundle.policySnapshot.blockedPhases,
