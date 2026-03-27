@@ -550,8 +550,7 @@ export async function runPlanningPipeline(
       staleRunIds,
       reason: `Active overlapping run ${blockedByRun.runId} already owns ${concurrencyKey}.`
     });
-    const blockedManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    const blockedManifest = patchManifest(currentManifest, {
       lifecycleStatus: "blocked",
       updatedAt: runStartedAtIso
     });
@@ -740,8 +739,7 @@ export async function runPlanningPipeline(
     if (!eligibility.eligible) {
       const blockedAt = clock();
       const blockedAtIso = asIsoTimestamp(blockedAt);
-      const blockedManifest = taskManifestSchema.parse({
-        ...currentManifest,
+      const blockedManifest = patchManifest(currentManifest, {
         currentPhase: "eligibility",
         lifecycleStatus: "blocked",
         updatedAt: blockedAtIso
@@ -1191,8 +1189,7 @@ export async function runPlanningPipeline(
       createdAt: archiveCompletedAtIso
     });
 
-    const completedManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    const completedManifest = patchManifest(currentManifest, {
       currentPhase: "archive",
       lifecycleStatus: approvalRequest ? "blocked" : "completed",
       evidenceLinks: [
@@ -1239,8 +1236,7 @@ export async function runPlanningPipeline(
     );
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
-    const failedManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    const failedManifest = patchManifest(currentManifest, {
       currentPhase: activePhase,
       lifecycleStatus: "failed",
       updatedAt: failedAtIso
@@ -1498,8 +1494,7 @@ export async function runDeveloperPhase(
 
     const developmentStartedAt = clock();
     const developmentStartedAtIso = asIsoTimestamp(developmentStartedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "development",
       lifecycleStatus: "active",
       assignedAgentType: "developer",
@@ -1557,8 +1552,7 @@ export async function runDeveloperPhase(
       createdAt: developmentStartedAtIso,
       secretLease
     });
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: developmentStartedAtIso,
       evidenceLinks: [
@@ -1807,8 +1801,7 @@ export async function runDeveloperPhase(
       createdAt: blockedAtIso
     });
 
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "development",
       lifecycleStatus: "blocked",
       updatedAt: blockedAtIso
@@ -1845,8 +1838,7 @@ export async function runDeveloperPhase(
     );
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "development",
       lifecycleStatus: "failed",
       updatedAt: failedAtIso
@@ -2048,8 +2040,7 @@ export async function runValidationPhase(
 
     const validationStartedAt = clock();
     const validationStartedAtIso = asIsoTimestamp(validationStartedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "validation",
       lifecycleStatus: "active",
       assignedAgentType: "validation",
@@ -2107,8 +2098,7 @@ export async function runValidationPhase(
       createdAt: validationStartedAtIso,
       secretLease
     });
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: validationStartedAtIso,
       evidenceLinks: [
@@ -2557,8 +2547,7 @@ export async function runValidationPhase(
       createdAt: blockedAtIso
     });
 
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "validation",
       lifecycleStatus: "blocked",
       updatedAt: blockedAtIso
@@ -2596,8 +2585,7 @@ export async function runValidationPhase(
     );
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "validation",
       lifecycleStatus: "failed",
       updatedAt: failedAtIso
@@ -2691,8 +2679,7 @@ export async function resolveApprovalRequest(
     updatedAt: resolvedAtIso,
     resolvedAt: resolvedAtIso
   });
-  const updatedManifest = taskManifestSchema.parse({
-    ...manifest,
+  const updatedManifest = patchManifest(manifest, {
     lifecycleStatus,
     evidenceLinks: [
       ...manifest.evidenceLinks,
@@ -3584,8 +3571,7 @@ export async function runScmPhase(
 
     const scmStartedAt = clock();
     const scmStartedAtIso = asIsoTimestamp(scmStartedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "scm",
       lifecycleStatus: "active",
       assignedAgentType: "scm",
@@ -3634,8 +3620,7 @@ export async function runScmPhase(
       workspaceId,
       createdAt: scmStartedAtIso
     });
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: scmStartedAtIso,
       evidenceLinks: [
@@ -3790,8 +3775,7 @@ export async function runScmPhase(
       evidenceRoot: input.evidenceRoot,
       fileName: "scm-diff.md"
     });
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "scm",
       lifecycleStatus: "completed",
       branchName: branch.branchName,
@@ -4000,8 +3984,7 @@ export async function runScmPhase(
     const pipelineFailure = normalizePipelineFailure(error, "scm", taskId, runId);
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
-    currentManifest = taskManifestSchema.parse({
-      ...currentManifest,
+    currentManifest = patchManifest(currentManifest, {
       currentPhase: "scm",
       lifecycleStatus: "failed",
       updatedAt: failedAtIso
@@ -4182,8 +4165,7 @@ async function handleAutomatedPhaseFailure(input: {
 
   if (retryEligible) {
     const retryCount = manifest.retryCount + 1;
-    const nextManifest = taskManifestSchema.parse({
-      ...manifest,
+    const nextManifest = patchManifest(manifest, {
       currentPhase: phase,
       lifecycleStatus: "blocked",
       retryCount,
@@ -4381,8 +4363,7 @@ async function handleAutomatedPhaseFailure(input: {
     }
   }
 
-  const nextManifest = taskManifestSchema.parse({
-    ...manifest,
+  const nextManifest = patchManifest(manifest, {
     currentPhase: phase,
     lifecycleStatus: "blocked",
     updatedAt: input.failedAtIso
@@ -4807,4 +4788,11 @@ async function recordRunEvent(input: {
   }
 
   return event;
+}
+
+function patchManifest(
+  manifest: TaskManifest,
+  updates: Partial<TaskManifest>
+): TaskManifest {
+  return { ...manifest, ...updates };
 }
