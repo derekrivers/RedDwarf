@@ -103,4 +103,14 @@
   - Feature 51 (demo runbook): added `docs/DEMO_RUNBOOK.md` covering stack bootstrap, GitHub token + Anthropic API key setup, filing a demo issue, running the full pipeline, inspecting Postgres evidence, and the approval workflow.
   - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55432` explanation, and `spawn EPERM` workaround pointer.
 - All M8 features (F43–F52) are complete. Feature board updated accordingly.
+- Post-M8 runbook validation session (2026-03-27): manually tested the full `docs/DEMO_RUNBOOK.md` end-to-end against `derekrivers/FirstVoyage` on GitHub. Fixes applied during the session:
+  - `psql` not available on Windows — added `scripts/query-evidence.mjs` and `docker exec` alternative; exposed as `pnpm query:evidence`.
+  - Table names had wrong `reddwarf_` prefix in query script and runbook — corrected to `planning_specs`, `phase_records`, `run_events`.
+  - `phase_records` column names wrong (`started_at`/`completed_at` do not exist) — corrected to `created_at`, `actor`, `summary`.
+  - `AnthropicPlanningAgent` had no retry logic — added 3-attempt backoff for 429/529 responses.
+  - Operator API startup command used `InMemoryPlanningRepository` — replaced with `createPostgresPlanningRepository`; added `scripts/start-operator-api.mjs`; exposed as `pnpm operator:api`.
+  - Approval resolve endpoint required `decidedBy` and `decisionSummary` but runbook omitted them.
+  - Approval decision enum value is `"approve"` not `"approved"`.
+  - `start-operator-api.mjs` import paths used `./packages/` instead of `../packages/`.
+- Runbook is now fully manually verified end-to-end including the high-risk approval workflow.
 - Likely next board items: none; M9 would be the next milestone.
