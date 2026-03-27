@@ -3,9 +3,9 @@ import { runPlanningPipeline } from "./packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
 import {
   intakeGitHubIssue,
-  createRestGitHubAdapter,
-  createAnthropicPlanningAgent
+  createRestGitHubAdapter
 } from "./packages/integrations/dist/index.js";
+import { createAnthropicPlanningAgent } from "./packages/execution-plane/dist/index.js";
 
 const repo = "derekrivers/FirstVoyage"; // owner/repo format — NOT a full URL
 const issueNumber = 1;            // Replace with your issue number

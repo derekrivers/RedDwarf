@@ -114,9 +114,9 @@ import { runPlanningPipeline } from "./packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
 import {
   intakeGitHubIssue,
-  createRestGitHubAdapter,
-  createAnthropicPlanningAgent
+  createRestGitHubAdapter
 } from "./packages/integrations/dist/index.js";
+import { createAnthropicPlanningAgent } from "./packages/execution-plane/dist/index.js";
 
 const repo = "your-org/demo-repo"; // owner/repo format — NOT a full GitHub URL
 const issueNumber = 42;            // Replace with your issue number
