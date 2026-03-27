@@ -248,18 +248,37 @@ If the task needs human review before development (e.g., medium/high risk), quer
 # Start the operator API server (from a separate terminal)
 node -e "
 import('./packages/control-plane/dist/index.js').then(async ({ createOperatorApiServer }) => {
-  const { InMemoryPlanningRepository } = await import('./packages/evidence/dist/index.js');
-  const server = createOperatorApiServer({ port: 8080 }, { repository: new InMemoryPlanningRepository() });
+  const { createPostgresPlanningRepository } = await import('./packages/evidence/dist/index.js');
+  const repo = createPostgresPlanningRepository(process.env.HOST_DATABASE_URL ?? 'postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf');
+  const server = createOperatorApiServer({ port: 8080 }, { repository: repo });
   await server.start();
   console.log('Operator API on port', server.port);
 });
 "
+```
 
+Then in a second terminal — use whichever shell you have:
+
+**PowerShell:**
+```powershell
+# List pending approvals
+Invoke-RestMethod http://localhost:8080/approvals
+
+# Resolve an approval
+Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
+  -ContentType "application/json" `
+  -Body '{"decision":"approved","rationale":"Looks good — proceed to development"}'
+```
+
+**Git Bash / WSL / Linux / macOS:**
+```bash
 # List pending approvals
 curl http://localhost:8080/approvals
 
-# Resolve an approval
-curl -X POST http://localhost:8080/approvals/<request-id>/resolve \
+# Resolve an approval — use curl.exe in Git Bash on Windows to avoid the PowerShell alias
+curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
   -H "Content-Type: application/json" \
   -d '{"decision":"approved","rationale":"Looks good — proceed to development"}'
 ```
