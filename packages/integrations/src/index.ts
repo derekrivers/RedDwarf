@@ -1343,3 +1343,112 @@ export class FixtureOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     };
   }
 }
+
+// ============================================================
+// HttpOpenClawDispatchAdapter — live HTTP dispatch to OpenClaw gateway
+// ============================================================
+
+export interface HttpOpenClawDispatchAdapterOptions {
+  /** OpenClaw gateway base URL — e.g. `http://localhost:3578`. */
+  baseUrl?: string;
+  /** Bearer token for webhook authentication. */
+  hookToken?: string;
+  /** Maximum retry attempts for transient failures. Defaults to 3. */
+  maxAttempts?: number;
+  /** Base delay in milliseconds between retries. Defaults to 2000. */
+  baseDelayMs?: number;
+  /** HTTP status codes that trigger a retry. Defaults to 429 and 529. */
+  retryableStatuses?: Set<number>;
+}
+
+/**
+ * HTTP-backed OpenClawDispatchAdapter that posts to `/hooks/agent` on the
+ * OpenClaw gateway. Uses bearer auth with the hook token and retries on
+ * transient 429/529 responses.
+ */
+export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
+  private readonly baseUrl: string;
+  private readonly hookToken: string;
+  private readonly maxAttempts: number;
+  private readonly baseDelayMs: number;
+  private readonly retryableStatuses: Set<number>;
+
+  constructor(options: HttpOpenClawDispatchAdapterOptions = {}) {
+    const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
+    if (!baseUrl) {
+      throw new Error(
+        "HttpOpenClawDispatchAdapter requires a base URL. " +
+          `Set the ${OPENCLAW_BASE_URL_ENV} environment variable or pass baseUrl explicitly.`
+      );
+    }
+    const hookToken = options.hookToken ?? process.env[OPENCLAW_HOOK_TOKEN_ENV];
+    if (!hookToken) {
+      throw new Error(
+        "HttpOpenClawDispatchAdapter requires a hook token. " +
+          `Set the ${OPENCLAW_HOOK_TOKEN_ENV} environment variable or pass hookToken explicitly.`
+      );
+    }
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.hookToken = hookToken;
+    this.maxAttempts = options.maxAttempts ?? 3;
+    this.baseDelayMs = options.baseDelayMs ?? 2000;
+    this.retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
+  }
+
+  async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
+    const url = `${this.baseUrl}/hooks/agent`;
+    const body = JSON.stringify({
+      sessionKey: request.sessionKey,
+      agentId: request.agentId,
+      prompt: request.prompt,
+      ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
+    });
+
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.hookToken}`,
+          "Content-Type": "application/json"
+        },
+        body
+      });
+
+      if (!response.ok) {
+        if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
+          const delay = attempt * this.baseDelayMs;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        const responseBody = await response.text().catch(() => "");
+        throw new Error(
+          `OpenClaw dispatch to ${url} returned ${response.status}: ${responseBody}`
+        );
+      }
+
+      const result = await response.json() as Record<string, unknown>;
+
+      return {
+        accepted: true,
+        sessionKey: request.sessionKey,
+        agentId: request.agentId,
+        sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
+        respondedAt: asIsoTimestamp(),
+        statusMessage: typeof result["message"] === "string" ? result["message"] : null
+      };
+    }
+  }
+}
+
+/**
+ * Create an HttpOpenClawDispatchAdapter from environment variables or
+ * explicit options. Reads OPENCLAW_BASE_URL and OPENCLAW_HOOK_TOKEN from
+ * the environment when not passed explicitly.
+ */
+export function createHttpOpenClawDispatchAdapter(
+  options: HttpOpenClawDispatchAdapterOptions = {}
+): HttpOpenClawDispatchAdapter {
+  return new HttpOpenClawDispatchAdapter(options);
+}

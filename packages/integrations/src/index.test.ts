@@ -5,6 +5,7 @@ import {
   FixtureGitHubAdapter,
   FixtureOpenClawDispatchAdapter,
   FixtureSecretsAdapter,
+  HttpOpenClawDispatchAdapter,
   OPENCLAW_BASE_URL_ENV,
   OPENCLAW_HOOK_TOKEN_ENV,
   OPENCLAW_HOOK_TOKEN_SCOPE,
@@ -306,5 +307,39 @@ describe("FixtureOpenClawDispatchAdapter", () => {
 
     expect(result.sessionId).toBe("custom-session-xyz");
     expect(result.statusMessage).toBe("Dispatch queued");
+  });
+});
+
+describe("HttpOpenClawDispatchAdapter", () => {
+  it("throws when no base URL is available", () => {
+    const saved = process.env[OPENCLAW_BASE_URL_ENV];
+    delete process.env[OPENCLAW_BASE_URL_ENV];
+    try {
+      expect(() => new HttpOpenClawDispatchAdapter({ hookToken: "tok" })).toThrow(
+        "requires a base URL"
+      );
+    } finally {
+      if (saved !== undefined) process.env[OPENCLAW_BASE_URL_ENV] = saved;
+    }
+  });
+
+  it("throws when no hook token is available", () => {
+    const saved = process.env[OPENCLAW_HOOK_TOKEN_ENV];
+    delete process.env[OPENCLAW_HOOK_TOKEN_ENV];
+    try {
+      expect(
+        () => new HttpOpenClawDispatchAdapter({ baseUrl: "http://localhost:3578" })
+      ).toThrow("requires a hook token");
+    } finally {
+      if (saved !== undefined) process.env[OPENCLAW_HOOK_TOKEN_ENV] = saved;
+    }
+  });
+
+  it("constructs successfully when both base URL and hook token are provided", () => {
+    const adapter = new HttpOpenClawDispatchAdapter({
+      baseUrl: "http://localhost:3578",
+      hookToken: "test-token"
+    });
+    expect(adapter).toBeInstanceOf(HttpOpenClawDispatchAdapter);
   });
 });
