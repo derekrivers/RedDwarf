@@ -14,7 +14,8 @@ import {
   workspaceDescriptorSchema,
   approvalRequestSchema,
   approvalRequestQuerySchema,
-  githubIssuePollingCursorSchema
+  githubIssuePollingCursorSchema,
+  openClawAgentRoleDefinitionSchema
 } from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
@@ -114,6 +115,26 @@ describe("contracts", () => {
 
     expect(cursor.lastSeenIssueNumber).toBe(88);
     expect(cursor.lastPollStatus).toBe("succeeded");
+  });
+
+  it("parses an OpenClaw agent role definition", () => {
+    const definition = openClawAgentRoleDefinitionSchema.parse({
+      agentId: "reddwarf-coordinator",
+      role: "coordinator",
+      displayName: "RedDwarf Coordinator",
+      purpose: "Keep OpenClaw sessions aligned with RedDwarf task scope and delegation boundaries.",
+      bootstrapFiles: [
+        { kind: "identity", relativePath: "agents/openclaw/coordinator/IDENTITY.md", description: "Identity and persona." },
+        { kind: "soul", relativePath: "agents/openclaw/coordinator/SOUL.md", description: "Operating posture." },
+        { kind: "agents", relativePath: "agents/openclaw/coordinator/AGENTS.md", description: "Agent roster." },
+        { kind: "tools", relativePath: "agents/openclaw/coordinator/TOOLS.md", description: "Tool guidance." },
+        { kind: "skill", relativePath: "agents/openclaw/coordinator/skills/reddwarf-openclaw/SKILL.md", description: "Runtime skill." }
+      ],
+      canonicalSources: ["docs/open_claw_research.md", "openclaw_ai_dev_team_v_2_architecture.md"]
+    });
+
+    expect(definition.role).toBe("coordinator");
+    expect(definition.bootstrapFiles).toHaveLength(5);
   });
 
   it("parses a runtime instruction layer", () => {

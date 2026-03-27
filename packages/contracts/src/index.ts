@@ -60,6 +60,14 @@ export const agentTypes = [
   "reviewer",
   "scm"
 ] as const;
+export const openClawAgentRoles = ["coordinator", "analyst", "validator"] as const;
+export const openClawBootstrapFileKinds = [
+  "identity",
+  "soul",
+  "agents",
+  "tools",
+  "skill"
+] as const;
 
 export const evidenceKinds = [
   "manifest",
@@ -384,6 +392,22 @@ export const agentDefinitionSchema = z.object({
   description: z.string().min(1)
 });
 
+export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
+export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
+export const openClawBootstrapFileSchema = z.object({
+  kind: openClawBootstrapFileKindSchema,
+  relativePath: z.string().min(1),
+  description: z.string().min(1)
+});
+export const openClawAgentRoleDefinitionSchema = z.object({
+  agentId: z.string().min(1),
+  role: openClawAgentRoleSchema,
+  displayName: z.string().min(1),
+  purpose: z.string().min(1),
+  bootstrapFiles: z.array(openClawBootstrapFileSchema).length(5),
+  canonicalSources: z.array(z.string().min(1)).min(1)
+});
+
 export const taskManifestSchema = z.object({
   taskId: z.string().min(1),
   source: sourceRefSchema,
@@ -562,6 +586,10 @@ export type GitHubIssuePollingCursor = z.infer<typeof githubIssuePollingCursorSc
 export type RunEvent = z.infer<typeof runEventSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
+export type OpenClawAgentRole = z.infer<typeof openClawAgentRoleSchema>;
+export type OpenClawBootstrapFileKind = z.infer<typeof openClawBootstrapFileKindSchema>;
+export type OpenClawBootstrapFile = z.infer<typeof openClawBootstrapFileSchema>;
+export type OpenClawAgentRoleDefinition = z.infer<typeof openClawAgentRoleDefinitionSchema>;
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;
 export type MemoryQuery = z.infer<typeof memoryQuerySchema>;
 export type MemoryContext = z.infer<typeof memoryContextSchema>;

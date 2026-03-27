@@ -138,4 +138,12 @@
 - Environment note: after evidence-schema changes, run `node scripts/apply-sql-migrations.mjs` before Postgres-backed verify scripts or the live database may be missing newly added tables.
 - Updated the feature board so feature 54 is marked complete and feature 55 is now the next actionable M9 item.
 - Likely next board item: feature 55, OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents.
+- Completed feature 55 from `FEATURE_BOARD.md`: OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents.
+- Added typed `OpenClawAgentRoleDefinition` contracts plus `openClawAgentRoleDefinitions` and `getOpenClawAgentRoleDefinition(...)` in the execution-plane so future config generation can reference stable coordinator, analyst, and validator role metadata.
+- Added versioned bootstrap assets under `agents/openclaw/<role>/...` for each role, including `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and a role-specific `skills/reddwarf-openclaw/SKILL.md`.
+- Expanded packaged policy-pack verification so `corepack pnpm verify:package` proves those OpenClaw bootstrap files survive into the immutable runtime artifact.
+- Verification for F55: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:package`.
+- Updated the feature board so feature 55 is marked complete and feature 56 is now the next actionable M9 item.
+- Likely next board item: feature 56, per-agent tool policy specification with profiles, allow or deny lists, sandbox settings, and Anthropic model binding.
+
 

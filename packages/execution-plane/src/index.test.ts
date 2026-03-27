@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { access } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DeterministicDeveloperAgent,
@@ -7,8 +8,11 @@ import {
   DeterministicValidationAgent,
   agentDefinitions,
   createPlanningAgent,
+  getOpenClawAgentRoleDefinition,
+  openClawAgentRoleDefinitions,
   phaseIsExecutable
 } from "@reddwarf/execution-plane";
+import { openClawAgentRoleDefinitionSchema } from "@reddwarf/contracts";
 import type {
   MaterializedManagedWorkspace,
   PlanningTaskInput,
@@ -367,6 +371,39 @@ describe("agentDefinitions", () => {
 });
 
 // ============================================================
+// openClawAgentRoleDefinitions
+// ============================================================
+
+describe("openClawAgentRoleDefinitions", () => {
+  it("declares coordinator, analyst, and validator roles", () => {
+    const roles = openClawAgentRoleDefinitions.map((definition) =>
+      openClawAgentRoleDefinitionSchema.parse(definition).role
+    );
+
+    expect(roles).toEqual(["coordinator", "analyst", "validator"]);
+  });
+
+  it("looks up a single role definition by role", () => {
+    const analyst = getOpenClawAgentRoleDefinition("analyst");
+
+    expect(analyst.agentId).toBe("reddwarf-analyst");
+    expect(analyst.bootstrapFiles[0]?.relativePath).toContain(
+      "analyst/IDENTITY.md"
+    );
+  });
+
+  it("points at bootstrap files that exist in the repo", async () => {
+    for (const definition of openClawAgentRoleDefinitions) {
+      for (const file of definition.bootstrapFiles) {
+        await expect(
+          access(resolve(process.cwd(), file.relativePath))
+        ).resolves.toBeUndefined();
+      }
+    }
+  });
+});
+
+// ============================================================
 // phaseIsExecutable
 // ============================================================
 
@@ -407,3 +444,6 @@ describe("createPlanningAgent", () => {
     }
   });
 });
+
+
+

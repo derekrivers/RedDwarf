@@ -5,6 +5,8 @@ import type {
   DevelopmentAgent,
   DevelopmentDraft,
   MaterializedManagedWorkspace,
+  OpenClawAgentRole,
+  OpenClawAgentRoleDefinition,
   PlanningAgent,
   PlanningDraft,
   PlanningTaskInput,
@@ -68,6 +70,142 @@ export const agentDefinitions: AgentDefinition[] = [
       "Creates approved branches and pull requests after validation while keeping product code writes disabled."
   }
 ];
+
+const sharedOpenClawCanonicalSources = [
+  "docs/open_claw_research.md",
+  "openclaw_ai_dev_team_v_2_architecture.md",
+  "standards/engineering.md"
+] as const;
+
+export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
+  {
+    agentId: "reddwarf-coordinator",
+    role: "coordinator",
+    displayName: "RedDwarf Coordinator",
+    purpose:
+      "Frames RedDwarf-approved work inside OpenClaw, preserves task boundaries, and delegates bounded analysis or validation work.",
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/coordinator/IDENTITY.md",
+        description: "Identity and persona for the coordinator role."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/coordinator/SOUL.md",
+        description: "Operating posture and system boundary guidance."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/coordinator/AGENTS.md",
+        description: "Runtime roster and delegation contract."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/coordinator/TOOLS.md",
+        description: "Tool-usage guardrails for coordination work."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/coordinator/skills/reddwarf-openclaw/SKILL.md",
+        description:
+          "Runtime skill for coordinating bounded OpenClaw sessions."
+      }
+    ],
+    canonicalSources: [...sharedOpenClawCanonicalSources, "agents/architect.md"]
+  },
+  {
+    agentId: "reddwarf-analyst",
+    role: "analyst",
+    displayName: "RedDwarf Analyst",
+    purpose:
+      "Performs read-only codebase analysis, planning support, and evidence-friendly synthesis inside the approved task boundary.",
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/analyst/IDENTITY.md",
+        description: "Identity and persona for the analyst role."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/analyst/SOUL.md",
+        description:
+          "Operating posture and source hierarchy for analysis work."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/analyst/AGENTS.md",
+        description: "Runtime roster and analyst handoff rules."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/analyst/TOOLS.md",
+        description: "Tool-usage guardrails for read-only analysis."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/analyst/skills/reddwarf-openclaw/SKILL.md",
+        description:
+          "Runtime skill for analysis and synthesis inside OpenClaw."
+      }
+    ],
+    canonicalSources: [
+      ...sharedOpenClawCanonicalSources,
+      "agents/architect.md",
+      "agents/developer.md"
+    ]
+  },
+  {
+    agentId: "reddwarf-validator",
+    role: "validator",
+    displayName: "RedDwarf Validator",
+    purpose:
+      "Runs bounded checks, reviews evidence, and reports findings without expanding scope or mutating product code.",
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/validator/IDENTITY.md",
+        description: "Identity and persona for the validator role."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/validator/SOUL.md",
+        description: "Operating posture for evidence and verification work."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/validator/AGENTS.md",
+        description: "Runtime roster and validator handoff rules."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/validator/TOOLS.md",
+        description: "Tool-usage guardrails for bounded verification."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/validator/skills/reddwarf-openclaw/SKILL.md",
+        description:
+          "Runtime skill for validation and evidence review inside OpenClaw."
+      }
+    ],
+    canonicalSources: [...sharedOpenClawCanonicalSources, "agents/validation.md"]
+  }
+];
+
+export function getOpenClawAgentRoleDefinition(
+  role: OpenClawAgentRole
+): OpenClawAgentRoleDefinition {
+  const definition = openClawAgentRoleDefinitions.find(
+    (entry) => entry.role === role
+  );
+
+  if (!definition) {
+    throw new Error(`Missing OpenClaw agent role definition for ${role}.`);
+  }
+
+  return definition;
+}
 
 const disabledPhases = new Set<TaskPhase>(v1DisabledPhases);
 
@@ -531,3 +669,4 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
     'console.log("Validated workspace contract for the validation phase.");'
   ].join("\n");
 }
+

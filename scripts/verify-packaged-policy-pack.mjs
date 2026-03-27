@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createPolicyPackPackage,
@@ -19,6 +19,11 @@ const controlPlaneModule = await import(
 const manifestModule = await import(
   pathToFileURL(
     `${packaged.packageRoot.replace(/\\/g, "/")}/packages/contracts/dist/index.js`
+  ).href
+);
+const executionPlaneModule = await import(
+  pathToFileURL(
+    `${packaged.packageRoot.replace(/\\/g, "/")}/packages/execution-plane/dist/index.js`
   ).href
 );
 
@@ -84,6 +89,7 @@ const instructionArtifacts =
 const parsedManifest = manifestModule.policyPackManifestSchema.parse(
   packaged.manifest
 );
+const openClawDefinitions = executionPlaneModule.openClawAgentRoleDefinitions;
 const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-packaged-workspace-"));
 
 try {
@@ -119,6 +125,13 @@ try {
   assert.equal(destroyed.descriptor?.status, "destroyed");
   assert.equal(destroyed.removed, true);
   await assert.rejects(access(managedWorkspace.workspaceRoot));
+  assert.equal(openClawDefinitions.length, 3);
+
+  for (const definition of openClawDefinitions) {
+    for (const file of definition.bootstrapFiles) {
+      await access(resolve(packaged.packageRoot, file.relativePath));
+    }
+  }
 
   console.log(
     JSON.stringify(
@@ -127,7 +140,8 @@ try {
         packageRoot: packaged.packageRoot,
         manifestPath: packaged.manifestPath,
         contentHash: packaged.manifest.contentHash,
-        includedEntryCount: packaged.manifest.includedEntries.length
+        includedEntryCount: packaged.manifest.includedEntries.length,
+        openClawRoleCount: openClawDefinitions.length
       },
       null,
       2

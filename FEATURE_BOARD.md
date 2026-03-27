@@ -58,7 +58,7 @@ The board is ordered by implementation priority.
 | 52       | README improvements covering Windows host configuration, registry access, and boot health check | M8 | completed | System Context                                                        |
 | 53       | GitHub issue polling daemon with configurable interval and deduplication against existing planning specs | M9 | completed | Integration Plane, Control Plane                                      |
 | 54       | Polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure | M9 | completed | Integration Plane, Evidence Plane, Observability Model                |
-| 55       | OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents | M9 | pending | Knowledge & Policy Plane, Execution Plane, Isolation and Security Model |
+| 55       | OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents | M9 | completed | Knowledge & Policy Plane, Execution Plane, Isolation and Security Model |
 | 56       | Per-agent tool policy specification with profiles, allow/deny lists, sandbox settings, and Anthropic model binding | M9 | pending | Knowledge & Policy Plane, Isolation and Security Model                |
 | 57       | openclaw.json generation from RedDwarf policy configuration with per-agent workspace paths, tool profiles, and skipBootstrap | M10 | pending | System Context, Knowledge & Policy Plane, Integration Plane           |
 | 58       | Hook token secret wiring through EnvVarSecretsAdapter with .env.example and runbook documentation | M10 | pending | Integration Plane, Isolation and Security Model                       |
@@ -67,4 +67,5 @@ The board is ordered by implementation priority.
 | 61       | Session result and transcript capture reading OpenClaw session JSONL and persisting agent output as phase evidence | M10 | pending | Integration Plane, Evidence Plane, Observability Model                |
 | 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | pending | Execution Plane, Control Plane, Integration Plane                     |
 | 63       | Workspace bootstrap alignment verifying IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md, and SKILL.md match OpenClaw consumption format | M10 | pending | Workspace Context, Knowledge & Policy Plane, Execution Plane          |
+
 

@@ -237,6 +237,7 @@ Do not invent new command flows when the repository already provides a standard 
 - summarize assumptions only after execution unless a stop condition is hit
 - when deduplicating GitHub issue intake, key off persisted planning specs for the source issue rather than task-manifest existence so failed or partial intake runs can still be replanned
 - after evidence-schema changes, run `node scripts/apply-sql-migrations.mjs` before Postgres-backed verify scripts so the live database schema matches the new repository code
+- keep OpenClaw runtime bootstrap assets under the existing `agents/` policy-pack tree so packaging and immutable runtime mounts pick them up without expanding the packager asset list
 
 While iterating, use the narrowest reliable feedback loop available. Before final handoff, expand verification to the most relevant broader checks needed to support confidence in the delivered change.
 
@@ -283,4 +284,5 @@ Before retrying a failing command or workflow, check:
 - any relevant local skill under `.agents/skills`
 
 Prefer documented working paths over re-running known failing approaches.
+
 
