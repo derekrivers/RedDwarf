@@ -67,6 +67,24 @@ The board is ordered by implementation priority.
 | 61       | Session result and transcript capture reading OpenClaw session JSONL and persisting agent output as phase evidence | M10 | pending | Integration Plane, Evidence Plane, Observability Model                |
 | 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | pending | Execution Plane, Control Plane, Integration Plane                     |
 | 63       | Workspace bootstrap alignment verifying IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md, and SKILL.md match OpenClaw consumption format | M10 | pending | Workspace Context, Knowledge & Policy Plane, Execution Plane          |
+| 64       | Fix SQL injection vector in hasPlanningSpecForSource and ReDoS vulnerability in redactSecretValues | M11 | completed | Evidence Plane, Integration Plane                                      |
+| 65       | Extract shared script configuration module for connection string, workspace root, and error formatting | M11 | completed | System Context                                                         |
+| 66       | Split contracts/src/index.ts into focused domain modules with barrel re-export | M11 | completed | Contracts                                                              |
+| 67       | Extract duplicate pipeline phase helpers for snapshot validation, approval lookup, and phase initialization | M11 | completed | Control Plane                                                          |
+| 68       | Decompose monolithic pipeline phase functions into orchestrated sub-steps | M11 | completed | Control Plane                                                          |
+| 69       | Deduplicate dedupeMemoryRecords and consolidate magic event-code string constants | M11 | completed | Evidence Plane                                                         |
+| 70       | Extract tool-policy mode literals and validation-schema magic numbers into named constants | M11 | completed | Control Plane, Contracts, Execution Plane                              |
+| 71       | Fix silent exception swallowing in cleanup-evidence and cap polling batch growth | M11 | completed | System Context, Control Plane                                          |
+| 72       | Parallelize verify-all.mjs script execution with configurable concurrency | M11 | completed | Observability Model                                                    |
+| 73       | Optimize PostgresPlanningRepository.getTaskSnapshot to reduce from 9 queries to 1–2 via JOINs | M11 | completed | Evidence Plane                                                         |
+| 74       | Reduce repeated taskManifestSchema.parse calls in pipeline.ts by parsing once at phase entry | M11 | completed | Control Plane                                                          |
+| 75       | Stream file hashing in archiveEvidenceArtifact instead of buffering entire file | M11 | completed | Control Plane                                                          |
+| 76       | Extract AnthropicPlanningAgent retry logic and response parsing into reusable concerns | M11 | completed | Execution Plane                                                        |
+| 77       | Segment GitHubAdapter interface into separate read and write contracts | M11 | completed | Integration Plane                                                      |
+| 78       | Replace hardcoded phase failure maps and approval rules with extensible registry pattern | M11 | completed | Control Plane, Policy                                                  |
+| 79       | Split PostgresPlanningRepository row mappers into standalone testable module | M11 | completed | Evidence Plane                                                         |
+| 80       | Fix defaultLogger.child() LSP violation returning same instance | M11 | completed | Control Plane                                                          |
+| 81       | Enable no-floating-promises ESLint rule and fix all unawaited promise call sites | M11 | completed | All Packages                                                           |
 
 
 
