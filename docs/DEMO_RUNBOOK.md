@@ -262,7 +262,7 @@ Invoke-RestMethod `
   -Method POST `
   -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
   -ContentType "application/json" `
-  -Body '{"decision":"approved","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+  -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
 ```
 
 **Git Bash / WSL / Linux / macOS:**
@@ -274,7 +274,7 @@ curl http://localhost:8080/approvals
 # decision, decidedBy, and decisionSummary are all required
 curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
   -H "Content-Type: application/json" \
-  -d '{"decision":"approved","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+  -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
 ```
 
 ---
