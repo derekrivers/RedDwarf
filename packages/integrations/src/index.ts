@@ -115,11 +115,14 @@ export interface BuildArtifactReference {
   contentType?: string;
 }
 
-export interface GitHubAdapter {
+export interface GitHubReader {
   fetchIssueCandidate(repo: string, issueNumber: number): Promise<GitHubIssueCandidate>;
   listIssueCandidates(query: GitHubIssueQuery): Promise<GitHubIssueCandidate[]>;
   readIssueStatus(repo: string, issueNumber: number): Promise<GitHubIssueStatusSnapshot>;
   convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput>;
+}
+
+export interface GitHubWriter {
   addLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
   removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
   createIssue(input: GitHubIssueDraft): Promise<GitHubCreatedIssueSummary>;
@@ -131,6 +134,8 @@ export interface GitHubAdapter {
   createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary>;
   commentOnIssue(comment: GitHubIssueComment): Promise<never>;
 }
+
+export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
 
 export interface NotificationAdapter {
   sendStatusUpdate(message: string, metadata?: Record<string, unknown>): Promise<void>;
