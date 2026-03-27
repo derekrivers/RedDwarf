@@ -1,6 +1,6 @@
 # RedDwarf End-to-End Demo Runbook
 
-This runbook walks through a complete demonstration of RedDwarf from a fresh clone to a completed AI Dev Squad planning cycle with real GitHub inputs.
+This runbook walks through a complete demonstration of RedDwarf — from a fresh clone through the full read-only pipeline: planning, OpenClaw analyst dispatch, validation, and SCM handoff.
 
 > **Prerequisites:** Docker Desktop (or Docker Engine + Compose), Node.js ≥ 22, Corepack, Git, a GitHub Personal Access Token, and an Anthropic API key.
 
@@ -10,10 +10,33 @@ This runbook walks through a complete demonstration of RedDwarf from a fresh clo
 
 The demo will:
 1. Boot the RedDwarf stack (OpenClaw + Postgres)
-2. File a GitHub issue on a target repository
-3. Run the RedDwarf planning pipeline against that issue using the real GitHub adapter and the Anthropic planning agent
-4. Inspect the durable planning evidence in Postgres
-5. (Optional) Walk through the approval workflow and SCM handoff
+2. Configure credentials (GitHub, Anthropic, OpenClaw)
+3. File a GitHub issue on a target repository
+4. Run the planning pipeline (intake → eligibility → planning → policy gate)
+5. Approve the plan via the operator API
+6. Run the developer phase — dispatch to Holly (read-only analyst) via OpenClaw
+7. Inspect session evidence (transcript + summary)
+8. Run the validation phase (workspace-local lint/test)
+9. Run the SCM phase (branch + PR creation)
+10. Clean up
+
+### Pipeline Phases
+
+```
+GitHub Issue
+    ↓
+  Intake → Eligibility → Planning → Policy Gate
+    ↓
+  [Approval Queue — human review]
+    ↓
+  Developer Phase → OpenClaw dispatch to Holly (read-only analyst)
+    ↓
+  Validation Phase → workspace-local lint/test
+    ↓
+  SCM Phase → branch + pull request (approval-gated)
+    ↓
+  Evidence archived to Postgres
+```
 
 ---
 
@@ -51,6 +74,12 @@ Confirm everything is up:
 [setup] Setup complete.
 ```
 
+### 1.3 Build all packages
+
+```bash
+corepack pnpm build
+```
+
 ---
 
 ## Part 2 — Configure Credentials
@@ -77,7 +106,7 @@ Obtain an API key at https://console.anthropic.com/keys.
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-### 2.3 OpenClaw hook token (Phase 2)
+### 2.3 OpenClaw hook token
 
 The hook token authenticates RedDwarf dispatch calls to the OpenClaw gateway webhook endpoint (`POST /hooks/agent`). Treat this token as a privileged secret — holders have full-trust ingress on the gateway.
 
@@ -101,6 +130,7 @@ This issue is a RedDwarf AI Dev Squad demo.
 
 Acceptance Criteria:
 - The planning agent produces a structured plan
+- The analyst agent completes a read-only analysis
 - Evidence is archived durably in Postgres
 
 Affected Paths:
@@ -166,16 +196,16 @@ try {
   console.log("  Phase records:", snapshot.phaseRecords.map((p) => `${p.phase}:${p.status}`));
   console.log("  Planning spec summary:", snapshot.spec?.summary ?? "(none)");
 
-  console.log("\nDemo complete. Task ID:", result.manifest.taskId);
+  console.log("\nPlanning complete. Task ID:", result.manifest.taskId);
+  console.log("Approval request ID:", result.approvalRequest?.requestId ?? "(none)");
 } finally {
   await repository.close();
 }
 ```
 
-Build the packages first, then run:
+Run it:
 
 ```bash
-corepack pnpm build
 node demo-run.mjs
 ```
 
@@ -198,36 +228,236 @@ Evidence snapshot:
   Phase records: [ 'intake:passed', 'eligibility:passed', 'planning:passed', 'policy_gate:passed' ]
   Planning spec summary: <AI-generated plan summary>
 
-Demo complete. Task ID: ...
+Planning complete. Task ID: ...
+Approval request ID: <request-id>
 ```
+
+Save the **Task ID** and **Approval request ID** — you'll need them for the next steps.
 
 ---
 
-## Part 5 — Inspect Evidence in Postgres
+## Part 5 — Approve the Plan
 
-### Option A — Docker exec (recommended on Windows)
+If the task requires human approval (medium/high risk), it will be in the approval queue. Start the operator API and resolve it.
 
-`psql` is not installed by default on Windows. Use the copy bundled inside the Postgres container:
-
-```bash
-docker exec -it reddwarf-postgres-1 psql -U reddwarf reddwarf
-```
-
-Then run the queries below at the `reddwarf=#` prompt.
-
-### Option B — psql on the host (Linux / macOS / WSL)
+### 5.1 Start the operator API
 
 ```bash
-psql "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+# In a separate terminal
+node scripts/start-operator-api.mjs
+# or: corepack pnpm operator:api
 ```
 
-### Option C — Node.js query script
+### 5.2 List pending approvals
+
+**PowerShell:**
+```powershell
+Invoke-RestMethod http://localhost:8080/approvals
+```
+
+**Git Bash / WSL / Linux / macOS:**
+```bash
+curl http://localhost:8080/approvals
+```
+
+### 5.3 Approve the plan
+
+**PowerShell:**
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
+  -ContentType "application/json" `
+  -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+```
+
+**Git Bash / WSL / Linux / macOS:**
+```bash
+# Use curl.exe in Git Bash on Windows to avoid the PowerShell alias
+curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
+  -H "Content-Type: application/json" \
+  -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+```
+
+### 5.4 Operator API reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Server health check |
+| GET | `/runs` | List pipeline runs (filter: `taskId`, `statuses`, `limit`) |
+| GET | `/approvals` | List approval requests (filter: `taskId`, `runId`, `statuses`, `limit`) |
+| POST | `/approvals/:id/resolve` | Resolve an approval request |
+| GET | `/approvals/:id` | Get specific approval request |
+| GET | `/tasks/:taskId/evidence` | List evidence records for a task |
+| GET | `/tasks/:taskId/snapshot` | Full task snapshot |
+| GET | `/blocked` | Summary of blocked runs and pending approvals |
+
+---
+
+## Part 6 — Run the Developer Phase (OpenClaw Analyst Dispatch)
+
+After approval, run the developer phase. This dispatches to **Holly** (the read-only analyst agent) via OpenClaw's `/hooks/agent` webhook.
+
+Create another demo script:
+
+```js
+// demo-developer.mjs
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { runDeveloperPhase } from "./packages/control-plane/dist/index.js";
+import { DeterministicDeveloperAgent } from "./packages/control-plane/dist/index.js";
+import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
+import { createHttpOpenClawDispatchAdapter } from "./packages/integrations/dist/index.js";
+
+const taskId = "<task-id-from-part-4>";  // Replace with your task ID
+
+const repository = new PostgresPlanningRepository({
+  connectionString:
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+});
+
+const targetRoot = resolve(
+  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
+    join(tmpdir(), "reddwarf-demo-workspace")
+);
+const evidenceRoot = resolve(
+  process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
+    join(tmpdir(), "reddwarf-demo-evidence")
+);
+
+try {
+  console.log("Running developer phase...");
+  console.log("  Task ID:", taskId);
+  console.log("  Target root:", targetRoot);
+
+  const result = await runDeveloperPhase(
+    {
+      taskId,
+      targetRoot,
+      evidenceRoot
+    },
+    {
+      repository,
+      developer: new DeterministicDeveloperAgent(),
+
+      // --- OpenClaw dispatch (comment out to use deterministic fallback) ---
+      openClawDispatch: createHttpOpenClawDispatchAdapter(),
+      // reads OPENCLAW_BASE_URL and OPENCLAW_HOOK_TOKEN from env
+      // dispatches to reddwarf-analyst (Holly) by default
+      openClawAgentId: "reddwarf-analyst"
+    }
+  );
+
+  console.log("\nDeveloper phase result:");
+  console.log("  Run ID:", result.runId);
+  console.log("  Next action:", result.nextAction);
+  console.log("  Workspace ID:", result.workspace?.workspaceId);
+  console.log("  Tool policy:", result.workspace?.descriptor?.toolPolicy?.mode);
+  console.log("  Code write enabled:", result.workspace?.descriptor?.toolPolicy?.codeWriteEnabled);
+
+  if (result.openClawDispatchResult) {
+    console.log("\nOpenClaw dispatch:");
+    console.log("  Accepted:", result.openClawDispatchResult.accepted);
+    console.log("  Session ID:", result.openClawDispatchResult.sessionId);
+    console.log("  Agent:", result.openClawDispatchResult.agentId);
+  }
+
+  if (result.handoffPath) {
+    const handoff = await readFile(result.handoffPath, "utf8");
+    console.log("\nDeveloper handoff (first 500 chars):");
+    console.log(handoff.slice(0, 500));
+  }
+
+  console.log("\nDeveloper phase complete. Proceed to validation.");
+} finally {
+  await repository.close();
+}
+```
+
+Run it:
+
+```bash
+node demo-developer.mjs
+```
+
+Expected output:
+
+```
+Running developer phase...
+  Task ID: your-org-demo-repo-42-<hash>
+  Target root: /tmp/reddwarf-demo-workspace
+
+Developer phase result:
+  Run ID: <uuid>
+  Next action: await_validation
+  Workspace ID: <workspace-id>
+  Tool policy: development_readonly
+  Code write enabled: false
+
+OpenClaw dispatch:
+  Accepted: true
+  Session ID: <session-id>
+  Agent: reddwarf-analyst
+
+Developer handoff (first 500 chars):
+# Development Handoff
+...
+
+Developer phase complete. Proceed to validation.
+```
+
+### What happens during this phase
+
+1. RedDwarf provisions an isolated workspace with read-only tool policy
+2. If `openClawDispatch` is provided, it posts to OpenClaw's `POST /hooks/agent` endpoint:
+   - Session key: `github:issue:{repo}:{issueNumber}`
+   - Agent ID: `reddwarf-analyst` (Holly)
+   - Prompt with task context, acceptance criteria, allowed paths
+   - Holly performs read-only analysis — **code writes remain disabled**
+3. The session transcript (JSONL) and summary (markdown) are captured as evidence
+4. A developer handoff artifact is archived with the workspace
+5. The task blocks pending validation
+
+### Running without OpenClaw
+
+If the OpenClaw gateway is not available, omit the `openClawDispatch` parameter. The phase falls back to the `DeterministicDeveloperAgent` stub — useful for verifying the pipeline end-to-end without a live gateway.
+
+---
+
+## Part 7 — Inspect Evidence
+
+### 7.1 Via the operator API
+
+```bash
+# Full task snapshot (all phases, evidence, events)
+curl http://localhost:8080/tasks/<task-id>/snapshot
+
+# Evidence records only
+curl http://localhost:8080/tasks/<task-id>/evidence
+```
+
+### 7.2 Via the Node.js query script
 
 ```bash
 node scripts/query-evidence.mjs
 ```
 
 This prints the most recent planning spec and phase records without requiring `psql`.
+
+### 7.3 Via psql
+
+**Docker exec (recommended on Windows):**
+
+```bash
+docker exec -it reddwarf-postgres-1 psql -U reddwarf reddwarf
+```
+
+**psql on the host (Linux / macOS / WSL):**
+
+```bash
+psql "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+```
 
 ### Queries
 
@@ -238,61 +468,325 @@ FROM planning_specs
 ORDER BY created_at DESC
 LIMIT 1;
 
--- View the phase records for that task
+-- View all phase records for a task (should now include development)
 SELECT phase, status, actor, summary, created_at
 FROM phase_records
-WHERE task_id = '<task-id-from-above>'
+WHERE task_id = '<task-id>'
 ORDER BY created_at;
 
--- View run events
+-- View run events (including OpenClaw dispatch events)
 SELECT run_id, phase, level, message
 FROM run_events
-WHERE task_id = '<task-id-from-above>'
+WHERE task_id = '<task-id>'
+ORDER BY created_at;
+
+-- View evidence records (handoff artifacts, session transcripts)
+SELECT artifact_class, source_location, archived_location, metadata
+FROM evidence_records
+WHERE task_id = '<task-id>'
+ORDER BY created_at;
+
+-- View memory records (development handoff context)
+SELECT partition, key, value
+FROM memory_records
+WHERE task_id = '<task-id>'
 ORDER BY created_at;
 ```
 
----
+### What to look for in the evidence
 
-## Part 6 — Approval Workflow (Optional)
-
-If the task needs human review before development (e.g., medium/high risk), query the approval queue via the operator API:
-
-```bash
-# Start the operator API server (from a separate terminal)
-node scripts/start-operator-api.mjs
-# or: corepack pnpm operator:api
-```
-
-Then in a second terminal — use whichever shell you have:
-
-**PowerShell:**
-```powershell
-# List pending approvals
-Invoke-RestMethod http://localhost:8080/approvals
-
-# Resolve an approval (decision, decidedBy, and decisionSummary are all required)
-Invoke-RestMethod `
-  -Method POST `
-  -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
-  -ContentType "application/json" `
-  -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
-```
-
-**Git Bash / WSL / Linux / macOS:**
-```bash
-# List pending approvals
-curl http://localhost:8080/approvals
-
-# Resolve an approval — use curl.exe in Git Bash on Windows to avoid the PowerShell alias
-# decision, decidedBy, and decisionSummary are all required
-curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
-  -H "Content-Type: application/json" \
-  -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
-```
+| Evidence | Description |
+|----------|-------------|
+| **Phase record** `development:passed` | Developer phase completed successfully |
+| **Evidence record** with `artifact_class: "handoff"` | Developer handoff markdown archived |
+| **Run event** with `OPENCLAW_DISPATCH` | OpenClaw dispatch was triggered |
+| **Memory record** with key `development.handoff` | Handoff summary, blocked actions, next steps |
+| **Session transcript** (if OpenClaw ran) | Full JSONL of the analyst session |
+| **Session summary** (if OpenClaw ran) | Markdown summary of Holly's analysis |
 
 ---
 
-## Part 7 — Clean Up
+## Part 8 — Run the Validation Phase
+
+After development, run validation to execute workspace-local lint and test commands.
+
+```js
+// demo-validation.mjs
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import {
+  runValidationPhase,
+  DeterministicValidationAgent
+} from "./packages/control-plane/dist/index.js";
+import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
+
+const taskId = "<task-id-from-part-4>";  // Same task ID
+
+const repository = new PostgresPlanningRepository({
+  connectionString:
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+});
+
+const targetRoot = resolve(
+  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
+    join(tmpdir(), "reddwarf-demo-workspace")
+);
+const evidenceRoot = resolve(
+  process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
+    join(tmpdir(), "reddwarf-demo-evidence")
+);
+
+try {
+  console.log("Running validation phase...");
+
+  const result = await runValidationPhase(
+    {
+      taskId,
+      targetRoot,
+      evidenceRoot
+    },
+    {
+      repository,
+      validator: new DeterministicValidationAgent()
+    }
+  );
+
+  console.log("\nValidation phase result:");
+  console.log("  Run ID:", result.runId);
+  console.log("  Next action:", result.nextAction);
+  console.log("  Tool policy:", result.workspace?.descriptor?.toolPolicy?.mode);
+  console.log("  Code write enabled:", result.workspace?.descriptor?.toolPolicy?.codeWriteEnabled);
+
+  if (result.reportPath) {
+    const report = await readFile(result.reportPath, "utf8");
+    console.log("\nValidation report (first 500 chars):");
+    console.log(report.slice(0, 500));
+  }
+
+  console.log("\nValidation complete. Proceed to SCM.");
+} finally {
+  await repository.close();
+}
+```
+
+Run it:
+
+```bash
+node demo-validation.mjs
+```
+
+Expected output:
+
+```
+Running validation phase...
+
+Validation phase result:
+  Run ID: <uuid>
+  Next action: await_scm
+  Tool policy: validation_only
+  Code write enabled: false
+
+Validation report (first 500 chars):
+# Validation Report
+...
+
+Validation complete. Proceed to SCM.
+```
+
+The validation phase:
+- Reuses the workspace provisioned by the developer phase
+- Runs in `validation_only` tool policy mode with `can_run_tests` capability
+- Archives a validation report as evidence
+- Blocks the task pending SCM handoff
+
+---
+
+## Part 9 — Run the SCM Phase (Branch + PR)
+
+After validation, run the SCM phase to create a branch and pull request.
+
+```js
+// demo-scm.mjs
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import {
+  runScmPhase,
+  DeterministicScmAgent
+} from "./packages/control-plane/dist/index.js";
+import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
+import {
+  createRestGitHubAdapter,
+  FixtureGitHubAdapter
+} from "./packages/integrations/dist/index.js";
+
+const taskId = "<task-id-from-part-4>";  // Same task ID
+const repo = "your-org/demo-repo";       // Same repo
+
+const repository = new PostgresPlanningRepository({
+  connectionString:
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+});
+
+const targetRoot = resolve(
+  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
+    join(tmpdir(), "reddwarf-demo-workspace")
+);
+
+try {
+  console.log("Running SCM phase...");
+
+  const result = await runScmPhase(
+    {
+      taskId,
+      targetRoot
+    },
+    {
+      repository,
+      scm: new DeterministicScmAgent(),
+
+      // Option A: Live GitHub (creates a real branch + PR)
+      // github: createRestGitHubAdapter(),
+
+      // Option B: Fixture GitHub (dry-run — no real GitHub calls)
+      github: new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo,
+            issueNumber: 42,
+            title: "RedDwarf AI Dev Squad Demo",
+            body: "Demo issue",
+            labels: ["ai-eligible"],
+            url: `https://github.com/${repo}/issues/42`,
+            state: "open"
+          }
+        ],
+        mutations: {
+          allowBranchCreation: true,
+          allowPullRequestCreation: true,
+          pullRequestNumberStart: 91
+        }
+      })
+    }
+  );
+
+  console.log("\nSCM phase result:");
+  console.log("  Run ID:", result.runId);
+  console.log("  Next action:", result.nextAction);
+  console.log("  Tool policy:", result.workspace?.descriptor?.toolPolicy?.mode);
+
+  if (result.branch) {
+    console.log("\nBranch:");
+    console.log("  Name:", result.branch.branchName);
+  }
+
+  if (result.pullRequest) {
+    console.log("\nPull Request:");
+    console.log("  Number:", result.pullRequest.number);
+    console.log("  URL:", result.pullRequest.url);
+  }
+
+  if (result.reportPath) {
+    const report = await readFile(result.reportPath, "utf8");
+    console.log("\nSCM report (first 500 chars):");
+    console.log(report.slice(0, 500));
+  }
+
+  console.log("\nPipeline complete!");
+} finally {
+  await repository.close();
+}
+```
+
+Run it:
+
+```bash
+node demo-scm.mjs
+```
+
+Expected output:
+
+```
+Running SCM phase...
+
+SCM phase result:
+  Run ID: <uuid>
+  Next action: complete
+  Tool policy: scm_only
+
+Branch:
+  Name: reddwarf/your-org-demo-repo-42-<hash>
+
+Pull Request:
+  Number: 91
+  URL: https://github.com/your-org/demo-repo/pull/91
+
+SCM report (first 500 chars):
+# SCM Report
+...Pull Request URL...
+
+Pipeline complete!
+```
+
+The SCM phase:
+- Runs in `scm_only` tool policy mode
+- Creates a feature branch from the workspace diff
+- Opens a pull request linking back to the originating issue
+- Archives the SCM report (branch name, PR URL, metadata) as evidence
+- Marks the task lifecycle as `completed`
+
+### Live vs Fixture GitHub
+
+The example above uses `FixtureGitHubAdapter` for a safe dry-run. To create a **real branch and PR** on GitHub:
+
+1. Replace `FixtureGitHubAdapter` with `createRestGitHubAdapter()`
+2. Ensure `GITHUB_TOKEN` has `contents:write` and `pull_requests:write` scopes
+3. Ensure the workspace contains actual file changes to commit
+
+---
+
+## Part 10 — Verify the Full Pipeline
+
+After completing all phases, confirm the full pipeline state:
+
+```bash
+# Via operator API
+curl http://localhost:8080/tasks/<task-id>/snapshot
+```
+
+Or via SQL:
+
+```sql
+-- Full phase progression
+SELECT phase, status, actor, summary
+FROM phase_records
+WHERE task_id = '<task-id>'
+ORDER BY created_at;
+```
+
+Expected phase records:
+
+```
+ phase       | status | actor
+-------------+--------+------------------
+ intake      | passed | system
+ eligibility | passed | system
+ planning    | passed | anthropic-planner
+ policy_gate | passed | system
+ development | passed | reddwarf-analyst
+ validation  | passed | system
+ scm         | passed | system
+```
+
+The task manifest should show:
+- `lifecycleStatus: "completed"`
+- `currentPhase: "scm"`
+- `branchName` and `prNumber` populated (if SCM ran with live GitHub)
+
+---
+
+## Part 11 — Clean Up
 
 ```bash
 # Stop the Docker stack
@@ -301,6 +795,25 @@ corepack pnpm compose:down
 # (Optional) Clean up evidence older than 0 days (removes everything)
 node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 ```
+
+---
+
+## Agent Reference
+
+RedDwarf uses three agent personas based on Red Dwarf characters:
+
+| Agent | Role | ID | Tool Policy | Model |
+|-------|------|----|-------------|-------|
+| **Holly** | Architect / Analyst | `reddwarf-analyst` | `coding` (read-only sandbox) | claude-opus-4-6 |
+| **Rimmer** | Session Coordinator | `reddwarf-coordinator` | `minimal` (read-only sandbox) | claude-sonnet-4-6 |
+| **Kryten** | Validator / Reviewer | `reddwarf-validator` | `coding` (workspace-write sandbox) | claude-sonnet-4-6 |
+
+Agent bootstrap files are in `agents/openclaw/{holly,rimmer,kryten}/`:
+- `IDENTITY.md` — Agent name, role, and title
+- `SOUL.md` — Personality and operating principles
+- `AGENTS.md` — Runtime roster and delegation rules
+- `TOOLS.md` — Tool profile, allow/deny lists, sandbox mode, model binding
+- `SKILL.md` files — Task-specific skills
 
 ---
 
@@ -316,5 +829,12 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 | `spawn EPERM` in verify scripts | Windows sandbox restriction | Run commands outside the Claude Code sandbox or with elevated permissions |
 | `OPENCLAW_HOOK_TOKEN not set` | Hook token missing for dispatch | `export OPENCLAW_HOOK_TOKEN="..."` — retrieve from OpenClaw gateway config |
 | OpenClaw dispatch returns 401/403 | Invalid or expired hook token | Regenerate the hook token in OpenClaw gateway config and re-export |
+| `OPENCLAW_BASE_URL not set` | Gateway URL missing | `export OPENCLAW_BASE_URL="http://localhost:3578"` |
+| OpenClaw dispatch returns 429/529 | Gateway rate-limited or overloaded | Adapter retries automatically (3 attempts, 2s backoff) — wait and retry |
+| Developer phase returns `task_blocked` | Task not in `ready` lifecycle status | Check that approval was resolved — query `/approvals` |
+| Validation phase returns `task_blocked` | Developer phase not completed | Run developer phase first — check phase records |
+| SCM phase returns `task_blocked` | Validation phase not completed | Run validation phase first — check phase records |
+| `nextAction: "await_validation"` after dev | Expected — this is normal flow | Proceed to run the validation phase |
+| No OpenClaw dispatch result in output | `openClawDispatch` not in dependencies | Add `createHttpOpenClawDispatchAdapter()` — or this is the deterministic fallback |
 
 For more known issues, see [docs/agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md).
