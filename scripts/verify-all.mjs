@@ -60,7 +60,8 @@ const scripts = [
   "verify-recovery.mjs",
   "verify-operator-api.mjs",
   "verify-knowledge-ingestion.mjs",
-  "verify-packaged-policy-pack.mjs"
+  "verify-packaged-policy-pack.mjs",
+  "verify-bootstrap-alignment.mjs"
 ];
 
 function runScript(script) {

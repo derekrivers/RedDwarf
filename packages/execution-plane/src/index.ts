@@ -712,5 +712,16 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
   ].join("\n");
 }
 
-
+export {
+  expectedBootstrapFileNames,
+  bootstrapStructuralMarkers,
+  validateBootstrapFileContent,
+  validateAgentBootstrapAlignment,
+  validateAllBootstrapAlignment
+} from "./bootstrap-alignment.js";
+export type {
+  BootstrapFileViolation,
+  BootstrapAlignmentResult,
+  FullBootstrapAlignmentResult
+} from "./bootstrap-alignment.js";
 

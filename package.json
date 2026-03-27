@@ -39,6 +39,7 @@
     "verify:recovery": "corepack pnpm build && node scripts/verify-recovery.mjs",
     "verify:operator-api": "corepack pnpm build && node scripts/verify-operator-api.mjs",
     "verify:knowledge-ingestion": "corepack pnpm build && node scripts/verify-knowledge-ingestion.mjs",
+    "verify:bootstrap-alignment": "corepack pnpm build && node scripts/verify-bootstrap-alignment.mjs",
     "verify:all": "corepack pnpm build && node scripts/verify-all.mjs",
     "setup": "corepack pnpm build && node scripts/setup.mjs",
     "cleanup:evidence": "node scripts/cleanup-evidence.mjs",

@@ -8,9 +8,12 @@ import {
   DeterministicValidationAgent,
   agentDefinitions,
   createPlanningAgent,
+  expectedBootstrapFileNames,
   getOpenClawAgentRoleDefinition,
   openClawAgentRoleDefinitions,
-  phaseIsExecutable
+  phaseIsExecutable,
+  validateAllBootstrapAlignment,
+  validateBootstrapFileContent
 } from "@reddwarf/execution-plane";
 import { openClawAgentRoleDefinitionSchema } from "@reddwarf/contracts";
 import type {
@@ -456,6 +459,89 @@ describe("createPlanningAgent", () => {
         process.env["ANTHROPIC_API_KEY"] = original;
       }
     }
+  });
+});
+
+// ============================================================
+// Bootstrap alignment validation
+// ============================================================
+
+describe("bootstrap alignment", () => {
+  it("expectedBootstrapFileNames maps all five kinds", () => {
+    expect(Object.keys(expectedBootstrapFileNames)).toEqual([
+      "identity",
+      "soul",
+      "agents",
+      "tools",
+      "skill"
+    ]);
+    expect(expectedBootstrapFileNames.identity).toBe("IDENTITY.md");
+    expect(expectedBootstrapFileNames.soul).toBe("SOUL.md");
+    expect(expectedBootstrapFileNames.agents).toBe("AGENTS.md");
+    expect(expectedBootstrapFileNames.tools).toBe("TOOLS.md");
+    expect(expectedBootstrapFileNames.skill).toBe("SKILL.md");
+  });
+
+  it("validateBootstrapFileContent returns no violations for a valid identity file", () => {
+    const file = { kind: "identity" as const, relativePath: "agents/openclaw/rimmer/IDENTITY.md", description: "test" };
+    const content = "# Arnold J. Rimmer\n\nRole: Coordinator\n\nPurpose: Coordinate RedDwarf sessions and preserve task boundaries.";
+    const violations = validateBootstrapFileContent(file, content, "reddwarf-coordinator");
+    expect(violations).toHaveLength(0);
+  });
+
+  it("validateBootstrapFileContent flags wrong filename for kind", () => {
+    const file = { kind: "identity" as const, relativePath: "agents/openclaw/rimmer/WRONG.md", description: "test" };
+    const content = "# Arnold J. Rimmer\n\nRole: Coordinator\n\nPurpose: Coordinate sessions and preserve boundaries.";
+    const violations = validateBootstrapFileContent(file, content, "reddwarf-coordinator");
+    expect(violations.some((v) => v.message.includes("IDENTITY.md"))).toBe(true);
+  });
+
+  it("validateBootstrapFileContent flags content that is too short", () => {
+    const file = { kind: "soul" as const, relativePath: "agents/openclaw/rimmer/SOUL.md", description: "test" };
+    const content = "# Soul\n\nShort.";
+    const violations = validateBootstrapFileContent(file, content, "reddwarf-coordinator");
+    expect(violations.some((v) => v.message.includes("too short"))).toBe(true);
+  });
+
+  it("validateBootstrapFileContent flags missing structural markers", () => {
+    const file = { kind: "tools" as const, relativePath: "agents/openclaw/rimmer/TOOLS.md", description: "test" };
+    // No heading and no tool profile / sandbox / allow / deny references
+    const content = "This file has no relevant markers at all and is long enough to pass minimum length checks for bootstrap.";
+    const violations = validateBootstrapFileContent(file, content, "reddwarf-coordinator");
+    expect(violations.some((v) => v.message.includes("structural marker"))).toBe(true);
+  });
+
+  it("validates all real bootstrap files in the repository with no violations", async () => {
+    const result = await validateAllBootstrapAlignment(
+      openClawAgentRoleDefinitions,
+      process.cwd()
+    );
+    expect(result.valid).toBe(true);
+    expect(result.totalViolations).toBe(0);
+    expect(result.agents).toHaveLength(3);
+    for (const agent of result.agents) {
+      expect(agent.valid).toBe(true);
+      expect(agent.filesChecked).toBe(5);
+    }
+  });
+
+  it("reports violations when a file is missing", async () => {
+    const brokenRole = {
+      ...openClawAgentRoleDefinitions[0]!,
+      agentId: "broken-agent",
+      bootstrapFiles: [
+        ...openClawAgentRoleDefinitions[0]!.bootstrapFiles.slice(0, 4),
+        {
+          kind: "skill" as const,
+          relativePath: "agents/openclaw/nonexistent/SKILL.md",
+          description: "Missing file."
+        }
+      ]
+    };
+    const result = await validateAllBootstrapAlignment([brokenRole], process.cwd());
+    expect(result.valid).toBe(false);
+    expect(result.totalViolations).toBeGreaterThan(0);
+    expect(result.agents[0]!.violations.some((v) => v.message.includes("not found"))).toBe(true);
   });
 });
 
