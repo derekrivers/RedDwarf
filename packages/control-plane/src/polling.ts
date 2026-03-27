@@ -21,6 +21,7 @@ export interface GitHubPollingRepoConfig {
   labels?: string[];
   limit?: number;
   states?: GitHubIssueState[];
+  maxBatchSize?: number;
 }
 
 export interface GitHubIssuePollingDaemonConfig {
@@ -73,6 +74,7 @@ export interface GitHubIssuePollingDaemon {
 
 const defaultGitHubIssueStates: GitHubIssueState[] = ["open"];
 const defaultPollingLabels = ["ai-eligible"];
+const DEFAULT_MAX_BATCH_SIZE = 50;
 
 export function createGitHubIssuePollingDaemon(
   config: GitHubIssuePollingDaemonConfig,
@@ -116,10 +118,11 @@ export function createGitHubIssuePollingDaemon(
           : { states: defaultGitHubIssueStates })
       };
       const candidates = await deps.github.listIssueCandidates(query);
+      const batchSize = repoConfig.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
       const unseenCandidates = selectUnseenCandidates(
         candidates,
         existingCursor?.lastSeenIssueNumber ?? null
-      );
+      ).slice(0, batchSize);
 
       for (const candidate of unseenCandidates) {
         const source: TaskManifest["source"] = {

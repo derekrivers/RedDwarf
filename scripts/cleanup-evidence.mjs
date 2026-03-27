@@ -141,12 +141,12 @@ for (const entry of taskDirs) {
       try {
         const childStat = await stat(join(dirPath, child));
         if (childStat.isFile()) dirBytes += childStat.size;
-      } catch {
-        // skip unreadable entries
+      } catch (err) {
+        log(`  WARN: could not stat ${join(entry.name, child)}: ${formatError(err)}`);
       }
     }
-  } catch {
-    // skip if we can't read
+  } catch (err) {
+    log(`  WARN: could not read directory ${entry.name}: ${formatError(err)}`);
   }
 
   eligibleCount += 1;
