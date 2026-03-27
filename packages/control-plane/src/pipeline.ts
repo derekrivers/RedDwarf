@@ -1332,60 +1332,21 @@ export async function runDeveloperPhase(
 
   const repository = dependencies.repository;
   const developer = dependencies.developer;
-  const logger = dependencies.logger ?? defaultLogger;
-  const clock = dependencies.clock ?? (() => new Date());
-  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
-  const concurrency = {
-    strategy: dependencies.concurrency?.strategy ?? "serialize",
-    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
-  } satisfies Required<PlanningConcurrencyOptions>;
-  const snapshot = await repository.getTaskSnapshot(taskId);
-
-  if (!snapshot.manifest) {
-    throw new Error(`Task manifest ${taskId} was not found.`);
-  }
-
-  if (!snapshot.spec) {
-    throw new Error(`Planning spec for ${taskId} was not found.`);
-  }
-
-  if (!snapshot.policySnapshot) {
-    throw new Error(`Policy snapshot for ${taskId} was not found.`);
-  }
-
-  const approvedRequest =
-    snapshot.manifest.approvalMode === "auto"
-      ? null
-      : (snapshot.approvalRequests.find(
-          (request) => request.status === "approved"
-        ) ?? null);
-
-  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
-    throw new Error(
-      `Task ${taskId} requires an approved request before the developer phase can start.`
-    );
-  }
-
-  const pendingFailureEscalation = findPendingFailureEscalationRequest(
-    snapshot,
-    "development"
-  );
-
-  if (pendingFailureEscalation) {
-    throw new Error(
-      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the developer phase can restart.`
-    );
-  }
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const rawSnapshot = await repository.getTaskSnapshot(taskId);
+  const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
+  const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "development");
+  requireNoFailureEscalation(snapshot, taskId, "development");
 
   const lifecycleAllowsDevelopment =
-    snapshot.manifest.lifecycleStatus === "ready" ||
-    snapshot.manifest.lifecycleStatus === "active" ||
-    (snapshot.manifest.lifecycleStatus === "blocked" &&
-      snapshot.manifest.currentPhase === "development");
+    validatedManifest.lifecycleStatus === "ready" ||
+    validatedManifest.lifecycleStatus === "active" ||
+    (validatedManifest.lifecycleStatus === "blocked" &&
+      validatedManifest.currentPhase === "development");
 
   if (!lifecycleAllowsDevelopment) {
     throw new Error(
-      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter development.`
+      `Task ${taskId} is ${validatedManifest.lifecycleStatus} in phase ${validatedManifest.currentPhase} and cannot enter development.`
     );
   }
 
@@ -1394,7 +1355,7 @@ export async function runDeveloperPhase(
   const runId = idGenerator();
   const runStartedAt = clock();
   const runStartedAtIso = asIsoTimestamp(runStartedAt);
-  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  const concurrencyKey = createSourceConcurrencyKey(validatedManifest.source);
   let currentManifest = taskManifestSchema.parse(snapshot.manifest);
   let concurrencyDecision = createConcurrencyDecision({
     action: "start",
@@ -1609,8 +1570,8 @@ export async function runDeveloperPhase(
 
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
-      spec: snapshot.spec,
-      policySnapshot: snapshot.policySnapshot
+      spec: validatedSpec,
+      policySnapshot: validatedPolicySnapshot
     });
     const secretLease = await issueWorkspaceSecretLease({
       bundle,
@@ -2026,74 +1987,35 @@ export async function runValidationPhase(
 
   const repository = dependencies.repository;
   const validator = dependencies.validator;
-  const logger = dependencies.logger ?? defaultLogger;
-  const clock = dependencies.clock ?? (() => new Date());
-  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
-  const concurrency = {
-    strategy: dependencies.concurrency?.strategy ?? "serialize",
-    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
-  } satisfies Required<PlanningConcurrencyOptions>;
-  const snapshot = await repository.getTaskSnapshot(taskId);
-
-  if (!snapshot.manifest) {
-    throw new Error(`Task manifest ${taskId} was not found.`);
-  }
-
-  if (!snapshot.spec) {
-    throw new Error(`Planning spec for ${taskId} was not found.`);
-  }
-
-  if (!snapshot.policySnapshot) {
-    throw new Error(`Policy snapshot for ${taskId} was not found.`);
-  }
-
-  const approvedRequest =
-    snapshot.manifest.approvalMode === "auto"
-      ? null
-      : (snapshot.approvalRequests.find(
-          (request) => request.status === "approved"
-        ) ?? null);
-
-  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
-    throw new Error(
-      `Task ${taskId} requires an approved request before the validation phase can start.`
-    );
-  }
-
-  const pendingFailureEscalation = findPendingFailureEscalationRequest(
-    snapshot,
-    "validation"
-  );
-
-  if (pendingFailureEscalation) {
-    throw new Error(
-      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the validation phase can restart.`
-    );
-  }
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const rawSnapshot = await repository.getTaskSnapshot(taskId);
+  const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
+  const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "validation");
+  requireNoFailureEscalation(snapshot, taskId, "validation");
 
   const lifecycleAllowsValidation =
-    (snapshot.manifest.lifecycleStatus === "blocked" &&
-      ["development", "validation"].includes(snapshot.manifest.currentPhase)) ||
-    (snapshot.manifest.lifecycleStatus === "active" &&
-      snapshot.manifest.currentPhase === "validation");
+    (validatedManifest.lifecycleStatus === "blocked" &&
+      ["development", "validation"].includes(validatedManifest.currentPhase)) ||
+    (validatedManifest.lifecycleStatus === "active" &&
+      validatedManifest.currentPhase === "validation");
 
   if (!lifecycleAllowsValidation) {
     throw new Error(
-      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter validation.`
+      `Task ${taskId} is ${validatedManifest.lifecycleStatus} in phase ${validatedManifest.currentPhase} and cannot enter validation.`
     );
   }
 
   if (
     input.workspaceId &&
-    snapshot.manifest.workspaceId &&
-    input.workspaceId !== snapshot.manifest.workspaceId
+    validatedManifest.workspaceId &&
+    input.workspaceId !== validatedManifest.workspaceId
   ) {
     throw new Error(
-      `Validation must reuse workspace ${snapshot.manifest.workspaceId}; received ${input.workspaceId}.`
+      `Validation must reuse workspace ${validatedManifest.workspaceId}; received ${input.workspaceId}.`
     );
   }
 
-  const workspaceId = snapshot.manifest.workspaceId ?? input.workspaceId;
+  const workspaceId = validatedManifest.workspaceId ?? input.workspaceId;
 
   if (!workspaceId) {
     throw new Error(
@@ -2106,7 +2028,7 @@ export async function runValidationPhase(
   const runId = idGenerator();
   const runStartedAt = clock();
   const runStartedAtIso = asIsoTimestamp(runStartedAt);
-  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  const concurrencyKey = createSourceConcurrencyKey(validatedManifest.source);
   let currentManifest = taskManifestSchema.parse(snapshot.manifest);
   let concurrencyDecision = createConcurrencyDecision({
     action: "start",
@@ -2325,8 +2247,8 @@ export async function runValidationPhase(
 
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
-      spec: snapshot.spec,
-      policySnapshot: snapshot.policySnapshot
+      spec: validatedSpec,
+      policySnapshot: validatedPolicySnapshot
     });
     const secretLease = await issueWorkspaceSecretLease({
       bundle,
@@ -3102,6 +3024,97 @@ function createConcurrencyDecision(
   return concurrencyDecisionSchema.parse(input);
 }
 
+// ── Shared phase pre-flight helpers ──────────────────────────────────────────
+
+interface ValidatedPhaseSnapshot {
+  snapshot: PersistedTaskSnapshot;
+  manifest: TaskManifest;
+  spec: PlanningSpec;
+  policySnapshot: PolicySnapshot;
+}
+
+function requirePhaseSnapshot(
+  snapshot: PersistedTaskSnapshot,
+  taskId: string
+): ValidatedPhaseSnapshot {
+  if (!snapshot.manifest) {
+    throw new Error(`Task manifest ${taskId} was not found.`);
+  }
+  if (!snapshot.spec) {
+    throw new Error(`Planning spec for ${taskId} was not found.`);
+  }
+  if (!snapshot.policySnapshot) {
+    throw new Error(`Policy snapshot for ${taskId} was not found.`);
+  }
+  return {
+    snapshot,
+    manifest: snapshot.manifest,
+    spec: snapshot.spec,
+    policySnapshot: snapshot.policySnapshot
+  };
+}
+
+function requireApprovedRequest(
+  snapshot: PersistedTaskSnapshot,
+  manifest: TaskManifest,
+  phase: TaskPhase
+): ApprovalRequest | null {
+  if (manifest.approvalMode === "auto") {
+    return null;
+  }
+  const approvedRequest =
+    snapshot.approvalRequests.find(
+      (request) => request.status === "approved"
+    ) ?? null;
+
+  if (!approvedRequest) {
+    throw new Error(
+      `Task ${manifest.taskId} requires an approved request before the ${phase} phase can start.`
+    );
+  }
+  return approvedRequest;
+}
+
+function requireNoFailureEscalation(
+  snapshot: PersistedTaskSnapshot,
+  taskId: string,
+  phase: RecoverablePhase
+): void {
+  const pendingFailureEscalation = findPendingFailureEscalationRequest(
+    snapshot,
+    phase
+  );
+  if (pendingFailureEscalation) {
+    throw new Error(
+      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the ${phase} phase can restart.`
+    );
+  }
+}
+
+interface ResolvedPhaseDependencies {
+  logger: PlanningPipelineLogger;
+  clock: () => Date;
+  idGenerator: () => string;
+  concurrency: Required<PlanningConcurrencyOptions>;
+}
+
+function resolvePhaseDependencies(dependencies: {
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  concurrency?: PlanningConcurrencyOptions;
+}): ResolvedPhaseDependencies {
+  return {
+    logger: dependencies.logger ?? defaultLogger,
+    clock: dependencies.clock ?? (() => new Date()),
+    idGenerator: dependencies.idGenerator ?? (() => randomUUID()),
+    concurrency: {
+      strategy: dependencies.concurrency?.strategy ?? "serialize",
+      staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+    }
+  };
+}
+
 function createSourceConcurrencyKey(
   source: PlanningTaskInput["source"]
 ): string {
@@ -3624,80 +3637,42 @@ export async function runScmPhase(
   const repository = dependencies.repository;
   const scm = dependencies.scm;
   const github = dependencies.github;
-  const logger = dependencies.logger ?? defaultLogger;
-  const clock = dependencies.clock ?? (() => new Date());
-  const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
-  const concurrency = {
-    strategy: dependencies.concurrency?.strategy ?? "serialize",
-    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
-  } satisfies Required<PlanningConcurrencyOptions>;
-  const snapshot = await repository.getTaskSnapshot(taskId);
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const rawSnapshot = await repository.getTaskSnapshot(taskId);
+  const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
 
-  if (!snapshot.manifest) {
-    throw new Error(`Task manifest ${taskId} was not found.`);
-  }
-
-  if (!snapshot.spec) {
-    throw new Error(`Planning spec for ${taskId} was not found.`);
-  }
-
-  if (!snapshot.policySnapshot) {
-    throw new Error(`Policy snapshot for ${taskId} was not found.`);
-  }
-
-  if (!taskRequestsPullRequest(snapshot.manifest)) {
+  if (!taskRequestsPullRequest(validatedManifest)) {
     throw new Error(
       `Task ${taskId} did not request can_open_pr and cannot enter SCM.`
     );
   }
 
-  const approvedRequest =
-    snapshot.manifest.approvalMode === "auto"
-      ? null
-      : (snapshot.approvalRequests.find(
-          (request) => request.status === "approved"
-        ) ?? null);
-
-  if (snapshot.manifest.approvalMode !== "auto" && !approvedRequest) {
-    throw new Error(
-      `Task ${taskId} requires an approved request before the SCM phase can start.`
-    );
-  }
-
-  const pendingFailureEscalation = findPendingFailureEscalationRequest(
-    snapshot,
-    "scm"
-  );
-
-  if (pendingFailureEscalation) {
-    throw new Error(
-      `Task ${taskId} has a pending failure escalation request ${pendingFailureEscalation.requestId} before the SCM phase can restart.`
-    );
-  }
+  const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "scm");
+  requireNoFailureEscalation(snapshot, taskId, "scm");
 
   const lifecycleAllowsScm =
-    (snapshot.manifest.lifecycleStatus === "blocked" &&
-      ["validation", "scm"].includes(snapshot.manifest.currentPhase)) ||
-    (snapshot.manifest.lifecycleStatus === "active" &&
-      snapshot.manifest.currentPhase === "scm");
+    (validatedManifest.lifecycleStatus === "blocked" &&
+      ["validation", "scm"].includes(validatedManifest.currentPhase)) ||
+    (validatedManifest.lifecycleStatus === "active" &&
+      validatedManifest.currentPhase === "scm");
 
   if (!lifecycleAllowsScm) {
     throw new Error(
-      `Task ${taskId} is ${snapshot.manifest.lifecycleStatus} in phase ${snapshot.manifest.currentPhase} and cannot enter SCM.`
+      `Task ${taskId} is ${validatedManifest.lifecycleStatus} in phase ${validatedManifest.currentPhase} and cannot enter SCM.`
     );
   }
 
   if (
     input.workspaceId &&
-    snapshot.manifest.workspaceId &&
-    input.workspaceId !== snapshot.manifest.workspaceId
+    validatedManifest.workspaceId &&
+    input.workspaceId !== validatedManifest.workspaceId
   ) {
     throw new Error(
-      `SCM must reuse workspace ${snapshot.manifest.workspaceId}; received ${input.workspaceId}.`
+      `SCM must reuse workspace ${validatedManifest.workspaceId}; received ${input.workspaceId}.`
     );
   }
 
-  const workspaceId = snapshot.manifest.workspaceId ?? input.workspaceId;
+  const workspaceId = validatedManifest.workspaceId ?? input.workspaceId;
 
   if (!workspaceId) {
     throw new Error(
@@ -3714,7 +3689,7 @@ export async function runScmPhase(
   const runId = idGenerator();
   const runStartedAt = clock();
   const runStartedAtIso = asIsoTimestamp(runStartedAt);
-  const concurrencyKey = createSourceConcurrencyKey(snapshot.manifest.source);
+  const concurrencyKey = createSourceConcurrencyKey(validatedManifest.source);
   let currentManifest = taskManifestSchema.parse(snapshot.manifest);
   let concurrencyDecision = createConcurrencyDecision({
     action: "start",
@@ -3931,8 +3906,8 @@ export async function runScmPhase(
 
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
-      spec: snapshot.spec,
-      policySnapshot: snapshot.policySnapshot
+      spec: validatedSpec,
+      policySnapshot: validatedPolicySnapshot
     });
     const workspace = await materializeManagedWorkspace({
       bundle,
