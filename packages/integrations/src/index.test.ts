@@ -4,7 +4,11 @@ import {
   FixtureCiAdapter,
   FixtureGitHubAdapter,
   FixtureSecretsAdapter,
+  OPENCLAW_BASE_URL_ENV,
+  OPENCLAW_HOOK_TOKEN_ENV,
+  OPENCLAW_HOOK_TOKEN_SCOPE,
   V1MutationDisabledError,
+  createOpenClawSecretsAdapter,
   createPlanningInputFromGitHubIssue,
   intakeGitHubIssue,
   redactSecretValues
@@ -173,6 +177,42 @@ describe("integrations", () => {
     expect(pullRequest.number).toBe(41);
     expect(pullRequest.baseBranch).toBe("main");
     expect(pullRequest.headBranch).toBe(branch.branchName);
+  });
+
+  it("exports well-known OpenClaw secret constants", () => {
+    expect(OPENCLAW_HOOK_TOKEN_SCOPE).toBe("openclaw");
+    expect(OPENCLAW_HOOK_TOKEN_ENV).toBe("OPENCLAW_HOOK_TOKEN");
+    expect(OPENCLAW_BASE_URL_ENV).toBe("OPENCLAW_BASE_URL");
+  });
+
+  it("creates an OpenClaw secrets adapter that reads hook token from env", async () => {
+    const saved = process.env[OPENCLAW_HOOK_TOKEN_ENV];
+    try {
+      process.env[OPENCLAW_HOOK_TOKEN_ENV] = "test-hook-token-abc";
+      const adapter = createOpenClawSecretsAdapter();
+
+      const lease = await adapter.issueTaskSecrets({
+        taskId: "test-task",
+        repo: "acme/demo",
+        agentType: "developer",
+        phase: "development",
+        environment: "local",
+        riskClass: "low",
+        approvalMode: "auto",
+        requestedCapabilities: ["can_use_secrets"],
+        allowedSecretScopes: ["openclaw"]
+      });
+
+      expect(lease).not.toBeNull();
+      expect(lease?.secretScopes).toEqual(["openclaw"]);
+      expect(lease?.environmentVariables["HOOK_TOKEN"]).toBe("test-hook-token-abc");
+    } finally {
+      if (saved !== undefined) {
+        process.env[OPENCLAW_HOOK_TOKEN_ENV] = saved;
+      } else {
+        delete process.env[OPENCLAW_HOOK_TOKEN_ENV];
+      }
+    }
   });
 
   it("denies mutation-oriented GitHub, CI, and secret operations in v1", async () => {

@@ -1184,6 +1184,49 @@ export function createEnvVarSecretsAdapter(
   return new EnvVarSecretsAdapter(options);
 }
 
+// ── OpenClaw hook-token scope name ───────────────────────────────────────────
+
+/**
+ * Well-known scope name for the OpenClaw webhook hook token.
+ * Used by RedDwarf dispatch adapters to retrieve the bearer token
+ * needed for `POST /hooks/agent` calls.
+ */
+export const OPENCLAW_HOOK_TOKEN_SCOPE = "openclaw" as const;
+
+/**
+ * Well-known environment variable name for the OpenClaw hook token.
+ */
+export const OPENCLAW_HOOK_TOKEN_ENV = "OPENCLAW_HOOK_TOKEN" as const;
+
+/**
+ * Well-known environment variable name for the OpenClaw gateway base URL.
+ */
+export const OPENCLAW_BASE_URL_ENV = "OPENCLAW_BASE_URL" as const;
+
+/**
+ * Create an EnvVarSecretsAdapter pre-configured with the `openclaw` scope
+ * mapping so that `requestSecret("openclaw_hook_token")` reads from
+ * `OPENCLAW_HOOK_TOKEN` and the `openclaw` scope is available for
+ * task-scoped lease issuance.
+ *
+ * Additional scopes can be passed and will be merged with the openclaw scope.
+ */
+export function createOpenClawSecretsAdapter(
+  options: { extraScopes?: Record<string, Record<string, string>> } = {}
+): EnvVarSecretsAdapter {
+  const hookToken = process.env[OPENCLAW_HOOK_TOKEN_ENV] ?? "";
+  const openclawScope: Record<string, string> = {};
+  if (hookToken.length > 0) {
+    openclawScope["HOOK_TOKEN"] = hookToken;
+  }
+  return new EnvVarSecretsAdapter({
+    scopes: {
+      [OPENCLAW_HOOK_TOKEN_SCOPE]: openclawScope,
+      ...options.extraScopes
+    }
+  });
+}
+
 /**
  * Create a RestGitHubAdapter from environment variables or explicit options.
  * Reads GITHUB_TOKEN from the environment when no token is provided.

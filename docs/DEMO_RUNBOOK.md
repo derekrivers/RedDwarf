@@ -77,6 +77,19 @@ Obtain an API key at https://console.anthropic.com/keys.
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
+### 2.3 OpenClaw hook token (Phase 2)
+
+The hook token authenticates RedDwarf dispatch calls to the OpenClaw gateway webhook endpoint (`POST /hooks/agent`). Treat this token as a privileged secret — holders have full-trust ingress on the gateway.
+
+Retrieve your hook token from the OpenClaw gateway configuration or generate one during gateway setup. Set it along with the gateway base URL:
+
+```bash
+export OPENCLAW_HOOK_TOKEN="your_hook_token_here"
+export OPENCLAW_BASE_URL="http://localhost:3578"
+```
+
+The `createOpenClawSecretsAdapter()` factory reads `OPENCLAW_HOOK_TOKEN` from the environment and exposes it under the `openclaw` secret scope so dispatch adapters can retrieve it without direct `process.env` access.
+
 ---
 
 ## Part 3 — File a Demo GitHub Issue
@@ -301,5 +314,7 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 | `GitHub API GET /repos/... returned 401` | Invalid token | Regenerate the token at github.com/settings/tokens |
 | Postgres connection refused | Docker stack not running | `corepack pnpm setup` |
 | `spawn EPERM` in verify scripts | Windows sandbox restriction | Run commands outside the Claude Code sandbox or with elevated permissions |
+| `OPENCLAW_HOOK_TOKEN not set` | Hook token missing for dispatch | `export OPENCLAW_HOOK_TOKEN="..."` — retrieve from OpenClaw gateway config |
+| OpenClaw dispatch returns 401/403 | Invalid or expired hook token | Regenerate the hook token in OpenClaw gateway config and re-export |
 
 For more known issues, see [docs/agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md).
