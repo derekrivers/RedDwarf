@@ -1,14 +1,47 @@
 /**
  * verify-all.mjs
  *
- * Runs all eighteen feature verification scripts in sequence.
+ * Runs all feature verification scripts with configurable parallelism.
  * Each script is run as a separate child process so failures are isolated.
  * Exits with code 1 if any script fails; prints a summary at the end.
+ *
+ * Options:
+ *   --concurrency <n>   Maximum number of scripts to run in parallel (default: 4).
+ *   --sequential         Run scripts one at a time (equivalent to --concurrency 1).
+ *   --help               Show usage and exit.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { scriptsDir } from "./lib/config.mjs";
+
+const args = process.argv.slice(2);
+
+if (args.includes("--help")) {
+  process.stdout.write(`
+Usage: node scripts/verify-all.mjs [options]
+
+Options:
+  --concurrency <n>   Maximum parallel scripts (default: 4)
+  --sequential        Run scripts one at a time (--concurrency 1)
+  --help              Show this message and exit
+`.trimStart());
+  process.exit(0);
+}
+
+function parseArgValue(flag) {
+  const idx = args.indexOf(flag);
+  if (idx === -1 || idx + 1 >= args.length) return undefined;
+  return args[idx + 1];
+}
+
+const concurrencyArg = parseArgValue("--concurrency");
+const sequential = args.includes("--sequential");
+const concurrency = sequential
+  ? 1
+  : concurrencyArg !== undefined
+    ? Math.max(1, Number(concurrencyArg) || 1)
+    : 4;
 
 const scripts = [
   "verify-postgres-pipeline.mjs",
@@ -30,30 +63,54 @@ const scripts = [
   "verify-packaged-policy-pack.mjs"
 ];
 
-const results = [];
-
-for (const script of scripts) {
+function runScript(script) {
   const label = script.replace(/\.mjs$/, "");
-  process.stdout.write(`\n[verify:all] Running ${label}...\n`);
   const startMs = Date.now();
 
-  try {
-    execFileSync(process.execPath, [join(scriptsDir, script)], {
-      stdio: "inherit",
-      env: process.env
-    });
-    const durationMs = Date.now() - startMs;
-    results.push({ script: label, status: "passed", durationMs });
-    process.stdout.write(`[verify:all] ✓ ${label} (${durationMs}ms)\n`);
-  } catch (err) {
-    const durationMs = Date.now() - startMs;
-    results.push({ script: label, status: "failed", durationMs });
-    process.stderr.write(`[verify:all] ✗ ${label} FAILED (${durationMs}ms)\n`);
-    if (err instanceof Error) {
-      process.stderr.write(`  ${err.message}\n`);
+  return new Promise((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [join(scriptsDir, script)],
+      { env: process.env, maxBuffer: 10 * 1024 * 1024 },
+      (err) => {
+        const durationMs = Date.now() - startMs;
+
+        if (err) {
+          process.stderr.write(`[verify:all] ✗ ${label} FAILED (${durationMs}ms)\n`);
+          resolve({ script: label, status: "failed", durationMs });
+        } else {
+          process.stdout.write(`[verify:all] ✓ ${label} (${durationMs}ms)\n`);
+          resolve({ script: label, status: "passed", durationMs });
+        }
+      }
+    );
+
+    child.stdout?.pipe(process.stdout, { end: false });
+    child.stderr?.pipe(process.stderr, { end: false });
+  });
+}
+
+async function runWithConcurrency(items, limit, fn) {
+  const results = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const current = index++;
+      results[current] = await fn(items[current]);
     }
   }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
 }
+
+process.stdout.write(
+  `[verify:all] Running ${scripts.length} scripts (concurrency: ${concurrency})\n`
+);
+
+const results = await runWithConcurrency(scripts, concurrency, runScript);
 
 const passed = results.filter((r) => r.status === "passed");
 const failed = results.filter((r) => r.status === "failed");
