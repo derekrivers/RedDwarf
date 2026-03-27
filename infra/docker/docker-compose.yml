@@ -11,9 +11,7 @@ services:
       - -lc
       - |
         mkdir -p /home/node/.openclaw &&
-        if [ ! -f /home/node/.openclaw/openclaw.json ]; then
-          cp /etc/openclaw/openclaw.json /home/node/.openclaw/openclaw.json
-        fi
+        cp /etc/openclaw/openclaw.json /home/node/.openclaw/openclaw.json
         exec node openclaw.mjs gateway --allow-unconfigured
     environment:
       REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}

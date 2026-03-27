@@ -2,18 +2,27 @@ import { join } from "node:path";
 import type { OpenClawAgentRoleDefinition } from "@reddwarf/contracts";
 import { openClawAgentRoleDefinitions } from "@reddwarf/execution-plane";
 
-// ── OpenClaw config output types ─────────────────────────────────────────────
+// -- OpenClaw config output types ---------------------------------------------
+
+export interface OpenClawSandboxConfig {
+  mode: "all";
+  scope: "agent";
+  workspaceAccess: "ro" | "rw";
+}
 
 export interface OpenClawAgentConfig {
+  id: string;
+  name: string;
   workspace: string;
+  agentDir: string;
   model: string;
   tools: {
     profile: string;
     allow: string[];
     deny: string[];
   };
-  sandbox: string;
-  skipBootstrap: boolean;
+  sandbox: OpenClawSandboxConfig;
+  default?: boolean;
 }
 
 export interface OpenClawConfig {
@@ -21,7 +30,7 @@ export interface OpenClawConfig {
     defaults: {
       skipBootstrap: boolean;
     };
-    [agentId: string]: OpenClawAgentConfig | { skipBootstrap: boolean };
+    list: OpenClawAgentConfig[];
   };
 }
 
@@ -48,20 +57,27 @@ export interface GenerateOpenClawConfigOptions {
 export function buildAgentConfig(
   role: OpenClawAgentRoleDefinition,
   workspaceRoot: string,
-  skipBootstrap: boolean
+  _skipBootstrap: boolean
 ): OpenClawAgentConfig {
   const policy = role.runtimePolicy;
+  const workspace = join(workspaceRoot, role.agentId).replace(/\\/g, "/");
+  const agentDir = join(workspaceRoot, ".agents", role.agentId, "agent").replace(
+    /\\/g,
+    "/"
+  );
 
   return {
-    workspace: join(workspaceRoot, role.agentId).replace(/\\/g, "/"),
+    id: role.agentId,
+    name: role.displayName,
+    workspace,
+    agentDir,
     model: policy.model.model,
     tools: {
       profile: policy.toolProfile,
       allow: [...policy.allow],
       deny: [...policy.deny]
     },
-    sandbox: policy.sandboxMode,
-    skipBootstrap
+    sandbox: mapSandboxConfig(policy.sandboxMode)
   };
 }
 
@@ -70,8 +86,8 @@ export function buildAgentConfig(
  * definitions. The output is a plain object suitable for JSON.stringify.
  *
  * Each role definition in the execution-plane is mapped to an OpenClaw agent
- * entry keyed by `agentId`, with workspace paths, tool profiles, allow/deny
- * lists, sandbox mode, and model binding derived from the runtime policy.
+ * entry under `agents.list`, with workspace paths, tool profiles, allow/deny
+ * lists, sandbox policy, and model binding derived from the runtime policy.
  */
 export function generateOpenClawConfig(
   options: GenerateOpenClawConfigOptions
@@ -81,13 +97,16 @@ export function generateOpenClawConfig(
 
   const config: OpenClawConfig = {
     agents: {
-      defaults: { skipBootstrap }
+      defaults: { skipBootstrap },
+      list: []
     }
   };
 
-  for (const role of roles) {
+  for (const [index, role] of roles.entries()) {
     const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap);
-    (config.agents as Record<string, unknown>)[role.agentId] = agentEntry;
+    config.agents.list.push(
+      index === 0 ? { ...agentEntry, default: true } : agentEntry
+    );
   }
 
   return config;
@@ -98,4 +117,14 @@ export function generateOpenClawConfig(
  */
 export function serializeOpenClawConfig(config: OpenClawConfig): string {
   return JSON.stringify(config, null, 2) + "\n";
+}
+
+function mapSandboxConfig(
+  sandboxMode: OpenClawAgentRoleDefinition["runtimePolicy"]["sandboxMode"]
+): OpenClawSandboxConfig {
+  return {
+    mode: "all",
+    scope: "agent",
+    workspaceAccess: sandboxMode === "workspace_write" ? "rw" : "ro"
+  };
 }

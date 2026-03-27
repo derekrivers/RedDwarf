@@ -15,4 +15,4 @@ const json = serializeOpenClawConfig(config);
 writeFileSync(resolvedOutputPath, json, "utf8");
 console.log(`Generated openclaw.json at ${resolvedOutputPath}`);
 console.log(`  Workspace root: ${resolvedWorkspaceRoot}`);
-console.log(`  Agents: ${Object.keys(config.agents).filter((k) => k !== "defaults").join(", ")}`);
+console.log(`  Agents: ${config.agents.list.map((agent) => agent.id).join(", ")}`);

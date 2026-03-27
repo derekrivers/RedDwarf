@@ -2012,7 +2012,7 @@ describe("knowledge ingestion pipeline", () => {
   });
 });
 
-// ── OpenClaw config generation ───────────────────────────────────────────────
+// -- OpenClaw config generation ---------------------------------------------
 
 describe("generateOpenClawConfig", () => {
   it("generates config with all three agent roles", () => {
@@ -2020,45 +2020,59 @@ describe("generateOpenClawConfig", () => {
 
     expect(config.agents.defaults.skipBootstrap).toBe(true);
 
-    const agentIds = Object.keys(config.agents).filter((k) => k !== "defaults");
+    const agentIds = config.agents.list.map((agent) => agent.id);
     expect(agentIds).toContain("reddwarf-coordinator");
     expect(agentIds).toContain("reddwarf-analyst");
     expect(agentIds).toContain("reddwarf-validator");
     expect(agentIds).toHaveLength(3);
+    expect(config.agents.list[0]?.default).toBe(true);
   });
 
-  it("sets per-agent workspace paths under the provided root", () => {
+  it("sets per-agent workspace and agent state paths under the provided root", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/data/workspaces" });
 
-    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
-    const analyst = config.agents["reddwarf-analyst"] as Record<string, unknown>;
-    const validator = config.agents["reddwarf-validator"] as Record<string, unknown>;
+    const coordinator = config.agents.list.find((agent) => agent.id === "reddwarf-coordinator");
+    const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
+    const validator = config.agents.list.find((agent) => agent.id === "reddwarf-validator");
 
-    expect(coordinator["workspace"]).toBe("/data/workspaces/reddwarf-coordinator");
-    expect(analyst["workspace"]).toBe("/data/workspaces/reddwarf-analyst");
-    expect(validator["workspace"]).toBe("/data/workspaces/reddwarf-validator");
+    expect(coordinator?.workspace).toBe("/data/workspaces/reddwarf-coordinator");
+    expect(analyst?.workspace).toBe("/data/workspaces/reddwarf-analyst");
+    expect(validator?.workspace).toBe("/data/workspaces/reddwarf-validator");
+    expect(coordinator?.agentDir).toBe("/data/workspaces/.agents/reddwarf-coordinator/agent");
   });
 
-  it("maps tool profiles, allow/deny, and sandbox from runtime policy", () => {
+  it("maps tool profiles, allow or deny lists, and sandbox from runtime policy", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
 
-    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
-    const tools = coordinator["tools"] as Record<string, unknown>;
+    const coordinator = config.agents.list.find((agent) => agent.id === "reddwarf-coordinator");
 
-    expect(tools["profile"]).toBe("minimal");
-    expect(tools["allow"]).toEqual(["group:fs", "group:sessions", "group:memory", "group:openclaw"]);
-    expect(tools["deny"]).toEqual(["group:automation", "group:messaging", "group:nodes"]);
-    expect(coordinator["sandbox"]).toBe("read_only");
+    expect(coordinator?.tools.profile).toBe("minimal");
+    expect(coordinator?.tools.allow).toEqual([
+      "group:fs",
+      "group:sessions",
+      "group:memory",
+      "group:openclaw"
+    ]);
+    expect(coordinator?.tools.deny).toEqual([
+      "group:automation",
+      "group:messaging",
+      "group:nodes"
+    ]);
+    expect(coordinator?.sandbox).toEqual({
+      mode: "all",
+      scope: "agent",
+      workspaceAccess: "ro"
+    });
   });
 
   it("maps model binding from runtime policy", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
 
-    const analyst = config.agents["reddwarf-analyst"] as Record<string, unknown>;
-    expect(analyst["model"]).toBe("anthropic/claude-opus-4-6");
+    const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
+    expect(analyst?.model).toBe("anthropic/claude-opus-4-6");
 
-    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
-    expect(coordinator["model"]).toBe("anthropic/claude-sonnet-4-6");
+    const coordinator = config.agents.list.find((agent) => agent.id === "reddwarf-coordinator");
+    expect(coordinator?.model).toBe("anthropic/claude-sonnet-4-6");
   });
 
   it("allows a subset of roles", () => {
@@ -2066,7 +2080,7 @@ describe("generateOpenClawConfig", () => {
     const analystOnly = roles.filter((r: { role: string }) => r.role === "analyst");
 
     const config = generateOpenClawConfig({ workspaceRoot: "/ws", roles: analystOnly });
-    const agentIds = Object.keys(config.agents).filter((k) => k !== "defaults");
+    const agentIds = config.agents.list.map((agent) => agent.id);
     expect(agentIds).toEqual(["reddwarf-analyst"]);
   });
 
@@ -2077,7 +2091,7 @@ describe("generateOpenClawConfig", () => {
     expect(json.endsWith("\n")).toBe(true);
     const parsed = JSON.parse(json);
     expect(parsed.agents.defaults.skipBootstrap).toBe(true);
-    expect(parsed.agents["reddwarf-coordinator"]).toBeDefined();
+    expect(parsed.agents.list.find((agent: { id: string }) => agent.id === "reddwarf-coordinator")).toBeDefined();
   });
 });
 
@@ -2088,15 +2102,19 @@ describe("buildAgentConfig", () => {
 
     const entry = buildAgentConfig(validator, "/runtime/ws", true);
 
+    expect(entry.id).toBe("reddwarf-validator");
+    expect(entry.name).toBe("RedDwarf Validator");
     expect(entry.workspace).toBe("/runtime/ws/reddwarf-validator");
+    expect(entry.agentDir).toBe("/runtime/ws/.agents/reddwarf-validator/agent");
     expect(entry.model).toBe("anthropic/claude-sonnet-4-6");
     expect(entry.tools.profile).toBe("coding");
-    expect(entry.sandbox).toBe("workspace_write");
-    expect(entry.skipBootstrap).toBe(true);
+    expect(entry.sandbox).toEqual({
+      mode: "all",
+      scope: "agent",
+      workspaceAccess: "rw"
+    });
   });
 });
-
-// ── OpenClaw session transcript parsing ──────────────────────────────────────
 
 describe("parseSessionJsonl", () => {
   it("parses valid JSONL lines into session entries", () => {
@@ -2256,7 +2274,7 @@ describe("buildSessionSummaryMarkdown", () => {
   });
 });
 
-// ── Developer phase OpenClaw dispatch ────────────────────────────────────────
+// -- Developer phase OpenClaw dispatch -------------------------------------
 
 describe("developer phase with OpenClaw dispatch", () => {
   it("dispatches to OpenClaw when openClawDispatch is provided", async () => {
