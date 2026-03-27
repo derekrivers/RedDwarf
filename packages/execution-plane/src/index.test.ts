@@ -1,0 +1,409 @@
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  DeterministicDeveloperAgent,
+  DeterministicPlanningAgent,
+  DeterministicScmAgent,
+  DeterministicValidationAgent,
+  agentDefinitions,
+  createPlanningAgent,
+  phaseIsExecutable
+} from "@reddwarf/execution-plane";
+import type {
+  MaterializedManagedWorkspace,
+  PlanningTaskInput,
+  TaskManifest,
+  WorkspaceContextBundle
+} from "@reddwarf/contracts";
+
+// ============================================================
+// Minimal test fixtures
+// ============================================================
+
+const testManifest = {
+  taskId: "acme-platform-99",
+  title: "Plan a docs-safe change",
+  riskClass: "medium",
+  approvalMode: "human_signoff_required",
+  lifecycleStatus: "active",
+  currentPhase: "development",
+  assignedAgentType: "developer",
+  requestedCapabilities: ["can_plan", "can_archive_evidence"],
+  labels: ["ai-eligible"],
+  acceptanceCriteria: ["A planning spec exists"],
+  affectedPaths: ["docs/guide.md"],
+  metadata: {},
+  createdAt: "2026-03-27T00:00:00.000Z",
+  updatedAt: "2026-03-27T00:00:00.000Z"
+} as unknown as TaskManifest;
+
+const testInput: PlanningTaskInput = {
+  source: {
+    provider: "github",
+    repo: "acme/platform",
+    issueNumber: 99,
+    issueUrl: "https://github.com/acme/platform/issues/99"
+  },
+  title: "Plan a docs-safe change",
+  summary: "A deterministic docs-safe change for evidence output.",
+  priority: 5,
+  labels: ["ai-eligible"],
+  acceptanceCriteria: ["A planning spec exists"],
+  affectedPaths: ["docs/guide.md"],
+  requestedCapabilities: ["can_plan", "can_archive_evidence"],
+  metadata: {}
+};
+
+const workspaceRoot = join("/tmp", "ws-execution-plane-test");
+const testWorkspace = {
+  workspaceId: "ws-exec-plane-001",
+  workspaceRoot,
+  artifactsDir: join(workspaceRoot, "artifacts"),
+  contextDir: join(workspaceRoot, ".context"),
+  files: {},
+  instructions: { canonicalSources: [], taskContractFiles: [], files: {} },
+  stateDir: join(workspaceRoot, ".workspace"),
+  stateFile: join(workspaceRoot, ".workspace", "workspace.json"),
+  scratchDir: join(workspaceRoot, "scratch"),
+  descriptor: {}
+} as unknown as MaterializedManagedWorkspace;
+
+const testBundle = {
+  manifest: testManifest,
+  spec: { summary: "Deterministic spec for docs-safe change." },
+  allowedPaths: ["docs/guide.md", "docs/README.md"],
+  acceptanceCriteria: ["A planning spec exists", "Policy output is archived"]
+} as unknown as WorkspaceContextBundle;
+
+// ============================================================
+// DeterministicPlanningAgent
+// ============================================================
+
+describe("DeterministicPlanningAgent", () => {
+  it("returns a PlanningDraft with the expected shape", async () => {
+    const agent = new DeterministicPlanningAgent();
+    const draft = await agent.createSpec(testInput, {
+      manifest: testManifest,
+      runId: "run-plan-001"
+    });
+
+    expect(typeof draft.summary).toBe("string");
+    expect(draft.summary.length).toBeGreaterThan(0);
+    expect(Array.isArray(draft.assumptions)).toBe(true);
+    expect(Array.isArray(draft.affectedAreas)).toBe(true);
+    expect(Array.isArray(draft.constraints)).toBe(true);
+    expect(Array.isArray(draft.testExpectations)).toBe(true);
+  });
+
+  it("embeds the task ID and repo in the summary", async () => {
+    const agent = new DeterministicPlanningAgent();
+    const draft = await agent.createSpec(testInput, {
+      manifest: testManifest,
+      runId: "run-plan-002"
+    });
+
+    expect(draft.summary).toContain(testManifest.taskId);
+    expect(draft.summary).toContain(testInput.source.repo);
+  });
+
+  it("reflects affectedPaths in affectedAreas when provided", async () => {
+    const agent = new DeterministicPlanningAgent();
+    const draft = await agent.createSpec(testInput, {
+      manifest: testManifest,
+      runId: "run-plan-003"
+    });
+
+    expect(draft.affectedAreas).toContain("docs/guide.md");
+  });
+
+  it("falls back to planning-surface-only when affectedPaths is empty", async () => {
+    const agent = new DeterministicPlanningAgent();
+    const inputWithNoAffectedPaths: PlanningTaskInput = {
+      ...testInput,
+      affectedPaths: []
+    };
+    const draft = await agent.createSpec(inputWithNoAffectedPaths, {
+      manifest: testManifest,
+      runId: "run-plan-004"
+    });
+
+    expect(draft.affectedAreas).toContain("planning-surface-only");
+  });
+});
+
+// ============================================================
+// DeterministicDeveloperAgent
+// ============================================================
+
+describe("DeterministicDeveloperAgent", () => {
+  it("returns a DevelopmentDraft with the expected shape", async () => {
+    const agent = new DeterministicDeveloperAgent();
+    const draft = await agent.createHandoff(testBundle, {
+      manifest: testManifest,
+      runId: "run-dev-001",
+      workspace: testWorkspace,
+      codeWriteEnabled: false
+    });
+
+    expect(typeof draft.summary).toBe("string");
+    expect(draft.summary.length).toBeGreaterThan(0);
+    expect(Array.isArray(draft.implementationNotes)).toBe(true);
+    expect(draft.implementationNotes.length).toBeGreaterThan(0);
+    expect(Array.isArray(draft.blockedActions)).toBe(true);
+    expect(Array.isArray(draft.nextActions)).toBe(true);
+  });
+
+  it("references the workspace ID and task ID in the summary", async () => {
+    const agent = new DeterministicDeveloperAgent();
+    const draft = await agent.createHandoff(testBundle, {
+      manifest: testManifest,
+      runId: "run-dev-002",
+      workspace: testWorkspace,
+      codeWriteEnabled: false
+    });
+
+    expect(draft.summary).toContain(testWorkspace.workspaceId);
+    expect(draft.summary).toContain(testManifest.taskId);
+  });
+
+  it("mentions allowed paths in implementation notes", async () => {
+    const agent = new DeterministicDeveloperAgent();
+    const draft = await agent.createHandoff(testBundle, {
+      manifest: testManifest,
+      runId: "run-dev-003",
+      workspace: testWorkspace,
+      codeWriteEnabled: false
+    });
+
+    const noteText = draft.implementationNotes.join(" ");
+    expect(noteText).toContain("docs/guide.md");
+  });
+
+  it("confirms product code writes are blocked in blocked actions", async () => {
+    const agent = new DeterministicDeveloperAgent();
+    const draft = await agent.createHandoff(testBundle, {
+      manifest: testManifest,
+      runId: "run-dev-004",
+      workspace: testWorkspace,
+      codeWriteEnabled: false
+    });
+
+    const blockedText = draft.blockedActions.join(" ").toLowerCase();
+    expect(blockedText).toContain("disabled");
+  });
+});
+
+// ============================================================
+// DeterministicValidationAgent
+// ============================================================
+
+describe("DeterministicValidationAgent", () => {
+  it("returns a ValidationDraft with the expected shape", async () => {
+    const agent = new DeterministicValidationAgent();
+    const draft = await agent.createPlan(testBundle, {
+      manifest: testManifest,
+      runId: "run-val-001",
+      workspace: testWorkspace
+    });
+
+    expect(typeof draft.summary).toBe("string");
+    expect(draft.summary.length).toBeGreaterThan(0);
+    expect(Array.isArray(draft.commands)).toBe(true);
+    expect(draft.commands.length).toBeGreaterThan(0);
+  });
+
+  it("produces a lint command and a test command", async () => {
+    const agent = new DeterministicValidationAgent();
+    const draft = await agent.createPlan(testBundle, {
+      manifest: testManifest,
+      runId: "run-val-002",
+      workspace: testWorkspace
+    });
+
+    const ids = draft.commands.map((c) => c.id);
+    expect(ids).toContain("lint");
+    expect(ids).toContain("test");
+  });
+
+  it("uses process.execPath as the executable for each command", async () => {
+    const agent = new DeterministicValidationAgent();
+    const draft = await agent.createPlan(testBundle, {
+      manifest: testManifest,
+      runId: "run-val-003",
+      workspace: testWorkspace
+    });
+
+    for (const command of draft.commands) {
+      expect(command.executable).toBe(process.execPath);
+      expect(command.args[0]).toBe("-e");
+      expect(typeof command.args[1]).toBe("string");
+    }
+  });
+
+  it("references the workspace ID in the summary", async () => {
+    const agent = new DeterministicValidationAgent();
+    const draft = await agent.createPlan(testBundle, {
+      manifest: testManifest,
+      runId: "run-val-004",
+      workspace: testWorkspace
+    });
+
+    expect(draft.summary).toContain(testWorkspace.workspaceId);
+  });
+});
+
+// ============================================================
+// DeterministicScmAgent
+// ============================================================
+
+describe("DeterministicScmAgent", () => {
+  it("returns a ScmDraft with the expected shape", async () => {
+    const agent = new DeterministicScmAgent();
+    const draft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-001",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
+
+    expect(typeof draft.summary).toBe("string");
+    expect(typeof draft.branchName).toBe("string");
+    expect(typeof draft.pullRequestTitle).toBe("string");
+    expect(typeof draft.pullRequestBody).toBe("string");
+    expect(Array.isArray(draft.labels)).toBe(true);
+    expect(draft.baseBranch).toBe("main");
+  });
+
+  it("generates a reddwarf-prefixed branch name from taskId and runId", async () => {
+    const agent = new DeterministicScmAgent();
+    const draft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-002",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
+
+    expect(draft.branchName).toMatch(/^reddwarf\//);
+    expect(draft.branchName).toContain("acme-platform-99");
+  });
+
+  it("prefixes the PR title with [RedDwarf]", async () => {
+    const agent = new DeterministicScmAgent();
+    const draft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-003",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
+
+    expect(draft.pullRequestTitle).toMatch(/^\[RedDwarf\]/);
+    expect(draft.pullRequestTitle).toContain(testManifest.title);
+  });
+
+  it("includes the risk class label in the PR labels", async () => {
+    const agent = new DeterministicScmAgent();
+    const draft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-004",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
+
+    expect(draft.labels).toContain("reddwarf");
+    expect(draft.labels).toContain("automation");
+    expect(draft.labels).toContain(`risk:${testManifest.riskClass}`);
+  });
+
+  it("embeds the spec summary and acceptance criteria in the PR body", async () => {
+    const agent = new DeterministicScmAgent();
+    const draft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-005",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
+
+    expect(draft.pullRequestBody).toContain("Deterministic spec for docs-safe change.");
+    expect(draft.pullRequestBody).toContain("A planning spec exists");
+    expect(draft.pullRequestBody).toContain("Policy output is archived");
+  });
+});
+
+// ============================================================
+// agentDefinitions
+// ============================================================
+
+describe("agentDefinitions", () => {
+  it("declares all expected agent IDs", () => {
+    const ids = agentDefinitions.map((a) => a.id);
+    expect(ids).toContain("architect-default");
+    expect(ids).toContain("developer-default");
+    expect(ids).toContain("validation-default");
+    expect(ids).toContain("scm-default");
+    expect(ids).toContain("reviewer-placeholder");
+  });
+
+  it("marks the reviewer as disabled in v1", () => {
+    const reviewer = agentDefinitions.find((a) => a.id === "reviewer-placeholder");
+    expect(reviewer?.enabled).toBe(false);
+  });
+
+  it("marks all other agents as enabled", () => {
+    const enabled = agentDefinitions.filter((a) => a.id !== "reviewer-placeholder");
+    for (const agent of enabled) {
+      expect(agent.enabled).toBe(true);
+    }
+  });
+});
+
+// ============================================================
+// phaseIsExecutable
+// ============================================================
+
+describe("phaseIsExecutable", () => {
+  it("returns true for planning, development, validation, and scm", () => {
+    expect(phaseIsExecutable("planning")).toBe(true);
+    expect(phaseIsExecutable("development")).toBe(true);
+    expect(phaseIsExecutable("validation")).toBe(true);
+    expect(phaseIsExecutable("scm")).toBe(true);
+  });
+
+  it("returns false for the review phase (v1 disabled)", () => {
+    expect(phaseIsExecutable("review")).toBe(false);
+  });
+});
+
+// ============================================================
+// createPlanningAgent factory
+// ============================================================
+
+describe("createPlanningAgent", () => {
+  it("returns a DeterministicPlanningAgent for type deterministic", () => {
+    const agent = createPlanningAgent({ type: "deterministic" });
+    expect(agent).toBeInstanceOf(DeterministicPlanningAgent);
+  });
+
+  it("throws when type is anthropic and no API key is available", () => {
+    const original = process.env["ANTHROPIC_API_KEY"];
+    delete process.env["ANTHROPIC_API_KEY"];
+    try {
+      expect(() => createPlanningAgent({ type: "anthropic" })).toThrow(
+        /ANTHROPIC_API_KEY/
+      );
+    } finally {
+      if (original !== undefined) {
+        process.env["ANTHROPIC_API_KEY"] = original;
+      }
+    }
+  });
+});
