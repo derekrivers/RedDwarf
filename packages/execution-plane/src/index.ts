@@ -397,6 +397,46 @@ interface AnthropicMessagesResponse {
   content: Array<{ type: string; text?: string }>;
 }
 
+export interface FetchWithRetryOptions {
+  url: string;
+  init: RequestInit;
+  maxAttempts?: number;
+  retryableStatuses?: Set<number>;
+  baseDelayMs?: number;
+}
+
+export async function fetchWithRetry(options: FetchWithRetryOptions): Promise<Response> {
+  const maxAttempts = options.maxAttempts ?? 3;
+  const retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
+  const baseDelayMs = options.baseDelayMs ?? 2000;
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    const response = await fetch(options.url, options.init);
+
+    if (!response.ok) {
+      if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
+        const delay = attempt * baseDelayMs;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      const responseBody = await response.text().catch(() => "");
+      throw new Error(`Anthropic API returned ${response.status}: ${responseBody}`);
+    }
+
+    return response;
+  }
+}
+
+export function extractAnthropicTextContent(response: AnthropicMessagesResponse): string {
+  const block = response.content.find((b) => b.type === "text");
+  if (!block?.text) {
+    throw new Error("Anthropic response contained no text content block.");
+  }
+  return block.text;
+}
+
 export class AnthropicPlanningAgent implements PlanningAgent {
   private readonly apiKey: string;
   private readonly model: string;
@@ -424,46 +464,28 @@ export class AnthropicPlanningAgent implements PlanningAgent {
     context: { manifest: TaskManifest; runId: string }
   ): Promise<PlanningDraft> {
     const userMessage = buildPlanningUserMessage(input, context);
-    const body = JSON.stringify({
-      model: this.model,
-      max_tokens: this.maxTokens,
-      system: this.systemPrompt,
-      messages: [{ role: "user", content: userMessage }]
-    });
 
-    const retryableStatuses = new Set([429, 529]);
-    const maxAttempts = 3;
-    let attempt = 0;
-
-    while (true) {
-      attempt++;
-      const response = await fetch(`${this.baseUrl}/v1/messages`, {
+    const response = await fetchWithRetry({
+      url: `${this.baseUrl}/v1/messages`,
+      init: {
         method: "POST",
         headers: {
           "x-api-key": this.apiKey,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json"
         },
-        body
-      });
-
-      if (!response.ok) {
-        if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
-          const delay = attempt * 2000;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-        const responseBody = await response.text().catch(() => "");
-        throw new Error(`Anthropic API returned ${response.status}: ${responseBody}`);
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          system: this.systemPrompt,
+          messages: [{ role: "user", content: userMessage }]
+        })
       }
+    });
 
-      const result = (await response.json()) as AnthropicMessagesResponse;
-      const block = result.content.find((b) => b.type === "text");
-      if (!block?.text) {
-        throw new Error("Anthropic response contained no text content block.");
-      }
-      return parsePlanningDraft(block.text, input, context);
-    }
+    const result = (await response.json()) as AnthropicMessagesResponse;
+    const text = extractAnthropicTextContent(result);
+    return parsePlanningDraft(text, input, context);
   }
 }
 
@@ -592,7 +614,7 @@ function buildPlanningUserMessage(
   return lines.join("\n");
 }
 
-function parsePlanningDraft(
+export function parsePlanningDraft(
   text: string,
   input: PlanningTaskInput,
   context: { manifest: TaskManifest; runId: string }
@@ -627,7 +649,7 @@ function parsePlanningDraft(
   };
 }
 
-function isValidPlanningDraft(value: unknown): value is PlanningDraft {
+export function isValidPlanningDraft(value: unknown): value is PlanningDraft {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
