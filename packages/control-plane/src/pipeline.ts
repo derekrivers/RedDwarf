@@ -105,28 +105,30 @@ import {
   createWorkspaceCredentialPolicy,
   createWorkspaceToolPolicy
 } from "./workspace.js";
-const phaseFailureClassMap: Record<TaskPhase, FailureClass> = {
-  intake: "integration_failure",
-  eligibility: "policy_violation",
-  planning: "planning_failure",
-  policy_gate: "policy_violation",
-  development: "integration_failure",
-  validation: "validation_failure",
-  review: "review_failure",
-  scm: "merge_failure",
-  archive: "integration_failure"
+export interface PhaseDefinition {
+  failureClass: FailureClass;
+  failureCode: string;
+  recovery: {
+    retryLimit: number;
+    retryableFailureClasses: readonly FailureClass[];
+  };
+}
+
+const defaultRecovery: PhaseDefinition["recovery"] = {
+  retryLimit: 0,
+  retryableFailureClasses: []
 };
 
-const phaseFailureCodeMap: Record<TaskPhase, string> = {
-  intake: "INTAKE_FAILED",
-  eligibility: "ELIGIBILITY_FAILED",
-  planning: "PLANNING_FAILED",
-  policy_gate: "POLICY_GATE_FAILED",
-  development: "DEVELOPMENT_FAILED",
-  validation: "VALIDATION_FAILED",
-  review: "REVIEW_FAILED",
-  scm: "SCM_FAILED",
-  archive: "ARCHIVE_FAILED"
+export const phaseRegistry: Record<TaskPhase, PhaseDefinition> = {
+  intake: { failureClass: "integration_failure", failureCode: "INTAKE_FAILED", recovery: defaultRecovery },
+  eligibility: { failureClass: "policy_violation", failureCode: "ELIGIBILITY_FAILED", recovery: defaultRecovery },
+  planning: { failureClass: "planning_failure", failureCode: "PLANNING_FAILED", recovery: defaultRecovery },
+  policy_gate: { failureClass: "policy_violation", failureCode: "POLICY_GATE_FAILED", recovery: defaultRecovery },
+  development: { failureClass: "integration_failure", failureCode: "DEVELOPMENT_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["integration_failure"] } },
+  validation: { failureClass: "validation_failure", failureCode: "VALIDATION_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["validation_failure", "integration_failure"] } },
+  review: { failureClass: "review_failure", failureCode: "REVIEW_FAILED", recovery: defaultRecovery },
+  scm: { failureClass: "merge_failure", failureCode: "SCM_FAILED", recovery: defaultRecovery },
+  archive: { failureClass: "integration_failure", failureCode: "ARCHIVE_FAILED", recovery: defaultRecovery }
 };
 
 const failureAutomationRequestedBy = "failure-automation";
@@ -162,20 +164,6 @@ const EventCodes = {
   SECRETS_ADAPTER_REQUIRED: "SECRETS_ADAPTER_REQUIRED",
   SECRET_LEASE_FAILED: "SECRET_LEASE_FAILED",
   SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING"
-} as const;
-const failureRecoveryPolicies = {
-  development: {
-    retryLimit: 1,
-    retryableFailureClasses: ["integration_failure"] as FailureClass[]
-  },
-  validation: {
-    retryLimit: 1,
-    retryableFailureClasses: ["validation_failure", "integration_failure"] as FailureClass[]
-  },
-  scm: {
-    retryLimit: 0,
-    retryableFailureClasses: [] as FailureClass[]
-  }
 } as const;
 
 export interface PlanningConcurrencyOptions {
@@ -361,7 +349,7 @@ async function issueWorkspaceSecretLease(input: {
   if (!input.secrets) {
     throw new PlanningPipelineFailure({
       message: `Task ${bundle.manifest.taskId} is approved for scoped secrets (${allowedSecretScopes.join(", ")}), but no secrets adapter is configured.`,
-      failureClass: phaseFailureClassMap[input.phase],
+      failureClass: phaseRegistry[input.phase].failureClass,
       phase: input.phase,
       code: EventCodes.SECRETS_ADAPTER_REQUIRED,
       details: {
@@ -390,7 +378,7 @@ async function issueWorkspaceSecretLease(input: {
   } catch (error) {
     throw new PlanningPipelineFailure({
       message: `Failed to issue scoped secrets for ${bundle.manifest.taskId} during ${input.phase}.`,
-      failureClass: phaseFailureClassMap[input.phase],
+      failureClass: phaseRegistry[input.phase].failureClass,
       phase: input.phase,
       code: EventCodes.SECRET_LEASE_FAILED,
       details: {
@@ -407,7 +395,7 @@ async function issueWorkspaceSecretLease(input: {
   if (!lease) {
     throw new PlanningPipelineFailure({
       message: `Scoped secrets were approved for ${bundle.manifest.taskId}, but the secrets adapter returned no lease.`,
-      failureClass: phaseFailureClassMap[input.phase],
+      failureClass: phaseRegistry[input.phase].failureClass,
       phase: input.phase,
       code: EventCodes.SECRET_LEASE_MISSING,
       details: {
@@ -4157,7 +4145,7 @@ async function handleAutomatedPhaseFailure(input: {
   github: GitHubAdapter | undefined;
 }): Promise<AutomatedFailureRecoveryResult> {
   const { repository, snapshot, manifest, phase, runId, failure } = input;
-  const policy = failureRecoveryPolicies[phase];
+  const policy = phaseRegistry[phase].recovery;
   const retryEligible =
     policy.retryableFailureClasses.includes(failure.failureClass) &&
     manifest.retryCount < policy.retryLimit;
@@ -4502,9 +4490,9 @@ function normalizePipelineFailure(
       error instanceof Error
         ? error.message
         : `Unexpected failure while running ${phase}.`,
-    failureClass: phaseFailureClassMap[phase],
+    failureClass: phaseRegistry[phase].failureClass,
     phase,
-    code: phaseFailureCodeMap[phase],
+    code: phaseRegistry[phase].failureCode,
     details: serializeError(error),
     cause: error,
     taskId,
