@@ -110,8 +110,40 @@ try {
   process.exit(1);
 }
 
+// ── Step 5: Check OpenClaw availability ──────────────────────────────────
+
+log("Checking OpenClaw gateway status...");
+let openClawAvailable = false;
+try {
+  const openClawStatus = execSync(
+    `docker compose -f "${COMPOSE_FILE}" ps --format json openclaw 2>/dev/null`,
+    { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
+  ).trim();
+  if (openClawStatus) {
+    const parsed = JSON.parse(openClawStatus);
+    if (parsed.State === "running") {
+      openClawAvailable = true;
+      log("OpenClaw gateway is running.");
+    } else {
+      log(`OpenClaw container exists but is ${parsed.State}.`);
+    }
+  }
+} catch {
+  // Container not running or not started — this is expected
+}
+
+if (!openClawAvailable) {
+  log("OpenClaw gateway is not running — this is normal.");
+  log("The pipeline will use deterministic agent fallbacks.");
+  log("To start OpenClaw (when the image is available):");
+  log("  docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d");
+}
+
 log("──────────────────────────────────────────────────────────────────");
 log("Setup complete. The RedDwarf stack is running and ready.");
+log("");
+log(`  Postgres:  running (port ${process.env.POSTGRES_HOST_PORT ?? "55432"})`);
+log(`  OpenClaw:  ${openClawAvailable ? "running (port " + (process.env.OPENCLAW_HOST_PORT ?? "3578") + ")" : "not running (optional — deterministic fallback active)"}`);
 log("");
 log("Next steps:");
 log("  corepack pnpm verify:postgres        — confirm the planning pipeline works");

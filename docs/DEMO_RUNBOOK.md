@@ -9,16 +9,18 @@ This runbook walks through a complete demonstration of RedDwarf — from a fresh
 ## Overview
 
 The demo will:
-1. Boot the RedDwarf stack (OpenClaw + Postgres)
-2. Configure credentials (GitHub, Anthropic, OpenClaw)
+1. Boot the RedDwarf stack (Postgres required, OpenClaw optional)
+2. Configure credentials (GitHub, Anthropic, OpenClaw if available)
 3. File a GitHub issue on a target repository
 4. Run the planning pipeline (intake → eligibility → planning → policy gate)
 5. Approve the plan via the operator API
-6. Run the developer phase — dispatch to Holly (read-only analyst) via OpenClaw
+6. Run the developer phase — with OpenClaw analyst dispatch or deterministic fallback
 7. Inspect session evidence (transcript + summary)
 8. Run the validation phase (workspace-local lint/test)
 9. Run the SCM phase (branch + PR creation)
 10. Clean up
+
+> **OpenClaw availability:** The OpenClaw gateway image (`ghcr.io/openclaw/openclaw:latest`) may not yet be published. The entire pipeline works without it — the developer phase falls back to a deterministic agent. When the image becomes available, OpenClaw can be started alongside Postgres to enable live analyst dispatch.
 
 ### Pipeline Phases
 
@@ -30,6 +32,7 @@ GitHub Issue
   [Approval Queue — human review]
     ↓
   Developer Phase → OpenClaw dispatch to Holly (read-only analyst)
+    │                 OR deterministic fallback (if OpenClaw unavailable)
     ↓
   Validation Phase → workspace-local lint/test
     ↓
@@ -60,21 +63,44 @@ POSTGRES_PASSWORD=reddwarf   # change for shared or production environments
 
 ### 1.2 Start the stack
 
+By default, `setup` starts **Postgres only**. OpenClaw is behind a Docker Compose profile and starts separately.
+
 ```bash
 corepack pnpm setup
 # Equivalent to: compose:up → wait for Postgres → db:migrate → health check
 ```
 
-Confirm everything is up:
+Confirm Postgres is up:
 
 ```
 [setup] Postgres is reachable.
 [setup] Migrations applied.
 [setup] Health check passed. Public tables: reddwarf_schema_migrations, ...
+[setup] OpenClaw gateway is not running — this is normal.
+[setup] The pipeline will use deterministic agent fallbacks.
 [setup] Setup complete.
 ```
 
-### 1.3 Build all packages
+### 1.3 (Optional) Start OpenClaw gateway
+
+If the OpenClaw container image is available, start it alongside Postgres:
+
+```bash
+corepack pnpm compose:up:openclaw
+# Equivalent to: docker compose --profile openclaw up -d
+```
+
+Verify it's running:
+
+```bash
+docker compose -f infra/docker/docker-compose.yml ps openclaw
+```
+
+The gateway listens on port `3578` (configurable via `OPENCLAW_HOST_PORT` in `.env`).
+
+> **If the image is not yet published**, skip this step. The full pipeline works without OpenClaw — the developer phase uses a deterministic agent fallback.
+
+### 1.4 Build all packages
 
 ```bash
 corepack pnpm build
@@ -106,7 +132,9 @@ Obtain an API key at https://console.anthropic.com/keys.
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-### 2.3 OpenClaw hook token
+### 2.3 OpenClaw hook token (only if OpenClaw is running)
+
+> **Skip this step if OpenClaw is not running.** The pipeline works without these variables.
 
 The hook token authenticates RedDwarf dispatch calls to the OpenClaw gateway webhook endpoint (`POST /hooks/agent`). Treat this token as a privileged secret — holders have full-trust ingress on the gateway.
 
@@ -294,19 +322,26 @@ curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
 
 ---
 
-## Part 6 — Run the Developer Phase (OpenClaw Analyst Dispatch)
+## Part 6 — Run the Developer Phase
 
-After approval, run the developer phase. This dispatches to **Holly** (the read-only analyst agent) via OpenClaw's `/hooks/agent` webhook.
+After approval, run the developer phase. This phase supports two modes:
 
-Create another demo script:
+| Mode | When to use | What happens |
+|------|-------------|--------------|
+| **With OpenClaw** | Gateway running (Part 1.3) | Dispatches to Holly (read-only analyst) via `/hooks/agent` |
+| **Without OpenClaw** | Gateway not available | Uses `DeterministicDeveloperAgent` stub — full pipeline still works |
+
+Create a demo script:
 
 ```js
 // demo-developer.mjs
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
-import { runDeveloperPhase } from "./packages/control-plane/dist/index.js";
-import { DeterministicDeveloperAgent } from "./packages/control-plane/dist/index.js";
+import {
+  runDeveloperPhase,
+  DeterministicDeveloperAgent
+} from "./packages/control-plane/dist/index.js";
 import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
 import { createHttpOpenClawDispatchAdapter } from "./packages/integrations/dist/index.js";
 
@@ -326,27 +361,31 @@ const evidenceRoot = resolve(
     join(tmpdir(), "reddwarf-demo-evidence")
 );
 
+// ── Choose your mode ─────────────────────────────────────────────────────
+// Option A: With OpenClaw (requires gateway running + OPENCLAW_HOOK_TOKEN set)
+const useOpenClaw = !!process.env.OPENCLAW_HOOK_TOKEN;
+
+const dependencies = {
+  repository,
+  developer: new DeterministicDeveloperAgent()
+};
+
+if (useOpenClaw) {
+  dependencies.openClawDispatch = createHttpOpenClawDispatchAdapter();
+  // reads OPENCLAW_BASE_URL and OPENCLAW_HOOK_TOKEN from env
+  // dispatches to reddwarf-analyst (Holly) by default
+  dependencies.openClawAgentId = "reddwarf-analyst";
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 try {
   console.log("Running developer phase...");
   console.log("  Task ID:", taskId);
-  console.log("  Target root:", targetRoot);
+  console.log("  Mode:", useOpenClaw ? "OpenClaw dispatch (Holly)" : "Deterministic fallback");
 
   const result = await runDeveloperPhase(
-    {
-      taskId,
-      targetRoot,
-      evidenceRoot
-    },
-    {
-      repository,
-      developer: new DeterministicDeveloperAgent(),
-
-      // --- OpenClaw dispatch (comment out to use deterministic fallback) ---
-      openClawDispatch: createHttpOpenClawDispatchAdapter(),
-      // reads OPENCLAW_BASE_URL and OPENCLAW_HOOK_TOKEN from env
-      // dispatches to reddwarf-analyst (Holly) by default
-      openClawAgentId: "reddwarf-analyst"
-    }
+    { taskId, targetRoot, evidenceRoot },
+    dependencies
   );
 
   console.log("\nDeveloper phase result:");
@@ -361,6 +400,8 @@ try {
     console.log("  Accepted:", result.openClawDispatchResult.accepted);
     console.log("  Session ID:", result.openClawDispatchResult.sessionId);
     console.log("  Agent:", result.openClawDispatchResult.agentId);
+  } else {
+    console.log("\nOpenClaw: not used (deterministic fallback)");
   }
 
   if (result.handoffPath) {
@@ -381,12 +422,35 @@ Run it:
 node demo-developer.mjs
 ```
 
-Expected output:
+### Expected output (without OpenClaw)
 
 ```
 Running developer phase...
   Task ID: your-org-demo-repo-42-<hash>
-  Target root: /tmp/reddwarf-demo-workspace
+  Mode: Deterministic fallback
+
+Developer phase result:
+  Run ID: <uuid>
+  Next action: await_validation
+  Workspace ID: <workspace-id>
+  Tool policy: development_readonly
+  Code write enabled: false
+
+OpenClaw: not used (deterministic fallback)
+
+Developer handoff (first 500 chars):
+# Development Handoff
+...
+
+Developer phase complete. Proceed to validation.
+```
+
+### Expected output (with OpenClaw)
+
+```
+Running developer phase...
+  Task ID: your-org-demo-repo-42-<hash>
+  Mode: OpenClaw dispatch (Holly)
 
 Developer phase result:
   Run ID: <uuid>
@@ -410,18 +474,15 @@ Developer phase complete. Proceed to validation.
 ### What happens during this phase
 
 1. RedDwarf provisions an isolated workspace with read-only tool policy
-2. If `openClawDispatch` is provided, it posts to OpenClaw's `POST /hooks/agent` endpoint:
+2. **With OpenClaw:** posts to `POST /hooks/agent` on the gateway:
    - Session key: `github:issue:{repo}:{issueNumber}`
    - Agent ID: `reddwarf-analyst` (Holly)
    - Prompt with task context, acceptance criteria, allowed paths
    - Holly performs read-only analysis — **code writes remain disabled**
-3. The session transcript (JSONL) and summary (markdown) are captured as evidence
+   - Session transcript (JSONL) and summary (markdown) captured as evidence
+3. **Without OpenClaw:** the `DeterministicDeveloperAgent` produces a stub handoff — the pipeline continues identically through validation and SCM
 4. A developer handoff artifact is archived with the workspace
 5. The task blocks pending validation
-
-### Running without OpenClaw
-
-If the OpenClaw gateway is not available, omit the `openClawDispatch` parameter. The phase falls back to the `DeterministicDeveloperAgent` stub — useful for verifying the pipeline end-to-end without a live gateway.
 
 ---
 

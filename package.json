@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/apply-sql-migrations.mjs",
     "compose:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "compose:up:openclaw": "docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d",
     "compose:down": "docker compose -f infra/docker/docker-compose.yml down",
     "validate:policy-pack": "node scripts/validate-policy-pack.mjs",
     "verify:postgres": "corepack pnpm build && node scripts/verify-postgres-pipeline.mjs",
