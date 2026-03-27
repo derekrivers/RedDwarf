@@ -559,12 +559,15 @@ export function redactSecretValues(
     return value;
   }
 
-  const pattern = new RegExp(
-    secretValues.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-    "g"
-  );
-
-  return value.replace(pattern, "***REDACTED***");
+  // Use iterative string replacement instead of regex alternation to avoid
+  // ReDoS risk from secret values that share common prefixes or suffixes.
+  // Replace longest values first so shorter substrings don't mask longer matches.
+  const sorted = [...secretValues].sort((a, b) => b.length - a.length);
+  let result = value;
+  for (const secret of sorted) {
+    result = result.split(secret).join("***REDACTED***");
+  }
+  return result;
 }
 
 export function createPlanningInputFromGitHubIssue(

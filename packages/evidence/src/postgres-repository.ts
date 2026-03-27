@@ -552,27 +552,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
   async hasPlanningSpecForSource(
     source: TaskManifest["source"]
   ): Promise<boolean> {
-    const issueKey =
-      source.issueNumber !== undefined
-        ? "issueNumber"
-        : source.issueId !== undefined
-          ? "issueId"
-          : null;
-    const issueValue =
-      issueKey === "issueNumber"
-        ? String(source.issueNumber)
-        : issueKey === "issueId"
-          ? String(source.issueId)
-          : null;
     const conditions = [
       "task_manifests.source ->> 'provider' = $1",
       "task_manifests.source ->> 'repo' = $2"
     ];
     const params: unknown[] = [source.provider, source.repo];
 
-    if (issueKey !== null && issueValue !== null) {
-      conditions.push(`task_manifests.source ->> '${issueKey}' = $3`);
-      params.push(issueValue);
+    if (source.issueNumber !== undefined) {
+      conditions.push("task_manifests.source ->> 'issueNumber' = $3");
+      params.push(String(source.issueNumber));
+    } else if (source.issueId !== undefined) {
+      conditions.push("task_manifests.source ->> 'issueId' = $3");
+      params.push(String(source.issueId));
     }
 
     const result = await this.pool.query(
