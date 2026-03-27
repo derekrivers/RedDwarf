@@ -98,6 +98,14 @@ docker compose -f infra/docker/docker-compose.yml ps openclaw
 
 The gateway listens on port `3578` (configurable via `OPENCLAW_HOST_PORT` in `.env`).
 
+To reach the OpenClaw Control UI from your host browser, set `OPENCLAW_GATEWAY_TOKEN` in `.env` before starting the container. The compose stack mounts [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json), which forces `gateway.bind` to `lan` so host port `3578` is reachable.
+
+```bash
+OPENCLAW_GATEWAY_TOKEN=<long-random-token>
+```
+
+Then browse to `http://127.0.0.1:3578/` and authenticate with `OPENCLAW_GATEWAY_TOKEN`.
+
 > **If the image is not yet published**, skip this step. The full pipeline works without OpenClaw — the developer phase uses a deterministic agent fallback.
 
 ### 1.4 Build all packages
@@ -275,6 +283,8 @@ If the task requires human approval (medium/high risk), it will be in the approv
 node scripts/start-operator-api.mjs
 # or: corepack pnpm operator:api
 ```
+
+This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API listens on `127.0.0.1:8080` and exposes JSON endpoints only.
 
 ### 5.2 List pending approvals
 
@@ -891,6 +901,7 @@ Agent bootstrap files are in `agents/openclaw/{holly,rimmer,kryten}/`:
 | `OPENCLAW_HOOK_TOKEN not set` | Hook token missing for dispatch | `export OPENCLAW_HOOK_TOKEN="..."` — retrieve from OpenClaw gateway config |
 | OpenClaw dispatch returns 401/403 | Invalid or expired hook token | Regenerate the hook token in OpenClaw gateway config and re-export |
 | `OPENCLAW_BASE_URL not set` | Gateway URL missing | `export OPENCLAW_BASE_URL="http://localhost:3578"` |
+| OpenClaw UI on `3578` accepts TCP but returns an empty reply | Gateway is still bound to container loopback | Ensure the stack is using [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json), set `OPENCLAW_GATEWAY_TOKEN=...`, then recreate the `openclaw` container |
 | OpenClaw dispatch returns 429/529 | Gateway rate-limited or overloaded | Adapter retries automatically (3 attempts, 2s backoff) — wait and retry |
 | Developer phase returns `task_blocked` | Task not in `ready` lifecycle status | Check that approval was resolved — query `/approvals` |
 | Validation phase returns `task_blocked` | Developer phase not completed | Run developer phase first — check phase records |

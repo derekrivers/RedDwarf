@@ -10,6 +10,8 @@ services:
       REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
       DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
       OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_CONFIG_PATH: /etc/openclaw/openclaw.json
     ports:
       - "${OPENCLAW_HOST_PORT:-3578}:18789"
     depends_on:
@@ -23,6 +25,7 @@ services:
       start_period: 15s
     volumes:
       - ${REDDWARF_POLICY_SOURCE_ROOT:-../../}:${REDDWARF_POLICY_ROOT:-/opt/reddwarf}:ro
+      - ./openclaw.json:/etc/openclaw/openclaw.json:ro
       - runtime-workspace:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       - runtime-evidence:${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
 

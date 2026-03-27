@@ -1,0 +1,14 @@
+{
+  "gateway": {
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    },
+    "controlUi": {
+      "allowedOrigins": [
+        "http://127.0.0.1:3578",
+        "http://localhost:3578"
+      ]
+    }
+  }
+}
