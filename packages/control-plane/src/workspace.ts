@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import {
   access,
   copyFile,
@@ -805,8 +806,8 @@ export async function archiveEvidenceArtifact(input: {
   await mkdir(dirname(archivePath), { recursive: true });
   await copyFile(input.sourcePath, archivePath);
 
-  const archiveContents = await readFile(archivePath);
   const archiveStats = await stat(archivePath);
+  const sha256 = await streamFileHash(archivePath);
 
   return {
     evidenceRoot,
@@ -814,8 +815,18 @@ export async function archiveEvidenceArtifact(input: {
     relativePath,
     location: `${evidenceLocationPrefix}${relativePath}`,
     byteSize: archiveStats.size,
-    sha256: createHash("sha256").update(archiveContents).digest("hex")
+    sha256
   };
+}
+
+function streamFileHash(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
 }
 
 export function buildArchivedArtifactMetadata(input: {
