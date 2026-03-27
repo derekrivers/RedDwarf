@@ -114,3 +114,12 @@
   - `start-operator-api.mjs` import paths used `./packages/` instead of `../packages/`.
 - Runbook is now fully manually verified end-to-end including the high-risk approval workflow.
 - Likely next board items: none; M9 would be the next milestone.
+
+## 2026-03-27 — Phase 2 planning
+
+- Agreed Phase 2 architecture: RedDwarf remains the control plane (intake, policy, risk, approvals, evidence, orchestration); OpenClaw is the bounded execution runtime (agent sessions, workspace loading, tool enforcement, sandboxed execution, model routing).
+- HTTP dispatch via `/hooks/agent` is the primary RedDwarf→OpenClaw contract. Session key pattern: `github:issue:<repo>:<issue_number>`. agentId selected by RedDwarf policy. CLI dispatch is backup/debug only. Shared-volume watching is not the primary dispatch mechanism — evidence/artifacts only.
+- Code writing (`codeWriteEnabled`) remains disabled in Phase 2. Agent roles, skills, memory, and scope require careful design before enabling mutation.
+- Review phase is Phase 3 or later.
+- Features F53–F63 added to the board covering M9 (automated intake, agent definitions) and M10 (openclaw.json generation, HTTP dispatch adapter, session capture, developer phase wiring, bootstrap alignment).
+- Likely next board item: F53, GitHub issue polling daemon.
