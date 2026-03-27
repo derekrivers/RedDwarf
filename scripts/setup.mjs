@@ -142,7 +142,7 @@ if (!openClawAvailable) {
 log("──────────────────────────────────────────────────────────────────");
 log("Setup complete. The RedDwarf stack is running and ready.");
 log("");
-log(`  Postgres:  running (port ${process.env.POSTGRES_HOST_PORT ?? "55432"})`);
+log(`  Postgres:  running (port ${process.env.POSTGRES_HOST_PORT ?? "55532"})`);
 log(`  OpenClaw:  ${openClawAvailable ? "running (port " + (process.env.OPENCLAW_HOST_PORT ?? "3578") + ")" : "not running (optional — deterministic fallback active)"}`);
 log("");
 log("Next steps:");

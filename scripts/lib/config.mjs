@@ -25,7 +25,7 @@ export const scriptsDir = resolve(__libdir, "..");
 
 /** Default Postgres connection string used by all scripts. */
 export const DEFAULT_CONNECTION_STRING =
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
+  "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf";
 
 /**
  * Resolve the Postgres connection string from environment variables

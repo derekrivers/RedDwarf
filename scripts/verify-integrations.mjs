@@ -16,7 +16,7 @@ import { connectionString } from "./lib/config.mjs";
 const connectionString =
   process.env.HOST_DATABASE_URL ??
   process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
+  "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf";
 
 const repository = new PostgresPlanningRepository({ connectionString });
 const unique = Date.now();

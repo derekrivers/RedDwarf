@@ -3,7 +3,7 @@
 // Usage: node scripts/start-operator-api.mjs [port]
 //
 // Default port: 8080
-// Default DB:   postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf
+// Default DB:   postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf
 //               (override with HOST_DATABASE_URL env var)
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";

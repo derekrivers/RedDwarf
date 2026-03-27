@@ -13,7 +13,7 @@ const issueNumber = 0;       // TODO: replace with your issue number
 const github = createRestGitHubAdapter();          // reads GITHUB_TOKEN from env
 const planner = createAnthropicPlanningAgent();    // reads ANTHROPIC_API_KEY from env
 const repository = createPostgresPlanningRepository(
-  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 );
 
 try {

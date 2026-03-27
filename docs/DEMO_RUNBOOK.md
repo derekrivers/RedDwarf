@@ -195,7 +195,7 @@ const issueNumber = 42;            // Replace with your issue number
 const github = createRestGitHubAdapter();          // reads GITHUB_TOKEN from env
 const planner = createAnthropicPlanningAgent();    // reads ANTHROPIC_API_KEY from env
 const repository = createPostgresPlanningRepository(
-  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 );
 
 try {
@@ -349,7 +349,7 @@ const taskId = "<task-id-from-part-4>";  // Replace with your task ID
 
 const repository = new PostgresPlanningRepository({
   connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 });
 
 const targetRoot = resolve(
@@ -517,7 +517,7 @@ docker exec -it reddwarf-postgres-1 psql -U reddwarf reddwarf
 **psql on the host (Linux / macOS / WSL):**
 
 ```bash
-psql "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+psql "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 ```
 
 ### Queries
@@ -586,7 +586,7 @@ const taskId = "<task-id-from-part-4>";  // Same task ID
 
 const repository = new PostgresPlanningRepository({
   connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 });
 
 const targetRoot = resolve(
@@ -687,7 +687,7 @@ const repo = "your-org/demo-repo";       // Same repo
 
 const repository = new PostgresPlanningRepository({
   connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
+    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 });
 
 const targetRoot = resolve(

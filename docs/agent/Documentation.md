@@ -101,7 +101,7 @@
   - Feature 49 (setup script): added `scripts/setup.mjs` — `compose:up`, 60s Postgres readiness poll, `db:migrate`, health check table query; safe to re-run; exposed as `pnpm setup`.
   - Feature 50 (evidence cleanup): added `scripts/cleanup-evidence.mjs` with configurable `--max-age-days` threshold, dry-run by default, `--delete` for actual removal; reports eligible dirs/sizes; exposed as `pnpm cleanup:evidence`.
   - Feature 51 (demo runbook): added `docs/DEMO_RUNBOOK.md` covering stack bootstrap, GitHub token + Anthropic API key setup, filing a demo issue, running the full pipeline, inspecting Postgres evidence, and the approval workflow.
-  - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55432` explanation, and `spawn EPERM` workaround pointer.
+  - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55532` explanation, and `spawn EPERM` workaround pointer.
 - All M8 features (F43–F52) are complete. Feature board updated accordingly.
 - Post-M8 runbook validation session (2026-03-27): manually tested the full `docs/DEMO_RUNBOOK.md` end-to-end against `derekrivers/FirstVoyage` on GitHub. Fixes applied during the session:
   - `psql` not available on Windows — added `scripts/query-evidence.mjs` and `docker exec` alternative; exposed as `pnpm query:evidence`.

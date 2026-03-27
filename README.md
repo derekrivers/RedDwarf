@@ -79,7 +79,7 @@ corepack pnpm verify:package   # packaged policy-pack integrity
 ### Windows-specific notes
 
 - Use `127.0.0.1` instead of `localhost` in database connection strings when running host-side scripts on Windows with WSL2. `localhost` resolves via the WSL relay and misses the Docker-bound Postgres listener. The default `.env` already uses `127.0.0.1`.
-- Postgres is exposed on port `55432` (not the standard `5432`) to avoid conflicts with any locally installed Postgres.
+- Postgres is exposed on port `55532` (not the standard `5432`) to avoid conflicts with any locally installed Postgres.
 - Some verification scripts spawn child processes. If you see `spawn EPERM` errors inside a sandboxed environment (e.g., Claude Code terminal), re-run the command with elevated permissions or outside the sandbox. See `docs/agent/TROUBLESHOOTING.md` for documented workarounds.
 
 ## Demo
@@ -90,7 +90,7 @@ For a complete walkthrough from a fresh clone to a real planning cycle with GitH
 
 - `openclaw` runs as a container and can mount either this repo read-only for development or a packaged policy-pack artifact from `artifacts/policy-packs/.../policy-root` for immutable promotion.
 - `postgres` stores manifests, planning specs, policy snapshots, approval requests and decisions, evidence metadata, run events, durable pipeline-run records for overlap control, derived run summaries, and partitioned memory across task, project, organization, and external scopes.
-- Host-side verification uses `POSTGRES_HOST_PORT` and defaults to `55432` to avoid collisions with an existing local Postgres on `5432`.
+- Host-side verification uses `POSTGRES_HOST_PORT` and defaults to `55532` to avoid collisions with an existing local Postgres on `5432`.
 - Host-side DB clients should use `127.0.0.1` instead of `localhost` on this Windows setup because `localhost` can resolve through `wslrelay` and miss the Docker-bound listener.
 - Host-side context materialization defaults to `REDDWARF_HOST_WORKSPACE_ROOT=runtime-data/workspaces` and writes `.context/` plus generated `SOUL.md`, `AGENTS.md`, `TOOLS.md`, and `skills/reddwarf-task/SKILL.md` files into each workspace. Managed workspaces also receive `.workspace/workspace.json`, isolated `scratch/`, and `artifacts/` directories and can be explicitly destroyed through the workspace manager.
 - GitHub and CI integrations are modeled conservatively in v1. Issue intake and status reads are supported; the SCM phase can create approved branches and pull requests through the GitHub adapter after validation, while labels, issue comments, workflow triggers, and remote secret mutations still stay blocked behind explicit `V1MutationDisabledError` guards. Approved tasks can also receive workspace-local scoped secret leases from the secrets adapter.
