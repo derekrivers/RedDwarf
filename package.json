@@ -42,7 +42,8 @@
     "verify:all": "corepack pnpm build && node scripts/verify-all.mjs",
     "setup": "corepack pnpm build && node scripts/setup.mjs",
     "cleanup:evidence": "node scripts/cleanup-evidence.mjs",
-    "query:evidence": "node scripts/query-evidence.mjs"
+    "query:evidence": "node scripts/query-evidence.mjs",
+    "operator:api": "node scripts/start-operator-api.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

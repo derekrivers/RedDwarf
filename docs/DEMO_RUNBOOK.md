@@ -246,15 +246,8 @@ If the task needs human review before development (e.g., medium/high risk), quer
 
 ```bash
 # Start the operator API server (from a separate terminal)
-node -e "
-import('./packages/control-plane/dist/index.js').then(async ({ createOperatorApiServer }) => {
-  const { createPostgresPlanningRepository } = await import('./packages/evidence/dist/index.js');
-  const repo = createPostgresPlanningRepository(process.env.HOST_DATABASE_URL ?? 'postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf');
-  const server = createOperatorApiServer({ port: 8080 }, { repository: repo });
-  await server.start();
-  console.log('Operator API on port', server.port);
-});
-"
+node scripts/start-operator-api.mjs
+# or: corepack pnpm operator:api
 ```
 
 Then in a second terminal — use whichever shell you have:
