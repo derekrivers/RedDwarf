@@ -145,5 +145,12 @@
 - Verification for F55: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:package`.
 - Updated the feature board so feature 55 is marked complete and feature 56 is now the next actionable M9 item.
 - Likely next board item: feature 56, per-agent tool policy specification with profiles, allow or deny lists, sandbox settings, and Anthropic model binding.
+- Completed feature 56 from `FEATURE_BOARD.md`: per-agent tool policy specification with profiles, allow or deny lists, sandbox settings, and Anthropic model binding.
+- Extended the OpenClaw role contracts with typed runtime-policy metadata covering tool profile, allow list, deny list, sandbox mode, and Anthropic model binding so future `openclaw.json` generation can stay data-driven.
+- Updated the coordinator, analyst, and validator role definitions with conservative per-agent policies: minimal read-only coordination, coding-profile read-only analysis, and coding-profile workspace-write validation.
+- Aligned each role-specific `TOOLS.md` bootstrap file with the machine-readable policy so the human-readable bootstrap guidance matches the config source of truth.
+- Verification for F56: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:package`.
+- Updated the feature board so feature 56 is marked complete. All M9 features are now delivered.
+
 
 

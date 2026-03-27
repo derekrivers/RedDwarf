@@ -68,6 +68,8 @@ export const openClawBootstrapFileKinds = [
   "tools",
   "skill"
 ] as const;
+export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
+export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
 
 export const evidenceKinds = [
   "manifest",
@@ -394,16 +396,30 @@ export const agentDefinitionSchema = z.object({
 
 export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
 export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
+export const openClawToolProfileSchema = z.enum(openClawToolProfiles);
+export const openClawSandboxModeSchema = z.enum(openClawSandboxModes);
 export const openClawBootstrapFileSchema = z.object({
   kind: openClawBootstrapFileKindSchema,
   relativePath: z.string().min(1),
   description: z.string().min(1)
+});
+export const openClawModelBindingSchema = z.object({
+  provider: z.literal("anthropic"),
+  model: z.string().min(1)
+});
+export const openClawAgentRuntimePolicySchema = z.object({
+  toolProfile: openClawToolProfileSchema,
+  allow: z.array(z.string().min(1)),
+  deny: z.array(z.string().min(1)),
+  sandboxMode: openClawSandboxModeSchema,
+  model: openClawModelBindingSchema
 });
 export const openClawAgentRoleDefinitionSchema = z.object({
   agentId: z.string().min(1),
   role: openClawAgentRoleSchema,
   displayName: z.string().min(1),
   purpose: z.string().min(1),
+  runtimePolicy: openClawAgentRuntimePolicySchema,
   bootstrapFiles: z.array(openClawBootstrapFileSchema).length(5),
   canonicalSources: z.array(z.string().min(1)).min(1)
 });
@@ -588,7 +604,11 @@ export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 export type OpenClawAgentRole = z.infer<typeof openClawAgentRoleSchema>;
 export type OpenClawBootstrapFileKind = z.infer<typeof openClawBootstrapFileKindSchema>;
+export type OpenClawToolProfile = z.infer<typeof openClawToolProfileSchema>;
+export type OpenClawSandboxMode = z.infer<typeof openClawSandboxModeSchema>;
 export type OpenClawBootstrapFile = z.infer<typeof openClawBootstrapFileSchema>;
+export type OpenClawModelBinding = z.infer<typeof openClawModelBindingSchema>;
+export type OpenClawAgentRuntimePolicy = z.infer<typeof openClawAgentRuntimePolicySchema>;
 export type OpenClawAgentRoleDefinition = z.infer<typeof openClawAgentRoleDefinitionSchema>;
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;
 export type MemoryQuery = z.infer<typeof memoryQuerySchema>;
@@ -747,4 +767,5 @@ export interface ScmAgent {
     }
   ): Promise<ScmDraft>;
 }
+
 

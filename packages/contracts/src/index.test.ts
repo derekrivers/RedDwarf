@@ -123,6 +123,13 @@ describe("contracts", () => {
       role: "coordinator",
       displayName: "RedDwarf Coordinator",
       purpose: "Keep OpenClaw sessions aligned with RedDwarf task scope and delegation boundaries.",
+      runtimePolicy: {
+        toolProfile: "minimal",
+        allow: ["group:fs", "group:sessions", "group:memory", "group:openclaw"],
+        deny: ["group:automation", "group:messaging", "group:nodes"],
+        sandboxMode: "read_only",
+        model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      },
       bootstrapFiles: [
         { kind: "identity", relativePath: "agents/openclaw/coordinator/IDENTITY.md", description: "Identity and persona." },
         { kind: "soul", relativePath: "agents/openclaw/coordinator/SOUL.md", description: "Operating posture." },
@@ -134,6 +141,8 @@ describe("contracts", () => {
     });
 
     expect(definition.role).toBe("coordinator");
+    expect(definition.runtimePolicy.toolProfile).toBe("minimal");
+    expect(definition.runtimePolicy.model.provider).toBe("anthropic");
     expect(definition.bootstrapFiles).toHaveLength(5);
   });
 
@@ -577,4 +586,5 @@ describe("contracts", () => {
     expect(decision.action).toBe("block");
   });
 });
+
 

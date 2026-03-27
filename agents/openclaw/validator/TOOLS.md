@@ -1,5 +1,12 @@
 # Validator Tool Guidance
 
+Configured policy:
+- Tool profile: `coding`
+- Allow: `group:fs`, `group:runtime`, `group:memory`, `group:openclaw`
+- Deny: `group:messaging`
+- Sandbox mode: `workspace_write`
+- Model binding: `anthropic/claude-sonnet-4-6`
+
 Default posture:
 - verify before trusting
 - keep checks bounded and reproducible

@@ -392,6 +392,20 @@ describe("openClawAgentRoleDefinitions", () => {
     );
   });
 
+  it("binds conservative coordinator and validator runtime policies", () => {
+    const coordinator = getOpenClawAgentRoleDefinition("coordinator");
+    const validator = getOpenClawAgentRoleDefinition("validator");
+
+    expect(coordinator.runtimePolicy.toolProfile).toBe("minimal");
+    expect(coordinator.runtimePolicy.sandboxMode).toBe("read_only");
+    expect(coordinator.runtimePolicy.model.model).toBe(
+      "anthropic/claude-sonnet-4-6"
+    );
+    expect(validator.runtimePolicy.toolProfile).toBe("coding");
+    expect(validator.runtimePolicy.sandboxMode).toBe("workspace_write");
+    expect(validator.runtimePolicy.allow).toContain("group:runtime");
+  });
+
   it("points at bootstrap files that exist in the repo", async () => {
     for (const definition of openClawAgentRoleDefinitions) {
       for (const file of definition.bootstrapFiles) {
@@ -444,6 +458,8 @@ describe("createPlanningAgent", () => {
     }
   });
 });
+
+
 
 
 

@@ -84,6 +84,13 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     displayName: "RedDwarf Coordinator",
     purpose:
       "Frames RedDwarf-approved work inside OpenClaw, preserves task boundaries, and delegates bounded analysis or validation work.",
+    runtimePolicy: {
+      toolProfile: "minimal",
+      allow: ["group:fs", "group:sessions", "group:memory", "group:openclaw"],
+      deny: ["group:automation", "group:messaging", "group:nodes"],
+      sandboxMode: "read_only",
+      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+    },
     bootstrapFiles: [
       {
         kind: "identity",
@@ -120,6 +127,13 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     displayName: "RedDwarf Analyst",
     purpose:
       "Performs read-only codebase analysis, planning support, and evidence-friendly synthesis inside the approved task boundary.",
+    runtimePolicy: {
+      toolProfile: "coding",
+      allow: ["group:fs", "group:memory", "group:web", "group:openclaw"],
+      deny: ["group:automation", "group:messaging"],
+      sandboxMode: "read_only",
+      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+    },
     bootstrapFiles: [
       {
         kind: "identity",
@@ -161,6 +175,13 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     displayName: "RedDwarf Validator",
     purpose:
       "Runs bounded checks, reviews evidence, and reports findings without expanding scope or mutating product code.",
+    runtimePolicy: {
+      toolProfile: "coding",
+      allow: ["group:fs", "group:runtime", "group:memory", "group:openclaw"],
+      deny: ["group:messaging"],
+      sandboxMode: "workspace_write",
+      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+    },
     bootstrapFiles: [
       {
         kind: "identity",
@@ -192,7 +213,6 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/validation.md"]
   }
 ];
-
 export function getOpenClawAgentRoleDefinition(
   role: OpenClawAgentRole
 ): OpenClawAgentRoleDefinition {
@@ -669,4 +689,6 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
     'console.log("Validated workspace contract for the validation phase.");'
   ].join("\n");
 }
+
+
 
