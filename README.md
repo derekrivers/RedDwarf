@@ -41,7 +41,7 @@ Contact the openclaw organisation if you do not have access.
 
 ### OpenClaw Control UI access
 
-If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in `.env` before starting the `openclaw` profile. The compose stack seeds [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) into the writable host-backed state directory at `runtime-data/openclaw-home`, which forces `gateway.bind` to `lan` while still letting OpenClaw persist its own runtime state.
+If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in the repo-root `.env` before starting the `openclaw` profile. The compose stack explicitly references that file with `env_file: ../../.env`, then seeds [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) into the writable host-backed state directory at `runtime-data/openclaw-home`, which forces `gateway.bind` to `lan` while still letting OpenClaw persist its own runtime state.
 
 ```bash
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>

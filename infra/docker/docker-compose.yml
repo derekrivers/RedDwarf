@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     profiles:
       - openclaw
+    env_file:
+      - ../../.env
     command:
       - sh
       - -lc
@@ -18,8 +20,6 @@ services:
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
       DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
-      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
     ports:
       - "${OPENCLAW_HOST_PORT:-3578}:18789"
@@ -42,6 +42,8 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    env_file:
+      - ../../.env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-reddwarf}
       POSTGRES_USER: ${POSTGRES_USER:-reddwarf}
