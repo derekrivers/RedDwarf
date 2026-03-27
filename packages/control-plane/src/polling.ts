@@ -1,10 +1,18 @@
-import { asIsoTimestamp, type PlanningAgent, type TaskManifest } from "@reddwarf/contracts";
+import {
+  asIsoTimestamp,
+  type PlanningAgent,
+  type TaskManifest
+} from "@reddwarf/contracts";
+import {
+  createGitHubIssuePollingCursor,
+  type PlanningRepository
+} from "@reddwarf/evidence";
 import type {
   GitHubAdapter,
+  GitHubIssueCandidate,
   GitHubIssueQuery,
   GitHubIssueState
 } from "@reddwarf/integrations";
-import type { PlanningRepository } from "@reddwarf/evidence";
 import type { PlanningPipelineLogger } from "./logger.js";
 import { runPlanningPipeline, type PlanningConcurrencyOptions } from "./pipeline.js";
 
@@ -88,6 +96,103 @@ export function createGitHubIssuePollingDaemon(
   let intervalHandle: unknown = null;
   let polling = false;
 
+  async function pollRepository(
+    repoConfig: GitHubPollingRepoConfig,
+    decisions: GitHubIssuePollingDecision[]
+  ): Promise<void> {
+    const existingCursor = await deps.repository.getGitHubIssuePollingCursor(repoConfig.repo);
+    const pollStartedAt = clock();
+    const pollStartedAtIso = asIsoTimestamp(pollStartedAt);
+
+    try {
+      const query: GitHubIssueQuery = {
+        repo: repoConfig.repo,
+        ...(repoConfig.labels !== undefined
+          ? { labels: repoConfig.labels }
+          : { labels: defaultPollingLabels }),
+        ...(repoConfig.limit !== undefined ? { limit: repoConfig.limit } : {}),
+        ...(repoConfig.states !== undefined
+          ? { states: repoConfig.states }
+          : { states: defaultGitHubIssueStates })
+      };
+      const candidates = await deps.github.listIssueCandidates(query);
+      const unseenCandidates = selectUnseenCandidates(
+        candidates,
+        existingCursor?.lastSeenIssueNumber ?? null
+      );
+
+      for (const candidate of unseenCandidates) {
+        const source: TaskManifest["source"] = {
+          provider: "github",
+          repo: candidate.repo,
+          issueNumber: candidate.issueNumber,
+          issueUrl: candidate.url
+        };
+        const existingSpec = await deps.repository.hasPlanningSpecForSource(source);
+
+        if (existingSpec) {
+          decisions.push({
+            repo: candidate.repo,
+            issueNumber: candidate.issueNumber,
+            action: "skipped",
+            reason: "existing_planning_spec"
+          });
+          continue;
+        }
+
+        const planningInput = await deps.github.convertToPlanningInput(candidate);
+        const result = await runPlanningPipeline(planningInput, {
+          repository: deps.repository,
+          planner: deps.planner,
+          ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+          clock,
+          ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
+          ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
+        });
+
+        decisions.push({
+          repo: candidate.repo,
+          issueNumber: candidate.issueNumber,
+          action: "planned",
+          taskId: result.manifest.taskId,
+          runId: result.runId
+        });
+      }
+
+      const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
+      const pollCompletedAtIso = asIsoTimestamp(clock());
+      await deps.repository.saveGitHubIssuePollingCursor(
+        createGitHubIssuePollingCursor({
+          repo: repoConfig.repo,
+          lastSeenIssueNumber:
+            lastSeenCandidate?.issueNumber ?? existingCursor?.lastSeenIssueNumber ?? null,
+          lastSeenUpdatedAt:
+            lastSeenCandidate?.updatedAt ?? existingCursor?.lastSeenUpdatedAt ?? null,
+          lastPollStartedAt: pollStartedAtIso,
+          lastPollCompletedAt: pollCompletedAtIso,
+          lastPollStatus: "succeeded",
+          lastPollError: null,
+          updatedAt: pollCompletedAtIso
+        })
+      );
+    } catch (error) {
+      const failedAtIso = asIsoTimestamp(clock());
+      await deps.repository.saveGitHubIssuePollingCursor(
+        createGitHubIssuePollingCursor({
+          repo: repoConfig.repo,
+          lastSeenIssueNumber: existingCursor?.lastSeenIssueNumber ?? null,
+          lastSeenUpdatedAt: existingCursor?.lastSeenUpdatedAt ?? null,
+          lastPollStartedAt: pollStartedAtIso,
+          lastPollCompletedAt: failedAtIso,
+          lastPollStatus: "failed",
+          lastPollError: serializePollingError(error),
+          updatedAt: failedAtIso
+        })
+      );
+      throw error;
+    }
+  }
+
   async function pollOnce(): Promise<GitHubIssuePollingCycleResult> {
     if (polling) {
       throw new Error("GitHub issue polling cycle is already running.");
@@ -99,55 +204,7 @@ export function createGitHubIssuePollingDaemon(
 
     try {
       for (const repoConfig of config.repositories) {
-        const query: GitHubIssueQuery = {
-          repo: repoConfig.repo,
-          ...(repoConfig.labels !== undefined
-            ? { labels: repoConfig.labels }
-            : { labels: defaultPollingLabels }),
-          ...(repoConfig.limit !== undefined ? { limit: repoConfig.limit } : {}),
-          ...(repoConfig.states !== undefined
-            ? { states: repoConfig.states }
-            : { states: defaultGitHubIssueStates })
-        };
-        const candidates = await deps.github.listIssueCandidates(query);
-
-        for (const candidate of candidates.sort((left, right) => left.issueNumber - right.issueNumber)) {
-          const source: TaskManifest["source"] = {
-            provider: "github",
-            repo: candidate.repo,
-            issueNumber: candidate.issueNumber,
-            issueUrl: candidate.url
-          };
-          const existing = await deps.repository.hasPlanningSpecForSource(source);
-
-          if (existing) {
-            decisions.push({
-              repo: candidate.repo,
-              issueNumber: candidate.issueNumber,
-              action: "skipped",
-              reason: "existing_planning_spec"
-            });
-            continue;
-          }
-
-          const planningInput = await deps.github.convertToPlanningInput(candidate);
-          const result = await runPlanningPipeline(planningInput, {
-            repository: deps.repository,
-            planner: deps.planner,
-            ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-            clock,
-            ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
-            ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
-          });
-
-          decisions.push({
-            repo: candidate.repo,
-            issueNumber: candidate.issueNumber,
-            action: "planned",
-            taskId: result.manifest.taskId,
-            runId: result.runId
-          });
-        }
+        await pollRepository(repoConfig, decisions);
       }
     } finally {
       polling = false;
@@ -179,7 +236,7 @@ export function createGitHubIssuePollingDaemon(
       intervalHandle = scheduler.setInterval(() => {
         void pollOnce().catch((error) =>
           deps.logger?.error("GitHub issue polling cycle failed.", {
-            error: error instanceof Error ? error.message : String(error)
+            error: serializePollingError(error)
           })
         );
       }, config.intervalMs);
@@ -200,3 +257,19 @@ export function createGitHubIssuePollingDaemon(
   };
 }
 
+function selectUnseenCandidates(
+  candidates: GitHubIssueCandidate[],
+  lastSeenIssueNumber: number | null
+): GitHubIssueCandidate[] {
+  return candidates
+    .filter((candidate) =>
+      lastSeenIssueNumber === null
+        ? true
+        : candidate.issueNumber > lastSeenIssueNumber
+    )
+    .sort((left, right) => left.issueNumber - right.issueNumber);
+}
+
+function serializePollingError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

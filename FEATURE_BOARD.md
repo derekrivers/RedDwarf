@@ -57,7 +57,7 @@ The board is ordered by implementation priority.
 | 51       | End-to-end local demo runbook targeting a real GitHub repository with live inputs and outputs | M8 | completed | System Context, Refactored Workflow                                   |
 | 52       | README improvements covering Windows host configuration, registry access, and boot health check | M8 | completed | System Context                                                        |
 | 53       | GitHub issue polling daemon with configurable interval and deduplication against existing planning specs | M9 | completed | Integration Plane, Control Plane                                      |
-| 54       | Polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure | M9 | pending | Integration Plane, Evidence Plane, Observability Model                |
+| 54       | Polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure | M9 | completed | Integration Plane, Evidence Plane, Observability Model                |
 | 55       | OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents | M9 | pending | Knowledge & Policy Plane, Execution Plane, Isolation and Security Model |
 | 56       | Per-agent tool policy specification with profiles, allow/deny lists, sandbox settings, and Anthropic model binding | M9 | pending | Knowledge & Policy Plane, Isolation and Security Model                |
 | 57       | openclaw.json generation from RedDwarf policy configuration with per-agent workspace paths, tool profiles, and skipBootstrap | M10 | pending | System Context, Knowledge & Policy Plane, Integration Plane           |

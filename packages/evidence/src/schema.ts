@@ -12,6 +12,7 @@ import {
   pipelineRunStatuses,
   riskClasses,
   taskLifecycleStatuses,
+  githubIssuePollingCursorStatuses,
   taskPhases
 } from "@reddwarf/contracts";
 import { integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
@@ -23,6 +24,7 @@ export const riskClassEnum = pgEnum("risk_class", riskClasses);
 export const approvalModeEnum = pgEnum("approval_mode", approvalModes);
 export const approvalRequestStatusEnum = pgEnum("approval_request_status", approvalRequestStatuses);
 export const approvalDecisionEnum = pgEnum("approval_decision", approvalDecisions);
+export const githubIssuePollingCursorStatusEnum = pgEnum("github_issue_polling_cursor_status", githubIssuePollingCursorStatuses);
 export const evidenceKindEnum = pgEnum("evidence_kind", evidenceKinds);
 export const eventLevelEnum = pgEnum("event_level", eventLevels);
 export const failureClassEnum = pgEnum("failure_class", failureClasses);
@@ -168,4 +170,16 @@ export const approvalRequestsTable = pgTable("approval_requests", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true })
 });
+
+export const githubIssuePollingCursorsTable = pgTable("github_issue_polling_cursors", {
+  repo: text("repo").primaryKey(),
+  lastSeenIssueNumber: integer("last_seen_issue_number"),
+  lastSeenUpdatedAt: timestamp("last_seen_updated_at", { withTimezone: true }),
+  lastPollStartedAt: timestamp("last_poll_started_at", { withTimezone: true }),
+  lastPollCompletedAt: timestamp("last_poll_completed_at", { withTimezone: true }),
+  lastPollStatus: githubIssuePollingCursorStatusEnum("last_poll_status"),
+  lastPollError: text("last_poll_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
+});
+
 

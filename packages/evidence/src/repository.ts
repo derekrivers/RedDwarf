@@ -14,6 +14,7 @@ import {
   type ApprovalRequestQuery,
   type ConcurrencyStrategy,
   type EvidenceRecord,
+  type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryQuery,
   type MemoryRecord,
@@ -38,11 +39,13 @@ export interface PlanningCommandRepository {
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+  saveGitHubIssuePollingCursor(cursor: GitHubIssuePollingCursor): Promise<void>;
 }
 
 export interface PlanningQueryRepository {
   getManifest(taskId: string): Promise<TaskManifest | null>;
   getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
+  getGitHubIssuePollingCursor(repo: string): Promise<GitHubIssuePollingCursor | null>;
   hasPlanningSpecForSource(source: TaskManifest["source"]): Promise<boolean>;
   getPlanningSpec(taskId: string): Promise<PlanningSpec | null>;
   getPolicySnapshot(taskId: string): Promise<PolicySnapshot | null>;
@@ -51,6 +54,7 @@ export interface PlanningQueryRepository {
   listEvidenceRecords(taskId: string): Promise<EvidenceRecord[]>;
   listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]>;
   listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
+  listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]>;
   listApprovalRequests(
     query?: Partial<ApprovalRequestQuery>
   ): Promise<ApprovalRequest[]>;
@@ -89,6 +93,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly memoryRecords: MemoryRecord[] = [];
   public readonly pipelineRuns = new Map<string, PipelineRun>();
   public readonly approvalRequests = new Map<string, ApprovalRequest>();
+  public readonly githubIssuePollingCursors = new Map<string, GitHubIssuePollingCursor>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -142,12 +147,22 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.approvalRequests.set(request.requestId, request);
   }
 
+  async saveGitHubIssuePollingCursor(
+    cursor: GitHubIssuePollingCursor
+  ): Promise<void> {
+    this.githubIssuePollingCursors.set(cursor.repo, cursor);
+  }
+
   async getManifest(taskId: string): Promise<TaskManifest | null> {
     return this.manifests.get(taskId) ?? null;
   }
 
   async getApprovalRequest(requestId: string): Promise<ApprovalRequest | null> {
     return this.approvalRequests.get(requestId) ?? null;
+  }
+
+  async getGitHubIssuePollingCursor(repo: string): Promise<GitHubIssuePollingCursor | null> {
+    return this.githubIssuePollingCursors.get(repo) ?? null;
   }
 
   async hasPlanningSpecForSource(
@@ -256,6 +271,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       )
       .sort(compareApprovalRequests)
       .slice(0, parsed.limit);
+  }
+
+  async listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]> {
+    return [...this.githubIssuePollingCursors.values()].sort((left, right) =>
+      left.repo.localeCompare(right.repo)
+    );
   }
 
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
@@ -379,4 +400,5 @@ export function compareApprovalRequests(
     ? created
     : left.requestId.localeCompare(right.requestId);
 }
+
 

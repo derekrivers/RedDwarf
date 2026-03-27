@@ -6,6 +6,7 @@ import {
 import {
   type ApprovalDecision,
   type ApprovalRequest,
+  type GitHubIssuePollingCursor,
   type PipelineRun
 } from "@reddwarf/contracts";
 import { type PlanningRepository } from "@reddwarf/evidence";
@@ -30,6 +31,19 @@ export interface OperatorBlockedSummary {
   pendingApprovals: ApprovalRequest[];
   totalBlockedRuns: number;
   totalPendingApprovals: number;
+}
+
+export interface OperatorPollingHealthSummary {
+  status: "idle" | "healthy" | "degraded";
+  repositories: GitHubIssuePollingCursor[];
+  totalRepositories: number;
+  failingRepositories: number;
+}
+
+export interface OperatorHealthResponse {
+  status: "ok";
+  timestamp: string;
+  polling: OperatorPollingHealthSummary;
 }
 
 export interface OperatorApiServer {
@@ -154,10 +168,14 @@ async function handleOperatorRequest(
 
   // GET /health
   if (method === "GET" && path === "/health") {
-    writeOperatorJsonResponse(res, 200, {
+    const response: OperatorHealthResponse = {
       status: "ok",
-      timestamp: clock().toISOString()
-    });
+      timestamp: clock().toISOString(),
+      polling: summarizePollingHealth(
+        await repository.listGitHubIssuePollingCursors()
+      )
+    };
+    writeOperatorJsonResponse(res, 200, response);
     return;
   }
 
@@ -312,4 +330,24 @@ async function handleOperatorRequest(
     error: "not_found",
     message: "Route not found."
   });
+}
+
+function summarizePollingHealth(
+  repositories: GitHubIssuePollingCursor[]
+): OperatorPollingHealthSummary {
+  const failingRepositories = repositories.filter(
+    (record) => record.lastPollStatus === "failed"
+  ).length;
+
+  return {
+    status:
+      repositories.length === 0
+        ? "idle"
+        : failingRepositories > 0
+          ? "degraded"
+          : "healthy",
+    repositories,
+    totalRepositories: repositories.length,
+    failingRepositories
+  };
 }

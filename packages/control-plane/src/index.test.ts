@@ -1331,6 +1331,12 @@ describe("operator API server", () => {
       expect((health.body as Record<string, unknown>)["timestamp"]).toBe(
         "2026-03-26T12:00:00.000Z"
       );
+      expect(
+        ((health.body as Record<string, unknown>)["polling"] as Record<string, unknown>)["status"]
+      ).toBe("idle");
+      expect(
+        ((health.body as Record<string, unknown>)["polling"] as Record<string, unknown>)["totalRepositories"]
+      ).toBe(0);
 
       const runs = await operatorGet(port, "/runs");
       expect(runs.status).toBe(200);
@@ -1357,6 +1363,42 @@ describe("operator API server", () => {
     }
   });
 
+
+  it("includes polling cursor health in the /health response", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveGitHubIssuePollingCursor({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 42,
+      lastSeenUpdatedAt: "2026-03-27T10:00:00.000Z",
+      lastPollStartedAt: "2026-03-27T10:00:01.000Z",
+      lastPollCompletedAt: "2026-03-27T10:00:05.000Z",
+      lastPollStatus: "succeeded",
+      lastPollError: null,
+      updatedAt: "2026-03-27T10:00:05.000Z"
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1" },
+      { repository, clock: () => new Date("2026-03-27T10:01:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const health = await operatorGet(port, "/health");
+      const polling = (health.body as Record<string, unknown>)["polling"] as Record<string, unknown>;
+      const repositories = polling["repositories"] as Array<Record<string, unknown>>;
+
+      expect(health.status).toBe(200);
+      expect(polling["status"]).toBe("healthy");
+      expect(polling["totalRepositories"]).toBe(1);
+      expect(polling["failingRepositories"]).toBe(0);
+      expect(repositories[0]?.["repo"]).toBe("acme/platform");
+      expect(repositories[0]?.["lastSeenIssueNumber"]).toBe(42);
+    } finally {
+      await apiServer.stop();
+    }
+  });
   it("returns runs and approvals filtered by status after a planning run", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(
@@ -1612,6 +1654,79 @@ describe("GitHub issue polling daemon", () => {
     expect(repository.planningSpecs.size).toBe(1);
   });
 
+
+  it("advances per-repo cursors and only ingests newer issues", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveGitHubIssuePollingCursor({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 71,
+      lastSeenUpdatedAt: "2026-03-27T08:59:00.000Z",
+      lastPollStartedAt: "2026-03-27T08:59:00.000Z",
+      lastPollCompletedAt: "2026-03-27T08:59:10.000Z",
+      lastPollStatus: "succeeded",
+      lastPollError: null,
+      updatedAt: "2026-03-27T08:59:10.000Z"
+    });
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 71,
+          title: "Already seen",
+          body: "Previously seen issue.",
+          labels: ["ai-eligible"],
+          url: "https://github.com/acme/platform/issues/71",
+          state: "open",
+          updatedAt: "2026-03-27T08:59:00.000Z"
+        },
+        {
+          repo: "acme/platform",
+          issueNumber: 72,
+          title: "New issue",
+          body: [
+            "This issue should advance the polling cursor.",
+            "",
+            "Acceptance Criteria:",
+            "- Only newer issues are planned"
+          ].join("\n"),
+          labels: ["ai-eligible", "priority:4"],
+          url: "https://github.com/acme/platform/issues/72",
+          state: "open",
+          updatedAt: "2026-03-27T09:02:00.000Z"
+        }
+      ]
+    });
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-27T09:03:00.000Z"),
+        idGenerator: () => "poll-run-cursor-001"
+      }
+    );
+
+    const cycle = await daemon.pollOnce();
+    const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
+
+    expect(cycle.decisions).toHaveLength(1);
+    expect(cycle.decisions[0]).toMatchObject({
+      repo: "acme/platform",
+      issueNumber: 72,
+      action: "planned"
+    });
+    expect(cursor).toMatchObject({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 72,
+      lastSeenUpdatedAt: "2026-03-27T09:02:00.000Z",
+      lastPollStatus: "succeeded"
+    });
+  });
   it("skips issues that already have a persisted planning spec", async () => {
     const repository = new InMemoryPlanningRepository();
     const github = new FixtureGitHubAdapter({
@@ -1886,4 +2001,5 @@ describe("knowledge ingestion pipeline", () => {
     ).toBe(true);
   });
 });
+
 

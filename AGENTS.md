@@ -236,6 +236,7 @@ Do not invent new command flows when the repository already provides a standard 
 - keep commits focused on the workflow being delivered
 - summarize assumptions only after execution unless a stop condition is hit
 - when deduplicating GitHub issue intake, key off persisted planning specs for the source issue rather than task-manifest existence so failed or partial intake runs can still be replanned
+- after evidence-schema changes, run `node scripts/apply-sql-migrations.mjs` before Postgres-backed verify scripts so the live database schema matches the new repository code
 
 While iterating, use the narrowest reliable feedback loop available. Before final handoff, expand verification to the most relevant broader checks needed to support confidence in the delivered change.
 

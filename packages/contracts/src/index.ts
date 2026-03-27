@@ -122,6 +122,7 @@ export const approvalRequestStatuses = [
   "cancelled"
 ] as const;
 export const approvalDecisions = ["approve", "reject"] as const;
+export const githubIssuePollingCursorStatuses = ["succeeded", "failed"] as const;
 
 const isoDateTimeSchema = z.string().datetime({ offset: true });
 
@@ -162,6 +163,7 @@ export const workspaceToolModeSchema = z.enum(workspaceToolModes);
 export const workspaceCredentialModeSchema = z.enum(workspaceCredentialModes);
 export const approvalRequestStatusSchema = z.enum(approvalRequestStatuses);
 export const approvalDecisionSchema = z.enum(approvalDecisions);
+export const githubIssuePollingCursorStatusSchema = z.enum(githubIssuePollingCursorStatuses);
 
 export const sourceRefSchema = z.object({
   provider: z.literal("github"),
@@ -327,6 +329,17 @@ export const approvalRequestQuerySchema = z.object({
   runId: z.string().min(1).optional(),
   statuses: z.array(approvalRequestStatusSchema).default([]),
   limit: z.number().int().positive().max(100).default(50)
+});
+
+export const githubIssuePollingCursorSchema = z.object({
+  repo: z.string().min(1),
+  lastSeenIssueNumber: z.number().int().positive().nullable(),
+  lastSeenUpdatedAt: isoDateTimeSchema.nullable(),
+  lastPollStartedAt: isoDateTimeSchema.nullable(),
+  lastPollCompletedAt: isoDateTimeSchema.nullable(),
+  lastPollStatus: githubIssuePollingCursorStatusSchema.nullable(),
+  lastPollError: z.string().min(1).nullable(),
+  updatedAt: isoDateTimeSchema
 });
 
 export const runEventSchema = z.object({
@@ -544,6 +557,8 @@ export type ApprovalRequestStatus = z.infer<typeof approvalRequestStatusSchema>;
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 export type ApprovalRequestQuery = z.infer<typeof approvalRequestQuerySchema>;
+export type GitHubIssuePollingCursorStatus = z.infer<typeof githubIssuePollingCursorStatusSchema>;
+export type GitHubIssuePollingCursor = z.infer<typeof githubIssuePollingCursorSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
@@ -704,3 +719,4 @@ export interface ScmAgent {
     }
   ): Promise<ScmDraft>;
 }
+

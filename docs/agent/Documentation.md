@@ -130,4 +130,12 @@
 - Verification for F53: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/evidence/src/index.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure).
 - Updated the feature board so feature 53 is marked complete and feature 54 is now the next actionable M9 item.
 - Likely next board item: feature 54, polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure.
+- Completed feature 54 from `FEATURE_BOARD.md`: polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure.
+- Added `GitHubIssuePollingCursor` contracts, evidence persistence, and SQL migration support so each polled repository now stores `lastSeenIssueNumber`, poll timestamps, success or failure status, and the last poll error in both in-memory and Postgres repositories.
+- Updated `createGitHubIssuePollingDaemon` to read and persist per-repo cursors, plan only unseen issue numbers, and record failed poll attempts without losing the previous last-seen checkpoint.
+- Expanded the operator API `GET /health` response to include polling health summary data for all persisted repositories, including degraded status when any repo has a failed last poll.
+- Verification for F54: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts packages/evidence/src/index.test.ts`; `node scripts/apply-sql-migrations.mjs`; `corepack pnpm verify:operator-api`.
+- Environment note: after evidence-schema changes, run `node scripts/apply-sql-migrations.mjs` before Postgres-backed verify scripts or the live database may be missing newly added tables.
+- Updated the feature board so feature 54 is marked complete and feature 55 is now the next actionable M9 item.
+- Likely next board item: feature 55, OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents.
 

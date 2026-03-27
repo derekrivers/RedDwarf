@@ -15,6 +15,7 @@ import {
   type ConcurrencyStrategy,
   type EvidenceRecord,
   type FailureClass,
+  type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryQuery,
   type MemoryRecord,
@@ -485,6 +486,43 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
+  async saveGitHubIssuePollingCursor(
+    cursor: GitHubIssuePollingCursor
+  ): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO github_issue_polling_cursors (
+          repo,
+          last_seen_issue_number,
+          last_seen_updated_at,
+          last_poll_started_at,
+          last_poll_completed_at,
+          last_poll_status,
+          last_poll_error,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (repo) DO UPDATE SET
+          last_seen_issue_number = EXCLUDED.last_seen_issue_number,
+          last_seen_updated_at = EXCLUDED.last_seen_updated_at,
+          last_poll_started_at = EXCLUDED.last_poll_started_at,
+          last_poll_completed_at = EXCLUDED.last_poll_completed_at,
+          last_poll_status = EXCLUDED.last_poll_status,
+          last_poll_error = EXCLUDED.last_poll_error,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        cursor.repo,
+        cursor.lastSeenIssueNumber,
+        cursor.lastSeenUpdatedAt,
+        cursor.lastPollStartedAt,
+        cursor.lastPollCompletedAt,
+        cursor.lastPollStatus,
+        cursor.lastPollError,
+        cursor.updatedAt
+      ]
+    );
+  }
+
   async getManifest(taskId: string): Promise<TaskManifest | null> {
     const result = await this.pool.query(
       "SELECT * FROM task_manifests WHERE task_id = $1",
@@ -499,6 +537,16 @@ export class PostgresPlanningRepository implements PlanningRepository {
       [requestId]
     );
     return result.rows[0] ? mapApprovalRequestRow(result.rows[0]) : null;
+  }
+
+  async getGitHubIssuePollingCursor(
+    repo: string
+  ): Promise<GitHubIssuePollingCursor | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM github_issue_polling_cursors WHERE repo = $1",
+      [repo]
+    );
+    return result.rows[0] ? mapGitHubIssuePollingCursorRow(result.rows[0]) : null;
   }
 
   async hasPlanningSpecForSource(
@@ -690,6 +738,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
 
     return result.rows.map(mapPipelineRunRow);
+  }
+
+  async listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM github_issue_polling_cursors ORDER BY repo ASC"
+    );
+
+    return result.rows.map(mapGitHubIssuePollingCursorRow);
   }
 
   async listApprovalRequests(
@@ -919,6 +975,30 @@ function mapPipelineRunRow(row: Record<string, unknown>): PipelineRun {
         : asIsoTimestamp(new Date(row.stale_at as string | Date)),
     metadata: (row.metadata as Record<string, unknown>) ?? {}
   });
+}
+
+function mapGitHubIssuePollingCursorRow(
+  row: Record<string, unknown>
+): GitHubIssuePollingCursor {
+  return {
+    repo: row.repo as string,
+    lastSeenIssueNumber: (row.last_seen_issue_number as number | null) ?? null,
+    lastSeenUpdatedAt:
+      row.last_seen_updated_at === null || row.last_seen_updated_at === undefined
+        ? null
+        : asIsoTimestamp(new Date(row.last_seen_updated_at as string | Date)),
+    lastPollStartedAt:
+      row.last_poll_started_at === null || row.last_poll_started_at === undefined
+        ? null
+        : asIsoTimestamp(new Date(row.last_poll_started_at as string | Date)),
+    lastPollCompletedAt:
+      row.last_poll_completed_at === null || row.last_poll_completed_at === undefined
+        ? null
+        : asIsoTimestamp(new Date(row.last_poll_completed_at as string | Date)),
+    lastPollStatus: (row.last_poll_status as GitHubIssuePollingCursor["lastPollStatus"]) ?? null,
+    lastPollError: (row.last_poll_error as string | null) ?? null,
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  };
 }
 
 function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {

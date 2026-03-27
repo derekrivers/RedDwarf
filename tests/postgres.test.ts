@@ -783,4 +783,29 @@ describeIfDatabase("postgres planning repository", () => {
       pipelineRuns.find((run) => run.runId === `blocked-${issueNumber}`)?.status
     ).toBe("blocked");
   });
+  it("persists GitHub polling cursors in Postgres", async () => {
+    const repo = `polling-${Date.now()}/platform`;
+
+    await repository.saveGitHubIssuePollingCursor({
+      repo,
+      lastSeenIssueNumber: 88,
+      lastSeenUpdatedAt: "2026-03-27T10:00:00.000Z",
+      lastPollStartedAt: "2026-03-27T10:01:00.000Z",
+      lastPollCompletedAt: "2026-03-27T10:01:05.000Z",
+      lastPollStatus: "succeeded",
+      lastPollError: null,
+      updatedAt: "2026-03-27T10:01:05.000Z"
+    });
+
+    const cursor = await repository.getGitHubIssuePollingCursor(repo);
+    const cursors = await repository.listGitHubIssuePollingCursors();
+
+    expect(cursor).toMatchObject({
+      repo,
+      lastSeenIssueNumber: 88,
+      lastPollStatus: "succeeded"
+    });
+    expect(cursors.some((entry) => entry.repo === repo)).toBe(true);
+  });
 });
+

@@ -106,6 +106,39 @@ describe("evidence memory partitions", () => {
     expect(activeRuns).toHaveLength(1);
   });
 
+
+  it("stores and lists GitHub issue polling cursors", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveGitHubIssuePollingCursor({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 88,
+      lastSeenUpdatedAt: timestamp,
+      lastPollStartedAt: timestamp,
+      lastPollCompletedAt: timestamp,
+      lastPollStatus: "succeeded",
+      lastPollError: null,
+      updatedAt: timestamp
+    });
+
+    await expect(repository.getGitHubIssuePollingCursor("acme/platform")).resolves.toMatchObject({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 88,
+      lastPollStatus: "succeeded"
+    });
+    await expect(repository.listGitHubIssuePollingCursors()).resolves.toEqual([
+      {
+        repo: "acme/platform",
+        lastSeenIssueNumber: 88,
+        lastSeenUpdatedAt: timestamp,
+        lastPollStartedAt: timestamp,
+        lastPollCompletedAt: timestamp,
+        lastPollStatus: "succeeded",
+        lastPollError: null,
+        updatedAt: timestamp
+      }
+    ]);
+  });
   it("detects persisted planning specs by GitHub source for polling dedupe", async () => {
     const repository = new InMemoryPlanningRepository();
 
@@ -167,4 +200,5 @@ describe("evidence memory partitions", () => {
     ).resolves.toBe(false);
   });
 });
+
 

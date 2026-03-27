@@ -6,15 +6,15 @@ import {
   resolveApprovalRequest,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 
 const connectionString =
   process.env.HOST_DATABASE_URL ??
   process.env.DATABASE_URL ??
   "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf";
-const issueNumber = Date.now();
+const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString);
 
 function apiGet(port, path) {
   return new Promise((resolve, reject) => {
@@ -75,7 +75,18 @@ const apiServer = createOperatorApiServer(
 );
 
 try {
-  // Seed a blocked task requiring human approval
+  await repository.saveGitHubIssuePollingCursor({
+    repo,
+    lastSeenIssueNumber: issueNumber,
+    lastSeenUpdatedAt: "2026-03-26T11:59:00.000Z",
+    lastPollStartedAt: "2026-03-26T11:59:30.000Z",
+    lastPollCompletedAt: "2026-03-26T11:59:45.000Z",
+    lastPollStatus: "succeeded",
+    lastPollError: null,
+    updatedAt: "2026-03-26T11:59:45.000Z"
+  });
+
+  // Seed a blocked task requiring human approval.
   const planResult = await runPlanningPipeline(
     {
       source: {
@@ -117,6 +128,10 @@ try {
   assert.equal(health.status, 200);
   assert.equal(health.body.status, "ok");
   assert.equal(health.body.timestamp, "2026-03-26T12:00:00.000Z");
+  assert.equal(health.body.polling.status, "healthy");
+  assert.equal(health.body.polling.totalRepositories, 1);
+  assert.equal(health.body.polling.repositories[0].repo, repo);
+  assert.equal(health.body.polling.repositories[0].lastSeenIssueNumber, issueNumber);
 
   // GET /runs?taskId=...
   const runsForTask = await apiGet(port, `/runs?taskId=${taskId}`);
@@ -238,6 +253,7 @@ try {
         port,
         runsTotal: runsForTask.body.total,
         evidenceTotal: evidence.body.total,
+        pollingRepositories: health.body.polling.totalRepositories,
         resolvedApprovalStatus: resolved.body.approval.status,
         manifestLifecycleAfterResolve: resolved.body.manifest.lifecycleStatus
       },
@@ -249,3 +265,6 @@ try {
   await apiServer.stop().catch(() => {});
   await repository.close();
 }
+
+
+

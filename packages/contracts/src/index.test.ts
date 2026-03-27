@@ -13,7 +13,8 @@ import {
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
   approvalRequestSchema,
-  approvalRequestQuerySchema
+  approvalRequestQuerySchema,
+  githubIssuePollingCursorSchema
 } from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
@@ -96,6 +97,23 @@ describe("contracts", () => {
     });
 
     expect(bundle.policySnapshot.blockedPhases).toEqual(["review"]);
+  });
+
+
+  it("parses a GitHub issue polling cursor", () => {
+    const cursor = githubIssuePollingCursorSchema.parse({
+      repo: "acme/platform",
+      lastSeenIssueNumber: 88,
+      lastSeenUpdatedAt: timestamp,
+      lastPollStartedAt: timestamp,
+      lastPollCompletedAt: timestamp,
+      lastPollStatus: "succeeded",
+      lastPollError: null,
+      updatedAt: timestamp
+    });
+
+    expect(cursor.lastSeenIssueNumber).toBe(88);
+    expect(cursor.lastPollStatus).toBe("succeeded");
   });
 
   it("parses a runtime instruction layer", () => {
@@ -538,3 +556,4 @@ describe("contracts", () => {
     expect(decision.action).toBe("block");
   });
 });
+

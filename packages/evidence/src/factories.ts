@@ -9,6 +9,7 @@ import {
   type ConcurrencyStrategy,
   type EvidenceRecord,
   type FailureClass,
+  type GitHubIssuePollingCursor,
   type MemoryRecord,
   type PipelineRun,
   type RunEvent,
@@ -183,3 +184,25 @@ export function createApprovalRequest(input: {
     resolvedAt: input.resolvedAt ?? null
   });
 }
+export function createGitHubIssuePollingCursor(input: {
+  repo: string;
+  lastSeenIssueNumber?: number | null;
+  lastSeenUpdatedAt?: string | null;
+  lastPollStartedAt?: string | null;
+  lastPollCompletedAt?: string | null;
+  lastPollStatus?: GitHubIssuePollingCursor["lastPollStatus"];
+  lastPollError?: string | null;
+  updatedAt?: string;
+}): GitHubIssuePollingCursor {
+  return {
+    repo: input.repo,
+    lastSeenIssueNumber: input.lastSeenIssueNumber ?? null,
+    lastSeenUpdatedAt: input.lastSeenUpdatedAt ?? null,
+    lastPollStartedAt: input.lastPollStartedAt ?? null,
+    lastPollCompletedAt: input.lastPollCompletedAt ?? null,
+    lastPollStatus: input.lastPollStatus ?? null,
+    lastPollError: input.lastPollError ?? null,
+    updatedAt: input.updatedAt ?? asIsoTimestamp()
+  };
+}
+
