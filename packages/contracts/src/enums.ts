@@ -1,0 +1,217 @@
+import { z } from "zod";
+
+export const taskPhases = [
+  "intake",
+  "eligibility",
+  "planning",
+  "policy_gate",
+  "development",
+  "validation",
+  "review",
+  "scm",
+  "archive"
+] as const;
+
+export const taskLifecycleStatuses = [
+  "draft",
+  "ready",
+  "active",
+  "blocked",
+  "completed",
+  "failed",
+  "cancelled"
+] as const;
+
+export const phaseLifecycleStatuses = [
+  "pending",
+  "running",
+  "passed",
+  "failed",
+  "escalated",
+  "skipped"
+] as const;
+
+export const riskClasses = ["low", "medium", "high"] as const;
+export const approvalModes = [
+  "auto",
+  "review_required",
+  "human_signoff_required",
+  "disallowed"
+] as const;
+
+export const v1DisabledPhases = ["review"] as const satisfies readonly (typeof taskPhases)[number][];
+
+export const capabilities = [
+  "can_plan",
+  "can_write_code",
+  "can_run_tests",
+  "can_open_pr",
+  "can_modify_schema",
+  "can_touch_sensitive_paths",
+  "can_use_secrets",
+  "can_review",
+  "can_archive_evidence"
+] as const;
+
+export const agentTypes = [
+  "architect",
+  "developer",
+  "validation",
+  "reviewer",
+  "scm"
+] as const;
+
+export const evidenceKinds = [
+  "manifest",
+  "planning_spec",
+  "phase_record",
+  "gate_decision",
+  "run_event",
+  "file_artifact"
+] as const;
+
+export const eventLevels = ["info", "warn", "error"] as const;
+export const memoryScopes = [
+  "task",
+  "project",
+  "organization",
+  "external"
+] as const;
+export const memoryProvenances = [
+  "human_curated",
+  "pipeline_derived",
+  "external_retrieval"
+] as const;
+export const policyPackEntryKinds = ["directory", "file"] as const;
+export const concurrencyStrategies = ["serialize", "escalate"] as const;
+export const pipelineRunStatuses = [
+  "active",
+  "completed",
+  "blocked",
+  "failed",
+  "stale",
+  "cancelled"
+] as const;
+export const overlapActions = ["start", "block"] as const;
+export const failureClasses = [
+  "planning_failure",
+  "validation_failure",
+  "review_failure",
+  "integration_failure",
+  "merge_failure",
+  "policy_violation",
+  "execution_loop"
+] as const;
+export const pipelineRunStatusesForSummary = [
+  "completed",
+  "blocked",
+  "failed"
+] as const;
+export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
+export const workspaceToolModes = [
+  "planning_only",
+  "development_readonly",
+  "validation_only",
+  "scm_only"
+] as const;
+export const workspaceCredentialModes = ["none", "scoped_env"] as const;
+export const approvalRequestStatuses = [
+  "pending",
+  "approved",
+  "rejected",
+  "cancelled"
+] as const;
+export const approvalDecisions = ["approve", "reject"] as const;
+export const githubIssuePollingCursorStatuses = ["succeeded", "failed"] as const;
+
+export const openClawAgentRoles = ["coordinator", "analyst", "validator"] as const;
+export const openClawBootstrapFileKinds = [
+  "identity",
+  "soul",
+  "agents",
+  "tools",
+  "skill"
+] as const;
+export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
+export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
+
+// ── Shared utility schemas ──────────────────────────────────────────────────
+
+export const isoDateTimeSchema = z.string().datetime({ offset: true });
+
+export const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(jsonValueSchema)
+  ])
+);
+
+// ── Enum schemas ────────────────────────────────────────────────────────────
+
+export const taskPhaseSchema = z.enum(taskPhases);
+export const taskLifecycleStatusSchema = z.enum(taskLifecycleStatuses);
+export const phaseLifecycleStatusSchema = z.enum(phaseLifecycleStatuses);
+export const riskClassSchema = z.enum(riskClasses);
+export const approvalModeSchema = z.enum(approvalModes);
+export const capabilitySchema = z.enum(capabilities);
+export const agentTypeSchema = z.enum(agentTypes);
+export const evidenceKindSchema = z.enum(evidenceKinds);
+export const eventLevelSchema = z.enum(eventLevels);
+export const memoryScopeSchema = z.enum(memoryScopes);
+export const memoryProvenanceSchema = z.enum(memoryProvenances);
+export const policyPackEntryKindSchema = z.enum(policyPackEntryKinds);
+export const concurrencyStrategySchema = z.enum(concurrencyStrategies);
+export const pipelineRunStatusSchema = z.enum(pipelineRunStatuses);
+export const overlapActionSchema = z.enum(overlapActions);
+export const failureClassSchema = z.enum(failureClasses);
+export const pipelineRunStatusSummarySchema = z.enum(
+  pipelineRunStatusesForSummary
+);
+export const workspaceLifecycleStatusSchema = z.enum(
+  workspaceLifecycleStatuses
+);
+export const workspaceToolModeSchema = z.enum(workspaceToolModes);
+export const workspaceCredentialModeSchema = z.enum(workspaceCredentialModes);
+export const approvalRequestStatusSchema = z.enum(approvalRequestStatuses);
+export const approvalDecisionSchema = z.enum(approvalDecisions);
+export const githubIssuePollingCursorStatusSchema = z.enum(githubIssuePollingCursorStatuses);
+export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
+export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
+export const openClawToolProfileSchema = z.enum(openClawToolProfiles);
+export const openClawSandboxModeSchema = z.enum(openClawSandboxModes);
+
+// ── Enum type exports ───────────────────────────────────────────────────────
+
+export type TaskPhase = z.infer<typeof taskPhaseSchema>;
+export type TaskLifecycleStatus = z.infer<typeof taskLifecycleStatusSchema>;
+export type PhaseLifecycleStatus = z.infer<typeof phaseLifecycleStatusSchema>;
+export type RiskClass = z.infer<typeof riskClassSchema>;
+export type ApprovalMode = z.infer<typeof approvalModeSchema>;
+export type Capability = z.infer<typeof capabilitySchema>;
+export type AgentType = z.infer<typeof agentTypeSchema>;
+export type WorkspaceLifecycleStatus = z.infer<typeof workspaceLifecycleStatusSchema>;
+export type WorkspaceToolMode = z.infer<typeof workspaceToolModeSchema>;
+export type WorkspaceCredentialMode = z.infer<typeof workspaceCredentialModeSchema>;
+export type ApprovalRequestStatus = z.infer<typeof approvalRequestStatusSchema>;
+export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+export type GitHubIssuePollingCursorStatus = z.infer<typeof githubIssuePollingCursorStatusSchema>;
+export type MemoryProvenance = z.infer<typeof memoryProvenanceSchema>;
+export type ConcurrencyStrategy = z.infer<typeof concurrencyStrategySchema>;
+export type PipelineRunStatus = z.infer<typeof pipelineRunStatusSchema>;
+export type OverlapAction = z.infer<typeof overlapActionSchema>;
+export type FailureClass = z.infer<typeof failureClassSchema>;
+export type PipelineRunStatusSummary = z.infer<typeof pipelineRunStatusSummarySchema>;
+export type OpenClawAgentRole = z.infer<typeof openClawAgentRoleSchema>;
+export type OpenClawBootstrapFileKind = z.infer<typeof openClawBootstrapFileKindSchema>;
+export type OpenClawToolProfile = z.infer<typeof openClawToolProfileSchema>;
+export type OpenClawSandboxMode = z.infer<typeof openClawSandboxModeSchema>;
+
+// ── Utility ─────────────────────────────────────────────────────────────────
+
+export function asIsoTimestamp(date: Date = new Date()): string {
+  return date.toISOString();
+}
