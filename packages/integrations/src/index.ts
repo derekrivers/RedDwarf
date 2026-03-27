@@ -1040,6 +1040,142 @@ export class RestGitHubAdapter implements GitHubAdapter {
   }
 }
 
+// ============================================================
+// EnvVarSecretsAdapter — env-variable-backed secrets implementation
+// ============================================================
+
+export interface EnvVarSecretsAdapterOptions {
+  /**
+   * Prefix for environment variable names. Defaults to "REDDWARF_SECRET_".
+   * A secret named "db_password" with the default prefix would be read from
+   * the environment variable REDDWARF_SECRET_DB_PASSWORD.
+   */
+  prefix?: string;
+  /**
+   * Explicit map of scope name → environment variables for that scope.
+   * When provided, issueTaskSecrets only injects variables for scopes
+   * listed here. Unrecognised scopes are silently skipped.
+   */
+  scopes?: Record<string, Record<string, string>>;
+}
+
+/**
+ * A concrete SecretsAdapter implementation that reads secret values from
+ * environment variables. Suitable for local development and CI environments
+ * where secrets are injected as env vars rather than a dedicated vault.
+ *
+ * For production workloads, replace this adapter with a vault-backed
+ * implementation that implements the same SecretsAdapter interface.
+ */
+export class EnvVarSecretsAdapter implements SecretsAdapter {
+  private readonly prefix: string;
+  private readonly scopeMap: Map<string, Record<string, string>>;
+
+  constructor(options: EnvVarSecretsAdapterOptions = {}) {
+    this.prefix = options.prefix ?? "REDDWARF_SECRET_";
+    this.scopeMap = new Map(
+      options.scopes !== undefined ? Object.entries(options.scopes) : []
+    );
+  }
+
+  async requestSecret(name: string): Promise<string> {
+    const envKey = `${this.prefix}${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+    const value = process.env[envKey];
+    if (value === undefined) {
+      throw new Error(
+        `EnvVarSecretsAdapter: no environment variable "${envKey}" found for secret "${name}".`
+      );
+    }
+    return value;
+  }
+
+  async issueTaskSecrets(request: SecretLeaseRequest): Promise<SecretLease | null> {
+    if (
+      request.allowedSecretScopes.length === 0 ||
+      !request.requestedCapabilities.includes("can_use_secrets")
+    ) {
+      return null;
+    }
+
+    const issuedScopes: string[] = [];
+    const injectedKeys = new Set<string>();
+    const environmentVariables: Record<string, string> = {};
+    const notes: string[] = [];
+
+    for (const scopeName of request.allowedSecretScopes) {
+      const scopeVars = this.resolveScope(scopeName, request);
+
+      if (scopeVars === null) {
+        continue;
+      }
+
+      issuedScopes.push(scopeName);
+      for (const [key, value] of Object.entries(scopeVars)) {
+        environmentVariables[key] = value;
+        injectedKeys.add(key);
+      }
+      notes.push(`Scope "${scopeName}" injected from environment variables.`);
+    }
+
+    if (issuedScopes.length === 0) {
+      return null;
+    }
+
+    return {
+      leaseId: `${request.taskId}:${request.agentType}:${issuedScopes.join("+")}`,
+      mode: "scoped_env",
+      secretScopes: issuedScopes,
+      injectedSecretKeys: [...injectedKeys].sort(),
+      environmentVariables,
+      issuedAt: asIsoTimestamp(),
+      expiresAt: null,
+      notes: [
+        `Env-var-backed credentials issued for ${request.agentType} during ${request.phase}.`,
+        ...notes
+      ]
+    };
+  }
+
+  private resolveScope(
+    scopeName: string,
+    request: SecretLeaseRequest
+  ): Record<string, string> | null {
+    if (request.riskClass === "high") {
+      throw new Error(
+        `EnvVarSecretsAdapter: scope "${scopeName}" is denied for high-risk tasks.`
+      );
+    }
+
+    if (this.scopeMap.size > 0) {
+      const explicit = this.scopeMap.get(scopeName);
+      return explicit ?? null;
+    }
+
+    // When no explicit scope map is provided, read all env vars whose names
+    // start with the scope prefix: REDDWARF_SECRET_{SCOPE}_{KEY}.
+    const scopePrefix = `${this.prefix}${scopeName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_`;
+    const collected: Record<string, string> = {};
+    for (const [envKey, envValue] of Object.entries(process.env)) {
+      if (envKey.startsWith(scopePrefix) && envValue !== undefined) {
+        const secretKey = envKey.slice(scopePrefix.length);
+        if (secretKey.length > 0) {
+          collected[secretKey] = envValue;
+        }
+      }
+    }
+    return Object.keys(collected).length > 0 ? collected : null;
+  }
+}
+
+/**
+ * Create an EnvVarSecretsAdapter from optional configuration.
+ */
+export function createEnvVarSecretsAdapter(
+  options: EnvVarSecretsAdapterOptions = {}
+): EnvVarSecretsAdapter {
+  return new EnvVarSecretsAdapter(options);
+}
+
 /**
  * Create a RestGitHubAdapter from environment variables or explicit options.
  * Reads GITHUB_TOKEN from the environment when no token is provided.
