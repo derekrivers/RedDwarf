@@ -17,8 +17,10 @@ export default [
     languageOptions: {
       parser: tsParser,
       parserOptions: {
-        project: false,
-        sourceType: "module"
+        projectService: {
+          allowDefaultProject: ["tests/*.ts", "vitest.config.ts", "drizzle.config.ts"]
+        },
+        tsconfigRootDir: import.meta.dirname
       }
     },
     plugins: {
@@ -27,7 +29,7 @@ export default [
     rules: {
       "no-console": ["error", { allow: ["warn", "error"] }],
       "@typescript-eslint/consistent-type-imports": "error",
-      "@typescript-eslint/no-floating-promises": "off"
+      "@typescript-eslint/no-floating-promises": "error"
     }
   }
 ];
