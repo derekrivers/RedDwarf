@@ -266,33 +266,46 @@ export class AnthropicPlanningAgent implements PlanningAgent {
     context: { manifest: TaskManifest; runId: string }
   ): Promise<PlanningDraft> {
     const userMessage = buildPlanningUserMessage(input, context);
-
-    const response = await fetch(`${this.baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: this.maxTokens,
-        system: this.systemPrompt,
-        messages: [{ role: "user", content: userMessage }]
-      })
+    const body = JSON.stringify({
+      model: this.model,
+      max_tokens: this.maxTokens,
+      system: this.systemPrompt,
+      messages: [{ role: "user", content: userMessage }]
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Anthropic API returned ${response.status}: ${body}`);
-    }
+    const retryableStatuses = new Set([429, 529]);
+    const maxAttempts = 3;
+    let attempt = 0;
 
-    const result = (await response.json()) as AnthropicMessagesResponse;
-    const block = result.content.find((b) => b.type === "text");
-    if (!block?.text) {
-      throw new Error("Anthropic response contained no text content block.");
+    while (true) {
+      attempt++;
+      const response = await fetch(`${this.baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "x-api-key": this.apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        body
+      });
+
+      if (!response.ok) {
+        if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
+          const delay = attempt * 2000;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        const responseBody = await response.text().catch(() => "");
+        throw new Error(`Anthropic API returned ${response.status}: ${responseBody}`);
+      }
+
+      const result = (await response.json()) as AnthropicMessagesResponse;
+      const block = result.content.find((b) => b.type === "text");
+      if (!block?.text) {
+        throw new Error("Anthropic response contained no text content block.");
+      }
+      return parsePlanningDraft(block.text, input, context);
     }
-    return parsePlanningDraft(block.text, input, context);
   }
 }
 
