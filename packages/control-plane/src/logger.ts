@@ -26,14 +26,18 @@ export interface BufferedPlanningLogger {
   records: PlanningLogRecord[];
 }
 
-export const defaultLogger: PlanningPipelineLogger = {
-  info() {},
-  warn() {},
-  error() {},
-  child() {
-    return defaultLogger;
-  }
-};
+export function createNoopLogger(): PlanningPipelineLogger {
+  return {
+    info() {},
+    warn() {},
+    error() {},
+    child() {
+      return createNoopLogger();
+    }
+  };
+}
+
+export const defaultLogger: PlanningPipelineLogger = createNoopLogger();
 
 function wrapPinoLogger(logger: PinoLogger): PlanningPipelineLogger {
   return {
