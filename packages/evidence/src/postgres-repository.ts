@@ -777,38 +777,34 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
-    const [
-      manifest,
-      spec,
-      policySnapshot,
-      phaseRecords,
-      evidenceRecords,
-      runEvents,
-      memoryRecords,
-      pipelineRuns,
-      approvalRequests
-    ] = await Promise.all([
-      this.getManifest(taskId),
-      this.getPlanningSpec(taskId),
-      this.getPolicySnapshot(taskId),
-      this.listPhaseRecords(taskId),
-      this.listEvidenceRecords(taskId),
-      this.listRunEvents(taskId),
-      this.listMemoryRecords({ taskId, scope: "task", limit: 100 }),
-      this.listPipelineRuns({ taskId, limit: 100 }),
-      this.listApprovalRequests({ taskId, limit: 100 })
-    ]);
+    const result = await this.pool.query(
+      `
+      SELECT
+        (SELECT row_to_json(m.*) FROM task_manifests m WHERE m.task_id = $1) AS manifest,
+        (SELECT row_to_json(s.*) FROM planning_specs s WHERE s.task_id = $1 ORDER BY s.created_at DESC LIMIT 1) AS spec,
+        (SELECT row_to_json(ps.*) FROM policy_snapshots ps WHERE ps.task_id = $1) AS policy_snapshot,
+        (SELECT COALESCE(json_agg(pr ORDER BY pr.created_at ASC, pr.record_id ASC), '[]'::json) FROM phase_records pr WHERE pr.task_id = $1) AS phase_records,
+        (SELECT COALESCE(json_agg(er ORDER BY er.created_at ASC, er.record_id ASC), '[]'::json) FROM evidence_records er WHERE er.task_id = $1) AS evidence_records,
+        (SELECT COALESCE(json_agg(re ORDER BY re.created_at ASC, re.event_id ASC), '[]'::json) FROM run_events re WHERE re.task_id = $1) AS run_events,
+        (SELECT COALESCE(json_agg(mr ORDER BY mr.updated_at DESC, mr.created_at DESC, mr.memory_id ASC), '[]'::json) FROM (SELECT * FROM memory_records WHERE task_id = $1 AND scope = 'task' ORDER BY updated_at DESC, created_at DESC, memory_id ASC LIMIT 100) mr) AS memory_records,
+        (SELECT COALESCE(json_agg(plr ORDER BY plr.started_at DESC, plr.run_id ASC), '[]'::json) FROM (SELECT * FROM pipeline_runs WHERE task_id = $1 ORDER BY started_at DESC, run_id ASC LIMIT 100) plr) AS pipeline_runs,
+        (SELECT COALESCE(json_agg(ar ORDER BY ar.updated_at DESC, ar.created_at DESC, ar.request_id ASC), '[]'::json) FROM (SELECT * FROM approval_requests WHERE task_id = $1 ORDER BY updated_at DESC, created_at DESC, request_id ASC LIMIT 100) ar) AS approval_requests
+      `,
+      [taskId]
+    );
+
+    const row = result.rows[0];
 
     return {
-      manifest,
-      spec,
-      policySnapshot,
-      phaseRecords,
-      evidenceRecords,
-      runEvents,
-      memoryRecords,
-      pipelineRuns,
-      approvalRequests
+      manifest: row.manifest ? mapManifestRow(row.manifest) : null,
+      spec: row.spec ? mapPlanningSpecRow(row.spec) : null,
+      policySnapshot: row.policy_snapshot ? mapPolicySnapshotRow(row.policy_snapshot) : null,
+      phaseRecords: (row.phase_records as Record<string, unknown>[]).map(mapPhaseRecordRow),
+      evidenceRecords: (row.evidence_records as Record<string, unknown>[]).map(mapEvidenceRecordRow),
+      runEvents: (row.run_events as Record<string, unknown>[]).map(mapRunEventRow),
+      memoryRecords: (row.memory_records as Record<string, unknown>[]).map(mapMemoryRecordRow),
+      pipelineRuns: (row.pipeline_runs as Record<string, unknown>[]).map(mapPipelineRunRow),
+      approvalRequests: (row.approval_requests as Record<string, unknown>[]).map(mapApprovalRequestRow)
     };
   }
 
