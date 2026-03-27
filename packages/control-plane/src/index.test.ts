@@ -12,6 +12,8 @@ import {
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
   buildAgentConfig,
+  buildSessionSummaryMarkdown,
+  captureSessionEvidence,
   createBufferedPlanningLogger,
   createGitHubIssuePollingDaemon,
   createOperatorApiServer,
@@ -19,8 +21,10 @@ import {
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
+  extractSessionSummary,
   generateOpenClawConfig,
   ingestKnowledgeSources,
+  parseSessionJsonl,
   provisionTaskWorkspace,
   resolveApprovalRequest,
   runDeveloperPhase,
@@ -2086,6 +2090,166 @@ describe("buildAgentConfig", () => {
     expect(entry.tools.profile).toBe("coding");
     expect(entry.sandbox).toBe("workspace_write");
     expect(entry.skipBootstrap).toBe(true);
+  });
+});
+
+// ── OpenClaw session transcript parsing ──────────────────────────────────────
+
+describe("parseSessionJsonl", () => {
+  it("parses valid JSONL lines into session entries", () => {
+    const jsonl = [
+      JSON.stringify({ role: "system", content: "You are a helpful assistant." }),
+      JSON.stringify({ role: "user", content: "Analyze this code." }),
+      JSON.stringify({ role: "assistant", content: "The code looks good." })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "github:issue:acme/repo:42", "reddwarf-analyst");
+
+    expect(transcript.sessionKey).toBe("github:issue:acme/repo:42");
+    expect(transcript.agentId).toBe("reddwarf-analyst");
+    expect(transcript.totalEntries).toBe(3);
+    expect(transcript.errors).toHaveLength(0);
+    expect(transcript.entries[0]?.role).toBe("system");
+    expect(transcript.entries[2]?.content).toBe("The code looks good.");
+  });
+
+  it("records parse errors for invalid lines without failing", () => {
+    const jsonl = [
+      JSON.stringify({ role: "user", content: "Hello" }),
+      "not valid json",
+      JSON.stringify({ role: "missing_content" }),
+      JSON.stringify({ role: "assistant", content: "Response" })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:key", "test-agent");
+
+    expect(transcript.totalEntries).toBe(2);
+    expect(transcript.errors).toHaveLength(2);
+    expect(transcript.errors[0]).toContain("Line 2");
+    expect(transcript.errors[1]).toContain("Line 3");
+  });
+
+  it("handles empty input", () => {
+    const transcript = parseSessionJsonl("", "test:key", "test-agent");
+    expect(transcript.totalEntries).toBe(0);
+    expect(transcript.errors).toHaveLength(0);
+  });
+
+  it("preserves optional fields when present", () => {
+    const jsonl = JSON.stringify({
+      role: "tool",
+      content: "File read result",
+      toolName: "Read",
+      toolCallId: "tc_123",
+      timestamp: "2026-03-27T10:00:00Z",
+      metadata: { lineCount: 42 }
+    });
+
+    const transcript = parseSessionJsonl(jsonl, "test:key", "test-agent");
+    const entry = transcript.entries[0]!;
+
+    expect(entry.toolName).toBe("Read");
+    expect(entry.toolCallId).toBe("tc_123");
+    expect(entry.timestamp).toBe("2026-03-27T10:00:00Z");
+    expect(entry.metadata).toEqual({ lineCount: 42 });
+  });
+});
+
+describe("extractSessionSummary", () => {
+  it("returns the last assistant entry content", () => {
+    const transcript = parseSessionJsonl(
+      [
+        JSON.stringify({ role: "assistant", content: "First response" }),
+        JSON.stringify({ role: "user", content: "Follow up" }),
+        JSON.stringify({ role: "assistant", content: "Final analysis" })
+      ].join("\n"),
+      "test:key",
+      "test-agent"
+    );
+    expect(extractSessionSummary(transcript)).toBe("Final analysis");
+  });
+
+  it("returns fallback when no assistant entries exist", () => {
+    const transcript = parseSessionJsonl(
+      JSON.stringify({ role: "user", content: "Hello" }),
+      "test:key",
+      "test-agent"
+    );
+    expect(extractSessionSummary(transcript)).toContain("No assistant response");
+  });
+});
+
+describe("captureSessionEvidence", () => {
+  it("writes transcript and summary artifacts to workspace and archives them", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "session-evidence-"));
+    const evidenceDir = join(tmpDir, "evidence");
+
+    try {
+      const transcript = parseSessionJsonl(
+        [
+          JSON.stringify({ role: "user", content: "Analyze code" }),
+          JSON.stringify({ role: "assistant", content: "Analysis complete" })
+        ].join("\n"),
+        "github:issue:acme/repo:42",
+        "reddwarf-analyst"
+      );
+
+      const dispatchResult = {
+        accepted: true,
+        sessionKey: "github:issue:acme/repo:42",
+        agentId: "reddwarf-analyst",
+        sessionId: "sess-001",
+        respondedAt: new Date().toISOString(),
+        statusMessage: null
+      };
+
+      const result = await captureSessionEvidence({
+        taskId: "acme-repo-42",
+        runId: "run-001",
+        phase: "development",
+        transcript,
+        dispatchResult,
+        workspaceRoot: tmpDir,
+        evidenceRoot: evidenceDir
+      });
+
+      expect(result.transcriptArtifact).not.toBeNull();
+      expect(result.summaryArtifact).not.toBeNull();
+      expect(result.metadata["sessionKey"]).toBe("github:issue:acme/repo:42");
+      expect(result.metadata["totalEntries"]).toBe(2);
+      expect(result.metadata["parseErrors"]).toBe(0);
+
+      // Verify files exist in evidence
+      await access(result.transcriptArtifact!.archivePath);
+      await access(result.summaryArtifact!.archivePath);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildSessionSummaryMarkdown", () => {
+  it("produces markdown with session metadata and agent output", () => {
+    const transcript = parseSessionJsonl(
+      JSON.stringify({ role: "assistant", content: "The implementation looks correct." }),
+      "test:session",
+      "reddwarf-validator"
+    );
+    const dispatchResult = {
+      accepted: true,
+      sessionKey: "test:session",
+      agentId: "reddwarf-validator",
+      sessionId: "sess-xyz",
+      respondedAt: new Date().toISOString(),
+      statusMessage: null
+    };
+
+    const md = buildSessionSummaryMarkdown(transcript, dispatchResult);
+
+    expect(md).toContain("# OpenClaw Session Summary");
+    expect(md).toContain("reddwarf-validator");
+    expect(md).toContain("sess-xyz");
+    expect(md).toContain("The implementation looks correct.");
   });
 });
 
