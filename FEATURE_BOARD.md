@@ -67,7 +67,7 @@ The board is ordered by implementation priority.
 | 59       | OpenClawDispatchAdapter contract and fixture adapter registered alongside existing integration adapters | M10 | completed | Integration Plane, Execution Plane                                    |
 | 60       | HTTP implementation of OpenClawDispatchAdapter posting to /hooks/agent with sessionKey, agentId, bearer auth, and retry | M10 | completed | Integration Plane, Execution Plane                                    |
 | 61       | Session result and transcript capture reading OpenClaw session JSONL and persisting agent output as phase evidence | M10 | completed | Integration Plane, Evidence Plane, Observability Model                |
-| 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | pending | Execution Plane, Control Plane, Integration Plane                     |
+| 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | completed | Execution Plane, Control Plane, Integration Plane                     |
 | 63       | Workspace bootstrap alignment verifying IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md, and SKILL.md match OpenClaw consumption format | M10 | pending | Workspace Context, Knowledge & Policy Plane, Execution Plane          |
 | 64       | Fix SQL injection vector in hasPlanningSpecForSource and ReDoS vulnerability in redactSecretValues | M11 | completed | Evidence Plane, Integration Plane                                      |
 | 65       | Extract shared script configuration module for connection string, workspace root, and error formatting | M11 | completed | System Context                                                         |

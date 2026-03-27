@@ -33,7 +33,10 @@ import {
   runValidationPhase,
   serializeOpenClawConfig
 } from "@reddwarf/control-plane";
-import { FixtureKnowledgeIngestionAdapter } from "@reddwarf/integrations";
+import {
+  FixtureKnowledgeIngestionAdapter,
+  FixtureOpenClawDispatchAdapter
+} from "@reddwarf/integrations";
 import {
   InMemoryPlanningRepository,
   createPipelineRun
@@ -2250,6 +2253,88 @@ describe("buildSessionSummaryMarkdown", () => {
     expect(md).toContain("reddwarf-validator");
     expect(md).toContain("sess-xyz");
     expect(md).toContain("The implementation looks correct.");
+  });
+});
+
+// ── Developer phase OpenClaw dispatch ────────────────────────────────────────
+
+describe("developer phase with OpenClaw dispatch", () => {
+  it("dispatches to OpenClaw when openClawDispatch is provided", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/dispatch-target.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-27T10:00:00.000Z")
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for dispatch test.",
+          comment: "Dispatch to OpenClaw."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-27T10:02:00.000Z")
+        }
+      );
+
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-dispatch-001"
+      });
+
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dispatch"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-analyst",
+          clock: () => new Date("2026-03-27T10:05:00.000Z"),
+          idGenerator: () => "run-dispatch"
+        }
+      );
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(development.openClawDispatchResult).toBeDefined();
+      expect(development.openClawDispatchResult?.accepted).toBe(true);
+      expect(development.openClawDispatchResult?.sessionId).toBe("session-dispatch-001");
+
+      // Verify the dispatch adapter received the request
+      expect(dispatchAdapter.dispatches).toHaveLength(1);
+      expect(dispatchAdapter.dispatches[0]?.agentId).toBe("reddwarf-analyst");
+      expect(dispatchAdapter.dispatches[0]?.sessionKey).toContain("github:issue:");
+      expect(dispatchAdapter.dispatches[0]?.metadata).toMatchObject({
+        taskId: planningResult.manifest.taskId,
+        phase: "development"
+      });
+
+      // Verify the handoff references OpenClaw
+      expect(development.handoff?.summary).toContain("OpenClaw analyst session");
+
+      // Verify OPENCLAW_DISPATCH event was recorded
+      expect(
+        repository.runEvents.some((e) => e.code === "OPENCLAW_DISPATCH")
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 

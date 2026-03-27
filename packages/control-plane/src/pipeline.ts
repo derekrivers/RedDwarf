@@ -54,6 +54,8 @@ import {
   type GitHubBranchSummary,
   type GitHubCreatedIssueSummary,
   type GitHubPullRequestSummary,
+  type OpenClawDispatchAdapter,
+  type OpenClawDispatchResult,
   type SecretLease,
   type SecretsAdapter
 } from "@reddwarf/integrations";
@@ -163,7 +165,8 @@ const EventCodes = {
   VALIDATION_COMMAND_FAILED: "VALIDATION_COMMAND_FAILED",
   SECRETS_ADAPTER_REQUIRED: "SECRETS_ADAPTER_REQUIRED",
   SECRET_LEASE_FAILED: "SECRET_LEASE_FAILED",
-  SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING"
+  SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING",
+  OPENCLAW_DISPATCH: "OPENCLAW_DISPATCH"
 } as const;
 
 export interface PlanningConcurrencyOptions {
@@ -216,6 +219,17 @@ export interface DevelopmentPhaseDependencies {
   developer: DevelopmentAgent;
   github?: GitHubAdapter;
   secrets?: SecretsAdapter;
+  /**
+   * Optional OpenClaw dispatch adapter. When provided, the developer phase
+   * dispatches to the OpenClaw analyst agent for read-only analysis instead
+   * of calling the deterministic developer agent directly.
+   */
+  openClawDispatch?: OpenClawDispatchAdapter;
+  /**
+   * OpenClaw agent ID to dispatch to. Defaults to "reddwarf-analyst".
+   * Only used when openClawDispatch is provided.
+   */
+  openClawAgentId?: string;
   environment?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
@@ -253,6 +267,8 @@ export interface DevelopmentPhaseResult {
   handoffPath?: string;
   nextAction: "await_validation" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
+  /** Present when the developer phase dispatched to OpenClaw instead of using the deterministic agent. */
+  openClawDispatchResult?: OpenClawDispatchResult;
 }
 
 export interface ValidationPhaseResult {
@@ -1637,12 +1653,73 @@ export async function runDeveloperPhase(
       createdAt: developmentStartedAtIso
     });
 
-    const handoff = await developer.createHandoff(bundle, {
-      manifest: currentManifest,
-      runId,
-      workspace,
-      codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
-    });
+    let handoff: DevelopmentDraft;
+    let dispatchResult: OpenClawDispatchResult | null = null;
+
+    if (dependencies.openClawDispatch) {
+      const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-analyst";
+      const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
+      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace);
+
+      dispatchResult = await dependencies.openClawDispatch.dispatch({
+        sessionKey,
+        agentId: openClawAgentId,
+        prompt,
+        metadata: {
+          taskId,
+          runId,
+          phase: "development",
+          workspaceId: workspace.workspaceId
+        }
+      });
+
+      handoff = {
+        summary: dispatchResult.accepted
+          ? `OpenClaw analyst session dispatched for task ${taskId} via agent ${openClawAgentId}.`
+          : `OpenClaw dispatch was not accepted for task ${taskId}.`,
+        implementationNotes: [
+          `Session key: ${sessionKey}`,
+          `Agent: ${openClawAgentId}`,
+          `Session ID: ${dispatchResult.sessionId ?? "none"}`,
+          ...(dispatchResult.statusMessage ? [`Status: ${dispatchResult.statusMessage}`] : [])
+        ],
+        blockedActions: [
+          "Product code writes remain disabled — analyst session is read-only.",
+          "Session output captured as evidence for downstream phases."
+        ],
+        nextActions: [
+          "Review session transcript in evidence artifacts.",
+          "Run the validation phase against the managed workspace before SCM handoff."
+        ]
+      };
+
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", EventCodes.OPENCLAW_DISPATCH),
+        taskId,
+        runId,
+        phase: "development",
+        level: "info",
+        code: EventCodes.OPENCLAW_DISPATCH,
+        message: `Dispatched to OpenClaw agent ${openClawAgentId} with session key ${sessionKey}.`,
+        data: {
+          sessionKey,
+          agentId: openClawAgentId,
+          accepted: dispatchResult.accepted,
+          sessionId: dispatchResult.sessionId
+        },
+        createdAt: asIsoTimestamp(clock())
+      });
+    } else {
+      handoff = await developer.createHandoff(bundle, {
+        manifest: currentManifest,
+        runId,
+        workspace,
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+      });
+    }
+
     const developmentCompletedAt = clock();
     const developmentCompletedAtIso = asIsoTimestamp(developmentCompletedAt);
     const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
@@ -1815,7 +1892,8 @@ export async function runDeveloperPhase(
       handoff,
       handoffPath,
       nextAction: "await_validation",
-      concurrencyDecision
+      concurrencyDecision,
+      ...(dispatchResult !== null ? { openClawDispatchResult: dispatchResult } : {})
     };
   } catch (error) {
     const pipelineFailure = normalizePipelineFailure(
@@ -3051,6 +3129,43 @@ function sanitizeBranchSegment(value: string): string {
     .replace(/^[-/.]+|[-/.]+$/g, "");
 
   return sanitized.length > 0 ? sanitized : "task";
+}
+
+function buildOpenClawDeveloperPrompt(
+  bundle: WorkspaceContextBundle,
+  manifest: TaskManifest,
+  workspace: MaterializedManagedWorkspace
+): string {
+  return [
+    `Task ID: ${manifest.taskId}`,
+    `Title: ${manifest.title}`,
+    `Repository: ${manifest.source.repo}`,
+    ...(manifest.source.issueNumber !== undefined
+      ? [`Issue: #${manifest.source.issueNumber}`]
+      : []),
+    `Risk class: ${manifest.riskClass}`,
+    `Workspace: ${workspace.workspaceId}`,
+    `Workspace root: ${workspace.workspaceRoot}`,
+    "",
+    "## Planning Summary",
+    "",
+    bundle.spec.summary,
+    "",
+    "## Acceptance Criteria",
+    "",
+    ...bundle.acceptanceCriteria.map((item) => `- ${item}`),
+    "",
+    "## Allowed Paths",
+    "",
+    ...bundle.allowedPaths.map((item) => `- ${item}`),
+    "",
+    "## Instructions",
+    "",
+    "Perform read-only analysis of the codebase for this task.",
+    "Identify the implementation approach, affected files, and risks.",
+    "Do not write product code — analysis and evidence only.",
+    "Produce a structured analysis report as your output."
+  ].join("\n");
 }
 
 function renderDevelopmentHandoffMarkdown(input: {
