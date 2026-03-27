@@ -7,8 +7,8 @@ import {
 } from "./packages/integrations/dist/index.js";
 import { createAnthropicPlanningAgent } from "./packages/execution-plane/dist/index.js";
 
-const repo = "derekrivers/FirstVoyage"; // owner/repo format — NOT a full URL
-const issueNumber = 1;            // Replace with your issue number
+const repo = "owner/repo";   // TODO: replace with your GitHub repo in owner/repo format
+const issueNumber = 0;       // TODO: replace with your issue number
 
 const github = createRestGitHubAdapter();          // reads GITHUB_TOKEN from env
 const planner = createAnthropicPlanningAgent();    // reads ANTHROPIC_API_KEY from env
