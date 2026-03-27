@@ -192,11 +192,31 @@ Demo complete. Task ID: ...
 
 ## Part 5 — Inspect Evidence in Postgres
 
-Connect to the local Postgres instance and query the evidence:
+### Option A — Docker exec (recommended on Windows)
+
+`psql` is not installed by default on Windows. Use the copy bundled inside the Postgres container:
+
+```bash
+docker exec -it reddwarf-postgres-1 psql -U reddwarf reddwarf
+```
+
+Then run the queries below at the `reddwarf=#` prompt.
+
+### Option B — psql on the host (Linux / macOS / WSL)
 
 ```bash
 psql "postgresql://reddwarf:reddwarf@127.0.0.1:55432/reddwarf"
 ```
+
+### Option C — Node.js query script
+
+```bash
+node scripts/query-evidence.mjs
+```
+
+This prints the most recent planning spec and phase records without requiring `psql`.
+
+### Queries
 
 ```sql
 -- View the planning spec for the most recent task
