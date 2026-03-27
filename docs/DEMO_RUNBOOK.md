@@ -221,19 +221,19 @@ This prints the most recent planning spec and phase records without requiring `p
 ```sql
 -- View the planning spec for the most recent task
 SELECT task_id, summary, assumptions, affected_areas
-FROM reddwarf_planning_specs
+FROM planning_specs
 ORDER BY created_at DESC
 LIMIT 1;
 
 -- View the phase records for that task
 SELECT phase, status, started_at, completed_at
-FROM reddwarf_phase_records
+FROM phase_records
 WHERE task_id = '<task-id-from-above>'
 ORDER BY started_at;
 
 -- View run events
 SELECT run_id, phase, level, message
-FROM reddwarf_run_events
+FROM run_events
 WHERE task_id = '<task-id-from-above>'
 ORDER BY created_at;
 ```

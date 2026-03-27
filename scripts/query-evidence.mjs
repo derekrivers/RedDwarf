@@ -24,7 +24,7 @@ try {
     // Show most recent planning spec
     const specResult = await client.query(`
       SELECT task_id, summary, assumptions, affected_areas, created_at
-      FROM reddwarf_planning_specs
+      FROM planning_specs
       ORDER BY created_at DESC
       LIMIT 1
     `);
@@ -60,7 +60,7 @@ try {
     const phaseResult = await client.query(
       `
       SELECT phase, status, started_at, completed_at
-      FROM reddwarf_phase_records
+      FROM phase_records
       WHERE task_id = $1
       ORDER BY started_at
     `,
@@ -83,7 +83,7 @@ try {
     const eventResult = await client.query(
       `
       SELECT run_id, phase, level, message, created_at
-      FROM reddwarf_run_events
+      FROM run_events
       WHERE task_id = $1
       ORDER BY created_at
     `,
