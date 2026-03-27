@@ -132,6 +132,37 @@ const phaseFailureCodeMap: Record<TaskPhase, string> = {
 const failureAutomationRequestedBy = "failure-automation";
 const failureRecoveryMemoryKey = "failure.recovery";
 const followUpIssueMemoryPrefix = "failure.follow_up_issue";
+
+const EventCodes = {
+  PIPELINE_STARTED: "PIPELINE_STARTED",
+  PIPELINE_COMPLETED: "PIPELINE_COMPLETED",
+  PIPELINE_BLOCKED: "PIPELINE_BLOCKED",
+  PIPELINE_FAILED: "PIPELINE_FAILED",
+  PHASE_RUNNING: "PHASE_RUNNING",
+  PHASE_PASSED: "PHASE_PASSED",
+  PHASE_FAILED: "PHASE_FAILED",
+  PHASE_BLOCKED: "PHASE_BLOCKED",
+  PHASE_RETRY_SCHEDULED: "PHASE_RETRY_SCHEDULED",
+  PHASE_ESCALATED: "PHASE_ESCALATED",
+  RUN_BLOCKED_BY_OVERLAP: "RUN_BLOCKED_BY_OVERLAP",
+  STALE_RUNS_DETECTED: "STALE_RUNS_DETECTED",
+  APPROVAL_REQUESTED: "APPROVAL_REQUESTED",
+  WORKSPACE_PROVISIONED: "WORKSPACE_PROVISIONED",
+  WORKSPACE_PREPARED: "WORKSPACE_PREPARED",
+  CODE_WRITE_DISABLED: "CODE_WRITE_DISABLED",
+  SECRET_LEASE_ISSUED: "SECRET_LEASE_ISSUED",
+  BRANCH_CREATED: "BRANCH_CREATED",
+  PULL_REQUEST_CREATED: "PULL_REQUEST_CREATED",
+  FOLLOW_UP_ISSUE_CREATED: "FOLLOW_UP_ISSUE_CREATED",
+  FOLLOW_UP_ISSUE_SKIPPED: "FOLLOW_UP_ISSUE_SKIPPED",
+  VALIDATION_PLAN_EMPTY: "VALIDATION_PLAN_EMPTY",
+  VALIDATION_COMMAND_STARTED: "VALIDATION_COMMAND_STARTED",
+  VALIDATION_COMMAND_PASSED: "VALIDATION_COMMAND_PASSED",
+  VALIDATION_COMMAND_FAILED: "VALIDATION_COMMAND_FAILED",
+  SECRETS_ADAPTER_REQUIRED: "SECRETS_ADAPTER_REQUIRED",
+  SECRET_LEASE_FAILED: "SECRET_LEASE_FAILED",
+  SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING"
+} as const;
 const failureRecoveryPolicies = {
   development: {
     retryLimit: 1,
@@ -332,7 +363,7 @@ async function issueWorkspaceSecretLease(input: {
       message: `Task ${bundle.manifest.taskId} is approved for scoped secrets (${allowedSecretScopes.join(", ")}), but no secrets adapter is configured.`,
       failureClass: phaseFailureClassMap[input.phase],
       phase: input.phase,
-      code: "SECRETS_ADAPTER_REQUIRED",
+      code: EventCodes.SECRETS_ADAPTER_REQUIRED,
       details: {
         allowedSecretScopes,
         requestedCapabilities: bundle.manifest.requestedCapabilities
@@ -361,7 +392,7 @@ async function issueWorkspaceSecretLease(input: {
       message: `Failed to issue scoped secrets for ${bundle.manifest.taskId} during ${input.phase}.`,
       failureClass: phaseFailureClassMap[input.phase],
       phase: input.phase,
-      code: "SECRET_LEASE_FAILED",
+      code: EventCodes.SECRET_LEASE_FAILED,
       details: {
         allowedSecretScopes,
         environment: input.environment ?? "default",
@@ -378,7 +409,7 @@ async function issueWorkspaceSecretLease(input: {
       message: `Scoped secrets were approved for ${bundle.manifest.taskId}, but the secrets adapter returned no lease.`,
       failureClass: phaseFailureClassMap[input.phase],
       phase: input.phase,
-      code: "SECRET_LEASE_MISSING",
+      code: EventCodes.SECRET_LEASE_MISSING,
       details: {
         allowedSecretScopes,
         environment: input.environment ?? "default"
@@ -551,12 +582,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("intake", "RUN_BLOCKED_BY_OVERLAP"),
+      eventId: nextEventId("intake", EventCodes.RUN_BLOCKED_BY_OVERLAP),
       taskId,
       runId,
       phase: "intake",
       level: "warn",
-      code: "RUN_BLOCKED_BY_OVERLAP",
+      code: EventCodes.RUN_BLOCKED_BY_OVERLAP,
       message:
         concurrencyDecision.reason ??
         "Planning pipeline blocked by an overlapping run.",
@@ -572,12 +603,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("intake", "PIPELINE_BLOCKED"),
+      eventId: nextEventId("intake", EventCodes.PIPELINE_BLOCKED),
       taskId,
       runId,
       phase: "intake",
       level: "warn",
-      code: "PIPELINE_BLOCKED",
+      code: EventCodes.PIPELINE_BLOCKED,
       message: "Planning pipeline blocked by concurrency controls.",
       failureClass: "execution_loop",
       durationMs: getDurationMs(runStartedAt, runStartedAt),
@@ -618,12 +649,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("intake", "STALE_RUNS_DETECTED"),
+        eventId: nextEventId("intake", EventCodes.STALE_RUNS_DETECTED),
         taskId,
         runId,
         phase: "intake",
         level: "info",
-        code: "STALE_RUNS_DETECTED",
+        code: EventCodes.STALE_RUNS_DETECTED,
         message: "Stale overlapping runs were marked before planning started.",
         data: {
           concurrencyKey,
@@ -648,12 +679,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("intake", "PIPELINE_STARTED"),
+      eventId: nextEventId("intake", EventCodes.PIPELINE_STARTED),
       taskId,
       runId,
       phase: "intake",
       level: "info",
-      code: "PIPELINE_STARTED",
+      code: EventCodes.PIPELINE_STARTED,
       message: "Planning pipeline started.",
       data: {
         approvalMode,
@@ -681,12 +712,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("intake", "PHASE_PASSED"),
+      eventId: nextEventId("intake", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "intake",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Task intake completed.",
       durationMs: getDurationMs(runStartedAt, intakeCompletedAt),
       data: {
@@ -741,12 +772,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("eligibility", "PHASE_BLOCKED"),
+        eventId: nextEventId("eligibility", EventCodes.PHASE_BLOCKED),
         taskId,
         runId,
         phase: "eligibility",
         level: "warn",
-        code: "PHASE_BLOCKED",
+        code: EventCodes.PHASE_BLOCKED,
         message: "Task blocked by eligibility rules.",
         failureClass: "policy_violation",
         durationMs: getDurationMs(eligibilityStartedAt, blockedAt),
@@ -760,12 +791,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("eligibility", "PIPELINE_BLOCKED"),
+        eventId: nextEventId("eligibility", EventCodes.PIPELINE_BLOCKED),
         taskId,
         runId,
         phase: "eligibility",
         level: "warn",
-        code: "PIPELINE_BLOCKED",
+        code: EventCodes.PIPELINE_BLOCKED,
         message: "Planning pipeline blocked by policy.",
         failureClass: "policy_violation",
         durationMs: getDurationMs(runStartedAt, blockedAt),
@@ -810,12 +841,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("eligibility", "PHASE_PASSED"),
+      eventId: nextEventId("eligibility", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "eligibility",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Task passed eligibility checks.",
       durationMs: getDurationMs(eligibilityStartedAt, eligibilityCompletedAt),
       data: {
@@ -887,12 +918,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("planning", "PHASE_PASSED"),
+      eventId: nextEventId("planning", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "planning",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Planning spec generated.",
       durationMs: getDurationMs(planningStartedAt, planningCompletedAt),
       data: {
@@ -1040,13 +1071,13 @@ export async function runPlanningPipeline(
       logger: runLogger,
       eventId: nextEventId(
         "policy_gate",
-        policyStatus === "passed" ? "PHASE_PASSED" : "PHASE_ESCALATED"
+        policyStatus === "passed" ? EventCodes.PHASE_PASSED : EventCodes.PHASE_ESCALATED
       ),
       taskId,
       runId,
       phase: "policy_gate",
       level: policyStatus === "passed" ? "info" : "warn",
-      code: policyStatus === "passed" ? "PHASE_PASSED" : "PHASE_ESCALATED",
+      code: policyStatus === "passed" ? EventCodes.PHASE_PASSED : EventCodes.PHASE_ESCALATED,
       message:
         policyStatus === "passed"
           ? "Policy gate passed for this planning run."
@@ -1068,12 +1099,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("policy_gate", "APPROVAL_REQUESTED"),
+        eventId: nextEventId("policy_gate", EventCodes.APPROVAL_REQUESTED),
         taskId,
         runId,
         phase: "policy_gate",
         level: "warn",
-        code: "APPROVAL_REQUESTED",
+        code: EventCodes.APPROVAL_REQUESTED,
         message: "Approval request queued for downstream execution.",
         data: {
           requestId: approvalRequest.requestId,
@@ -1117,12 +1148,12 @@ export async function runPlanningPipeline(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("archive", "PHASE_PASSED"),
+      eventId: nextEventId("archive", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "archive",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Planning outputs archived.",
       durationMs: getDurationMs(archiveStartedAt, archiveCompletedAt),
       data: {
@@ -1139,13 +1170,13 @@ export async function runPlanningPipeline(
       logger: runLogger,
       eventId: nextEventId(
         "archive",
-        approvalRequest ? "PIPELINE_BLOCKED" : "PIPELINE_COMPLETED"
+        approvalRequest ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED
       ),
       taskId,
       runId,
       phase: "archive",
       level: approvalRequest ? "warn" : "info",
-      code: approvalRequest ? "PIPELINE_BLOCKED" : "PIPELINE_COMPLETED",
+      code: approvalRequest ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED,
       message: approvalRequest
         ? "Planning outputs are archived and the task is waiting for human approval."
         : "Planning pipeline completed.",
@@ -1251,12 +1282,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId(activePhase, "PHASE_FAILED"),
+        eventId: nextEventId(activePhase, EventCodes.PHASE_FAILED),
         taskId,
         runId,
         phase: activePhase,
         level: "error",
-        code: "PHASE_FAILED",
+        code: EventCodes.PHASE_FAILED,
         message: pipelineFailure.message,
         failureClass: pipelineFailure.failureClass,
         data: {
@@ -1269,12 +1300,12 @@ export async function runPlanningPipeline(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId(activePhase, "PIPELINE_FAILED"),
+        eventId: nextEventId(activePhase, EventCodes.PIPELINE_FAILED),
         taskId,
         runId,
         phase: activePhase,
         level: "error",
-        code: "PIPELINE_FAILED",
+        code: EventCodes.PIPELINE_FAILED,
         message: "Planning pipeline failed.",
         failureClass: pipelineFailure.failureClass,
         durationMs: getDurationMs(runStartedAt, failedAt),
@@ -1448,12 +1479,12 @@ export async function runDeveloperPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("development", "STALE_RUNS_DETECTED"),
+        eventId: nextEventId("development", EventCodes.STALE_RUNS_DETECTED),
         taskId,
         runId,
         phase: "development",
         level: "info",
-        code: "STALE_RUNS_DETECTED",
+        code: EventCodes.STALE_RUNS_DETECTED,
         message:
           "Stale overlapping runs were marked before the developer phase started.",
         data: {
@@ -1478,12 +1509,12 @@ export async function runDeveloperPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("development", "PHASE_RUNNING"),
+      eventId: nextEventId("development", EventCodes.PHASE_RUNNING),
       taskId,
       runId,
       phase: "development",
       level: "info",
-      code: "PHASE_RUNNING",
+      code: EventCodes.PHASE_RUNNING,
       message: "Developer phase started.",
       data: {
         actor: "developer",
@@ -1563,12 +1594,12 @@ export async function runDeveloperPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("development", "WORKSPACE_PROVISIONED"),
+      eventId: nextEventId("development", EventCodes.WORKSPACE_PROVISIONED),
       taskId,
       runId,
       phase: "development",
       level: "info",
-      code: "WORKSPACE_PROVISIONED",
+      code: EventCodes.WORKSPACE_PROVISIONED,
       message: "Developer workspace provisioned.",
       data: {
         workspaceId: workspace.workspaceId,
@@ -1586,12 +1617,12 @@ export async function runDeveloperPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("development", "SECRET_LEASE_ISSUED"),
+        eventId: nextEventId("development", EventCodes.SECRET_LEASE_ISSUED),
         taskId,
         runId,
         phase: "development",
         level: "info",
-        code: "SECRET_LEASE_ISSUED",
+        code: EventCodes.SECRET_LEASE_ISSUED,
         message: "Scoped developer credentials issued for the managed workspace.",
         data: {
           workspaceId: workspace.workspaceId,
@@ -1608,12 +1639,12 @@ export async function runDeveloperPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("development", "CODE_WRITE_DISABLED"),
+      eventId: nextEventId("development", EventCodes.CODE_WRITE_DISABLED),
       taskId,
       runId,
       phase: "development",
       level: "warn",
-      code: "CODE_WRITE_DISABLED",
+      code: EventCodes.CODE_WRITE_DISABLED,
       message:
         "Developer workspace is ready, but product code writes remain disabled by default.",
       data: {
@@ -1726,12 +1757,12 @@ export async function runDeveloperPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("development", "PHASE_PASSED"),
+      eventId: nextEventId("development", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "development",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Developer handoff captured in the managed workspace.",
       durationMs: getDurationMs(developmentStartedAt, developmentCompletedAt),
       data: {
@@ -1758,12 +1789,12 @@ export async function runDeveloperPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("development", "PIPELINE_BLOCKED"),
+      eventId: nextEventId("development", EventCodes.PIPELINE_BLOCKED),
       taskId,
       runId,
       phase: "development",
       level: "warn",
-      code: "PIPELINE_BLOCKED",
+      code: EventCodes.PIPELINE_BLOCKED,
       message:
         "Developer phase completed and is ready for validation execution.",
       durationMs: getDurationMs(runStartedAt, blockedAt),
@@ -1998,12 +2029,12 @@ export async function runValidationPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("validation", "STALE_RUNS_DETECTED"),
+        eventId: nextEventId("validation", EventCodes.STALE_RUNS_DETECTED),
         taskId,
         runId,
         phase: "validation",
         level: "info",
-        code: "STALE_RUNS_DETECTED",
+        code: EventCodes.STALE_RUNS_DETECTED,
         message:
           "Stale overlapping runs were marked before the validation phase started.",
         data: {
@@ -2029,12 +2060,12 @@ export async function runValidationPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("validation", "PHASE_RUNNING"),
+      eventId: nextEventId("validation", EventCodes.PHASE_RUNNING),
       taskId,
       runId,
       phase: "validation",
       level: "info",
-      code: "PHASE_RUNNING",
+      code: EventCodes.PHASE_RUNNING,
       message: "Validation phase started.",
       data: {
         actor: "validation",
@@ -2113,12 +2144,12 @@ export async function runValidationPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("validation", "WORKSPACE_PREPARED"),
+      eventId: nextEventId("validation", EventCodes.WORKSPACE_PREPARED),
       taskId,
       runId,
       phase: "validation",
       level: "info",
-      code: "WORKSPACE_PREPARED",
+      code: EventCodes.WORKSPACE_PREPARED,
       message: "Validation workspace prepared.",
       data: {
         workspaceId: workspace.workspaceId,
@@ -2137,12 +2168,12 @@ export async function runValidationPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("validation", "SECRET_LEASE_ISSUED"),
+        eventId: nextEventId("validation", EventCodes.SECRET_LEASE_ISSUED),
         taskId,
         runId,
         phase: "validation",
         level: "info",
-        code: "SECRET_LEASE_ISSUED",
+        code: EventCodes.SECRET_LEASE_ISSUED,
         message: "Scoped validation credentials issued for the managed workspace.",
         data: {
           workspaceId: workspace.workspaceId,
@@ -2167,7 +2198,7 @@ export async function runValidationPhase(
         message: "Validation plan did not provide any commands.",
         failureClass: "validation_failure",
         phase: "validation",
-        code: "VALIDATION_PLAN_EMPTY",
+        code: EventCodes.VALIDATION_PLAN_EMPTY,
         details: {
           workspaceId: workspace.workspaceId
         },
@@ -2184,12 +2215,12 @@ export async function runValidationPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("validation", "VALIDATION_COMMAND_STARTED"),
+        eventId: nextEventId("validation", EventCodes.VALIDATION_COMMAND_STARTED),
         taskId,
         runId,
         phase: "validation",
         level: "info",
-        code: "VALIDATION_COMMAND_STARTED",
+        code: EventCodes.VALIDATION_COMMAND_STARTED,
         message: `Validation command ${command.id} started.`,
         data: {
           commandId: command.id,
@@ -2250,12 +2281,12 @@ export async function runValidationPhase(
         await recordRunEvent({
           repository,
           logger: runLogger,
-          eventId: nextEventId("validation", "VALIDATION_COMMAND_FAILED"),
+          eventId: nextEventId("validation", EventCodes.VALIDATION_COMMAND_FAILED),
           taskId,
           runId,
           phase: "validation",
           level: "error",
-          code: "VALIDATION_COMMAND_FAILED",
+          code: EventCodes.VALIDATION_COMMAND_FAILED,
           message: `Validation command ${command.id} failed.`,
           failureClass: "validation_failure",
           durationMs: commandResult.durationMs,
@@ -2273,7 +2304,7 @@ export async function runValidationPhase(
           message: `Validation command ${command.id} failed with exit code ${commandResult.exitCode}.`,
           failureClass: "validation_failure",
           phase: "validation",
-          code: "VALIDATION_COMMAND_FAILED",
+          code: EventCodes.VALIDATION_COMMAND_FAILED,
           details: {
             commandId: command.id,
             commandName: command.name,
@@ -2289,12 +2320,12 @@ export async function runValidationPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("validation", "VALIDATION_COMMAND_PASSED"),
+        eventId: nextEventId("validation", EventCodes.VALIDATION_COMMAND_PASSED),
         taskId,
         runId,
         phase: "validation",
         level: "info",
-        code: "VALIDATION_COMMAND_PASSED",
+        code: EventCodes.VALIDATION_COMMAND_PASSED,
         message: `Validation command ${command.id} passed.`,
         durationMs: commandResult.durationMs,
         data: {
@@ -2465,12 +2496,12 @@ export async function runValidationPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("validation", "PHASE_PASSED"),
+      eventId: nextEventId("validation", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "validation",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "Validation checks passed in the managed workspace.",
       durationMs: getDurationMs(validationStartedAt, validationCompletedAt),
       data: {
@@ -2507,12 +2538,12 @@ export async function runValidationPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("validation", "PIPELINE_BLOCKED"),
+      eventId: nextEventId("validation", EventCodes.PIPELINE_BLOCKED),
       taskId,
       runId,
       phase: "validation",
       level: "warn",
-      code: "PIPELINE_BLOCKED",
+      code: EventCodes.PIPELINE_BLOCKED,
       message: blockedMessage,
       durationMs: getDurationMs(runStartedAt, blockedAt),
       data: {
@@ -3535,12 +3566,12 @@ export async function runScmPhase(
       await recordRunEvent({
         repository,
         logger: runLogger,
-        eventId: nextEventId("scm", "STALE_RUNS_DETECTED"),
+        eventId: nextEventId("scm", EventCodes.STALE_RUNS_DETECTED),
         taskId,
         runId,
         phase: "scm",
         level: "info",
-        code: "STALE_RUNS_DETECTED",
+        code: EventCodes.STALE_RUNS_DETECTED,
         message: "Stale overlapping runs were marked before the SCM phase started.",
         data: {
           concurrencyKey,
@@ -3565,12 +3596,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "PHASE_RUNNING"),
+      eventId: nextEventId("scm", EventCodes.PHASE_RUNNING),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "PHASE_RUNNING",
+      code: EventCodes.PHASE_RUNNING,
       message: "SCM phase started.",
       data: {
         actor: "scm",
@@ -3636,12 +3667,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "WORKSPACE_PREPARED"),
+      eventId: nextEventId("scm", EventCodes.WORKSPACE_PREPARED),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "WORKSPACE_PREPARED",
+      code: EventCodes.WORKSPACE_PREPARED,
       message: "SCM workspace prepared.",
       data: {
         workspaceId: workspace.workspaceId,
@@ -3676,12 +3707,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "BRANCH_CREATED"),
+      eventId: nextEventId("scm", EventCodes.BRANCH_CREATED),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "BRANCH_CREATED",
+      code: EventCodes.BRANCH_CREATED,
       message: `SCM branch ${branch.branchName} created.`,
       data: {
         workspaceId: workspace.workspaceId,
@@ -3879,12 +3910,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "PULL_REQUEST_CREATED"),
+      eventId: nextEventId("scm", EventCodes.PULL_REQUEST_CREATED),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "PULL_REQUEST_CREATED",
+      code: EventCodes.PULL_REQUEST_CREATED,
       message: `Pull request #${pullRequest.number} created for ${branch.branchName}.`,
       data: {
         workspaceId: workspace.workspaceId,
@@ -3898,12 +3929,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "PHASE_PASSED"),
+      eventId: nextEventId("scm", EventCodes.PHASE_PASSED),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "PHASE_PASSED",
+      code: EventCodes.PHASE_PASSED,
       message: "SCM branch and pull request created.",
       durationMs: getDurationMs(scmStartedAt, scmCompletedAt),
       data: {
@@ -3920,12 +3951,12 @@ export async function runScmPhase(
     await recordRunEvent({
       repository,
       logger: runLogger,
-      eventId: nextEventId("scm", "PIPELINE_COMPLETED"),
+      eventId: nextEventId("scm", EventCodes.PIPELINE_COMPLETED),
       taskId,
       runId,
       phase: "scm",
       level: "info",
-      code: "PIPELINE_COMPLETED",
+      code: EventCodes.PIPELINE_COMPLETED,
       message: "Task completed after SCM handoff.",
       durationMs: getDurationMs(runStartedAt, scmCompletedAt),
       data: {
@@ -4197,12 +4228,12 @@ async function handleAutomatedPhaseFailure(input: {
     await recordRunEvent({
       repository,
       logger: input.runLogger,
-      eventId: input.nextEventId(phase, "PHASE_RETRY_SCHEDULED"),
+      eventId: input.nextEventId(phase, EventCodes.PHASE_RETRY_SCHEDULED),
       taskId: manifest.taskId,
       runId,
       phase,
       level: "warn",
-      code: "PHASE_RETRY_SCHEDULED",
+      code: EventCodes.PHASE_RETRY_SCHEDULED,
       message: `${formatPhaseLabel(phase)} failure was classified as retryable and queued for another attempt.`,
       failureClass: failure.failureClass,
       data: recoveryMetadata,
@@ -4211,12 +4242,12 @@ async function handleAutomatedPhaseFailure(input: {
     await recordRunEvent({
       repository,
       logger: input.runLogger,
-      eventId: input.nextEventId(phase, "PIPELINE_BLOCKED"),
+      eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
       taskId: manifest.taskId,
       runId,
       phase,
       level: "warn",
-      code: "PIPELINE_BLOCKED",
+      code: EventCodes.PIPELINE_BLOCKED,
       message: `${formatPhaseLabel(phase)} phase blocked pending a retry attempt.`,
       failureClass: failure.failureClass,
       durationMs: getDurationMs(input.runStartedAt, input.failedAt),
@@ -4317,12 +4348,12 @@ async function handleAutomatedPhaseFailure(input: {
       await recordRunEvent({
         repository,
         logger: input.runLogger,
-        eventId: input.nextEventId(phase, "FOLLOW_UP_ISSUE_CREATED"),
+        eventId: input.nextEventId(phase, EventCodes.FOLLOW_UP_ISSUE_CREATED),
         taskId: manifest.taskId,
         runId,
         phase,
         level: "info",
-        code: "FOLLOW_UP_ISSUE_CREATED",
+        code: EventCodes.FOLLOW_UP_ISSUE_CREATED,
         message: `Created a follow-up issue for the ${phase} failure.`,
         data: {
           followUpIssueNumber: followUpIssue.issueNumber,
@@ -4334,12 +4365,12 @@ async function handleAutomatedPhaseFailure(input: {
       await recordRunEvent({
         repository,
         logger: input.runLogger,
-        eventId: input.nextEventId(phase, "FOLLOW_UP_ISSUE_SKIPPED"),
+        eventId: input.nextEventId(phase, EventCodes.FOLLOW_UP_ISSUE_SKIPPED),
         taskId: manifest.taskId,
         runId,
         phase,
         level: "warn",
-        code: "FOLLOW_UP_ISSUE_SKIPPED",
+        code: EventCodes.FOLLOW_UP_ISSUE_SKIPPED,
         failureClass: failure.failureClass,
         message: `Failed to create a follow-up issue for the ${phase} failure.`,
         data: {
@@ -4414,12 +4445,12 @@ async function handleAutomatedPhaseFailure(input: {
   await recordRunEvent({
     repository,
     logger: input.runLogger,
-    eventId: input.nextEventId(phase, "PHASE_ESCALATED"),
+    eventId: input.nextEventId(phase, EventCodes.PHASE_ESCALATED),
     taskId: manifest.taskId,
     runId,
     phase,
     level: "warn",
-    code: "PHASE_ESCALATED",
+    code: EventCodes.PHASE_ESCALATED,
     message: `${formatPhaseLabel(phase)} failure escalated for human review.`,
     failureClass: failure.failureClass,
     data: recoveryMetadata,
@@ -4428,12 +4459,12 @@ async function handleAutomatedPhaseFailure(input: {
   await recordRunEvent({
     repository,
     logger: input.runLogger,
-    eventId: input.nextEventId(phase, "PIPELINE_BLOCKED"),
+    eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
     taskId: manifest.taskId,
     runId,
     phase,
     level: "warn",
-    code: "PIPELINE_BLOCKED",
+    code: EventCodes.PIPELINE_BLOCKED,
     message: `${formatPhaseLabel(phase)} phase blocked pending operator review.`,
     failureClass: failure.failureClass,
     durationMs: getDurationMs(input.runStartedAt, input.failedAt),
@@ -4590,12 +4621,12 @@ async function persistConcurrencyBlock(
   await recordRunEvent({
     repository: ctx.repository,
     logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, "RUN_BLOCKED_BY_OVERLAP"),
+    eventId: ctx.nextEventId(ctx.phase, EventCodes.RUN_BLOCKED_BY_OVERLAP),
     taskId: ctx.taskId,
     runId: ctx.runId,
     phase: ctx.phase,
     level: "warn",
-    code: "RUN_BLOCKED_BY_OVERLAP",
+    code: EventCodes.RUN_BLOCKED_BY_OVERLAP,
     message:
       decision.reason ?? `${phaseLabel} phase blocked by an overlapping run.`,
     failureClass: "execution_loop",
@@ -4610,12 +4641,12 @@ async function persistConcurrencyBlock(
   await recordRunEvent({
     repository: ctx.repository,
     logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, "PIPELINE_BLOCKED"),
+    eventId: ctx.nextEventId(ctx.phase, EventCodes.PIPELINE_BLOCKED),
     taskId: ctx.taskId,
     runId: ctx.runId,
     phase: ctx.phase,
     level: "warn",
-    code: "PIPELINE_BLOCKED",
+    code: EventCodes.PIPELINE_BLOCKED,
     message: `${phaseLabel} phase blocked by concurrency controls.`,
     failureClass: "execution_loop",
     durationMs: getDurationMs(ctx.runStartedAt, ctx.runStartedAt),
@@ -4685,12 +4716,12 @@ async function persistPhaseFailure(
   await recordRunEvent({
     repository: ctx.repository,
     logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, "PHASE_FAILED"),
+    eventId: ctx.nextEventId(ctx.phase, EventCodes.PHASE_FAILED),
     taskId,
     runId: ctx.runId,
     phase: ctx.phase,
     level: "error",
-    code: "PHASE_FAILED",
+    code: EventCodes.PHASE_FAILED,
     message: ctx.failure.message,
     failureClass: ctx.failure.failureClass,
     data: {

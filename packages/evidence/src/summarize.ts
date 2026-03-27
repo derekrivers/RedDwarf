@@ -8,7 +8,7 @@ import {
   type RunEvent,
   type RunSummary
 } from "@reddwarf/contracts";
-import { compareMemoryRecords, type PlanningRepository } from "./repository.js";
+import { compareMemoryRecords, dedupeMemoryRecords, type PlanningRepository } from "./repository.js";
 export function summarizeRunEvents(
   taskId: string,
   runId: string,
@@ -158,20 +158,4 @@ export function deriveOrganizationId(repo: string): string | null {
   return owner && owner.length > 0 ? owner : null;
 }
 
-
-function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {
-  const seen = new Set<string>();
-  const deduped: MemoryRecord[] = [];
-
-  for (const record of records.sort(compareMemoryRecords)) {
-    if (seen.has(record.memoryId)) {
-      continue;
-    }
-
-    seen.add(record.memoryId);
-    deduped.push(record);
-  }
-
-  return deduped;
-}
 

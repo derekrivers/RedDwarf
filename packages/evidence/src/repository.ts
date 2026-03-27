@@ -353,7 +353,7 @@ export function normalizeApprovalRequestQuery(
   return approvalRequestQuerySchema.parse(query);
 }
 
-function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {
+export function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {
   const seen = new Set<string>();
   const deduped: MemoryRecord[] = [];
 
