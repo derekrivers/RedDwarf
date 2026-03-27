@@ -60,6 +60,8 @@ The board is ordered by implementation priority.
 | 54       | Polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure | M9 | completed | Integration Plane, Evidence Plane, Observability Model                |
 | 55       | OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents | M9 | completed | Knowledge & Policy Plane, Execution Plane, Isolation and Security Model |
 | 56       | Per-agent tool policy specification with profiles, allow/deny lists, sandbox settings, and Anthropic model binding | M9 | completed | Knowledge & Policy Plane, Isolation and Security Model                |
+| 82       | Rename OpenClaw agents from coordinator/analyst/validator to rimmer/holly/kryten with full Red Dwarf persona files | M10 | pending | Knowledge & Policy Plane, Execution Plane                             |
+| 83       | Update docs/openclaw to reflect Anthropic as primary provider with model equivalents across all five docs | M10 | pending | Knowledge & Policy Plane                                              |
 | 57       | openclaw.json generation from RedDwarf policy configuration with per-agent workspace paths, tool profiles, and skipBootstrap | M10 | pending | System Context, Knowledge & Policy Plane, Integration Plane           |
 | 58       | Hook token secret wiring through EnvVarSecretsAdapter with .env.example and runbook documentation | M10 | pending | Integration Plane, Isolation and Security Model                       |
 | 59       | OpenClawDispatchAdapter contract and fixture adapter registered alongside existing integration adapters | M10 | pending | Integration Plane, Execution Plane                                    |
@@ -85,6 +87,8 @@ The board is ordered by implementation priority.
 | 79       | Split PostgresPlanningRepository row mappers into standalone testable module | M11 | completed | Evidence Plane                                                         |
 | 80       | Fix defaultLogger.child() LSP violation returning same instance | M11 | completed | Control Plane                                                          |
 | 81       | Enable no-floating-promises ESLint rule and fix all unawaited promise call sites | M11 | completed | All Packages                                                           |
+| 84       | Dave Lister developer agent — workspace_write sandbox, scoped file edit capability, implement_architecture_plan and report_deviation_or_blocker skills, wired to developer phase | M12 | pending | Execution Plane, Knowledge & Policy Plane                             |
+| 85       | OpenAI provider support — extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M13 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
 
 
 
