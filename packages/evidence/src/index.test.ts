@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   InMemoryPlanningRepository,
   buildMemoryContextForRepository,
@@ -105,4 +105,66 @@ describe("evidence memory partitions", () => {
     expect(context.externalMemory).toHaveLength(1);
     expect(activeRuns).toHaveLength(1);
   });
+
+  it("detects persisted planning specs by GitHub source for polling dedupe", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveManifest({
+      taskId: "acme-platform-77",
+      source: {
+        provider: "github",
+        repo: "acme/platform",
+        issueNumber: 77,
+        issueUrl: "https://github.com/acme/platform/issues/77"
+      },
+      title: "Poll issue 77",
+      summary: "A planning task created from the polling daemon.",
+      priority: 7,
+      riskClass: "low",
+      approvalMode: "auto",
+      currentPhase: "planning",
+      lifecycleStatus: "active",
+      assignedAgentType: "architect",
+      requestedCapabilities: ["can_plan", "can_archive_evidence"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.savePlanningSpec({
+      specId: "acme-platform-77:planning-spec",
+      taskId: "acme-platform-77",
+      summary: "Existing planning spec",
+      assumptions: ["Existing spec should suppress duplicate polling intake."],
+      affectedAreas: ["docs/polling.md"],
+      constraints: ["Do not create duplicate planning specs for the same issue."],
+      acceptanceCriteria: ["Polling dedupes by source issue."],
+      testExpectations: ["Repository source lookup returns true."],
+      recommendedAgentType: "architect",
+      riskClass: "low",
+      createdAt: timestamp
+    });
+
+    await expect(
+      repository.hasPlanningSpecForSource({
+        provider: "github",
+        repo: "acme/platform",
+        issueNumber: 77,
+        issueUrl: "https://github.com/acme/platform/issues/77"
+      })
+    ).resolves.toBe(true);
+    await expect(
+      repository.hasPlanningSpecForSource({
+        provider: "github",
+        repo: "acme/platform",
+        issueNumber: 78,
+        issueUrl: "https://github.com/acme/platform/issues/78"
+      })
+    ).resolves.toBe(false);
+  });
 });
+

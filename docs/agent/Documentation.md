@@ -123,3 +123,11 @@
 - Review phase is Phase 3 or later.
 - Features F53–F63 added to the board covering M9 (automated intake, agent definitions) and M10 (openclaw.json generation, HTTP dispatch adapter, session capture, developer phase wiring, bootstrap alignment).
 - Likely next board item: F53, GitHub issue polling daemon.
+- Completed feature 53 from `FEATURE_BOARD.md`: GitHub issue polling daemon with configurable interval and deduplication against existing planning specs.
+- Added `createGitHubIssuePollingDaemon(config, deps)` to the control-plane package. It polls one or more GitHub repositories on a configurable interval, converts new `ai-eligible` issue candidates into planning inputs, runs the planning pipeline, and skips issues that already have a persisted planning spec for the same GitHub source.
+- Added `PlanningRepository.hasPlanningSpecForSource(source)` to the evidence layer with in-memory and Postgres implementations so polling dedupe is based on durable planning-spec existence rather than on manifest presence alone.
+- Added focused unit coverage for polling intake and duplicate suppression in `packages/control-plane/src/index.test.ts`, plus source-dedupe coverage in `packages/evidence/src/index.test.ts`.
+- Verification for F53: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/evidence/src/index.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure).
+- Updated the feature board so feature 53 is marked complete and feature 54 is now the next actionable M9 item.
+- Likely next board item: feature 54, polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure.
+

@@ -12,6 +12,7 @@ import {
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
   createBufferedPlanningLogger,
+  createGitHubIssuePollingDaemon,
   createOperatorApiServer,
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
@@ -1555,6 +1556,140 @@ describe("operator API server", () => {
   });
 });
 
+
+describe("GitHub issue polling daemon", () => {
+  it("polls configured repositories and runs planning for new issue candidates", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 71,
+          title: "Poll the first issue",
+          body: [
+            "This issue should be ingested by the polling daemon.",
+            "",
+            "Acceptance Criteria:",
+            "- Planning input is created from polling",
+            "",
+            "Affected Paths:",
+            "- docs/polling.md",
+            "",
+            "Requested Capabilities:",
+            "- can_plan",
+            "- can_archive_evidence"
+          ].join("\n"),
+          labels: ["ai-eligible", "priority:4"],
+          url: "https://github.com/acme/platform/issues/71",
+          state: "open"
+        }
+      ]
+    });
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-27T09:00:00.000Z"),
+        idGenerator: () => "poll-run-001"
+      }
+    );
+
+    const cycle = await daemon.pollOnce();
+
+    expect(cycle.plannedIssueCount).toBe(1);
+    expect(cycle.skippedIssueCount).toBe(0);
+    expect(cycle.decisions[0]).toMatchObject({
+      repo: "acme/platform",
+      issueNumber: 71,
+      action: "planned"
+    });
+    expect(repository.planningSpecs.size).toBe(1);
+  });
+
+  it("skips issues that already have a persisted planning spec", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 72,
+          title: "Poll the duplicate issue",
+          body: [
+            "This issue already has a planning spec and should be skipped.",
+            "",
+            "Acceptance Criteria:",
+            "- Duplicate issues are skipped"
+          ].join("\n"),
+          labels: ["ai-eligible", "priority:4"],
+          url: "https://github.com/acme/platform/issues/72",
+          state: "open"
+        }
+      ]
+    });
+
+    await runPlanningPipeline(
+      {
+        source: {
+          provider: "github",
+          repo: "acme/platform",
+          issueNumber: 72,
+          issueUrl: "https://github.com/acme/platform/issues/72"
+        },
+        title: "Pre-existing planning issue",
+        summary:
+          "This planning task already exists and should cause the polling daemon to skip duplicate intake.",
+        priority: 4,
+        labels: ["ai-eligible"],
+        acceptanceCriteria: ["Duplicate intake is skipped."],
+        affectedPaths: ["docs/polling.md"],
+        requestedCapabilities: ["can_plan", "can_archive_evidence"],
+        metadata: {}
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-27T09:01:00.000Z"),
+        idGenerator: () => "poll-existing-001"
+      }
+    );
+
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-27T09:02:00.000Z"),
+        idGenerator: () => "poll-run-002"
+      }
+    );
+
+    const cycle = await daemon.pollOnce();
+
+    expect(cycle.plannedIssueCount).toBe(0);
+    expect(cycle.skippedIssueCount).toBe(1);
+    expect(cycle.decisions).toEqual([
+      {
+        repo: "acme/platform",
+        issueNumber: 72,
+        action: "skipped",
+        reason: "existing_planning_spec"
+      }
+    ]);
+    expect(repository.planningSpecs.size).toBe(1);
+  });
+});
+
 describe("knowledge ingestion pipeline", () => {
   const adrSource = {
     sourceUri: "file://docs/adr/001-use-postgres.md",
@@ -1751,3 +1886,4 @@ describe("knowledge ingestion pipeline", () => {
     ).toBe(true);
   });
 });
+

@@ -501,6 +501,47 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows[0] ? mapApprovalRequestRow(result.rows[0]) : null;
   }
 
+  async hasPlanningSpecForSource(
+    source: TaskManifest["source"]
+  ): Promise<boolean> {
+    const issueKey =
+      source.issueNumber !== undefined
+        ? "issueNumber"
+        : source.issueId !== undefined
+          ? "issueId"
+          : null;
+    const issueValue =
+      issueKey === "issueNumber"
+        ? String(source.issueNumber)
+        : issueKey === "issueId"
+          ? String(source.issueId)
+          : null;
+    const conditions = [
+      "task_manifests.source ->> 'provider' = $1",
+      "task_manifests.source ->> 'repo' = $2"
+    ];
+    const params: unknown[] = [source.provider, source.repo];
+
+    if (issueKey !== null && issueValue !== null) {
+      conditions.push(`task_manifests.source ->> '${issueKey}' = $3`);
+      params.push(issueValue);
+    }
+
+    const result = await this.pool.query(
+      `
+        SELECT 1
+        FROM task_manifests
+        INNER JOIN planning_specs
+          ON planning_specs.task_id = task_manifests.task_id
+        WHERE ${conditions.join(" AND ")}
+        LIMIT 1
+      `,
+      params
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async getPlanningSpec(taskId: string): Promise<PlanningSpec | null> {
     const result = await this.pool.query(
       "SELECT * FROM planning_specs WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1",
@@ -913,3 +954,4 @@ function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {
 }
 
 export * from "./schema.js";
+

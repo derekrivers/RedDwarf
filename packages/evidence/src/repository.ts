@@ -43,11 +43,26 @@ export interface PlanningCommandRepository {
 export interface PlanningQueryRepository {
   getManifest(taskId: string): Promise<TaskManifest | null>;
   getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
+  hasPlanningSpecForSource(source: TaskManifest["source"]): Promise<boolean>;
+  getPlanningSpec(taskId: string): Promise<PlanningSpec | null>;
+  getPolicySnapshot(taskId: string): Promise<PolicySnapshot | null>;
+  getPipelineRun(runId: string): Promise<PipelineRun | null>;
+  listPhaseRecords(taskId: string): Promise<PhaseRecord[]>;
+  listEvidenceRecords(taskId: string): Promise<EvidenceRecord[]>;
+  listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]>;
+  listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
   listApprovalRequests(
     query?: Partial<ApprovalRequestQuery>
   ): Promise<ApprovalRequest[]>;
   getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
+  getRunSummary(taskId: string, runId: string): Promise<RunSummary | null>;
+  getMemoryContext(input: {
+    taskId: string;
+    repo: string;
+    organizationId?: string | null;
+    limitPerScope?: number;
+  }): Promise<MemoryContext>;
 }
 
 export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;
@@ -133,6 +148,24 @@ export class InMemoryPlanningRepository implements PlanningRepository {
 
   async getApprovalRequest(requestId: string): Promise<ApprovalRequest | null> {
     return this.approvalRequests.get(requestId) ?? null;
+  }
+
+  async hasPlanningSpecForSource(
+    source: TaskManifest["source"]
+  ): Promise<boolean> {
+    for (const manifest of this.manifests.values()) {
+      if (
+        manifest.source.provider === source.provider &&
+        manifest.source.repo === source.repo &&
+        manifest.source.issueId === source.issueId &&
+        manifest.source.issueNumber === source.issueNumber &&
+        this.planningSpecs.has(manifest.taskId)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   async getPlanningSpec(taskId: string): Promise<PlanningSpec | null> {
