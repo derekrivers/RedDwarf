@@ -94,27 +94,27 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     bootstrapFiles: [
       {
         kind: "identity",
-        relativePath: "agents/openclaw/coordinator/IDENTITY.md",
-        description: "Identity and persona for the coordinator role."
+        relativePath: "agents/openclaw/rimmer/IDENTITY.md",
+        description: "Arnold Rimmer identity and coordinator persona."
       },
       {
         kind: "soul",
-        relativePath: "agents/openclaw/coordinator/SOUL.md",
+        relativePath: "agents/openclaw/rimmer/SOUL.md",
         description: "Operating posture and system boundary guidance."
       },
       {
         kind: "agents",
-        relativePath: "agents/openclaw/coordinator/AGENTS.md",
+        relativePath: "agents/openclaw/rimmer/AGENTS.md",
         description: "Runtime roster and delegation contract."
       },
       {
         kind: "tools",
-        relativePath: "agents/openclaw/coordinator/TOOLS.md",
+        relativePath: "agents/openclaw/rimmer/TOOLS.md",
         description: "Tool-usage guardrails for coordination work."
       },
       {
         kind: "skill",
-        relativePath: "agents/openclaw/coordinator/skills/reddwarf-openclaw/SKILL.md",
+        relativePath: "agents/openclaw/rimmer/skills/reddwarf-openclaw/SKILL.md",
         description:
           "Runtime skill for coordinating bounded OpenClaw sessions."
       }
@@ -132,35 +132,35 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:memory", "group:web", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
-      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      model: { provider: "anthropic", model: "anthropic/claude-opus-4-6" }
     },
     bootstrapFiles: [
       {
         kind: "identity",
-        relativePath: "agents/openclaw/analyst/IDENTITY.md",
-        description: "Identity and persona for the analyst role."
+        relativePath: "agents/openclaw/holly/IDENTITY.md",
+        description: "Holly identity and architect persona."
       },
       {
         kind: "soul",
-        relativePath: "agents/openclaw/analyst/SOUL.md",
+        relativePath: "agents/openclaw/holly/SOUL.md",
         description:
           "Operating posture and source hierarchy for analysis work."
       },
       {
         kind: "agents",
-        relativePath: "agents/openclaw/analyst/AGENTS.md",
+        relativePath: "agents/openclaw/holly/AGENTS.md",
         description: "Runtime roster and analyst handoff rules."
       },
       {
         kind: "tools",
-        relativePath: "agents/openclaw/analyst/TOOLS.md",
+        relativePath: "agents/openclaw/holly/TOOLS.md",
         description: "Tool-usage guardrails for read-only analysis."
       },
       {
         kind: "skill",
-        relativePath: "agents/openclaw/analyst/skills/reddwarf-openclaw/SKILL.md",
+        relativePath: "agents/openclaw/holly/skills/issue_to_architecture_plan/SKILL.md",
         description:
-          "Runtime skill for analysis and synthesis inside OpenClaw."
+          "Primary planning skill for issue-to-architecture-plan work."
       }
     ],
     canonicalSources: [
@@ -185,29 +185,29 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     bootstrapFiles: [
       {
         kind: "identity",
-        relativePath: "agents/openclaw/validator/IDENTITY.md",
-        description: "Identity and persona for the validator role."
+        relativePath: "agents/openclaw/kryten/IDENTITY.md",
+        description: "Kryten identity and reviewer/verifier persona."
       },
       {
         kind: "soul",
-        relativePath: "agents/openclaw/validator/SOUL.md",
+        relativePath: "agents/openclaw/kryten/SOUL.md",
         description: "Operating posture for evidence and verification work."
       },
       {
         kind: "agents",
-        relativePath: "agents/openclaw/validator/AGENTS.md",
+        relativePath: "agents/openclaw/kryten/AGENTS.md",
         description: "Runtime roster and validator handoff rules."
       },
       {
         kind: "tools",
-        relativePath: "agents/openclaw/validator/TOOLS.md",
+        relativePath: "agents/openclaw/kryten/TOOLS.md",
         description: "Tool-usage guardrails for bounded verification."
       },
       {
         kind: "skill",
-        relativePath: "agents/openclaw/validator/skills/reddwarf-openclaw/SKILL.md",
+        relativePath: "agents/openclaw/kryten/skills/review_implementation_against_plan/SKILL.md",
         description:
-          "Runtime skill for validation and evidence review inside OpenClaw."
+          "Primary review skill for plan-vs-implementation verification."
       }
     ],
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/validation.md"]

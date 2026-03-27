@@ -11,6 +11,7 @@ import {
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
+  buildAgentConfig,
   createBufferedPlanningLogger,
   createGitHubIssuePollingDaemon,
   createOperatorApiServer,
@@ -18,13 +19,15 @@ import {
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
+  generateOpenClawConfig,
   ingestKnowledgeSources,
   provisionTaskWorkspace,
   resolveApprovalRequest,
   runDeveloperPhase,
   runPlanningPipeline,
   runScmPhase,
-  runValidationPhase
+  runValidationPhase,
+  serializeOpenClawConfig
 } from "@reddwarf/control-plane";
 import { FixtureKnowledgeIngestionAdapter } from "@reddwarf/integrations";
 import {
@@ -2002,4 +2005,87 @@ describe("knowledge ingestion pipeline", () => {
   });
 });
 
+// ── OpenClaw config generation ───────────────────────────────────────────────
+
+describe("generateOpenClawConfig", () => {
+  it("generates config with all three agent roles", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/workspaces" });
+
+    expect(config.agents.defaults.skipBootstrap).toBe(true);
+
+    const agentIds = Object.keys(config.agents).filter((k) => k !== "defaults");
+    expect(agentIds).toContain("reddwarf-coordinator");
+    expect(agentIds).toContain("reddwarf-analyst");
+    expect(agentIds).toContain("reddwarf-validator");
+    expect(agentIds).toHaveLength(3);
+  });
+
+  it("sets per-agent workspace paths under the provided root", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/data/workspaces" });
+
+    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
+    const analyst = config.agents["reddwarf-analyst"] as Record<string, unknown>;
+    const validator = config.agents["reddwarf-validator"] as Record<string, unknown>;
+
+    expect(coordinator["workspace"]).toBe("/data/workspaces/reddwarf-coordinator");
+    expect(analyst["workspace"]).toBe("/data/workspaces/reddwarf-analyst");
+    expect(validator["workspace"]).toBe("/data/workspaces/reddwarf-validator");
+  });
+
+  it("maps tool profiles, allow/deny, and sandbox from runtime policy", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
+    const tools = coordinator["tools"] as Record<string, unknown>;
+
+    expect(tools["profile"]).toBe("minimal");
+    expect(tools["allow"]).toEqual(["group:fs", "group:sessions", "group:memory", "group:openclaw"]);
+    expect(tools["deny"]).toEqual(["group:automation", "group:messaging", "group:nodes"]);
+    expect(coordinator["sandbox"]).toBe("read_only");
+  });
+
+  it("maps model binding from runtime policy", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    const analyst = config.agents["reddwarf-analyst"] as Record<string, unknown>;
+    expect(analyst["model"]).toBe("anthropic/claude-opus-4-6");
+
+    const coordinator = config.agents["reddwarf-coordinator"] as Record<string, unknown>;
+    expect(coordinator["model"]).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("allows a subset of roles", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const analystOnly = roles.filter((r: { role: string }) => r.role === "analyst");
+
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws", roles: analystOnly });
+    const agentIds = Object.keys(config.agents).filter((k) => k !== "defaults");
+    expect(agentIds).toEqual(["reddwarf-analyst"]);
+  });
+
+  it("serializes to valid JSON with trailing newline", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+    const json = serializeOpenClawConfig(config);
+
+    expect(json.endsWith("\n")).toBe(true);
+    const parsed = JSON.parse(json);
+    expect(parsed.agents.defaults.skipBootstrap).toBe(true);
+    expect(parsed.agents["reddwarf-coordinator"]).toBeDefined();
+  });
+});
+
+describe("buildAgentConfig", () => {
+  it("builds a single agent config entry", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const validator = roles.find((r: { role: string }) => r.role === "validator");
+
+    const entry = buildAgentConfig(validator, "/runtime/ws", true);
+
+    expect(entry.workspace).toBe("/runtime/ws/reddwarf-validator");
+    expect(entry.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(entry.tools.profile).toBe("coding");
+    expect(entry.sandbox).toBe("workspace_write");
+    expect(entry.skipBootstrap).toBe(true);
+  });
+});
 

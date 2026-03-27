@@ -388,7 +388,7 @@ describe("openClawAgentRoleDefinitions", () => {
 
     expect(analyst.agentId).toBe("reddwarf-analyst");
     expect(analyst.bootstrapFiles[0]?.relativePath).toContain(
-      "analyst/IDENTITY.md"
+      "holly/IDENTITY.md"
     );
   });
 
