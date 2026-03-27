@@ -257,12 +257,12 @@ Then in a second terminal — use whichever shell you have:
 # List pending approvals
 Invoke-RestMethod http://localhost:8080/approvals
 
-# Resolve an approval
+# Resolve an approval (decision, decidedBy, and decisionSummary are all required)
 Invoke-RestMethod `
   -Method POST `
   -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
   -ContentType "application/json" `
-  -Body '{"decision":"approved","rationale":"Looks good — proceed to development"}'
+  -Body '{"decision":"approved","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
 ```
 
 **Git Bash / WSL / Linux / macOS:**
@@ -271,9 +271,10 @@ Invoke-RestMethod `
 curl http://localhost:8080/approvals
 
 # Resolve an approval — use curl.exe in Git Bash on Windows to avoid the PowerShell alias
+# decision, decidedBy, and decisionSummary are all required
 curl.exe -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
   -H "Content-Type: application/json" \
-  -d '{"decision":"approved","rationale":"Looks good — proceed to development"}'
+  -d '{"decision":"approved","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
 ```
 
 ---
