@@ -226,10 +226,10 @@ ORDER BY created_at DESC
 LIMIT 1;
 
 -- View the phase records for that task
-SELECT phase, status, started_at, completed_at
+SELECT phase, status, actor, summary, created_at
 FROM phase_records
 WHERE task_id = '<task-id-from-above>'
-ORDER BY started_at;
+ORDER BY created_at;
 
 -- View run events
 SELECT run_id, phase, level, message

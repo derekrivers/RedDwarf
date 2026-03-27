@@ -59,10 +59,10 @@ try {
     // Show phase records and run events for given task
     const phaseResult = await client.query(
       `
-      SELECT phase, status, started_at, completed_at
+      SELECT phase, status, actor, summary, created_at
       FROM phase_records
       WHERE task_id = $1
-      ORDER BY started_at
+      ORDER BY created_at
     `,
       [taskIdArg]
     );
@@ -72,11 +72,7 @@ try {
       console.log("(none)");
     } else {
       for (const row of phaseResult.rows) {
-        const duration =
-          row.started_at && row.completed_at
-            ? `${Math.round((new Date(row.completed_at) - new Date(row.started_at)) / 1000)}s`
-            : "—";
-        console.log(`  ${row.phase.padEnd(16)} ${row.status.padEnd(10)} ${duration}`);
+        console.log(`  ${row.phase.padEnd(16)} ${row.status.padEnd(10)} ${row.summary}`);
       }
     }
 
