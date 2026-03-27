@@ -88,3 +88,19 @@
   - Feature 42: moved `DeterministicPlanningAgent`, `DeterministicDeveloperAgent`, `DeterministicValidationAgent`, `DeterministicScmAgent` into `packages/execution-plane/src/index.ts` with all required private helpers (`formatLiteralList`, `createScmBranchName`, `sanitizeBranchSegment`, `createScmPullRequestBody`, `createValidationNodeScript`); control-plane re-exports the four classes from `@reddwarf/execution-plane` for backward compatibility; feature 32 marked complete.
 - All M7 features (39–42) are complete; F32 is also now complete. Feature board updated accordingly.
 - Likely next board items: none currently listed; M8 would be the next milestone.
+
+## 2026-03-27
+
+- Completed all ten features from `FEATURE_BOARD.md` M8 milestone (F43–F52).
+  - Feature 43 (RestGitHubAdapter): implemented `GitHubAdapter` backed by the GitHub REST API using Node 22 `fetch`; `fetchIssueCandidate`, `listIssueCandidates`, `readIssueStatus`, `createIssue`, `createBranch`, `createPullRequest` are all live; `addLabels`/`removeLabels`/`commentOnIssue` remain V1-disabled; `createRestGitHubAdapter` factory reads `GITHUB_TOKEN` from env.
+  - Feature 44 (AnthropicPlanningAgent): implemented `PlanningAgent` that calls the Anthropic Messages API with the policy-pack system prompt; `parsePlanningDraft` extracts JSON from the response with a graceful fallback; `createPlanningAgent({ type: "anthropic" | "deterministic" })` factory enables configurable selection; reads `ANTHROPIC_API_KEY` from env.
+  - Feature 45 (Real GitHub SCM adapter): `createBranch` fetches the base ref SHA then creates the new ref; `createPullRequest` opens the PR; both implemented in `RestGitHubAdapter` as part of F43; approval gate enforcement stays in the control-plane pipeline.
+  - Feature 46 (EnvVarSecretsAdapter): implemented `SecretsAdapter` reading from env vars with configurable prefix (`REDDWARF_SECRET_` by default); supports explicit scope map or automatic scope-prefixed env var discovery; enforces high-risk guard; `createEnvVarSecretsAdapter` factory provided.
+  - Feature 47 (Execution-plane unit tests): added `packages/execution-plane/src/index.test.ts` with 24 tests covering all four `DeterministicXxxAgent` classes, `agentDefinitions`, `phaseIsExecutable`, and `createPlanningAgent`; all pass.
+  - Feature 48 (verify:all): added `scripts/verify-all.mjs` running all 18 verify scripts as isolated child processes with pass/fail summary; exposed as `pnpm verify:all`.
+  - Feature 49 (setup script): added `scripts/setup.mjs` — `compose:up`, 60s Postgres readiness poll, `db:migrate`, health check table query; safe to re-run; exposed as `pnpm setup`.
+  - Feature 50 (evidence cleanup): added `scripts/cleanup-evidence.mjs` with configurable `--max-age-days` threshold, dry-run by default, `--delete` for actual removal; reports eligible dirs/sizes; exposed as `pnpm cleanup:evidence`.
+  - Feature 51 (demo runbook): added `docs/DEMO_RUNBOOK.md` covering stack bootstrap, GitHub token + Anthropic API key setup, filing a demo issue, running the full pipeline, inspecting Postgres evidence, and the approval workflow.
+  - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55432` explanation, and `spawn EPERM` workaround pointer.
+- All M8 features (F43–F52) are complete. Feature board updated accordingly.
+- Likely next board items: none; M9 would be the next milestone.

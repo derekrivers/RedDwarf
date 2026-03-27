@@ -49,10 +49,10 @@ The board is ordered by implementation priority.
 | 43       | Real GitHub issue intake adapter reading live repositories and issues via GitHub REST API | M8 | completed | Integration Plane                                                      |
 | 44       | Live LLM planning agent binding through OpenClaw system prompt and configurable agent selection | M8 | completed | Execution Plane, Knowledge & Policy Plane                              |
 | 45       | Real GitHub SCM adapter for live branch and PR creation behind existing approval gates | M8 | completed | Integration Plane, SCM Agent                                           |
-| 46       | Concrete env-var-backed secret vault adapter as first non-fixture secrets implementation | M8 | pending | Integration Plane, Isolation and Security Model                        |
-| 47       | Unit test suite for DeterministicPlanningAgent, DeterministicDeveloperAgent, DeterministicValidationAgent, and DeterministicScmAgent | M8 | pending | Execution Plane                                                        |
-| 48       | verify:all composite script running all eighteen verify scripts in sequence     | M8        | pending   | Observability Model                                                    |
-| 49       | Idempotent setup script combining compose:up, db:migrate, and stack health check | M8       | pending   | System Context                                                         |
-| 50       | Evidence volume retention policy with configurable age threshold and cleanup script | M8     | pending   | Evidence Plane                                                         |
-| 51       | End-to-end local demo runbook targeting a real GitHub repository with live inputs and outputs | M8 | pending | System Context, Refactored Workflow                                   |
-| 52       | README improvements covering Windows host configuration, registry access, and boot health check | M8 | pending | System Context                                                        |
+| 46       | Concrete env-var-backed secret vault adapter as first non-fixture secrets implementation | M8 | completed | Integration Plane, Isolation and Security Model                        |
+| 47       | Unit test suite for DeterministicPlanningAgent, DeterministicDeveloperAgent, DeterministicValidationAgent, and DeterministicScmAgent | M8 | completed | Execution Plane                                                        |
+| 48       | verify:all composite script running all eighteen verify scripts in sequence     | M8        | completed | Observability Model                                                    |
+| 49       | Idempotent setup script combining compose:up, db:migrate, and stack health check | M8       | completed | System Context                                                         |
+| 50       | Evidence volume retention policy with configurable age threshold and cleanup script | M8     | completed | Evidence Plane                                                         |
+| 51       | End-to-end local demo runbook targeting a real GitHub repository with live inputs and outputs | M8 | completed | System Context, Refactored Workflow                                   |
+| 52       | README improvements covering Windows host configuration, registry access, and boot health check | M8 | completed | System Context                                                        |
