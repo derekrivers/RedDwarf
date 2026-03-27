@@ -92,8 +92,9 @@
 ## 2026-03-27
 
 - Diagnosed an OpenClaw host-access issue in the Docker stack: the container published port `3578`, but the gateway was still binding to `127.0.0.1:18789` inside the container, so the host saw an open TCP port with empty HTTP replies and no reachable Control UI.
-- Fixed the Docker-side OpenClaw host-access gap by mounting `infra/docker/openclaw.json` into the container so `gateway.bind` is forced to `lan`, kept `OPENCLAW_GATEWAY_TOKEN` as the host-provided auth secret, and updated `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md` with the new startup path.
+- Fixed the Docker-side OpenClaw host-access gap by seeding `infra/docker/openclaw.json` into the writable host-backed state directory at `runtime-data/openclaw-home/openclaw.json`, kept `OPENCLAW_GATEWAY_TOKEN` as the host-provided auth secret, and updated `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md` with the new startup path.
 - Added a troubleshooting entry documenting the symptom (`curl` empty reply on `127.0.0.1:3578`), root cause, and verification path, and clarified that the RedDwarf operator API on `127.0.0.1:8080` is separate from the OpenClaw Control UI on `3578`.
+- Follow-up fix: a read-only OPENCLAW_CONFIG_PATH caused startup EACCES errors when OpenClaw tried to persist config seeds. The compose service now seeds the checked-in config template into writable host state before launch, and verification confirmed clean startup plus a reachable Control UI.
 
 - Completed all ten features from `FEATURE_BOARD.md` M8 milestone (F43–F52).
   - Feature 43 (RestGitHubAdapter): implemented `GitHubAdapter` backed by the GitHub REST API using Node 22 `fetch`; `fetchIssueCandidate`, `listIssueCandidates`, `readIssueStatus`, `createIssue`, `createBranch`, `createPullRequest` are all live; `addLabels`/`removeLabels`/`commentOnIssue` remain V1-disabled; `createRestGitHubAdapter` factory reads `GITHUB_TOKEN` from env.

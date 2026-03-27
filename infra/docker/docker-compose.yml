@@ -4,6 +4,15 @@ services:
     restart: unless-stopped
     profiles:
       - openclaw
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p /home/node/.openclaw &&
+        if [ ! -f /home/node/.openclaw/openclaw.json ]; then
+          cp /etc/openclaw/openclaw.json /home/node/.openclaw/openclaw.json
+        fi
+        exec node openclaw.mjs gateway --allow-unconfigured
     environment:
       REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
@@ -11,7 +20,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
       OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      OPENCLAW_CONFIG_PATH: /etc/openclaw/openclaw.json
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
     ports:
       - "${OPENCLAW_HOST_PORT:-3578}:18789"
     depends_on:
@@ -26,6 +35,7 @@ services:
     volumes:
       - ${REDDWARF_POLICY_SOURCE_ROOT:-../../}:${REDDWARF_POLICY_ROOT:-/opt/reddwarf}:ro
       - ./openclaw.json:/etc/openclaw/openclaw.json:ro
+      - ../../runtime-data/openclaw-home:/home/node/.openclaw
       - runtime-workspace:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       - runtime-evidence:${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
 

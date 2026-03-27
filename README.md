@@ -41,7 +41,7 @@ Contact the openclaw organisation if you do not have access.
 
 ### OpenClaw Control UI access
 
-If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in `.env` before starting the `openclaw` profile. The compose stack mounts [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json), which forces `gateway.bind` to `lan` inside the container so Docker-published port `3578` is actually reachable from the host.
+If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in `.env` before starting the `openclaw` profile. The compose stack seeds [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) into the writable host-backed state directory at `runtime-data/openclaw-home`, which forces `gateway.bind` to `lan` while still letting OpenClaw persist its own runtime state.
 
 ```bash
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>
@@ -99,7 +99,7 @@ For a complete walkthrough from a fresh clone to a real planning cycle with GitH
 ## Runtime Model
 
 - `openclaw` runs as a container and can mount either this repo read-only for development or a packaged policy-pack artifact from `artifacts/policy-packs/.../policy-root` for immutable promotion.
-- The OpenClaw Control UI is served by the OpenClaw gateway on host port `3578` via the mounted [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) config. The RedDwarf operator API is a separate host-side process on `127.0.0.1:8080` started with `corepack pnpm operator:api`.
+- The OpenClaw Control UI is served by the OpenClaw gateway on host port `3578` using the seeded [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) template plus writable runtime state under `runtime-data/openclaw-home`. The RedDwarf operator API is a separate host-side process on `127.0.0.1:8080` started with `corepack pnpm operator:api`.
 - `postgres` stores manifests, planning specs, policy snapshots, approval requests and decisions, evidence metadata, run events, durable pipeline-run records for overlap control, derived run summaries, and partitioned memory across task, project, organization, and external scopes.
 - Host-side verification uses `POSTGRES_HOST_PORT` and defaults to `55532` to avoid collisions with an existing local Postgres on `5432`.
 - Host-side DB clients should use `127.0.0.1` instead of `localhost` on this Windows setup because `localhost` can resolve through `wslrelay` and miss the Docker-bound listener.
