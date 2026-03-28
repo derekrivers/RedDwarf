@@ -695,6 +695,110 @@ describe("control-plane", () => {
     }
   });
 
+  it("keeps approved PR tasks pending review when the developer phase stays read-only", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-readonly-pr-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-readonly-pr-evidence-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic change that requests a PR even though the current developer workflow remains read-only.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-readonly-pr-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for read-only PR routing test.",
+        comment: "Do not allow SCM while code writing is disabled."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-readonly-pr",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-readonly-pr-dev"
+        }
+      );
+
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-readonly-pr-validation"
+        }
+      );
+
+      expect(validation.nextAction).toBe("await_review");
+      await expect(
+        runScmPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            scm: new DeterministicScmAgent(),
+            github: new FixtureGitHubAdapter({
+              candidates: [
+                {
+                  repo: planningResult.manifest.source.repo,
+                  issueNumber: 99,
+                  title: planningResult.manifest.title,
+                  body: planningResult.manifest.summary,
+                  labels: ["ai-eligible"],
+                  url: "https://github.com/acme/platform/issues/99",
+                  state: "open"
+                }
+              ],
+              mutations: {
+                allowBranchCreation: true,
+                allowPullRequestCreation: true,
+                pullRequestNumberStart: 71
+              }
+            }),
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-readonly-pr-scm"
+          }
+        )
+      ).rejects.toThrow("code writing disabled");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("routes approved PR tasks from validation into SCM and completes the task", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-workspace-"));
@@ -744,6 +848,18 @@ describe("control-plane", () => {
           idGenerator: () => "run-scm-dev"
         }
       );
+      const developmentHandoff = repository.memoryRecords.find(
+        (record) =>
+          record.taskId === planningResult.manifest.taskId &&
+          record.key === "development.handoff"
+      );
+      expect(developmentHandoff).toBeDefined();
+      if (developmentHandoff) {
+        developmentHandoff.value = {
+          ...(developmentHandoff.value as Record<string, unknown>),
+          codeWriteEnabled: true
+        };
+      }
       const validation = await runValidationPhase(
         {
           taskId: planningResult.manifest.taskId,

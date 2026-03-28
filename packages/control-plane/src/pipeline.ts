@@ -2457,6 +2457,8 @@ export async function runValidationPhase(
       evidenceRoot: input.evidenceRoot,
       fileName: "validation-results.json"
     });
+    const developerCodeWriteEnabled =
+      readDevelopmentCodeWriteEnabledFromSnapshot(snapshot);
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${taskId}:memory:task:validation`,
@@ -2473,7 +2475,8 @@ export async function runValidationPhase(
           reportPath,
           resultsPath,
           reportArchiveLocation: archivedReport.location,
-          resultsArchiveLocation: archivedResults.location
+          resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled
         },
         repo: currentManifest.source.repo,
         organizationId: deriveOrganizationId(currentManifest.source.repo),
@@ -2497,6 +2500,7 @@ export async function runValidationPhase(
           resultsPath,
           reportArchiveLocation: archivedReport.location,
           resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled,
           commandResults,
           ...(approvedRequest
             ? { approvalRequestId: approvedRequest.requestId }
@@ -2566,6 +2570,7 @@ export async function runValidationPhase(
         reportPath,
         reportArchiveLocation: archivedReport.location,
         resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled,
         commandCount: commandResults.length
       },
       createdAt: validationCompletedAtIso
@@ -2577,18 +2582,21 @@ export async function runValidationPhase(
         workspaceId: workspace.workspaceId,
         reportPath,
         reportArchiveLocation: archivedReport.location,
-        resultsArchiveLocation: archivedResults.location
+        resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled
       }
     });
-
-    const nextAction = taskRequestsPullRequest(currentManifest)
-      ? "await_scm"
-      : "await_review";
+    const nextAction =
+      taskRequestsPullRequest(currentManifest) && developerCodeWriteEnabled
+        ? "await_scm"
+        : "await_review";
     const nextPhase = nextAction === "await_scm" ? "scm" : "review";
     const blockedMessage =
       nextAction === "await_scm"
         ? "Validation phase completed and is ready for SCM branch and pull-request creation."
-        : "Validation phase completed, but review automation is not implemented yet.";
+        : taskRequestsPullRequest(currentManifest)
+          ? "Validation phase completed, but SCM handoff is unavailable because the developer phase stayed read-only."
+          : "Validation phase completed, but review automation is not implemented yet.";
     const blockedAt = clock();
     const blockedAtIso = asIsoTimestamp(blockedAt);
     await recordRunEvent({
@@ -2608,7 +2616,8 @@ export async function runValidationPhase(
         workspaceId: workspace.workspaceId,
         reportPath,
         reportArchiveLocation: archivedReport.location,
-        resultsArchiveLocation: archivedResults.location
+        resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled
       },
       createdAt: blockedAtIso
     });
@@ -2629,7 +2638,8 @@ export async function runValidationPhase(
         workspaceId: workspace.workspaceId,
         reportPath,
         reportArchiveLocation: archivedReport.location,
-        resultsArchiveLocation: archivedResults.location
+        resultsArchiveLocation: archivedResults.location,
+        developerCodeWriteEnabled
       }
     });
 
@@ -3112,6 +3122,24 @@ function readValidationReportPathFromSnapshot(
   );
 }
 
+function readDevelopmentCodeWriteEnabledFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): boolean {
+  const developmentHandoff = readTaskMemoryValue(snapshot, "development.handoff");
+
+  if (developmentHandoff && typeof developmentHandoff === "object") {
+    const codeWriteEnabled = (developmentHandoff as Record<string, unknown>)[
+      "codeWriteEnabled"
+    ];
+
+    if (typeof codeWriteEnabled === "boolean") {
+      return codeWriteEnabled;
+    }
+  }
+
+  return false;
+}
+
 function taskRequestsPullRequest(manifest: TaskManifest): boolean {
   return manifest.requestedCapabilities.includes("can_open_pr");
 }
@@ -3550,6 +3578,15 @@ export async function runScmPhase(
   if (!workspaceId) {
     throw new Error(
       `Task ${taskId} requires a managed workspace from the developer phase before SCM can start.`
+    );
+  }
+
+  const developerCodeWriteEnabled =
+    readDevelopmentCodeWriteEnabledFromSnapshot(snapshot);
+
+  if (!developerCodeWriteEnabled) {
+    throw new Error(
+      `Task ${taskId} cannot enter SCM because the developer phase completed with code writing disabled.`
     );
   }
 
@@ -4283,7 +4320,6 @@ async function handleAutomatedPhaseFailure(input: {
       retryCount,
       retryLimit: policy.retryLimit
     };
-
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${manifest.taskId}:memory:task:failure-recovery`,

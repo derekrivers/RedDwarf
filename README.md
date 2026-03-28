@@ -7,7 +7,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - planning-first
 - human-gated
 - durable and auditable
-- developer orchestration, workspace-local validation, durable evidence archival, scoped secret leases, and approval-gated SCM handoff are available, while product code-writing still remains disabled by default
+- developer orchestration, workspace-local validation, durable evidence archival, and scoped secret leases are available today; SCM PR handoff remains gated on a write-enabled developer workflow while product code-writing is still disabled by default
 
 ## Repository Shape
 
@@ -57,10 +57,10 @@ cd RedDwarf
 corepack enable
 corepack pnpm install
 cp .env.example .env          # review and edit as needed
-corepack pnpm setup           # compose:up → wait for Postgres → db:migrate → health check
+corepack pnpm run setup           # compose:up → wait for Postgres → db:migrate → health check
 ```
 
-`pnpm setup` is idempotent — safe to re-run if the stack is already running.
+`pnpm run setup` is idempotent — safe to re-run if the stack is already running.
 
 ### Manual steps (if preferred)
 

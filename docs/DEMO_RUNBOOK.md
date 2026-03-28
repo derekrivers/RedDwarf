@@ -1,6 +1,6 @@
 # RedDwarf End-to-End Runbook
 
-This runbook walks through a complete demonstration of RedDwarf — from a fresh clone through the full read-only pipeline: automated issue polling, planning, OpenClaw analyst dispatch, validation, and SCM handoff.
+This runbook walks through a complete demonstration of RedDwarf — from a fresh clone through the current read-only pipeline: automated issue polling, planning, OpenClaw analyst dispatch, validation, and review-pending handoff. Real SCM PR creation remains reserved for a future write-enabled developer workflow.
 
 > **Prerequisites:** Docker Desktop (or Docker Engine + Compose), Node.js ≥ 22, Corepack, Git, a GitHub Personal Access Token, and an Anthropic API key.
 
@@ -74,7 +74,7 @@ The `.env` file is referenced by both the Node.js app and the Docker Compose sta
 ### 1.2 Start the stack (Postgres only)
 
 ```bash
-corepack pnpm setup
+corepack pnpm run setup
 ```
 
 This runs: `build` → `compose:up` → wait for Postgres → `db:migrate` → health check.
@@ -622,7 +622,7 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 
 | Command | Purpose |
 |---------|---------|
-| `corepack pnpm setup` | Build + start Postgres + migrate + health check |
+| `corepack pnpm run setup` | Build + start Postgres + migrate + health check |
 | `corepack pnpm compose:up:openclaw` | Start OpenClaw alongside Postgres |
 | `corepack pnpm compose:down` | Stop Docker stack |
 | `corepack pnpm build` | TypeScript build |
@@ -644,7 +644,7 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 | `AnthropicPlanningAgent requires an API key` | `ANTHROPIC_API_KEY` not in `.env` | Set it in `.env` |
 | GitHub API 404 | Repo not found or token lacks scope | Check repo name format (`owner/repo`) and token scopes |
 | GitHub API 401 | Invalid token | Regenerate at github.com/settings/tokens |
-| Postgres connection refused | Docker stack not running | `corepack pnpm setup` |
+| Postgres connection refused | Docker stack not running | `corepack pnpm run setup` |
 | `spawn EPERM` in verify scripts | Windows sandbox restriction | Run outside the Claude Code sandbox |
 | OpenClaw `curl` returns empty reply on 3578 | Gateway bound to container loopback | Ensure `openclaw.json` has `gateway.bind: "lan"`, check `runtime-data/openclaw-home/openclaw.json`, recreate the container |
 | OpenClaw agents not showing in Control UI | Old agent config format | Ensure `openclaw.json` uses `agents.list[]` array format (not object keys), recreate container |

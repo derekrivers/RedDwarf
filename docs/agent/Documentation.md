@@ -106,10 +106,10 @@
   - Feature 46 (EnvVarSecretsAdapter): implemented `SecretsAdapter` reading from env vars with configurable prefix (`REDDWARF_SECRET_` by default); supports explicit scope map or automatic scope-prefixed env var discovery; enforces high-risk guard; `createEnvVarSecretsAdapter` factory provided.
   - Feature 47 (Execution-plane unit tests): added `packages/execution-plane/src/index.test.ts` with 24 tests covering all four `DeterministicXxxAgent` classes, `agentDefinitions`, `phaseIsExecutable`, and `createPlanningAgent`; all pass.
   - Feature 48 (verify:all): added `scripts/verify-all.mjs` running all 18 verify scripts as isolated child processes with pass/fail summary; exposed as `pnpm verify:all`.
-  - Feature 49 (setup script): added `scripts/setup.mjs` — `compose:up`, 60s Postgres readiness poll, `db:migrate`, health check table query; safe to re-run; exposed as `pnpm setup`.
+  - Feature 49 (setup script): added `scripts/setup.mjs` — `compose:up`, 60s Postgres readiness poll, `db:migrate`, health check table query; safe to re-run; exposed as `pnpm run setup`.
   - Feature 50 (evidence cleanup): added `scripts/cleanup-evidence.mjs` with configurable `--max-age-days` threshold, dry-run by default, `--delete` for actual removal; reports eligible dirs/sizes; exposed as `pnpm cleanup:evidence`.
   - Feature 51 (demo runbook): added `docs/DEMO_RUNBOOK.md` covering stack bootstrap, GitHub token + Anthropic API key setup, filing a demo issue, running the full pipeline, inspecting Postgres evidence, and the approval workflow.
-  - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55532` explanation, and `spawn EPERM` workaround pointer.
+  - Feature 52 (README improvements): added prerequisites section, OpenClaw registry access guide, `pnpm run setup` one-command bootstrap, `verify:all` shortcut, Windows `127.0.0.1` note, port `55532` explanation, and `spawn EPERM` workaround pointer.
 - All M8 features (F43–F52) are complete. Feature board updated accordingly.
 - Post-M8 runbook validation session (2026-03-27): manually tested the full `docs/DEMO_RUNBOOK.md` end-to-end against `derekrivers/FirstVoyage` on GitHub. Fixes applied during the session:
   - `psql` not available on Windows — added `scripts/query-evidence.mjs` and `docker exec` alternative; exposed as `pnpm query:evidence`.
@@ -162,3 +162,12 @@
 
 
 
+## 2026-03-28
+
+- Diagnosed the live `pnpm e2e` failure against `derekrivers/FirstVoyage`: the script created a real GitHub issue, completed intake, then failed inside `runPlanningPipeline(...)` with `connect ECONNREFUSED 127.0.0.1:55532` because the local Postgres stack had not been bootstrapped before the first repository query.
+- Updated `scripts/e2e-integration.mjs` so it now runs the existing idempotent `scripts/setup.mjs` preflight before creating any GitHub issue. This ensures Docker Compose startup, Postgres readiness, and SQL migrations happen before the E2E flow creates external GitHub resources.
+- The E2E failure mode is now fail-fast and targeted: if local setup cannot complete, the script stops before issue creation and tells the operator to run `corepack pnpm run setup`; if `E2E_USE_OPENCLAW=true`, it also now checks `OPENCLAW_BASE_URL`, `OPENCLAW_HOOK_TOKEN`, and gateway reachability before creating any GitHub issue.
+- Verification for this fix: `corepack pnpm build`; `node scripts/e2e-integration.mjs` now fails fast on blocked Docker access; `corepack pnpm run setup`; `E2E_TARGET_REPO=derekrivers/FirstVoyage E2E_CLEANUP=true E2E_USE_OPENCLAW=false corepack pnpm e2e`; `E2E_USE_OPENCLAW=true` now fails before issue creation when the gateway is unavailable.
+- Fixed the follow-up SCM failure reproduced by live E2E issue `derekrivers/FirstVoyage#6`: validation no longer hands read-only developer runs into SCM, `runScmPhase(...)` now rejects direct SCM entry when `development.handoff.codeWriteEnabled` is false, and `scripts/e2e-integration.mjs` now treats `await_review` as the expected terminal state for the current read-only workflow instead of forcing SCM.
+- Added focused control-plane coverage for the new routing: read-only `can_open_pr` tasks now stay blocked for review, while the SCM happy path remains covered by explicitly simulating a future write-enabled developer handoff in the fixture-backed test.
+- Verification for the SCM-routing fix: `corepack pnpm build`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; live deterministic `pnpm e2e` should now stop cleanly after validation/review instead of opening a follow-up SCM failure issue.

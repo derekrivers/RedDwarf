@@ -46,7 +46,9 @@
     "cleanup:evidence": "node scripts/cleanup-evidence.mjs",
     "query:evidence": "node scripts/query-evidence.mjs",
     "operator:api": "node scripts/start-operator-api.mjs",
-    "generate:openclaw-config": "corepack pnpm build && node scripts/generate-openclaw-config.mjs"
+    "generate:openclaw-config": "corepack pnpm build && node scripts/generate-openclaw-config.mjs",
+    "e2e": "corepack pnpm build && node scripts/e2e-integration.mjs",
+    "e2e:cleanup": "node scripts/e2e-cleanup.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
