@@ -171,3 +171,14 @@
 - Fixed the follow-up SCM failure reproduced by live E2E issue `derekrivers/FirstVoyage#6`: validation no longer hands read-only developer runs into SCM, `runScmPhase(...)` now rejects direct SCM entry when `development.handoff.codeWriteEnabled` is false, and `scripts/e2e-integration.mjs` now treats `await_review` as the expected terminal state for the current read-only workflow instead of forcing SCM.
 - Added focused control-plane coverage for the new routing: read-only `can_open_pr` tasks now stay blocked for review, while the SCM happy path remains covered by explicitly simulating a future write-enabled developer handoff in the fixture-backed test.
 - Verification for the SCM-routing fix: `corepack pnpm build`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; live deterministic `pnpm e2e` should now stop cleanly after validation/review instead of opening a follow-up SCM failure issue.
+- Completed feature 84 from `FEATURE_BOARD.md` (M12): Dave Lister developer agent.
+  - Added `"developer"` to `openClawAgentRoles` enum in `packages/contracts/src/enums.ts`.
+  - Added `reddwarf-developer` role definition to `openClawAgentRoleDefinitions` in `packages/execution-plane/src/index.ts` with `workspace_write` sandbox, `coding` tool profile, and `anthropic/claude-sonnet-4-6` model binding.
+  - Created full bootstrap workspace under `agents/openclaw/lister/`: IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md, USER.md, HEARTBEAT.md.
+  - Created two skill directories: `skills/implement_architecture_plan/SKILL.md` and `skills/report_deviation_or_blocker/SKILL.md`.
+  - Updated developer phase OpenClaw dispatch default from `reddwarf-analyst` to `reddwarf-developer` in `packages/control-plane/src/pipeline.ts`.
+  - Updated `infra/docker/openclaw.json` Docker template with `reddwarf-developer` agent entry.
+  - Updated bootstrap alignment marker regex to include `developer` and `lister`.
+  - Updated `scripts/verify-packaged-policy-pack.mjs` to expect 4 OpenClaw role definitions.
+  - Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/execution-plane/src/index.test.ts` (37 tests pass including 3 new developer role tests); `corepack pnpm test -- packages/control-plane/src/index.test.ts` (48 tests pass); `corepack pnpm verify:package` (4 roles, all bootstrap files resolved).
+- Likely next board item: feature 85, OpenAI provider support.

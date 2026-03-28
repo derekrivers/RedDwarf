@@ -226,7 +226,7 @@ export interface DevelopmentPhaseDependencies {
    */
   openClawDispatch?: OpenClawDispatchAdapter;
   /**
-   * OpenClaw agent ID to dispatch to. Defaults to "reddwarf-analyst".
+   * OpenClaw agent ID to dispatch to. Defaults to "reddwarf-developer".
    * Only used when openClawDispatch is provided.
    */
   openClawAgentId?: string;
@@ -1657,7 +1657,7 @@ export async function runDeveloperPhase(
     let dispatchResult: OpenClawDispatchResult | null = null;
 
     if (dependencies.openClawDispatch) {
-      const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-analyst";
+      const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
       const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace);
 
@@ -1675,7 +1675,7 @@ export async function runDeveloperPhase(
 
       handoff = {
         summary: dispatchResult.accepted
-          ? `OpenClaw analyst session dispatched for task ${taskId} via agent ${openClawAgentId}.`
+          ? `OpenClaw developer session dispatched for task ${taskId} via agent ${openClawAgentId}.`
           : `OpenClaw dispatch was not accepted for task ${taskId}.`,
         implementationNotes: [
           `Session key: ${sessionKey}`,

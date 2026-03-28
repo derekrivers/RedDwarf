@@ -42,7 +42,7 @@ export const bootstrapStructuralMarkers: Record<
   ],
   agents: [
     { label: "heading", pattern: /^#\s+.+/m },
-    { label: "agent roster entry", pattern: /coordinator|analyst|validator|rimmer|holly|kryten/i }
+    { label: "agent roster entry", pattern: /coordinator|analyst|validator|developer|rimmer|holly|kryten|lister/i }
   ],
   tools: [
     { label: "heading", pattern: /^#\s+.+/m },

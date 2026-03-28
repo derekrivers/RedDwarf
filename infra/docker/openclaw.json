@@ -91,6 +91,31 @@
           "scope": "agent",
           "workspaceAccess": "rw"
         }
+      },
+      {
+        "id": "reddwarf-developer",
+        "name": "RedDwarf Developer",
+        "workspace": "/opt/reddwarf/agents/openclaw/lister",
+        "agentDir": "/home/node/.openclaw/agents/reddwarf-developer/agent",
+        "model": "anthropic/claude-sonnet-4-6",
+        "tools": {
+          "profile": "coding",
+          "allow": [
+            "group:fs",
+            "group:runtime",
+            "group:memory",
+            "group:openclaw"
+          ],
+          "deny": [
+            "group:automation",
+            "group:messaging"
+          ]
+        },
+        "sandbox": {
+          "mode": "all",
+          "scope": "agent",
+          "workspaceAccess": "rw"
+        }
       }
     ]
   }

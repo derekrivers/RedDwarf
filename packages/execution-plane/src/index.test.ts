@@ -378,12 +378,12 @@ describe("agentDefinitions", () => {
 // ============================================================
 
 describe("openClawAgentRoleDefinitions", () => {
-  it("declares coordinator, analyst, and validator roles", () => {
+  it("declares coordinator, analyst, validator, and developer roles", () => {
     const roles = openClawAgentRoleDefinitions.map((definition) =>
       openClawAgentRoleDefinitionSchema.parse(definition).role
     );
 
-    expect(roles).toEqual(["coordinator", "analyst", "validator"]);
+    expect(roles).toEqual(["coordinator", "analyst", "validator", "developer"]);
   });
 
   it("looks up a single role definition by role", () => {
@@ -392,6 +392,16 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(analyst.agentId).toBe("reddwarf-analyst");
     expect(analyst.bootstrapFiles[0]?.relativePath).toContain(
       "holly/IDENTITY.md"
+    );
+  });
+
+  it("looks up the developer role definition", () => {
+    const developer = getOpenClawAgentRoleDefinition("developer");
+
+    expect(developer.agentId).toBe("reddwarf-developer");
+    expect(developer.displayName).toBe("RedDwarf Developer");
+    expect(developer.bootstrapFiles[0]?.relativePath).toContain(
+      "lister/IDENTITY.md"
     );
   });
 
@@ -407,6 +417,18 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(validator.runtimePolicy.toolProfile).toBe("coding");
     expect(validator.runtimePolicy.sandboxMode).toBe("workspace_write");
     expect(validator.runtimePolicy.allow).toContain("group:runtime");
+  });
+
+  it("binds developer runtime policy with workspace_write sandbox and coding profile", () => {
+    const developer = getOpenClawAgentRoleDefinition("developer");
+
+    expect(developer.runtimePolicy.toolProfile).toBe("coding");
+    expect(developer.runtimePolicy.sandboxMode).toBe("workspace_write");
+    expect(developer.runtimePolicy.model.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(developer.runtimePolicy.allow).toContain("group:fs");
+    expect(developer.runtimePolicy.allow).toContain("group:runtime");
+    expect(developer.runtimePolicy.deny).toContain("group:automation");
+    expect(developer.runtimePolicy.deny).toContain("group:messaging");
   });
 
   it("points at bootstrap files that exist in the repo", async () => {
@@ -518,7 +540,7 @@ describe("bootstrap alignment", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.totalViolations).toBe(0);
-    expect(result.agents).toHaveLength(3);
+    expect(result.agents).toHaveLength(4);
     for (const agent of result.agents) {
       expect(agent.valid).toBe(true);
       expect(agent.filesChecked).toBe(5);

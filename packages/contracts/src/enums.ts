@@ -124,7 +124,7 @@ export const approvalRequestStatuses = [
 export const approvalDecisions = ["approve", "reject"] as const;
 export const githubIssuePollingCursorStatuses = ["succeeded", "failed"] as const;
 
-export const openClawAgentRoles = ["coordinator", "analyst", "validator"] as const;
+export const openClawAgentRoles = ["coordinator", "analyst", "validator", "developer"] as const;
 export const openClawBootstrapFileKinds = [
   "identity",
   "soul",

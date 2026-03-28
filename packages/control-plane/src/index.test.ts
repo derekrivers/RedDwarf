@@ -2140,7 +2140,8 @@ describe("generateOpenClawConfig", () => {
     expect(agentIds).toContain("reddwarf-coordinator");
     expect(agentIds).toContain("reddwarf-analyst");
     expect(agentIds).toContain("reddwarf-validator");
-    expect(agentIds).toHaveLength(3);
+    expect(agentIds).toContain("reddwarf-developer");
+    expect(agentIds).toHaveLength(4);
     expect(config.agents.list[0]?.default).toBe(true);
   });
 
@@ -2150,10 +2151,12 @@ describe("generateOpenClawConfig", () => {
     const coordinator = config.agents.list.find((agent) => agent.id === "reddwarf-coordinator");
     const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
     const validator = config.agents.list.find((agent) => agent.id === "reddwarf-validator");
+    const developer = config.agents.list.find((agent) => agent.id === "reddwarf-developer");
 
     expect(coordinator?.workspace).toBe("/data/workspaces/reddwarf-coordinator");
     expect(analyst?.workspace).toBe("/data/workspaces/reddwarf-analyst");
     expect(validator?.workspace).toBe("/data/workspaces/reddwarf-validator");
+    expect(developer?.workspace).toBe("/data/workspaces/reddwarf-developer");
     expect(coordinator?.agentDir).toBe("/data/workspaces/.agents/reddwarf-coordinator/agent");
   });
 
@@ -2439,7 +2442,7 @@ describe("developer phase with OpenClaw dispatch", () => {
           repository,
           developer: new DeterministicDeveloperAgent(),
           openClawDispatch: dispatchAdapter,
-          openClawAgentId: "reddwarf-analyst",
+          openClawAgentId: "reddwarf-developer",
           clock: () => new Date("2026-03-27T10:05:00.000Z"),
           idGenerator: () => "run-dispatch"
         }
@@ -2452,7 +2455,7 @@ describe("developer phase with OpenClaw dispatch", () => {
 
       // Verify the dispatch adapter received the request
       expect(dispatchAdapter.dispatches).toHaveLength(1);
-      expect(dispatchAdapter.dispatches[0]?.agentId).toBe("reddwarf-analyst");
+      expect(dispatchAdapter.dispatches[0]?.agentId).toBe("reddwarf-developer");
       expect(dispatchAdapter.dispatches[0]?.sessionKey).toContain("github:issue:");
       expect(dispatchAdapter.dispatches[0]?.metadata).toMatchObject({
         taskId: planningResult.manifest.taskId,
@@ -2460,7 +2463,7 @@ describe("developer phase with OpenClaw dispatch", () => {
       });
 
       // Verify the handoff references OpenClaw
-      expect(development.handoff?.summary).toContain("OpenClaw analyst session");
+      expect(development.handoff?.summary).toContain("OpenClaw developer session");
 
       // Verify OPENCLAW_DISPATCH event was recorded
       expect(

@@ -211,6 +211,49 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       }
     ],
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/validation.md"]
+  },
+  {
+    agentId: "reddwarf-developer",
+    role: "developer",
+    displayName: "RedDwarf Developer",
+    purpose:
+      "Implements approved architecture plans safely and within scope, producing code changes, test updates, and a clear review handoff.",
+    runtimePolicy: {
+      toolProfile: "coding",
+      allow: ["group:fs", "group:runtime", "group:memory", "group:openclaw"],
+      deny: ["group:automation", "group:messaging"],
+      sandboxMode: "workspace_write",
+      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+    },
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/lister/IDENTITY.md",
+        description: "Dave Lister identity and developer persona."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/lister/SOUL.md",
+        description: "Operating posture and implementation principles."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/lister/AGENTS.md",
+        description: "Runtime roster and developer standing orders."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/lister/TOOLS.md",
+        description: "Tool-usage guardrails for scoped implementation work."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/lister/skills/implement_architecture_plan/SKILL.md",
+        description:
+          "Primary implementation skill for architecture-plan-to-code work."
+      }
+    ],
+    canonicalSources: [...sharedOpenClawCanonicalSources, "agents/developer.md"]
   }
 ];
 export function getOpenClawAgentRoleDefinition(
