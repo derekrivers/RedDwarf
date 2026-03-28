@@ -87,9 +87,11 @@ The board is ordered by implementation priority.
 | 79       | Split PostgresPlanningRepository row mappers into standalone testable module | M11 | completed | Evidence Plane                                                         |
 | 80       | Fix defaultLogger.child() LSP violation returning same instance | M11 | completed | Control Plane                                                          |
 | 81       | Enable no-floating-promises ESLint rule and fix all unawaited promise call sites | M11 | completed | All Packages                                                           |
-| 84       | Dave Lister developer agent — workspace_write sandbox, scoped file edit capability, implement_architecture_plan and report_deviation_or_blocker skills, wired to developer phase | M12 | completed | Execution Plane, Knowledge & Policy Plane                             |
-| 85       | OpenAI provider support — extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M13 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
-| 86       | GitHub user allowlist for issue intake — reject issues from non-whitelisted authors before processing, configurable via env or policy config, default-deny posture | M14 | pending | Integration Plane, Isolation and Security Model, Control Plane        |
+
+| 84       | Dave Lister developer agent - workspace_write sandbox, scoped file edit capability, implement_architecture_plan and report_deviation_or_blocker skills, wired to developer phase | M12 | completed | Execution Plane, Knowledge & Policy Plane                             |
+| 85       | PR-capable OpenClaw E2E path - materialize target-repo workspaces, wait for completed developer sessions, publish workspace changes as commits, and open real PRs at SCM handoff | M12 | pending | Execution Plane, Control Plane, Integration Plane, SCM Agent          |
+| 86       | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M13 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
+| 87       | GitHub user allowlist for issue intake - reject issues from non-whitelisted authors before processing, configurable via env or policy config, default-deny posture | M14 | pending | Integration Plane, Isolation and Security Model, Control Plane        |
 
 
 

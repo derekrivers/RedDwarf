@@ -182,3 +182,7 @@
   - Updated `scripts/verify-packaged-policy-pack.mjs` to expect 4 OpenClaw role definitions.
   - Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/execution-plane/src/index.test.ts` (37 tests pass including 3 new developer role tests); `corepack pnpm test -- packages/control-plane/src/index.test.ts` (48 tests pass); `corepack pnpm verify:package` (4 roles, all bootstrap files resolved).
 - Likely next board item: feature 85, OpenAI provider support.
+- Discovered an additional gap after feature 84: the live OpenClaw developer path is still not PR-capable end to end. The current workflow still materializes context-only workspaces, advances after dispatch acceptance rather than completed developer output, and the SCM phase creates a branch plus PR without first publishing a commit from workspace changes.
+- Added feature 85 to `FEATURE_BOARD.md` as the new next actionable item: PR-capable OpenClaw E2E path covering target-repo workspace materialization, completed developer-session handoff, commit publication, and real PR creation.
+- OpenAI provider support and GitHub intake allowlisting shifted to features 86 and 87 respectively so the board order matches the actual MVP blocker.
+- Likely next board item: feature 85, PR-capable OpenClaw E2E path.
