@@ -2,8 +2,8 @@
 
 ## Configured Policy
 
-- Tool profile: `minimal`
-- Allow: `group:fs`, `group:sessions`, `group:memory`, `group:openclaw`
+- Tool profile: `full`
+- Allow: `group:fs`, `group:sessions`, `group:openclaw`
 - Deny: `group:automation`, `group:messaging`, `group:nodes`
 - Sandbox mode: `read_only`
 - Model binding: `anthropic/claude-sonnet-4-6`

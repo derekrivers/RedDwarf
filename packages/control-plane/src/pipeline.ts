@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import {
   asIsoTimestamp,
@@ -107,6 +107,18 @@ import {
   createWorkspaceCredentialPolicy,
   createWorkspaceToolPolicy
 } from "./workspace.js";
+import {
+  assignWorkspaceRepoRoot,
+  createDeveloperHandoffAwaiter,
+  createGitHubWorkspaceRepoBootstrapper,
+  createGitWorkspaceCommitPublisher,
+  enableWorkspaceCodeWriting,
+  readWorkspaceRepoRoot,
+  type OpenClawCompletionAwaiter,
+  type WorkspaceCommitPublicationResult,
+  type WorkspaceCommitPublisher,
+  type WorkspaceRepoBootstrapper
+} from "./live-workflow.js";
 export interface PhaseDefinition {
   failureClass: FailureClass;
   failureCode: string;
@@ -225,6 +237,8 @@ export interface DevelopmentPhaseDependencies {
    * of calling the deterministic developer agent directly.
    */
   openClawDispatch?: OpenClawDispatchAdapter;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
+  openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
   /**
    * OpenClaw agent ID to dispatch to. Defaults to "reddwarf-developer".
    * Only used when openClawDispatch is provided.
@@ -253,6 +267,8 @@ export interface ScmPhaseDependencies {
   repository: PlanningRepository;
   scm: ScmAgent;
   github: GitHubAdapter;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
+  workspaceCommitPublisher?: WorkspaceCommitPublisher;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -1364,6 +1380,10 @@ export async function runDeveloperPhase(
   const repository = dependencies.repository;
   const developer = dependencies.developer;
   const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const workspaceRepoBootstrapper =
+    dependencies.workspaceRepoBootstrapper ?? createGitHubWorkspaceRepoBootstrapper();
+  const openClawCompletionAwaiter =
+    dependencies.openClawCompletionAwaiter ?? createDeveloperHandoffAwaiter();
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "development");
@@ -1538,6 +1558,7 @@ export async function runDeveloperPhase(
       spec: validatedSpec,
       policySnapshot: validatedPolicySnapshot
     });
+    const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
     const secretLease = await issueWorkspaceSecretLease({
       bundle,
       phase: "development",
@@ -1634,29 +1655,19 @@ export async function runDeveloperPhase(
       });
     }
 
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("development", EventCodes.CODE_WRITE_DISABLED),
-      taskId,
-      runId,
-      phase: "development",
-      level: "warn",
-      code: EventCodes.CODE_WRITE_DISABLED,
-      message:
-        "Developer workspace is ready, but product code writes remain disabled by default.",
-      data: {
-        workspaceId: workspace.workspaceId,
-        toolPolicyMode: workspace.descriptor.toolPolicy.mode,
-        requestedCapabilities: currentManifest.requestedCapabilities
-      },
-      createdAt: developmentStartedAtIso
-    });
-
     let handoff: DevelopmentDraft;
     let dispatchResult: OpenClawDispatchResult | null = null;
+    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
 
     if (dependencies.openClawDispatch) {
+      await enableWorkspaceCodeWriting(workspace);
+      const repoBootstrap = await workspaceRepoBootstrapper.ensureRepo({
+        manifest: currentManifest,
+        workspace,
+        baseBranch,
+        logger: runLogger
+      });
+      assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
       const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace);
@@ -1673,26 +1684,6 @@ export async function runDeveloperPhase(
         }
       });
 
-      handoff = {
-        summary: dispatchResult.accepted
-          ? `OpenClaw developer session dispatched for task ${taskId} via agent ${openClawAgentId}.`
-          : `OpenClaw dispatch was not accepted for task ${taskId}.`,
-        implementationNotes: [
-          `Session key: ${sessionKey}`,
-          `Agent: ${openClawAgentId}`,
-          `Session ID: ${dispatchResult.sessionId ?? "none"}`,
-          ...(dispatchResult.statusMessage ? [`Status: ${dispatchResult.statusMessage}`] : [])
-        ],
-        blockedActions: [
-          "Product code writes remain disabled — analyst session is read-only.",
-          "Session output captured as evidence for downstream phases."
-        ],
-        nextActions: [
-          "Review session transcript in evidence artifacts.",
-          "Run the validation phase against the managed workspace before SCM handoff."
-        ]
-      };
-
       await recordRunEvent({
         repository,
         logger: runLogger,
@@ -1707,33 +1698,70 @@ export async function runDeveloperPhase(
           sessionKey,
           agentId: openClawAgentId,
           accepted: dispatchResult.accepted,
-          sessionId: dispatchResult.sessionId
+          sessionId: dispatchResult.sessionId,
+          repoRoot: repoBootstrap.repoRoot,
+          baseBranch: repoBootstrap.baseBranch
         },
         createdAt: asIsoTimestamp(clock())
       });
+
+      if (!dispatchResult.accepted) {
+        throw new Error(`OpenClaw developer dispatch for ${taskId} was not accepted.`);
+      }
+
+      const completion = await openClawCompletionAwaiter.waitForCompletion({
+        manifest: currentManifest,
+        workspace,
+        sessionKey,
+        dispatchResult,
+        logger: runLogger
+      });
+      assignWorkspaceRepoRoot(workspace, completion.repoRoot ?? repoBootstrap.repoRoot);
+      handoff = parseDevelopmentHandoffMarkdown(
+        await readFile(completion.handoffPath, "utf8")
+      );
     } else {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("development", EventCodes.CODE_WRITE_DISABLED),
+        taskId,
+        runId,
+        phase: "development",
+        level: "warn",
+        code: EventCodes.CODE_WRITE_DISABLED,
+        message:
+          "Developer workspace is ready, but product code writes remain disabled by default.",
+        data: {
+          workspaceId: workspace.workspaceId,
+          toolPolicyMode: workspace.descriptor.toolPolicy.mode,
+          requestedCapabilities: currentManifest.requestedCapabilities
+        },
+        createdAt: developmentStartedAtIso
+      });
+
       handoff = await developer.createHandoff(bundle, {
         manifest: currentManifest,
         runId,
         workspace,
         codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
       });
+
+      await writeFile(
+        handoffPath,
+        renderDevelopmentHandoffMarkdown({
+          bundle,
+          handoff,
+          workspace,
+          runId,
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        }),
+        "utf8"
+      );
     }
 
     const developmentCompletedAt = clock();
     const developmentCompletedAtIso = asIsoTimestamp(developmentCompletedAt);
-    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
-    await writeFile(
-      handoffPath,
-      renderDevelopmentHandoffMarkdown({
-        bundle,
-        handoff,
-        workspace,
-        runId,
-        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
-      }),
-      "utf8"
-    );
     const handoffSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/developer-handoff.md`;
     const archivedHandoff = await archiveEvidenceArtifact({
       taskId,
@@ -3159,11 +3187,41 @@ function sanitizeBranchSegment(value: string): string {
   return sanitized.length > 0 ? sanitized : "task";
 }
 
+export function buildRuntimeWorkspacePath(
+  workspace: MaterializedManagedWorkspace
+): string {
+  const runtimeWorkspaceRoot = (process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces").replace(/\\/g, "/");
+  const hostWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+
+  if (hostWorkspaceRoot) {
+    const relativeWorkspacePath = relative(hostWorkspaceRoot, workspace.workspaceRoot).replace(
+      /\\/g,
+      "/"
+    );
+
+    if (
+      relativeWorkspacePath.length > 0 &&
+      relativeWorkspacePath !== "." &&
+      !relativeWorkspacePath.startsWith("../") &&
+      relativeWorkspacePath !== ".." &&
+      !relativeWorkspacePath.includes(":")
+    ) {
+      return join(runtimeWorkspaceRoot, relativeWorkspacePath).replace(/\\/g, "/");
+    }
+  }
+
+  return join(runtimeWorkspaceRoot, workspace.workspaceId).replace(/\\/g, "/");
+}
+
 function buildOpenClawDeveloperPrompt(
   bundle: WorkspaceContextBundle,
   manifest: TaskManifest,
   workspace: MaterializedManagedWorkspace
 ): string {
+  const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace);
+  const runtimeRepoPath = join(runtimeWorkspacePath, "repo").replace(/\\/g, "/");
+  const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "developer-handoff.md").replace(/\\/g, "/");
+
   return [
     `Task ID: ${manifest.taskId}`,
     `Title: ${manifest.title}`,
@@ -3173,7 +3231,9 @@ function buildOpenClawDeveloperPrompt(
       : []),
     `Risk class: ${manifest.riskClass}`,
     `Workspace: ${workspace.workspaceId}`,
-    `Workspace root: ${workspace.workspaceRoot}`,
+    `Workspace root: ${runtimeWorkspacePath}`,
+    `Repository checkout: ${runtimeRepoPath}`,
+    `Handoff path: ${runtimeHandoffPath}`,
     "",
     "## Planning Summary",
     "",
@@ -3189,11 +3249,68 @@ function buildOpenClawDeveloperPrompt(
     "",
     "## Instructions",
     "",
-    "Perform read-only analysis of the codebase for this task.",
-    "Identify the implementation approach, affected files, and risks.",
-    "Do not write product code — analysis and evidence only.",
-    "Produce a structured analysis report as your output."
+    "Implement the approved change directly in the checked-out repository.",
+    "Keep edits inside the allowed paths and leave unrelated files untouched.",
+    "Write the handoff file to the handoff path above using the exact headings below.",
+    "The handoff must include the line `- Code writing enabled: yes` before the section headings.",
+    "Include changed files, validation run notes, blockers, and next actions in the handoff.",
+    "",
+    "# Development Handoff",
+    "",
+    `- Task ID: ${manifest.taskId}`,
+    "- Run ID: <fill in>",
+    `- Workspace ID: ${workspace.workspaceId}`,
+    "- Tool policy mode: development_readwrite",
+    "- Credential policy mode: scoped_env or none",
+    "- Approved secret scopes: <list>",
+    "- Code writing enabled: yes",
+    "",
+    "## Summary",
+    "",
+    "One short paragraph summarizing the implementation.",
+    "",
+    "## Implementation Notes",
+    "",
+    "- Bullet points describing files changed and important decisions.",
+    "",
+    "## Blocked Actions",
+    "",
+    "- Bullet points for anything still blocked, or `- none`.",
+    "",
+    "## Next Actions",
+    "",
+    "- Bullet points for follow-up validation or review actions."
   ].join("\n");
+}
+
+function parseDevelopmentHandoffMarkdown(markdown: string): DevelopmentDraft {
+  return {
+    summary: readMarkdownSection(markdown, "## Summary"),
+    implementationNotes: readMarkdownBulletSection(markdown, "## Implementation Notes"),
+    blockedActions: readMarkdownBulletSection(markdown, "## Blocked Actions"),
+    nextActions: readMarkdownBulletSection(markdown, "## Next Actions")
+  };
+}
+
+function readMarkdownSection(markdown: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markdown.match(new RegExp(`${escapedHeading}\\n\\n([\\s\\S]*?)(?:\\n## |$)`));
+
+  if (!match) {
+    throw new Error(`Missing section ${heading} in developer handoff.`);
+  }
+
+  return match[1]!.trim();
+}
+
+function readMarkdownBulletSection(markdown: string, heading: string): string[] {
+  const section = readMarkdownSection(markdown, heading);
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.length > 0);
 }
 
 function renderDevelopmentHandoffMarkdown(input: {
@@ -3304,7 +3421,7 @@ function createScmPullRequestBody(input: {
 function renderScmReportMarkdown(input: {
   bundle: WorkspaceContextBundle;
   draft: ScmDraft;
-  branch: GitHubBranchSummary;
+  publication: WorkspaceCommitPublicationResult;
   pullRequest: GitHubPullRequestSummary;
   workspace: MaterializedManagedWorkspace;
   runId: string;
@@ -3317,9 +3434,10 @@ function renderScmReportMarkdown(input: {
     `- Run ID: ${input.runId}`,
     `- Workspace ID: ${input.workspace.workspaceId}`,
     `- Tool policy mode: ${input.workspace.descriptor.toolPolicy.mode}`,
-    `- Base branch: ${input.branch.baseBranch}`,
-    `- Head branch: ${input.branch.branchName}`,
-    `- Branch URL: ${input.branch.url}`,
+    `- Base branch: ${input.publication.branch.baseBranch}`,
+    `- Head branch: ${input.publication.branch.branchName}`,
+    `- Branch URL: ${input.publication.branch.url}`,
+    `- Commit SHA: ${input.publication.commitSha}`,
     `- Pull Request: #${input.pullRequest.number}`,
     `- Pull Request URL: ${input.pullRequest.url}`,
     `- Validation report path: ${relative(input.workspace.workspaceRoot, input.validationReportPath).replace(/\\/g, "/")}`,
@@ -3332,6 +3450,12 @@ function renderScmReportMarkdown(input: {
     "",
     input.draft.pullRequestTitle,
     "",
+    "## Changed Files",
+    "",
+    ...(input.publication.changedFiles.length > 0
+      ? input.publication.changedFiles.map((file) => `- ${file}`)
+      : ["- none"]),
+    "",
     "## Applied Labels",
     "",
     ...(input.draft.labels.length > 0
@@ -3343,7 +3467,7 @@ function renderScmReportMarkdown(input: {
 
 function renderScmDiffMarkdown(input: {
   bundle: WorkspaceContextBundle;
-  branch: GitHubBranchSummary;
+  publication: WorkspaceCommitPublicationResult;
   pullRequest: GitHubPullRequestSummary;
   validationSummary: string;
 }): string {
@@ -3351,9 +3475,10 @@ function renderScmDiffMarkdown(input: {
     "# SCM Diff Summary",
     "",
     `- Task ID: ${input.bundle.manifest.taskId}`,
-    `- Base branch: ${input.branch.baseBranch}`,
-    `- Head branch: ${input.branch.branchName}`,
+    `- Base branch: ${input.publication.branch.baseBranch}`,
+    `- Head branch: ${input.publication.branch.branchName}`,
     `- Pull Request URL: ${input.pullRequest.url}`,
+    `- Commit SHA: ${input.publication.commitSha}`,
     "",
     "## Planned Change Surface",
     "",
@@ -3361,13 +3486,21 @@ function renderScmDiffMarkdown(input: {
       ? input.bundle.spec.affectedAreas.map((area) => `- ${area}`)
       : ["- planning-surface-only"]),
     "",
+    "## Changed Files",
+    "",
+    ...(input.publication.changedFiles.length > 0
+      ? input.publication.changedFiles.map((file) => `- ${file}`)
+      : ["- none"]),
+    "",
     "## Validation Summary",
     "",
     input.validationSummary,
     "",
-    "## Diff Availability",
+    "## Patch",
     "",
-    "No product-repo diff patch was generated because RedDwarf still keeps product code writes disabled by default. This summary preserves the approved change intent and SCM metadata until code-writing lands.",
+    ...(input.publication.diff.trim().length > 0
+      ? ["```diff", input.publication.diff.trim(), "```"]
+      : ["No textual diff captured."]),
     ""
   ].join("\n");
 }
@@ -3385,10 +3518,10 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
       "    throw new Error(`Missing heading ${heading} in ${handoffPath}.`);",
       "  }",
       "}",
-      'if (!handoff.includes("Code writing enabled: no")) {',
-      '  throw new Error("Developer handoff must confirm code writing stays disabled.");',
+      'if (!/Code writing enabled: (yes|no)/.test(handoff)) {',
+      '  throw new Error("Developer handoff must declare whether code writing was enabled.");',
       "}",
-      'console.log("Validated developer handoff headings and guardrails.");'
+      'console.log("Validated developer handoff headings and code-writing declaration.");'
     ].join("\n");
   }
 
@@ -3539,6 +3672,10 @@ export async function runScmPhase(
   const scm = dependencies.scm;
   const github = dependencies.github;
   const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const workspaceRepoBootstrapper =
+    dependencies.workspaceRepoBootstrapper ?? createGitHubWorkspaceRepoBootstrapper();
+  const workspaceCommitPublisher =
+    dependencies.workspaceCommitPublisher ?? createGitWorkspaceCommitPublisher();
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
 
@@ -3760,6 +3897,13 @@ export async function runScmPhase(
       workspaceId,
       createdAt: scmStartedAtIso
     });
+    const repoBootstrap = await workspaceRepoBootstrapper.ensureRepo({
+      manifest: currentManifest,
+      workspace,
+      baseBranch,
+      logger: runLogger
+    });
+    assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
     currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: scmStartedAtIso,
@@ -3824,11 +3968,14 @@ export async function runScmPhase(
       throw new Error(`SCM draft for ${taskId} did not provide a base branch.`);
     }
 
-    const branch = await github.createBranch(
-      currentManifest.source.repo,
-      draft.baseBranch,
-      draft.branchName
-    );
+    const publication = await workspaceCommitPublisher.publish({
+      manifest: currentManifest,
+      workspace,
+      baseBranch: draft.baseBranch,
+      branchName: draft.branchName,
+      logger: runLogger
+    });
+    const branch = publication.branch;
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -3838,13 +3985,15 @@ export async function runScmPhase(
       phase: "scm",
       level: "info",
       code: EventCodes.BRANCH_CREATED,
-      message: `SCM branch ${branch.branchName} created.`,
+      message: `SCM branch ${branch.branchName} created with commit ${publication.commitSha}.`,
       data: {
         workspaceId: workspace.workspaceId,
         baseBranch: branch.baseBranch,
         branchName: branch.branchName,
         branchUrl: branch.url,
-        branchRef: branch.ref
+        branchRef: branch.ref,
+        commitSha: publication.commitSha,
+        changedFiles: publication.changedFiles
       },
       createdAt: scmStartedAtIso
     });
@@ -3853,14 +4002,15 @@ export async function runScmPhase(
       metadata: {
         currentPhase: "scm",
         workspaceId: workspace.workspaceId,
-        branchName: branch.branchName
+        branchName: branch.branchName,
+        commitSha: publication.commitSha
       }
     });
 
     const pullRequest = await github.createPullRequest({
       repo: currentManifest.source.repo,
       baseBranch: draft.baseBranch,
-      headBranch: draft.branchName,
+      headBranch: publication.branch.branchName,
       title: draft.pullRequestTitle,
       body: draft.pullRequestBody,
       labels: draft.labels,
@@ -3876,7 +4026,7 @@ export async function runScmPhase(
       renderScmReportMarkdown({
         bundle,
         draft,
-        branch,
+        publication,
         pullRequest,
         workspace,
         runId,
@@ -3889,7 +4039,7 @@ export async function runScmPhase(
       diffPath,
       renderScmDiffMarkdown({
         bundle,
-        branch,
+        publication,
         pullRequest,
         validationSummary
       }),
@@ -3943,6 +4093,8 @@ export async function runScmPhase(
           summary: draft.summary,
           branch,
           pullRequest,
+          commitSha: publication.commitSha,
+          changedFiles: publication.changedFiles,
           runId,
           workspaceId: workspace.workspaceId,
           validationReportPath,
@@ -3970,6 +4122,8 @@ export async function runScmPhase(
           workspaceId: workspace.workspaceId,
           branch,
           pullRequest,
+          commitSha: publication.commitSha,
+          changedFiles: publication.changedFiles,
           reportPath,
           diffPath,
           validationReportPath,
@@ -3995,6 +4149,8 @@ export async function runScmPhase(
           summary: draft.summary,
           branch,
           pullRequest,
+          commitSha: publication.commitSha,
+          changedFiles: publication.changedFiles,
           validationReportPath,
           reportPath,
           ...buildArchivedArtifactMetadata({
@@ -4019,6 +4175,8 @@ export async function runScmPhase(
           workspaceId: workspace.workspaceId,
           branch,
           pullRequest,
+          commitSha: publication.commitSha,
+          changedFiles: publication.changedFiles,
           validationReportPath,
           diffPath,
           ...buildArchivedArtifactMetadata({
@@ -4046,7 +4204,8 @@ export async function runScmPhase(
         branchName: branch.branchName,
         prNumber: pullRequest.number,
         pullRequestUrl: pullRequest.url,
-        labels: draft.labels
+        labels: draft.labels,
+        commitSha: publication.commitSha
       },
       createdAt: scmCompletedAtIso
     });
@@ -4068,7 +4227,8 @@ export async function runScmPhase(
         prNumber: pullRequest.number,
         reportPath,
         reportArchiveLocation: archivedScmReport.location,
-        diffArchiveLocation: archivedScmDiff.location
+        diffArchiveLocation: archivedScmDiff.location,
+        commitSha: publication.commitSha
       },
       createdAt: scmCompletedAtIso
     });
@@ -4088,6 +4248,7 @@ export async function runScmPhase(
         branchName: branch.branchName,
         prNumber: pullRequest.number,
         pullRequestUrl: pullRequest.url,
+        commitSha: publication.commitSha,
         reportArchiveLocation: archivedScmReport.location,
         diffArchiveLocation: archivedScmDiff.location
       },
@@ -4103,6 +4264,7 @@ export async function runScmPhase(
         branchName: branch.branchName,
         prNumber: pullRequest.number,
         pullRequestUrl: pullRequest.url,
+        commitSha: publication.commitSha,
         reportPath,
         reportArchiveLocation: archivedScmReport.location,
         diffArchiveLocation: archivedScmDiff.location
@@ -4935,3 +5097,14 @@ function patchManifest(
 ): TaskManifest {
   return { ...manifest, ...updates };
 }
+
+
+
+
+
+
+
+
+
+
+

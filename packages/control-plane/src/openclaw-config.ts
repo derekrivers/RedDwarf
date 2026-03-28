@@ -4,10 +4,35 @@ import { openClawAgentRoleDefinitions } from "@reddwarf/execution-plane";
 
 // -- OpenClaw config output types ---------------------------------------------
 
-export interface OpenClawSandboxConfig {
-  mode: "all";
-  scope: "agent";
-  workspaceAccess: "ro" | "rw";
+export type OpenClawSandboxConfig =
+  | {
+      mode: "off";
+    }
+  | {
+      mode: "all";
+      scope: "agent";
+      workspaceAccess: "ro" | "rw";
+    };
+
+export interface OpenClawGatewayConfig {
+  bind: "lan";
+  auth: {
+    mode: "token";
+    token: string;
+  };
+  controlUi: {
+    allowedOrigins: string[];
+  };
+}
+
+export interface OpenClawHooksConfig {
+  enabled: boolean;
+  token: string;
+  path: string;
+  defaultSessionKey: string;
+  allowedAgentIds: string[];
+  allowRequestSessionKey: boolean;
+  allowedSessionKeyPrefixes: string[];
 }
 
 export interface OpenClawAgentConfig {
@@ -26,6 +51,8 @@ export interface OpenClawAgentConfig {
 }
 
 export interface OpenClawConfig {
+  gateway: OpenClawGatewayConfig;
+  hooks: OpenClawHooksConfig;
   agents: {
     defaults: {
       skipBootstrap: boolean;
@@ -35,7 +62,7 @@ export interface OpenClawConfig {
 }
 
 export interface GenerateOpenClawConfigOptions {
-  /** Base directory where per-agent workspace directories are created. */
+  /** Shared workspace root mounted into OpenClaw agents. */
   workspaceRoot: string;
 
   /**
@@ -52,7 +79,7 @@ export interface GenerateOpenClawConfigOptions {
 }
 
 /**
- * Build a per-agent OpenClaw config entry from a RedDwarf role definition.
+ * Build an OpenClaw config entry from a RedDwarf role definition.
  */
 export function buildAgentConfig(
   role: OpenClawAgentRoleDefinition,
@@ -60,7 +87,7 @@ export function buildAgentConfig(
   _skipBootstrap: boolean
 ): OpenClawAgentConfig {
   const policy = role.runtimePolicy;
-  const workspace = join(workspaceRoot, role.agentId).replace(/\\/g, "/");
+  const workspace = workspaceRoot.replace(/\\/g, "/");
   const agentDir = join(workspaceRoot, ".agents", role.agentId, "agent").replace(
     /\\/g,
     "/"
@@ -88,6 +115,15 @@ export function buildAgentConfig(
  * Each role definition in the execution-plane is mapped to an OpenClaw agent
  * entry under `agents.list`, with workspace paths, tool profiles, allow/deny
  * lists, sandbox policy, and model binding derived from the runtime policy.
+ * The generated config also enables the webhook ingress RedDwarf uses for
+ * developer dispatch and restricts explicit session keys to the
+ * `github:issue:` namespace.
+ *
+ * The current Docker-hosted OpenClaw deployment already runs inside a dedicated
+ * container with repo-mounted workspaces, so nested OpenClaw sandboxing stays
+ * disabled here. This avoids a hard runtime dependency on an inner `docker`
+ * binary while preserving per-agent tool restrictions and the outer container
+ * boundary.
  */
 export function generateOpenClawConfig(
   options: GenerateOpenClawConfigOptions
@@ -96,6 +132,28 @@ export function generateOpenClawConfig(
   const skipBootstrap = options.skipBootstrap ?? true;
 
   const config: OpenClawConfig = {
+    gateway: {
+      bind: "lan",
+      auth: {
+        mode: "token",
+        token: "${OPENCLAW_GATEWAY_TOKEN}"
+      },
+      controlUi: {
+        allowedOrigins: [
+          "http://127.0.0.1:3578",
+          "http://localhost:3578"
+        ]
+      }
+    },
+    hooks: {
+      enabled: true,
+      token: "${OPENCLAW_HOOK_TOKEN}",
+      path: "/hooks",
+      defaultSessionKey: "hook:ingress",
+      allowedAgentIds: roles.map((role) => role.agentId),
+      allowRequestSessionKey: true,
+      allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
+    },
     agents: {
       defaults: { skipBootstrap },
       list: []
@@ -120,11 +178,7 @@ export function serializeOpenClawConfig(config: OpenClawConfig): string {
 }
 
 function mapSandboxConfig(
-  sandboxMode: OpenClawAgentRoleDefinition["runtimePolicy"]["sandboxMode"]
+  _sandboxMode: OpenClawAgentRoleDefinition["runtimePolicy"]["sandboxMode"]
 ): OpenClawSandboxConfig {
-  return {
-    mode: "all",
-    scope: "agent",
-    workspaceAccess: sandboxMode === "workspace_write" ? "rw" : "ro"
-  };
+  return { mode: "off" };
 }

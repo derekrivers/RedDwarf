@@ -1252,7 +1252,8 @@ export function createRestGitHubAdapter(
 
 /**
  * Request payload for dispatching work to an OpenClaw agent.
- * Maps to the `POST /hooks/agent` webhook endpoint.
+ * Maps to the `POST /hooks/agent` webhook endpoint, where the prompt is
+ * sent as the webhook `message` field.
  */
 export interface OpenClawDispatchRequest {
   /** Deterministic session key for continuity — e.g. `github:issue:acme/repo:42`. */
@@ -1363,8 +1364,9 @@ export interface HttpOpenClawDispatchAdapterOptions {
 
 /**
  * HTTP-backed OpenClawDispatchAdapter that posts to `/hooks/agent` on the
- * OpenClaw gateway. Uses bearer auth with the hook token and retries on
- * transient 429/529 responses.
+ * OpenClaw gateway. Uses bearer auth with the hook token, disables chat
+ * delivery for RedDwarf orchestration runs, and retries on transient 429/529
+ * responses.
  */
 export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   private readonly baseUrl: string;
@@ -1398,9 +1400,12 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
     const url = `${this.baseUrl}/hooks/agent`;
     const body = JSON.stringify({
+      message: request.prompt,
+      name: "RedDwarf",
       sessionKey: request.sessionKey,
       agentId: request.agentId,
-      prompt: request.prompt,
+      deliver: false,
+      wakeMode: "now",
       ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
     });
 
@@ -1428,7 +1433,10 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
         );
       }
 
-      const result = await response.json() as Record<string, unknown>;
+      const responseBody = await response.text();
+      const result = responseBody.length > 0
+        ? JSON.parse(responseBody) as Record<string, unknown>
+        : {};
 
       return {
         accepted: true,

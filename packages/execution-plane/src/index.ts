@@ -85,8 +85,8 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     purpose:
       "Frames RedDwarf-approved work inside OpenClaw, preserves task boundaries, and delegates bounded analysis or validation work.",
     runtimePolicy: {
-      toolProfile: "minimal",
-      allow: ["group:fs", "group:sessions", "group:memory", "group:openclaw"],
+      toolProfile: "full",
+      allow: ["group:fs", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:nodes"],
       sandboxMode: "read_only",
       model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
@@ -128,8 +128,8 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     purpose:
       "Performs read-only codebase analysis, planning support, and evidence-friendly synthesis inside the approved task boundary.",
     runtimePolicy: {
-      toolProfile: "coding",
-      allow: ["group:fs", "group:memory", "group:web", "group:openclaw"],
+      toolProfile: "full",
+      allow: ["group:fs", "group:web", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
       model: { provider: "anthropic", model: "anthropic/claude-opus-4-6" }
@@ -176,8 +176,8 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     purpose:
       "Runs bounded checks, reviews evidence, and reports findings without expanding scope or mutating product code.",
     runtimePolicy: {
-      toolProfile: "coding",
-      allow: ["group:fs", "group:runtime", "group:memory", "group:openclaw"],
+      toolProfile: "full",
+      allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:messaging"],
       sandboxMode: "workspace_write",
       model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
@@ -219,8 +219,8 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     purpose:
       "Implements approved architecture plans safely and within scope, producing code changes, test updates, and a clear review handoff.",
     runtimePolicy: {
-      toolProfile: "coding",
-      allow: ["group:fs", "group:runtime", "group:memory", "group:openclaw"],
+      toolProfile: "full",
+      allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
       model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
@@ -717,10 +717,10 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
       "    throw new Error(`Missing heading ${heading} in ${handoffPath}.`);",
       "  }",
       "}",
-      'if (!handoff.includes("Code writing enabled: no")) {',
-      '  throw new Error("Developer handoff must confirm code writing stays disabled.");',
+      'if (!/Code writing enabled: (yes|no)/.test(handoff)) {',
+      '  throw new Error("Developer handoff must declare whether code writing was enabled.");',
       "}",
-      'console.log("Validated developer handoff headings and guardrails.");'
+      'console.log("Validated developer handoff headings and code-writing declaration.");'
     ].join("\n");
   }
 
@@ -767,4 +767,5 @@ export type {
   BootstrapAlignmentResult,
   FullBootstrapAlignmentResult
 } from "./bootstrap-alignment.js";
+
 

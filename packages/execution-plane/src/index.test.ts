@@ -409,20 +409,20 @@ describe("openClawAgentRoleDefinitions", () => {
     const coordinator = getOpenClawAgentRoleDefinition("coordinator");
     const validator = getOpenClawAgentRoleDefinition("validator");
 
-    expect(coordinator.runtimePolicy.toolProfile).toBe("minimal");
+    expect(coordinator.runtimePolicy.toolProfile).toBe("full");
     expect(coordinator.runtimePolicy.sandboxMode).toBe("read_only");
     expect(coordinator.runtimePolicy.model.model).toBe(
       "anthropic/claude-sonnet-4-6"
     );
-    expect(validator.runtimePolicy.toolProfile).toBe("coding");
+    expect(validator.runtimePolicy.toolProfile).toBe("full");
     expect(validator.runtimePolicy.sandboxMode).toBe("workspace_write");
     expect(validator.runtimePolicy.allow).toContain("group:runtime");
   });
 
-  it("binds developer runtime policy with workspace_write sandbox and coding profile", () => {
+  it("binds developer runtime policy with workspace_write sandbox and full profile", () => {
     const developer = getOpenClawAgentRoleDefinition("developer");
 
-    expect(developer.runtimePolicy.toolProfile).toBe("coding");
+    expect(developer.runtimePolicy.toolProfile).toBe("full");
     expect(developer.runtimePolicy.sandboxMode).toBe("workspace_write");
     expect(developer.runtimePolicy.model.model).toBe("anthropic/claude-sonnet-4-6");
     expect(developer.runtimePolicy.allow).toContain("group:fs");

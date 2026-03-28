@@ -2,8 +2,8 @@
 
 ## Configured Policy
 
-- Tool profile: `coding`
-- Allow: `group:fs`, `group:runtime`, `group:memory`, `group:openclaw`
+- Tool profile: `full`
+- Allow: `group:fs`, `group:runtime`, `group:openclaw`
 - Deny: `group:messaging`
 - Sandbox mode: `workspace_write`
 - Model binding: `anthropic/claude-sonnet-4-6`

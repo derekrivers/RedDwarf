@@ -2,7 +2,8 @@
   "gateway": {
     "bind": "lan",
     "auth": {
-      "mode": "token"
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
     },
     "controlUi": {
       "allowedOrigins": [
@@ -10,6 +11,23 @@
         "http://localhost:3578"
       ]
     }
+  },
+  "hooks": {
+    "enabled": true,
+    "token": "${OPENCLAW_HOOK_TOKEN}",
+    "path": "/hooks",
+    "defaultSessionKey": "hook:ingress",
+    "allowedAgentIds": [
+      "reddwarf-coordinator",
+      "reddwarf-analyst",
+      "reddwarf-validator",
+      "reddwarf-developer"
+    ],
+    "allowRequestSessionKey": true,
+    "allowedSessionKeyPrefixes": [
+      "hook:",
+      "github:issue:"
+    ]
   },
   "agents": {
     "defaults": {
@@ -20,15 +38,14 @@
         "id": "reddwarf-coordinator",
         "default": true,
         "name": "RedDwarf Coordinator",
-        "workspace": "/opt/reddwarf/agents/openclaw/rimmer",
+        "workspace": "/var/lib/reddwarf/workspaces",
         "agentDir": "/home/node/.openclaw/agents/reddwarf-coordinator/agent",
         "model": "anthropic/claude-sonnet-4-6",
         "tools": {
-          "profile": "minimal",
+          "profile": "full",
           "allow": [
             "group:fs",
             "group:sessions",
-            "group:memory",
             "group:openclaw"
           ],
           "deny": [
@@ -38,22 +55,19 @@
           ]
         },
         "sandbox": {
-          "mode": "all",
-          "scope": "agent",
-          "workspaceAccess": "ro"
+          "mode": "off"
         }
       },
       {
         "id": "reddwarf-analyst",
         "name": "RedDwarf Analyst",
-        "workspace": "/opt/reddwarf/agents/openclaw/holly",
+        "workspace": "/var/lib/reddwarf/workspaces",
         "agentDir": "/home/node/.openclaw/agents/reddwarf-analyst/agent",
         "model": "anthropic/claude-opus-4-6",
         "tools": {
-          "profile": "coding",
+          "profile": "full",
           "allow": [
             "group:fs",
-            "group:memory",
             "group:web",
             "group:openclaw"
           ],
@@ -63,23 +77,20 @@
           ]
         },
         "sandbox": {
-          "mode": "all",
-          "scope": "agent",
-          "workspaceAccess": "ro"
+          "mode": "off"
         }
       },
       {
         "id": "reddwarf-validator",
         "name": "RedDwarf Validator",
-        "workspace": "/opt/reddwarf/agents/openclaw/kryten",
+        "workspace": "/var/lib/reddwarf/workspaces",
         "agentDir": "/home/node/.openclaw/agents/reddwarf-validator/agent",
         "model": "anthropic/claude-sonnet-4-6",
         "tools": {
-          "profile": "coding",
+          "profile": "full",
           "allow": [
             "group:fs",
             "group:runtime",
-            "group:memory",
             "group:openclaw"
           ],
           "deny": [
@@ -87,23 +98,20 @@
           ]
         },
         "sandbox": {
-          "mode": "all",
-          "scope": "agent",
-          "workspaceAccess": "rw"
+          "mode": "off"
         }
       },
       {
         "id": "reddwarf-developer",
         "name": "RedDwarf Developer",
-        "workspace": "/opt/reddwarf/agents/openclaw/lister",
+        "workspace": "/var/lib/reddwarf/workspaces",
         "agentDir": "/home/node/.openclaw/agents/reddwarf-developer/agent",
         "model": "anthropic/claude-sonnet-4-6",
         "tools": {
-          "profile": "coding",
+          "profile": "full",
           "allow": [
             "group:fs",
             "group:runtime",
-            "group:memory",
             "group:openclaw"
           ],
           "deny": [
@@ -112,9 +120,7 @@
           ]
         },
         "sandbox": {
-          "mode": "all",
-          "scope": "agent",
-          "workspaceAccess": "rw"
+          "mode": "off"
         }
       }
     ]

@@ -7,4 +7,5 @@ export * from "./knowledge.js";
 export * from "./polling.js";
 export * from "./openclaw-config.js";
 export * from "./openclaw-session.js";
+export * from "./live-workflow.js";
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DenyAllSecretsAdapter,
   FixtureCiAdapter,
@@ -311,6 +311,10 @@ describe("FixtureOpenClawDispatchAdapter", () => {
 });
 
 describe("HttpOpenClawDispatchAdapter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("throws when no base URL is available", () => {
     const saved = process.env[OPENCLAW_BASE_URL_ENV];
     delete process.env[OPENCLAW_BASE_URL_ENV];
@@ -341,5 +345,48 @@ describe("HttpOpenClawDispatchAdapter", () => {
       hookToken: "test-token"
     });
     expect(adapter).toBeInstanceOf(HttpOpenClawDispatchAdapter);
+  });
+
+  it("posts webhook-compatible payloads to /hooks/agent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ sessionId: "hook-session-123", message: "Dispatch queued" })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new HttpOpenClawDispatchAdapter({
+      baseUrl: "http://localhost:3578/",
+      hookToken: "test-token"
+    });
+
+    const result = await adapter.dispatch({
+      sessionKey: "github:issue:acme/repo:42",
+      agentId: "reddwarf-developer",
+      prompt: "Implement the requested change",
+      metadata: { source: "e2e" }
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3578/hooks/agent",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json"
+        }),
+        body: JSON.stringify({
+          message: "Implement the requested change",
+          name: "RedDwarf",
+          sessionKey: "github:issue:acme/repo:42",
+          agentId: "reddwarf-developer",
+          deliver: false,
+          wakeMode: "now",
+          metadata: { source: "e2e" }
+        })
+      })
+    );
+    expect(result.sessionId).toBe("hook-session-123");
+    expect(result.statusMessage).toBe("Dispatch queued");
   });
 });

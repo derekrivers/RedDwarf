@@ -10,9 +10,9 @@ Use tools deliberately and economically.
 
 ## Tool Profile
 
-Profile: coding
+Profile: full
 Sandbox: workspace_write
-Allow: group:fs, group:runtime, group:memory, group:openclaw
+Allow: group:fs, group:runtime, group:openclaw
 Deny: group:automation, group:messaging
 
 ## Preferred Working Pattern

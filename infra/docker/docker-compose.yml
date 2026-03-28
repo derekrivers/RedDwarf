@@ -34,7 +34,7 @@ services:
       - ${REDDWARF_POLICY_SOURCE_ROOT:-../../}:${REDDWARF_POLICY_ROOT:-/opt/reddwarf}:ro
       - ./openclaw.json:/etc/openclaw/openclaw.json:ro
       - ../../runtime-data/openclaw-home:/home/node/.openclaw
-      - runtime-workspace:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
+      - ../../runtime-data/workspaces:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       - runtime-evidence:${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
 
   postgres:
@@ -58,5 +58,5 @@ services:
 
 volumes:
   postgres-data:
-  runtime-workspace:
   runtime-evidence:
+

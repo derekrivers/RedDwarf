@@ -110,5 +110,6 @@ export interface MaterializedManagedWorkspace {
   stateFile: string;
   scratchDir: string;
   artifactsDir: string;
+  repoRoot: string | null;
   descriptor: WorkspaceDescriptor;
 }

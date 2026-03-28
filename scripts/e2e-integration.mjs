@@ -26,7 +26,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import pg from "pg";
@@ -63,6 +63,9 @@ import {
   DeterministicDeveloperAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  createDeveloperHandoffAwaiter,
+  createGitHubWorkspaceRepoBootstrapper,
+  createGitWorkspaceCommitPublisher,
   destroyTaskWorkspace
 } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
@@ -95,9 +98,11 @@ const useOpenClaw = process.env.E2E_USE_OPENCLAW === "true";
 const openClawBaseUrl = process.env.OPENCLAW_BASE_URL ?? "";
 const openClawHookToken = process.env.OPENCLAW_HOOK_TOKEN ?? "";
 const timestamp = Date.now();
+const defaultHostWorkspaceRoot = resolve(__scriptdir, "..", "runtime-data", "workspaces");
 const baseTargetRoot = resolve(
-  process.env.REDDWARF_HOST_WORKSPACE_ROOT ?? join(tmpdir(), "reddwarf-e2e")
+  process.env.REDDWARF_HOST_WORKSPACE_ROOT ?? defaultHostWorkspaceRoot
 );
+process.env.REDDWARF_HOST_WORKSPACE_ROOT ??= baseTargetRoot;
 const targetRoot = resolve(baseTargetRoot, `e2e-${timestamp}`);
 const evidenceRoot = resolve(targetRoot, "..", `e2e-evidence-${timestamp}`);
 const setupScriptPath = resolve(__scriptdir, "setup.mjs");
@@ -229,7 +234,45 @@ async function ensureRequestedOpenClawReady() {
     );
   }
 
-  log("Preflight complete: OpenClaw gateway is reachable.");
+  const hookUrl = `${openClawBaseUrl.replace(/\/+$/, "")}/hooks/agent`;
+  log(`Preflight: verifying OpenClaw hook ingress at ${hookUrl}...`);
+
+  let hookResponse;
+  try {
+    hookResponse = await fetch(hookUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openClawHookToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+  } catch (err) {
+    throw new Error(
+      `E2E_USE_OPENCLAW=true but the OpenClaw hook ingress is not reachable at ${hookUrl}. ${formatError(err)}`
+    );
+  }
+
+  if (hookResponse.status === 404) {
+    throw new Error(
+      `E2E_USE_OPENCLAW=true but ${hookUrl} returned 404. Enable OpenClaw hooks in openclaw.json before rerunning E2E.`
+    );
+  }
+
+  if (hookResponse.status === 401 || hookResponse.status === 403) {
+    throw new Error(
+      `E2E_USE_OPENCLAW=true but ${hookUrl} rejected the configured OPENCLAW_HOOK_TOKEN with ${hookResponse.status}.`
+    );
+  }
+
+  if (!hookResponse.ok && hookResponse.status !== 400) {
+    const hookBody = await hookResponse.text().catch(() => "");
+    throw new Error(
+      `E2E_USE_OPENCLAW=true but OpenClaw hook ingress preflight returned ${hookResponse.status} for ${hookUrl}: ${hookBody}`
+    );
+  }
+
+  log("Preflight complete: OpenClaw gateway and hook ingress are reachable.");
 }
 
 const runStart = Date.now();
@@ -241,6 +284,7 @@ let scmResult = null;
 try {
   await ensureLocalStackReady();
   await ensureRequestedOpenClawReady();
+  await mkdir(baseTargetRoot, { recursive: true });
 
   log("Step 1/7: Creating GitHub issue...");
   const issueStart = Date.now();
@@ -330,7 +374,9 @@ try {
 
   if (useOpenClaw) {
     devDeps.openClawDispatch = createHttpOpenClawDispatchAdapter();
-    devDeps.openClawAgentId = "reddwarf-analyst";
+    devDeps.openClawAgentId = "reddwarf-developer";
+    devDeps.workspaceRepoBootstrapper = createGitHubWorkspaceRepoBootstrapper();
+    devDeps.openClawCompletionAwaiter = createDeveloperHandoffAwaiter();
   }
 
   const devResult = await runDeveloperPhase(
@@ -379,7 +425,9 @@ try {
       {
         repository,
         scm: new DeterministicScmAgent(),
-        github
+        github,
+        workspaceRepoBootstrapper: createGitHubWorkspaceRepoBootstrapper(),
+        workspaceCommitPublisher: createGitWorkspaceCommitPublisher()
       }
     );
 
@@ -391,8 +439,8 @@ try {
       log(`  Branch: ${scmResult.branch.branchName}`);
     }
     if (scmResult.pullRequest) {
-      createdPrNumber = scmResult.pullRequest.prNumber;
-      log(`  PR #${scmResult.pullRequest.prNumber}: ${scmResult.pullRequest.url}`);
+      createdPrNumber = scmResult.pullRequest.number;
+      log(`  PR #${scmResult.pullRequest.number}: ${scmResult.pullRequest.url}`);
     }
   } else {
     log(`Step 6/7: Skipping SCM phase because validation returned ${valResult.nextAction}.`);
@@ -560,3 +608,4 @@ try {
   await rm(evidenceRoot, { recursive: true, force: true }).catch(() => {});
   await repository.close();
 }
+

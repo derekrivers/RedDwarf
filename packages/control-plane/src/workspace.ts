@@ -612,6 +612,7 @@ export async function materializeManagedWorkspace(input: {
     stateFile,
     scratchDir,
     artifactsDir,
+    repoRoot: null,
     descriptor
   };
 }

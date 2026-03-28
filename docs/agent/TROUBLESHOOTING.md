@@ -63,3 +63,51 @@
 - Failing approach: sending any read-only developer run straight from validation into SCM just because the task requested `can_open_pr`.
 - Working workaround: use the updated pipeline, which now keeps read-only `can_open_pr` tasks at `await_review` and only allows SCM when the developer handoff records `codeWriteEnabled: true`.
 - Verification: `corepack pnpm build`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; rerun the live E2E and confirm it stops after validation with `await_review` instead of creating a follow-up SCM failure issue.
+
+## OpenClaw `/hooks/agent` returns `404` even though `/health` is healthy
+
+- Symptom: `curl http://localhost:3578/health` returns `200`, but RedDwarf developer dispatch fails with `OpenClaw dispatch to .../hooks/agent returned 404: Not Found`.
+- Root cause: the gateway config did not enable hook ingress. Current OpenClaw requires an explicit `hooks` block, a hook token, a `defaultSessionKey`, and `allowedSessionKeyPrefixes` that include `hook:` when request-supplied session keys are allowed.
+- Failing approach: treating `/health` success as proof that `/hooks/agent` is enabled, or seeding an `openclaw.json` without a `hooks` section.
+- Working workaround: generate or seed [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) with `hooks.enabled: true`, `path: "/hooks"`, `defaultSessionKey: "hook:ingress"`, `allowRequestSessionKey: true`, and `allowedSessionKeyPrefixes: ["hook:", "github:issue:"]`, then force-recreate the `openclaw` service.
+- Verification: `curl http://localhost:3578/health`; `curl -X POST http://localhost:3578/hooks/agent -H "Authorization: Bearer <OPENCLAW_HOOK_TOKEN>" -H "Content-Type: application/json" -d "{}"`; a healthy hook ingress should return `400 {"ok":false,"error":"message required"}` rather than `404`.
+
+## OpenClaw container starts but the gateway never becomes healthy after config changes
+
+- Symptom: `docker compose ... ps openclaw` stays `unhealthy` or restart-loops, `curl http://localhost:3578/health` returns `STATUS:000`, and OpenClaw logs only repeated `Config observe anomaly: ... missing-meta-vs-last-good` messages.
+- Root cause: stale state in `runtime-data/openclaw-home` can accumulate `openclaw.json.clobbered.*` artifacts and leave `config-health.json` pinned to `missing-meta-vs-last-good`, which causes current OpenClaw builds to choke on config observation and sometimes hit a config-read stack overflow.
+- Failing approach: repeatedly force-recreating the container against the same corrupted `runtime-data/openclaw-home` and expecting the gateway to recover on its own.
+- Working workaround: stop the OpenClaw container, move `runtime-data/openclaw-home` aside to a timestamped backup, create a fresh `runtime-data/openclaw-home` directory, then recreate the service so it reseeds clean state from [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json).
+- Verification: `docker stop docker-openclaw-1`; move `runtime-data/openclaw-home` to a backup name; `docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d --force-recreate openclaw`; confirm `docker compose ... ps openclaw` is `healthy` and `curl http://localhost:3578/health` returns `200`.
+
+## OpenClaw agent turns fail with `Sandbox mode requires Docker, but the "docker" command was not found in PATH`
+
+- Symptom: live dispatch reaches OpenClaw, then agent lanes fail immediately with errors such as `Sandbox mode requires Docker, but the "docker" command was not found in PATH`.
+- Root cause: the Docker-hosted OpenClaw deployment was still asking OpenClaw to launch its own nested Docker sandbox (`sandbox.mode=all`), but the OpenClaw container image does not include an inner `docker` CLI.
+- Failing approach: preserving per-agent `sandbox.mode=all` in `openclaw.json` and expecting Docker-in-Docker sandboxing to work inside the existing OpenClaw container.
+- Working workaround: for this deployment, generate or seed agent configs with `sandbox: { mode: "off" }` and rely on the outer container boundary plus explicit tool allowlists. The current generator in [packages/control-plane/src/openclaw-config.ts](/c:/Dev/RedDwarf/packages/control-plane/src/openclaw-config.ts) and Docker template in [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) now do this.
+- Verification: recreate OpenClaw, dispatch a developer session, and confirm the logs no longer contain the missing-`docker` sandbox error.
+
+## OpenClaw warns that agent allowlists contain unknown entries like `group:memory`
+
+- Symptom: OpenClaw logs warnings such as `agents.reddwarf-developer.tools.allow allowlist contains unknown entries (group:memory)`.
+- Root cause: RedDwarf role definitions were still including `group:memory`, but that tool group is not available in the current OpenClaw runtime, so the allow entry can never resolve.
+- Failing approach: leaving `group:memory` in the machine-readable role definitions or the seeded Docker template after the runtime reports it as unknown.
+- Working workaround: remove `group:memory` from the execution-plane role definitions, the Docker template, and the human-readable bootstrap `TOOLS.md` files. The current source of truth no longer includes it.
+- Verification: recreate OpenClaw and inspect the seeded `runtime-data/openclaw-home/openclaw.json`; the agent `tools.allow` arrays should no longer contain `group:memory`, and subsequent logs should not emit the unknown-group warning.
+
+## OpenClaw warns that the `coding` profile contains unavailable tools like `apply_patch` or `image_generate`
+
+- Symptom: OpenClaw logs warnings such as `tools.profile (coding) allowlist contains unknown entries (apply_patch, image_generate)`.
+- Root cause: the built-in `coding` profile in the current OpenClaw release references shipped tools that are not available in this runtime/provider/model/config combination.
+- Failing approach: keeping analyst, validator, or developer agents on `tools.profile: "coding"` when the runtime reports unavailable profile members.
+- Working workaround: do not use the built-in `coding` profile in this runtime. Use `tools.profile: "full"` plus RedDwarf's explicit `tools.allow`/`tools.deny` group lists so built-in file/runtime tools remain available without inheriting the broken `coding` profile entries.
+- Verification: recreate OpenClaw, inspect the seeded `runtime-data/openclaw-home/openclaw.json`, and confirm the affected agents use `"profile": "full"`; subsequent dispatch logs should no longer complain about `apply_patch` or `image_generate` coming from the `coding` profile.
+
+## OpenClaw developer runs time out even though the agent finished work in a different workspace path
+
+- Symptom: pnpm e2e reaches developer dispatch, then fails with Timed out waiting for OpenClaw developer completion..., while the OpenClaw session logs show the developer wrote docs/health-check.md and developer-handoff.md under /var/lib/reddwarf/workspaces/<workspaceId> instead of the nested E2E workspace path.
+- Root cause: the OpenClaw prompt used workspaceId to build runtime paths and dropped any nested path segments under the host workspace root, so OpenClaw wrote to the wrong mounted directory when E2E used untime-data/workspaces/e2e-*/<workspaceId>.
+- Failing approach: deriving runtime-visible workspace paths as join(REDDWARF_WORKSPACE_ROOT, workspace.workspaceId) for every run.
+- Working workaround: set REDDWARF_HOST_WORKSPACE_ROOT in the E2E runner and derive the runtime-visible path from the relative path between the real host workspace root and workspace.workspaceRoot; keep REDDWARF_WORKSPACE_ROOT as the container-visible mount root.
+- Verification: rerun E2E_TARGET_REPO=derekrivers/FirstVoyage E2E_USE_OPENCLAW=true E2E_CLEANUP=false corepack pnpm e2e and confirm the developer phase completes, validation returns wait_scm, and SCM opens a real PR.
