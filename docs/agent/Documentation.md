@@ -276,3 +276,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Verification for feature 96: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:secrets`.
 - No new follow-on feature was added from feature 96; the next board item is feature 97, fence untrusted issue content inside planner and agent prompts.
 
+- Completed feature 97 from `FEATURE_BOARD.md`: fence untrusted issue content inside planner and agent prompts.
+- Updated `packages/execution-plane/src/index.ts` so Anthropic planning requests now carry raw GitHub issue fields inside an explicit `## Untrusted GitHub Issue Data` JSON block, separated from trusted instructions and the required output contract.
+- Updated `packages/control-plane/src/pipeline.ts` so Holly architect prompts and Lister developer prompts now isolate issue-derived title, summary, acceptance criteria, affected paths, and requested capabilities inside the same untrusted JSON boundary while keeping planning summaries, allowed paths, and handoff contracts in trusted sections.
+- Added regression coverage in `packages/execution-plane/src/index.test.ts` and `packages/control-plane/src/index.test.ts` proving adversarial issue text is preserved as data without being promoted into ambient prompt instructions.
+- Verification for feature 97: `corepack pnpm typecheck`; `corepack pnpm test -- packages/execution-plane/src/index.test.ts packages/control-plane/src/index.test.ts`.
+- No new follow-on feature was added from feature 97; the next board item is feature 98, harden the Postgres pool with timeouts, sizing, and telemetry.
+
