@@ -1,7 +1,10 @@
 import {
   asIsoTimestamp,
+  type DevelopmentAgent,
   type PlanningAgent,
-  type TaskManifest
+  type ScmAgent,
+  type TaskManifest,
+  type ValidationAgent
 } from "@reddwarf/contracts";
 import {
   createGitHubIssuePollingCursor,
@@ -11,10 +14,14 @@ import type {
   GitHubAdapter,
   GitHubIssueCandidate,
   GitHubIssueQuery,
-  GitHubIssueState
+  GitHubIssueState,
+  OpenClawDispatchAdapter,
+  SecretsAdapter
 } from "@reddwarf/integrations";
 import type { PlanningPipelineLogger } from "./logger.js";
-import { runPlanningPipeline, type PlanningConcurrencyOptions } from "./pipeline.js";
+import type { OpenClawCompletionAwaiter, WorkspaceCommitPublisher, WorkspaceRepoBootstrapper } from "./live-workflow.js";
+import { dispatchReadyTask, type DispatchReadyTaskResult, type PlanningConcurrencyOptions } from "./pipeline.js";
+import { runPlanningPipeline } from "./pipeline.js";
 
 export interface GitHubPollingRepoConfig {
   repo: string;
@@ -309,4 +316,210 @@ function selectUnseenCandidates(
 
 function serializePollingError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Ready-task dispatcher
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface ReadyTaskDispatcherConfig {
+  intervalMs: number;
+  targetRoot: string;
+  evidenceRoot?: string;
+  runOnStart?: boolean;
+}
+
+export interface ReadyTaskDispatcherDependencies {
+  repository: PlanningRepository;
+  developer: DevelopmentAgent;
+  validator: ValidationAgent;
+  scm: ScmAgent;
+  github: GitHubAdapter;
+  openClawDispatch: OpenClawDispatchAdapter;
+  secrets?: SecretsAdapter;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
+  openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
+  workspaceCommitPublisher?: WorkspaceCommitPublisher;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  concurrency?: PlanningConcurrencyOptions;
+  scheduler?: PollingScheduler;
+}
+
+export interface ReadyTaskDispatchCycleResult {
+  startedAt: string;
+  completedAt: string;
+  dispatchedCount: number;
+  results: DispatchReadyTaskResult[];
+}
+
+export interface ReadyTaskDispatcher {
+  readonly intervalMs: number;
+  readonly isRunning: boolean;
+  readonly consecutiveFailures: number;
+  readonly lastDispatchResult: DispatchReadyTaskResult | null;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  dispatchOnce(): Promise<ReadyTaskDispatchCycleResult>;
+}
+
+export function createReadyTaskDispatcher(
+  config: ReadyTaskDispatcherConfig,
+  deps: ReadyTaskDispatcherDependencies
+): ReadyTaskDispatcher {
+  if (config.intervalMs < 1_000) {
+    throw new Error("Ready-task dispatch interval must be at least 1000ms.");
+  }
+
+  const clock = deps.clock ?? (() => new Date());
+  const scheduler = deps.scheduler ?? {
+    setInterval: (callback: () => void, delayMs: number) =>
+      globalThis.setInterval(callback, delayMs),
+    clearInterval: (handle: unknown) =>
+      globalThis.clearInterval(handle as NodeJS.Timeout)
+  };
+
+  let intervalHandle: unknown = null;
+  let dispatching = false;
+  let consecutiveFailures = 0;
+  let nextAllowedDispatchAt = 0;
+  let lastResult: DispatchReadyTaskResult | null = null;
+
+  const MAX_BACKOFF_MS = 5 * 60_000;
+
+  function computeBackoffMs(failures: number): number {
+    if (failures <= 0) return 0;
+    return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
+  }
+
+  async function dispatchOnce(): Promise<ReadyTaskDispatchCycleResult> {
+    if (dispatching) {
+      throw new Error("Ready-task dispatch cycle is already running.");
+    }
+
+    dispatching = true;
+    const startedAt = clock();
+    const results: DispatchReadyTaskResult[] = [];
+
+    try {
+      // Find the oldest ready manifest (one at a time)
+      const readyManifests = await deps.repository.listManifestsByLifecycleStatus("ready", 1);
+
+      if (readyManifests.length > 0) {
+        const manifest = readyManifests[0]!;
+
+        deps.logger?.info("Found ready task for dispatch.", {
+          taskId: manifest.taskId,
+          sourceRepo: manifest.source.repo,
+          currentPhase: manifest.currentPhase
+        });
+
+        const result = await dispatchReadyTask(
+          {
+            taskId: manifest.taskId,
+            targetRoot: config.targetRoot,
+            ...(config.evidenceRoot ? { evidenceRoot: config.evidenceRoot } : {})
+          },
+          {
+            repository: deps.repository,
+            developer: deps.developer,
+            validator: deps.validator,
+            scm: deps.scm,
+            github: deps.github,
+            openClawDispatch: deps.openClawDispatch,
+            ...(deps.secrets ? { secrets: deps.secrets } : {}),
+            ...(deps.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper } : {}),
+            ...(deps.openClawCompletionAwaiter ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter } : {}),
+            ...(deps.workspaceCommitPublisher ? { workspaceCommitPublisher: deps.workspaceCommitPublisher } : {}),
+            ...(deps.logger ? { logger: deps.logger } : {}),
+            ...(deps.clock ? { clock: deps.clock } : {}),
+            ...(deps.concurrency ? { concurrency: deps.concurrency } : {})
+          }
+        );
+
+        results.push(result);
+        lastResult = result;
+
+        deps.logger?.info("Task dispatch completed.", {
+          taskId: result.taskId,
+          outcome: result.outcome,
+          phasesExecuted: result.phasesExecuted,
+          finalPhase: result.finalPhase,
+          pullRequestUrl: result.pullRequestUrl
+        });
+      }
+
+      consecutiveFailures = 0;
+      nextAllowedDispatchAt = 0;
+    } catch (error) {
+      consecutiveFailures++;
+      const backoffMs = computeBackoffMs(consecutiveFailures);
+      nextAllowedDispatchAt = clock().getTime() + backoffMs;
+      deps.logger?.error("Ready-task dispatch cycle failed.", {
+        error: serializePollingError(error),
+        consecutiveFailures,
+        backoffMs
+      });
+      throw error;
+    } finally {
+      dispatching = false;
+    }
+
+    const completedAt = clock();
+    return {
+      startedAt: asIsoTimestamp(startedAt),
+      completedAt: asIsoTimestamp(completedAt),
+      dispatchedCount: results.length,
+      results
+    };
+  }
+
+  return {
+    get intervalMs() {
+      return config.intervalMs;
+    },
+    get isRunning() {
+      return intervalHandle !== null;
+    },
+    get consecutiveFailures() {
+      return consecutiveFailures;
+    },
+    get lastDispatchResult() {
+      return lastResult;
+    },
+    async start(): Promise<void> {
+      if (intervalHandle !== null) {
+        return;
+      }
+
+      intervalHandle = scheduler.setInterval(() => {
+        const now = clock().getTime();
+        if (now < nextAllowedDispatchAt) {
+          deps.logger?.info("Ready-task dispatch cycle skipped due to backoff.", {
+            consecutiveFailures,
+            resumesInMs: nextAllowedDispatchAt - now
+          });
+          return;
+        }
+        void dispatchOnce().catch(() => {
+          // Error already logged and backoff applied inside dispatchOnce
+        });
+      }, config.intervalMs);
+
+      if (config.runOnStart !== false) {
+        await dispatchOnce();
+      }
+    },
+    async stop(): Promise<void> {
+      if (intervalHandle === null) {
+        return;
+      }
+
+      scheduler.clearInterval(intervalHandle);
+      intervalHandle = null;
+      consecutiveFailures = 0;
+      nextAllowedDispatchAt = 0;
+    },
+    dispatchOnce
+  };
 }

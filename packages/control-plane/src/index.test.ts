@@ -18,10 +18,12 @@ import {
   createBufferedPlanningLogger,
   createGitHubIssuePollingDaemon,
   createOperatorApiServer,
+  createReadyTaskDispatcher,
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
+  dispatchReadyTask,
   extractSessionSummary,
   generateOpenClawConfig,
   ingestKnowledgeSources,
@@ -2762,6 +2764,216 @@ describe("GitHub issue polling daemon backoff", () => {
     shouldFail = false;
     await daemon.pollOnce();
     expect(daemon.consecutiveFailures).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Post-approval dispatcher tests
+// ══════════════════════════════════════════════════════════════════════════
+
+describe("dispatchReadyTask", () => {
+  const fixtureGithub = new FixtureGitHubAdapter({ candidates: [] });
+
+  it("rejects tasks that are not in ready state", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const planningInput: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 100 },
+      title: "Dispatch test issue",
+      summary: "Plan a deterministic docs-safe change for dispatch testing.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["docs/guide.md"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_open_pr", "can_archive_evidence"],
+      metadata: {}
+    };
+
+    const result = await runPlanningPipeline(planningInput, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+
+    // The manifest should be "blocked" (awaiting approval), not "ready"
+    const manifest = await repository.getManifest(result.manifest.taskId);
+    expect(manifest!.lifecycleStatus).toBe("blocked");
+
+    const tmpDir = await mkdtemp(join(tmpdir(), "dispatch-test-"));
+    try {
+      await expect(
+        dispatchReadyTask(
+          { taskId: result.manifest.taskId, targetRoot: tmpDir },
+          {
+            repository,
+            developer: new DeterministicDeveloperAgent(),
+            validator: new DeterministicValidationAgent(),
+            scm: new DeterministicScmAgent(),
+            github: fixtureGithub,
+            openClawDispatch: new FixtureOpenClawDispatchAdapter()
+          }
+        )
+      ).rejects.toThrow("expected \"ready\"");
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dispatches a ready task through developer phase (deterministic fallback)", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const planningInput: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 101 },
+      title: "Dispatch ready task test",
+      summary: "Plan a deterministic docs-safe change for dispatch ready testing.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["docs/guide.md"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_open_pr", "can_archive_evidence"],
+      metadata: {}
+    };
+
+    const planResult = await runPlanningPipeline(planningInput, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+
+    expect(planResult.nextAction).toBe("await_human");
+
+    // Approve the task
+    await resolveApprovalRequest(
+      {
+        requestId: planResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "test",
+        decisionSummary: "Auto-approve for test"
+      },
+      { repository }
+    );
+
+    const manifest = await repository.getManifest(planResult.manifest.taskId);
+    expect(manifest!.lifecycleStatus).toBe("ready");
+
+    const tmpDir = await mkdtemp(join(tmpdir(), "dispatch-ready-"));
+    try {
+      const result = await dispatchReadyTask(
+        { taskId: planResult.manifest.taskId, targetRoot: tmpDir },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub
+        }
+      );
+
+      expect(result.taskId).toBe(planResult.manifest.taskId);
+      expect(result.phasesExecuted).toContain("development");
+      expect(["completed", "blocked", "failed"]).toContain(result.outcome);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listManifestsByLifecycleStatus", () => {
+  it("returns manifests matching the specified lifecycle status", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const input1: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 200 },
+      title: "Task 200",
+      summary: "Plan a deterministic docs-safe change for task 200 testing.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["docs/guide.md"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_open_pr", "can_archive_evidence"],
+      metadata: {}
+    };
+    const input2: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 201 },
+      title: "Task 201",
+      summary: "Plan a deterministic docs-safe change for task 201 testing.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["docs/guide.md"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_open_pr", "can_archive_evidence"],
+      metadata: {}
+    };
+
+    const result1 = await runPlanningPipeline(input1, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+    const result2 = await runPlanningPipeline(input2, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+
+    // Both should be blocked (awaiting human approval)
+    const blocked = await repository.listManifestsByLifecycleStatus("blocked");
+    expect(blocked.length).toBe(2);
+
+    // Approve one
+    await resolveApprovalRequest(
+      {
+        requestId: result1.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "test",
+        decisionSummary: "Approve"
+      },
+      { repository }
+    );
+
+    const ready = await repository.listManifestsByLifecycleStatus("ready");
+    expect(ready.length).toBe(1);
+    expect(ready[0]!.taskId).toBe(result1.manifest.taskId);
+
+    const stillBlocked = await repository.listManifestsByLifecycleStatus("blocked");
+    expect(stillBlocked.length).toBe(1);
+    expect(stillBlocked[0]!.taskId).toBe(result2.manifest.taskId);
+  });
+});
+
+describe("createReadyTaskDispatcher", () => {
+  const fixtureGithub = new FixtureGitHubAdapter({ candidates: [] });
+
+  it("requires intervalMs >= 1000", () => {
+    expect(() =>
+      createReadyTaskDispatcher(
+        { intervalMs: 500, targetRoot: "/tmp" },
+        {
+          repository: new InMemoryPlanningRepository(),
+          developer: new DeterministicDeveloperAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          openClawDispatch: new FixtureOpenClawDispatchAdapter()
+        }
+      )
+    ).toThrow("at least 1000ms");
+  });
+
+  it("dispatchOnce returns empty result when no ready manifests exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const dispatcher = createReadyTaskDispatcher(
+      { intervalMs: 5000, targetRoot: "/tmp", runOnStart: false },
+      {
+        repository,
+        developer: new DeterministicDeveloperAgent(),
+        validator: new DeterministicValidationAgent(),
+        scm: new DeterministicScmAgent(),
+        github: fixtureGithub,
+        openClawDispatch: new FixtureOpenClawDispatchAdapter()
+      }
+    );
+
+    const result = await dispatcher.dispatchOnce();
+    expect(result.dispatchedCount).toBe(0);
+    expect(result.results).toHaveLength(0);
   });
 });
 

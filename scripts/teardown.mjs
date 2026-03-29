@@ -289,6 +289,26 @@ try {
   } else {
     log("  No stale OpenClaw config artifacts found.");
   }
+
+  // Reset device pairing state to prevent stale token mismatches on next boot
+  const devicesDir = join(openClawHome, "devices");
+  const { writeFile } = await import("node:fs/promises");
+  try {
+    const deviceEntries = await readdir(devicesDir).catch(() => []);
+    if (deviceEntries.length > 0) {
+      if (dryRun) {
+        log("  Would reset device pairing state (paired.json, pending.json).");
+      } else {
+        await writeFile(join(devicesDir, "paired.json"), "{}", "utf8");
+        await writeFile(join(devicesDir, "pending.json"), "{}", "utf8");
+        log("  Device pairing state reset.");
+      }
+    } else {
+      log("  No device pairing state to reset.");
+    }
+  } catch {
+    log("  Device pairing directory not found — nothing to reset.");
+  }
 } catch {
   log("  OpenClaw home not found — nothing to clean.");
 }

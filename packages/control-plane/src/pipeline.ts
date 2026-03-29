@@ -5474,6 +5474,302 @@ function patchManifest(
   return { ...manifest, ...updates };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Post-approval dispatcher
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface DispatchReadyTaskInput {
+  taskId: string;
+  targetRoot: string;
+  evidenceRoot?: string | undefined;
+}
+
+export interface DispatchReadyTaskDependencies {
+  repository: PlanningRepository;
+  developer: DevelopmentAgent;
+  validator: ValidationAgent;
+  scm: ScmAgent;
+  github: GitHubAdapter;
+  openClawDispatch?: OpenClawDispatchAdapter;
+  secrets?: SecretsAdapter;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
+  openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
+  workspaceCommitPublisher?: WorkspaceCommitPublisher;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  concurrency?: PlanningConcurrencyOptions;
+}
+
+export type DispatchPhaseOutcome = "completed" | "blocked" | "failed";
+
+export interface DispatchReadyTaskResult {
+  taskId: string;
+  outcome: DispatchPhaseOutcome;
+  phasesExecuted: string[];
+  finalPhase: string;
+  pullRequestUrl?: string;
+  error?: string;
+}
+
+/**
+ * Dispatch a task that is in "ready" lifecycle status through
+ * the remaining pipeline phases (developer → validation → SCM)
+ * in a single pass.
+ *
+ * This is the post-approval orchestrator. It assumes:
+ *   - The manifest has lifecycleStatus === "ready"
+ *   - An approved approval request exists
+ *   - OpenClaw is available for developer dispatch
+ *
+ * The function runs each phase in sequence and stops on the first
+ * failure or blocking condition.
+ */
+export async function dispatchReadyTask(
+  input: DispatchReadyTaskInput,
+  dependencies: DispatchReadyTaskDependencies
+): Promise<DispatchReadyTaskResult> {
+  const { repository } = dependencies;
+  const logger = dependencies.logger ?? defaultLogger;
+  const taskId = input.taskId.trim();
+
+  const manifest = await repository.getManifest(taskId);
+  if (!manifest) {
+    throw new Error(`Task ${taskId} not found.`);
+  }
+
+  if (manifest.lifecycleStatus !== "ready") {
+    throw new Error(
+      `Task ${taskId} has lifecycleStatus "${manifest.lifecycleStatus}" — expected "ready".`
+    );
+  }
+
+  const dispatchLogger = bindPlanningLogger(logger, {
+    taskId,
+    sourceRepo: manifest.source.repo
+  });
+
+  dispatchLogger.info("Starting post-approval dispatch.", {
+    taskId,
+    currentPhase: manifest.currentPhase,
+    requestedCapabilities: manifest.requestedCapabilities
+  });
+
+  const phasesExecuted: string[] = [];
+
+  // ── Retrieve Holly's architect handoff from memory ──────────────────
+  let hollyHandoffMarkdown: string | undefined;
+  try {
+    const memories = await repository.listMemoryRecords({
+      taskId,
+      scope: "task",
+      limit: 100
+    });
+    const architectMemory = memories.find((m) => m.key === "architect.handoff");
+    if (architectMemory && typeof architectMemory.value === "object" && architectMemory.value !== null) {
+      const val = architectMemory.value as Record<string, unknown>;
+      if (typeof val["summary"] === "string") {
+        // Reconstruct a basic markdown from the structured memory
+        const parts: string[] = [];
+        parts.push(`# Architecture Plan\n\n${val["summary"]}`);
+        if (Array.isArray(val["affectedAreas"]) && val["affectedAreas"].length > 0) {
+          parts.push(`\n## Affected Areas\n\n${(val["affectedAreas"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+        }
+        if (Array.isArray(val["assumptions"]) && val["assumptions"].length > 0) {
+          parts.push(`\n## Assumptions\n\n${(val["assumptions"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+        }
+        if (Array.isArray(val["constraints"]) && val["constraints"].length > 0) {
+          parts.push(`\n## Constraints\n\n${(val["constraints"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+        }
+        if (Array.isArray(val["testExpectations"]) && val["testExpectations"].length > 0) {
+          parts.push(`\n## Test Expectations\n\n${(val["testExpectations"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+        }
+        hollyHandoffMarkdown = parts.join("\n");
+        dispatchLogger.info("Retrieved Holly architect handoff from memory.", {
+          taskId,
+          contentLength: hollyHandoffMarkdown.length
+        });
+      }
+    }
+  } catch {
+    dispatchLogger.warn("Failed to retrieve Holly architect handoff from memory.", { taskId });
+  }
+
+  // ── Phase 1: Developer ──────────────────────────────────────────────
+  try {
+    dispatchLogger.info("Dispatching developer phase.", { taskId });
+
+    const devResult = await runDeveloperPhase(
+      {
+        taskId,
+        targetRoot: input.targetRoot,
+        evidenceRoot: input.evidenceRoot
+      },
+      {
+        repository,
+        developer: dependencies.developer,
+        github: dependencies.github,
+        ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
+        openClawAgentId: "reddwarf-developer",
+        ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+        ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
+        ...(dependencies.openClawCompletionAwaiter ? { openClawCompletionAwaiter: dependencies.openClawCompletionAwaiter } : {}),
+        ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
+        ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+        ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+      }
+    );
+
+    phasesExecuted.push("development");
+    dispatchLogger.info("Developer phase completed.", {
+      taskId,
+      nextAction: devResult.nextAction,
+      runId: devResult.runId
+    });
+
+    if (devResult.nextAction === "task_blocked") {
+      return {
+        taskId,
+        outcome: "blocked",
+        phasesExecuted,
+        finalPhase: "development"
+      };
+    }
+  } catch (error) {
+    dispatchLogger.error("Developer phase failed.", {
+      taskId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      taskId,
+      outcome: "failed",
+      phasesExecuted: [...phasesExecuted, "development"],
+      finalPhase: "development",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  // ── Phase 2: Validation ─────────────────────────────────────────────
+  try {
+    dispatchLogger.info("Dispatching validation phase.", { taskId });
+
+    const valResult = await runValidationPhase(
+      {
+        taskId,
+        targetRoot: input.targetRoot,
+        evidenceRoot: input.evidenceRoot
+      },
+      {
+        repository,
+        validator: dependencies.validator,
+        ...(dependencies.github ? { github: dependencies.github } : {}),
+        ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+        ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+        ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+      }
+    );
+
+    phasesExecuted.push("validation");
+    dispatchLogger.info("Validation phase completed.", {
+      taskId,
+      nextAction: valResult.nextAction,
+      runId: valResult.runId
+    });
+
+    if (valResult.nextAction === "task_blocked") {
+      return {
+        taskId,
+        outcome: "blocked",
+        phasesExecuted,
+        finalPhase: "validation"
+      };
+    }
+
+    if (valResult.nextAction === "await_review") {
+      dispatchLogger.info("Validation returned await_review — skipping SCM (review is v1-disabled).", { taskId });
+      return {
+        taskId,
+        outcome: "completed",
+        phasesExecuted,
+        finalPhase: "validation"
+      };
+    }
+  } catch (error) {
+    dispatchLogger.error("Validation phase failed.", {
+      taskId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      taskId,
+      outcome: "failed",
+      phasesExecuted: [...phasesExecuted, "validation"],
+      finalPhase: "validation",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  // ── Phase 3: SCM ────────────────────────────────────────────────────
+  try {
+    dispatchLogger.info("Dispatching SCM phase.", { taskId });
+
+    const scmResult = await runScmPhase(
+      {
+        taskId,
+        targetRoot: input.targetRoot,
+        evidenceRoot: input.evidenceRoot
+      },
+      {
+        repository,
+        scm: dependencies.scm,
+        github: dependencies.github,
+        ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
+        ...(dependencies.workspaceCommitPublisher ? { workspaceCommitPublisher: dependencies.workspaceCommitPublisher } : {}),
+        ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+        ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+      }
+    );
+
+    phasesExecuted.push("scm");
+    dispatchLogger.info("SCM phase completed.", {
+      taskId,
+      nextAction: scmResult.nextAction,
+      runId: scmResult.runId,
+      pullRequestUrl: scmResult.pullRequest?.url
+    });
+
+    if (scmResult.nextAction === "task_blocked") {
+      return {
+        taskId,
+        outcome: "blocked",
+        phasesExecuted,
+        finalPhase: "scm"
+      };
+    }
+
+    return {
+      taskId,
+      outcome: "completed",
+      phasesExecuted,
+      finalPhase: "scm",
+      ...(scmResult.pullRequest?.url ? { pullRequestUrl: scmResult.pullRequest.url } : {})
+    };
+  } catch (error) {
+    dispatchLogger.error("SCM phase failed.", {
+      taskId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return {
+      taskId,
+      outcome: "failed",
+      phasesExecuted: [...phasesExecuted, "scm"],
+      finalPhase: "scm",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 
 
 

@@ -697,6 +697,17 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapMemoryRecordRow);
   }
 
+  async listManifestsByLifecycleStatus(
+    status: string,
+    limit = 100
+  ): Promise<TaskManifest[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM task_manifests WHERE lifecycle_status = $1 ORDER BY updated_at ASC LIMIT $2",
+      [status, limit]
+    );
+    return result.rows.map(mapManifestRow);
+  }
+
   async listPipelineRuns(
     query: Partial<PipelineRunQuery> = {}
   ): Promise<PipelineRun[]> {

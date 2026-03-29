@@ -102,6 +102,23 @@ if (!skipOpenClaw) {
   }
 }
 
+// ── 1a2: Reset OpenClaw device pairing state ─────────────────────────
+// Stale device tokens from previous sessions cause "pairing required" errors.
+// Reset them before Docker starts so the Control UI can pair cleanly.
+
+if (!skipOpenClaw) {
+  const devicesDir = resolve(repoRoot, "runtime-data", "openclaw-home", "devices");
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  try {
+    await mkdir(devicesDir, { recursive: true });
+    await writeFile(join(devicesDir, "paired.json"), "{}", "utf8");
+    await writeFile(join(devicesDir, "pending.json"), "{}", "utf8");
+    log("OpenClaw device pairing state reset.");
+  } catch (err) {
+    log(`Device state reset skipped: ${formatError(err)}`);
+  }
+}
+
 // ── 1b: Docker Compose (Postgres + optional OpenClaw) ─────────────────
 
 log("Starting Docker Compose stack...");
@@ -205,11 +222,21 @@ if (!skipOpenClaw) {
 log("Phase 2: Housekeeping...");
 
 // Import control-plane and evidence after build is confirmed
-const { createOperatorApiServer, createGitHubIssuePollingDaemon, sweepStaleRuns } =
-  await import("../packages/control-plane/dist/index.js");
+const {
+  createOperatorApiServer,
+  createGitHubIssuePollingDaemon,
+  createReadyTaskDispatcher,
+  createGitHubWorkspaceRepoBootstrapper,
+  createDeveloperHandoffAwaiter,
+  createGitWorkspaceCommitPublisher,
+  sweepStaleRuns,
+  DeterministicDeveloperAgent,
+  DeterministicValidationAgent,
+  DeterministicScmAgent
+} = await import("../packages/control-plane/dist/index.js");
 const { createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
-const { createRestGitHubAdapter } =
+const { createRestGitHubAdapter, createHttpOpenClawDispatchAdapter } =
   await import("../packages/integrations/dist/index.js");
 const { createPlanningAgent } =
   await import("../packages/execution-plane/dist/index.js");
@@ -266,18 +293,72 @@ try {
 
 log("Phase 3: Starting services...");
 
-// ── 3a: Operator API ──────────────────────────────────────────────────
+// ── 3a: Shared adapters ──────────────────────────────────────────────
 
-const server = createOperatorApiServer({ port: apiPort }, { repository });
+const github = createRestGitHubAdapter();
+const workspaceTargetRoot = resolve(repoRoot, "runtime-data", "workspaces");
+const evidenceRoot = resolve(repoRoot, "runtime-data", "evidence");
+const dispatchIntervalMs = parseInt(
+  process.env.REDDWARF_DISPATCH_INTERVAL_MS ?? "15000",
+  10
+);
+
+// ── 3b: Ready-task dispatcher (auto-dispatch after approval) ─────────
+
+let dispatcher = null;
+let dispatchDeps = null;
+
+if (openClawAvailable) {
+  const openClawDispatch = createHttpOpenClawDispatchAdapter();
+
+  dispatchDeps = {
+    developer: new DeterministicDeveloperAgent(),
+    validator: new DeterministicValidationAgent(),
+    scm: new DeterministicScmAgent(),
+    github,
+    openClawDispatch,
+    workspaceRepoBootstrapper: createGitHubWorkspaceRepoBootstrapper(),
+    openClawCompletionAwaiter: createDeveloperHandoffAwaiter(),
+    workspaceCommitPublisher: createGitWorkspaceCommitPublisher()
+  };
+
+  dispatcher = createReadyTaskDispatcher(
+    {
+      intervalMs: dispatchIntervalMs,
+      targetRoot: workspaceTargetRoot,
+      evidenceRoot,
+      runOnStart: false
+    },
+    { repository, ...dispatchDeps }
+  );
+}
+
+// ── 3c: Operator API ─────────────────────────────────────────────────
+
+const server = createOperatorApiServer(
+  { port: apiPort },
+  {
+    repository,
+    ...(dispatcher ? { dispatcher } : {}),
+    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+  }
+);
 await server.start();
 log(`Operator API listening on http://127.0.0.1:${server.port}`);
 
-// ── 3b: Polling daemon (optional) ─────────────────────────────────────
+if (dispatcher) {
+  log(`Starting ready-task dispatcher (every ${dispatchIntervalMs / 1_000}s)...`);
+  await dispatcher.start();
+  log("Ready-task dispatcher started.");
+} else {
+  log("Ready-task dispatcher not started — OpenClaw not available.");
+}
+
+// ── 3d: Polling daemon (optional) ────────────────────────────────────
 
 let daemon = null;
 
 if (pollRepos.length > 0) {
-  const github = createRestGitHubAdapter();
   const planner = createPlanningAgent({ type: "anthropic" });
 
   daemon = createGitHubIssuePollingDaemon(
@@ -308,6 +389,7 @@ log("");
 log(`  Postgres:     running (port ${process.env.POSTGRES_HOST_PORT ?? "55532"})`);
 log(`  OpenClaw:     ${openClawAvailable ? "running (port " + (process.env.OPENCLAW_HOST_PORT ?? "3578") + ")" : "not running (deterministic fallback)"}`);
 log(`  Operator API: http://127.0.0.1:${server.port}`);
+log(`  Dispatcher:   ${dispatcher ? "running (every " + (dispatchIntervalMs / 1_000) + "s)" : "disabled (requires OpenClaw)"}`);
 log(`  Polling:      ${daemon ? pollRepos.join(", ") + " every " + (pollIntervalMs / 1_000) + "s" : "disabled"}`);
 log("");
 log("  Endpoints:");
@@ -315,6 +397,9 @@ log(`    GET  http://127.0.0.1:${server.port}/health`);
 log(`    GET  http://127.0.0.1:${server.port}/blocked`);
 log(`    GET  http://127.0.0.1:${server.port}/approvals`);
 log(`    GET  http://127.0.0.1:${server.port}/runs`);
+if (dispatcher) {
+  log(`    POST http://127.0.0.1:${server.port}/tasks/:taskId/dispatch`);
+}
 log("");
 log("  Press Ctrl+C to shut down gracefully.");
 log("══════════════════════════════════════════════════════════════════");
@@ -333,6 +418,11 @@ async function shutdown() {
   if (daemon) {
     await daemon.stop();
     log("  Polling daemon stopped.");
+  }
+
+  if (dispatcher) {
+    await dispatcher.stop();
+    log("  Ready-task dispatcher stopped.");
   }
 
   await server.stop();

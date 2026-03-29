@@ -59,6 +59,10 @@ export interface PlanningQueryRepository {
     query?: Partial<ApprovalRequestQuery>
   ): Promise<ApprovalRequest[]>;
   getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
+  listManifestsByLifecycleStatus(
+    status: string,
+    limit?: number
+  ): Promise<TaskManifest[]>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
   getRunSummary(taskId: string, runId: string): Promise<RunSummary | null>;
   getMemoryContext(input: {
@@ -231,6 +235,16 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       )
       .sort(compareMemoryRecords)
       .slice(0, parsed.limit);
+  }
+
+  async listManifestsByLifecycleStatus(
+    status: string,
+    limit = 100
+  ): Promise<TaskManifest[]> {
+    return [...this.manifests.values()]
+      .filter((m) => m.lifecycleStatus === status)
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, limit);
   }
 
   async listPipelineRuns(

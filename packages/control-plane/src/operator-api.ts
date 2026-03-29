@@ -10,7 +10,8 @@ import {
   type PipelineRun
 } from "@reddwarf/contracts";
 import { type PlanningRepository } from "@reddwarf/evidence";
-import { resolveApprovalRequest } from "./pipeline.js";
+import { dispatchReadyTask, resolveApprovalRequest, type DispatchReadyTaskDependencies } from "./pipeline.js";
+import type { ReadyTaskDispatcher } from "./polling.js";
 
 // ============================================================
 // Operator API interfaces
@@ -24,6 +25,10 @@ export interface OperatorApiConfig {
 export interface OperatorApiDependencies {
   repository: PlanningRepository;
   clock?: () => Date;
+  /** When provided, enables POST /tasks/:taskId/dispatch and dispatcher health reporting. */
+  dispatcher?: ReadyTaskDispatcher;
+  /** Dependencies for manual dispatch via POST /tasks/:taskId/dispatch. */
+  dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
 }
 
 export interface OperatorBlockedSummary {
@@ -40,10 +45,18 @@ export interface OperatorPollingHealthSummary {
   failingRepositories: number;
 }
 
+export interface OperatorDispatcherHealthSummary {
+  status: "idle" | "running" | "degraded";
+  consecutiveFailures: number;
+  lastDispatchOutcome: string | null;
+  lastDispatchTaskId: string | null;
+}
+
 export interface OperatorHealthResponse {
   status: "ok";
   timestamp: string;
   polling: OperatorPollingHealthSummary;
+  dispatcher?: OperatorDispatcherHealthSummary;
 }
 
 export interface OperatorApiServer {
@@ -62,13 +75,13 @@ export function createOperatorApiServer(
   deps: OperatorApiDependencies
 ): OperatorApiServer {
   const host = config.host ?? "127.0.0.1";
-  const { repository, clock = () => new Date() } = deps;
+  const { repository, clock = () => new Date(), dispatcher, dispatchDependencies } = deps;
   let boundPort = config.port;
 
   const server = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
       try {
-        await handleOperatorRequest(req, res, repository, clock);
+        await handleOperatorRequest(req, res, repository, clock, dispatcher, dispatchDependencies);
       } catch (err) {
         writeOperatorJsonResponse(res, 500, {
           error: "internal_error",
@@ -158,7 +171,9 @@ async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
   repository: PlanningRepository,
-  clock: () => Date
+  clock: () => Date,
+  dispatcher?: ReadyTaskDispatcher,
+  dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -173,7 +188,21 @@ async function handleOperatorRequest(
       timestamp: clock().toISOString(),
       polling: summarizePollingHealth(
         await repository.listGitHubIssuePollingCursors()
-      )
+      ),
+      ...(dispatcher
+        ? {
+            dispatcher: {
+              status: dispatcher.isRunning
+                ? dispatcher.consecutiveFailures > 0
+                  ? "degraded"
+                  : "running"
+                : "idle",
+              consecutiveFailures: dispatcher.consecutiveFailures,
+              lastDispatchOutcome: dispatcher.lastDispatchResult?.outcome ?? null,
+              lastDispatchTaskId: dispatcher.lastDispatchResult?.taskId ?? null
+            }
+          }
+        : {})
     };
     writeOperatorJsonResponse(res, 200, response);
     return;
@@ -307,6 +336,44 @@ async function handleOperatorRequest(
       return;
     }
     writeOperatorJsonResponse(res, 200, snapshot);
+    return;
+  }
+
+  // POST /tasks/:taskId/dispatch
+  const dispatchMatch = /^\/tasks\/([^/]+)\/dispatch$/.exec(path);
+  if (method === "POST" && dispatchMatch) {
+    const taskId = decodeURIComponent(dispatchMatch[1]!);
+
+    if (!dispatchDependencies) {
+      writeOperatorJsonResponse(res, 503, {
+        error: "service_unavailable",
+        message: "Dispatch dependencies are not configured on this server."
+      });
+      return;
+    }
+
+    const body = (await readOperatorJsonBody(req)) as Record<string, unknown> | null;
+    const targetRoot = (body && typeof body["targetRoot"] === "string")
+      ? body["targetRoot"]
+      : undefined;
+    const evidenceRoot = (body && typeof body["evidenceRoot"] === "string")
+      ? body["evidenceRoot"]
+      : undefined;
+
+    if (!targetRoot) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "targetRoot is required in the request body."
+      });
+      return;
+    }
+
+    const result = await dispatchReadyTask(
+      { taskId, targetRoot, evidenceRoot },
+      { repository, ...dispatchDependencies }
+    );
+
+    writeOperatorJsonResponse(res, 200, result);
     return;
   }
 
