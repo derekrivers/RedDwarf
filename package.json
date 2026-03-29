@@ -50,7 +50,8 @@
     "start": "corepack pnpm build && node scripts/start-stack.mjs",
     "teardown": "node scripts/teardown.mjs",
     "e2e": "corepack pnpm build && node scripts/e2e-integration.mjs",
-    "e2e:cleanup": "node scripts/e2e-cleanup.mjs"
+    "e2e:cleanup": "node scripts/e2e-cleanup.mjs",
+    "cleanup:approvals": "node scripts/cleanup-approvals.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
