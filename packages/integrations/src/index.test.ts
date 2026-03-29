@@ -150,6 +150,40 @@ describe("integrations", () => {
     expect(followUp.title).toBe("Follow-up: validation failure");
   });
 
+  it("reuses fixture-backed follow-up issues for the same task marker", async () => {
+    const github = new FixtureGitHubAdapter({
+      candidates: [candidate],
+      mutations: {
+        allowIssueCreation: true,
+        issueNumberStart: 301
+      }
+    });
+
+    const firstFollowUp = await github.createIssue({
+      repo: candidate.repo,
+      title: "Follow-up: validation failure",
+      body: [
+        "Source task: Verify validation",
+        "Task ID: acme-platform-88",
+        "Run ID: validation-run-1"
+      ].join("\n"),
+      labels: ["reddwarf", "follow-up", "validation"]
+    });
+    const secondFollowUp = await github.createIssue({
+      repo: candidate.repo,
+      title: "Follow-up: validation failure",
+      body: [
+        "Source task: Verify validation",
+        "Task ID: acme-platform-88",
+        "Run ID: validation-run-2"
+      ].join("\n"),
+      labels: ["reddwarf", "follow-up", "validation"]
+    });
+
+    expect(secondFollowUp.issueNumber).toBe(firstFollowUp.issueNumber);
+    expect(secondFollowUp.url).toBe(firstFollowUp.url);
+  });
+
   it("creates fixture-backed branches and pull requests only when SCM mutations are explicitly enabled", async () => {
     const github = new FixtureGitHubAdapter({
       candidates: [candidate],
@@ -180,6 +214,50 @@ describe("integrations", () => {
     expect(pullRequest.number).toBe(41);
     expect(pullRequest.baseBranch).toBe("main");
     expect(pullRequest.headBranch).toBe(branch.branchName);
+  });
+
+  it("reuses fixture-backed branches and pull requests for the same SCM identity", async () => {
+    const github = new FixtureGitHubAdapter({
+      candidates: [candidate],
+      mutations: {
+        allowBranchCreation: true,
+        allowPullRequestCreation: true,
+        pullRequestNumberStart: 41
+      }
+    });
+
+    const firstBranch = await github.createBranch(
+      candidate.repo,
+      "main",
+      "reddwarf/acme-platform-88/scm"
+    );
+    const secondBranch = await github.createBranch(
+      candidate.repo,
+      "main",
+      "reddwarf/acme-platform-88/scm"
+    );
+    const firstPullRequest = await github.createPullRequest({
+      repo: candidate.repo,
+      baseBranch: "main",
+      headBranch: firstBranch.branchName,
+      title: "[RedDwarf] Test PR",
+      body: "Body",
+      labels: ["reddwarf", "automation"],
+      issueNumber: candidate.issueNumber
+    });
+    const secondPullRequest = await github.createPullRequest({
+      repo: candidate.repo,
+      baseBranch: "main",
+      headBranch: secondBranch.branchName,
+      title: "[RedDwarf] Test PR",
+      body: "Body retry",
+      labels: ["reddwarf", "automation"],
+      issueNumber: candidate.issueNumber
+    });
+
+    expect(secondBranch).toEqual(firstBranch);
+    expect(secondPullRequest.number).toBe(firstPullRequest.number);
+    expect(secondPullRequest.url).toBe(firstPullRequest.url);
   });
 
   it("exports well-known OpenClaw secret constants", () => {
@@ -315,6 +393,78 @@ describe("RestGitHubAdapter", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("reuses an existing follow-up issue when the task marker already exists remotely", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          number: 77,
+          title: "Follow-up: validation failure",
+          body: [
+            "Source task: Verify validation",
+            "Task ID: acme-platform-88",
+            "Run ID: validation-run-1"
+          ].join("\n"),
+          state: "open",
+          html_url: "https://github.com/acme/platform/issues/77",
+          labels: [{ name: "reddwarf" }, { name: "follow-up" }, { name: "validation" }],
+          assignees: [],
+          user: { login: "reddwarf" },
+          updated_at: "2026-03-29T18:00:00.000Z",
+          created_at: "2026-03-29T17:59:00.000Z",
+          milestone: null
+        }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const issue = await adapter.createIssue({
+      repo: "acme/platform",
+      title: "Follow-up: validation failure",
+      body: [
+        "Source task: Verify validation",
+        "Task ID: acme-platform-88",
+        "Run ID: validation-run-2"
+      ].join("\n"),
+      labels: ["reddwarf", "follow-up", "validation"]
+    });
+
+    expect(issue.issueNumber).toBe(77);
+    expect(issue.createdAt).toBe("2026-03-29T17:59:00.000Z");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses an existing pull request for the same base and head branch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          number: 91,
+          html_url: "https://github.com/acme/platform/pull/91",
+          state: "open",
+          base: { ref: "main" },
+          head: { ref: "reddwarf/acme-platform-88/scm" },
+          title: "[RedDwarf] Verify SCM"
+        }
+      ]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const pullRequest = await adapter.createPullRequest({
+      repo: "acme/platform",
+      baseBranch: "main",
+      headBranch: "reddwarf/acme-platform-88/scm",
+      title: "[RedDwarf] Verify SCM",
+      body: "Body"
+    });
+
+    expect(pullRequest.number).toBe(91);
+    expect(pullRequest.headBranch).toBe("reddwarf/acme-platform-88/scm");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails fast when the GitHub API request exceeds the timeout", async () => {

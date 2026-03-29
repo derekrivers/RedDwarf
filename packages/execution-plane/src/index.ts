@@ -604,8 +604,8 @@ function formatLiteralList(items: readonly string[]): string {
   return items.map((item) => `\`${item}\``).join(", ");
 }
 
-function createScmBranchName(taskId: string, runId: string): string {
-  return `reddwarf/${sanitizeBranchSegment(taskId)}/${sanitizeBranchSegment(runId)}`;
+function createScmBranchName(taskId: string, _runId: string): string {
+  return `reddwarf/${sanitizeBranchSegment(taskId)}/scm`;
 }
 
 function sanitizeBranchSegment(value: string): string {

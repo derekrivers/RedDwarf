@@ -284,9 +284,9 @@ describe("DeterministicScmAgent", () => {
     expect(draft.baseBranch).toBe("main");
   });
 
-  it("generates a reddwarf-prefixed branch name from taskId and runId", async () => {
+  it("generates a stable reddwarf-prefixed branch name from the task id", async () => {
     const agent = new DeterministicScmAgent();
-    const draft = await agent.createPullRequest(testBundle, {
+    const firstDraft = await agent.createPullRequest(testBundle, {
       manifest: testManifest,
       runId: "run-scm-002",
       workspace: testWorkspace,
@@ -294,9 +294,19 @@ describe("DeterministicScmAgent", () => {
       validationSummary: "All checks passed.",
       validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
     });
+    const secondDraft = await agent.createPullRequest(testBundle, {
+      manifest: testManifest,
+      runId: "run-scm-003-retry",
+      workspace: testWorkspace,
+      baseBranch: "main",
+      validationSummary: "All checks passed.",
+      validationReportPath: join(testWorkspace.artifactsDir, "validation-report.json")
+    });
 
-    expect(draft.branchName).toMatch(/^reddwarf\//);
-    expect(draft.branchName).toContain("acme-platform-99");
+    expect(firstDraft.branchName).toMatch(/^reddwarf\//);
+    expect(firstDraft.branchName).toContain("acme-platform-99");
+    expect(firstDraft.branchName).toBe(secondDraft.branchName);
+    expect(firstDraft.branchName).toMatch(/\/scm$/);
   });
 
   it("prefixes the PR title with [RedDwarf]", async () => {

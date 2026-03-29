@@ -222,6 +222,8 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   private readonly mutationOptions: FixtureGitHubMutationOptions;
   private readonly createdBranches: Map<string, GitHubBranchSummary>;
   private readonly createdIssues: Map<string, GitHubCreatedIssueSummary>;
+  private readonly createdIssueBodies: Map<string, string>;
+  private readonly createdPullRequests: Map<string, GitHubPullRequestSummary>;
   private nextIssueNumber: number;
   private nextPullRequestNumber: number;
 
@@ -239,6 +241,8 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     this.mutationOptions = input.mutations ?? {};
     this.createdBranches = new Map();
     this.createdIssues = new Map();
+    this.createdIssueBodies = new Map();
+    this.createdPullRequests = new Map();
     this.nextIssueNumber = this.mutationOptions.issueNumberStart ?? 1_000;
     this.nextPullRequestNumber = this.mutationOptions.pullRequestNumberStart ?? 1;
   }
@@ -309,6 +313,18 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
       throw new V1MutationDisabledError(`Creating a follow-up issue in ${input.repo}`);
     }
 
+    const existingIssue = [...this.createdIssues.entries()].find(([key, summary]) =>
+      matchesIssueDraft({
+        repo: summary.repo,
+        title: summary.title,
+        body: this.createdIssueBodies.get(key) ?? ""
+      }, input)
+    )?.[1];
+
+    if (existingIssue) {
+      return existingIssue;
+    }
+
     const issueNumber = this.nextIssueNumber;
     this.nextIssueNumber += 1;
     const summary: GitHubCreatedIssueSummary = {
@@ -320,7 +336,9 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
       createdAt: asIsoTimestamp()
     };
 
-    this.createdIssues.set(createIssueKey(input.repo, issueNumber), summary);
+    const issueKey = createIssueKey(input.repo, issueNumber);
+    this.createdIssues.set(issueKey, summary);
+    this.createdIssueBodies.set(issueKey, input.body);
     return summary;
   }
 
@@ -331,6 +349,11 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   ): Promise<GitHubBranchSummary> {
     if (this.mutationOptions.allowBranchCreation !== true) {
       throw new V1MutationDisabledError(`Creating branch ${branchName} from ${baseBranch} in ${repo}`);
+    }
+
+    const existingBranch = this.createdBranches.get(createBranchKey(repo, branchName));
+    if (existingBranch) {
+      return existingBranch;
     }
 
     const summary: GitHubBranchSummary = {
@@ -359,10 +382,17 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
       );
     }
 
+    const existingPullRequest = this.createdPullRequests.get(
+      createPullRequestKey(input.repo, input.baseBranch, input.headBranch)
+    );
+    if (existingPullRequest) {
+      return existingPullRequest;
+    }
+
     const number = this.nextPullRequestNumber;
     this.nextPullRequestNumber += 1;
 
-    return {
+    const summary = {
       repo: input.repo,
       number,
       url: `https://github.com/${input.repo}/pull/${number}`,
@@ -371,7 +401,14 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
       headBranch: input.headBranch,
       title: input.title,
       mergedAt: null
-    };
+    } satisfies GitHubPullRequestSummary;
+
+    this.createdPullRequests.set(
+      createPullRequestKey(input.repo, input.baseBranch, input.headBranch),
+      summary
+    );
+
+    return summary;
   }
 
   async commentOnIssue(comment: GitHubIssueComment): Promise<never> {
@@ -680,6 +717,42 @@ function createBranchKey(repo: string, branchName: string): string {
   return `${repo}@${branchName}`;
 }
 
+function createPullRequestKey(
+  repo: string,
+  baseBranch: string,
+  headBranch: string
+): string {
+  return `${repo}@${baseBranch}...${headBranch}`;
+}
+
+function extractTaskIdMarker(body: string): string | null {
+  const match = body.match(/^Task ID:\s*(.+)$/m);
+  const value = match?.[1]?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function matchesIssueDraft(
+  existing: { repo: string; title: string; body: string },
+  input: GitHubIssueDraft
+): boolean {
+  if (existing.repo !== input.repo || existing.title !== input.title) {
+    return false;
+  }
+
+  const existingTaskId = extractTaskIdMarker(existing.body);
+  const inputTaskId = extractTaskIdMarker(input.body);
+
+  if (existingTaskId && inputTaskId) {
+    return existingTaskId === inputTaskId;
+  }
+
+  return existing.body.trim() === input.body.trim();
+}
+
+function isGitHubNotFoundError(error: unknown): boolean {
+  return error instanceof Error && /returned 404:/i.test(error.message);
+}
+
 function createCheckKey(repo: string, ref: string): string {
   return `${repo}@${ref}`;
 }
@@ -804,6 +877,7 @@ interface GitHubApiIssue {
   assignees: Array<{ login: string }>;
   user: { login: string } | null;
   updated_at: string | null;
+  created_at: string | null;
   milestone: { title: string } | null;
 }
 
@@ -864,6 +938,108 @@ export class RestGitHubAdapter implements GitHubAdapter {
       throw new Error(`Invalid repo format: "${repo}". Expected "owner/name".`);
     }
     return { owner: repo.slice(0, slash), repoName: repo.slice(slash + 1) };
+  }
+
+  private async findExistingIssueForDraft(
+    input: GitHubIssueDraft
+  ): Promise<GitHubCreatedIssueSummary | null> {
+    const { owner, repoName } = this.parseRepo(input.repo);
+    const params = new URLSearchParams();
+    params.set("state", "open");
+    if (input.labels && input.labels.length > 0) {
+      params.set("labels", input.labels.join(","));
+    }
+    params.set("per_page", "100");
+    const issues = await this.apiGet<GitHubApiIssue[]>(
+      `/repos/${owner}/${repoName}/issues?${params.toString()}`
+    );
+    const match = issues.find((issue) =>
+      matchesIssueDraft(
+        {
+          repo: input.repo,
+          title: issue.title,
+          body: issue.body ?? ""
+        },
+        input
+      )
+    );
+
+    if (!match) {
+      return null;
+    }
+
+    return {
+      repo: input.repo,
+      issueNumber: match.number,
+      url: match.html_url,
+      state: match.state === "open" ? "open" : "closed",
+      title: match.title,
+      createdAt: match.created_at ?? asIsoTimestamp()
+    };
+  }
+
+  private async findExistingBranch(
+    repo: string,
+    baseBranch: string,
+    branchName: string
+  ): Promise<GitHubBranchSummary | null> {
+    const { owner, repoName } = this.parseRepo(repo);
+    let ref: GitHubApiRef | null = null;
+
+    try {
+      ref = await this.apiGet<GitHubApiRef>(
+        `/repos/${owner}/${repoName}/git/ref/heads/${encodeURIComponent(branchName)}`
+      );
+    } catch (error) {
+      if (!isGitHubNotFoundError(error)) {
+        throw error;
+      }
+    }
+
+    if (!ref) {
+      return null;
+    }
+
+    return {
+      repo,
+      baseBranch,
+      branchName,
+      ref: ref.ref,
+      url: `https://github.com/${owner}/${repoName}/tree/${encodeURIComponent(branchName)}`,
+      createdAt: asIsoTimestamp()
+    };
+  }
+
+  private async findExistingPullRequest(
+    repo: string,
+    baseBranch: string,
+    headBranch: string
+  ): Promise<GitHubPullRequestSummary | null> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const params = new URLSearchParams();
+    params.set("state", "open");
+    params.set("base", baseBranch);
+    params.set("head", `${owner}:${headBranch}`);
+    params.set("per_page", "1");
+    const pullRequests = await this.apiGet<GitHubApiPullRequest[]>(
+      `/repos/${owner}/${repoName}/pulls?${params.toString()}`
+    );
+    const pr = pullRequests[0];
+
+    if (!pr) {
+      return null;
+    }
+
+    return {
+      repo,
+      number: pr.number,
+      url: pr.html_url,
+      state: pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open",
+      baseBranch: pr.base.ref,
+      headBranch: pr.head.ref,
+      title: pr.title,
+      mergedAt: pr.merged_at
+    };
   }
 
   private apiHeaders(): Record<string, string> {
@@ -1005,6 +1181,11 @@ export class RestGitHubAdapter implements GitHubAdapter {
   }
 
   async createIssue(input: GitHubIssueDraft): Promise<GitHubCreatedIssueSummary> {
+    const existingIssue = await this.findExistingIssueForDraft(input);
+    if (existingIssue) {
+      return existingIssue;
+    }
+
     const { owner, repoName } = this.parseRepo(input.repo);
     const created = await this.apiPost<GitHubApiCreatedIssue>(
       `/repos/${owner}/${repoName}/issues`,
@@ -1031,15 +1212,30 @@ export class RestGitHubAdapter implements GitHubAdapter {
     baseBranch: string,
     branchName: string
   ): Promise<GitHubBranchSummary> {
+    const existingBranch = await this.findExistingBranch(repo, baseBranch, branchName);
+    if (existingBranch) {
+      return existingBranch;
+    }
+
     const { owner, repoName } = this.parseRepo(repo);
     const baseRef = await this.apiGet<GitHubApiRef>(
       `/repos/${owner}/${repoName}/git/ref/heads/${baseBranch}`
     );
     const sha = baseRef.object.sha;
-    await this.apiPost<GitHubApiRef>(`/repos/${owner}/${repoName}/git/refs`, {
-      ref: `refs/heads/${branchName}`,
-      sha
-    });
+
+    try {
+      await this.apiPost<GitHubApiRef>(`/repos/${owner}/${repoName}/git/refs`, {
+        ref: `refs/heads/${branchName}`,
+        sha
+      });
+    } catch (error) {
+      const retriedBranch = await this.findExistingBranch(repo, baseBranch, branchName);
+      if (retriedBranch) {
+        return retriedBranch;
+      }
+      throw error;
+    }
+
     return {
       repo,
       baseBranch,
@@ -1051,27 +1247,49 @@ export class RestGitHubAdapter implements GitHubAdapter {
   }
 
   async createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary> {
-    const { owner, repoName } = this.parseRepo(input.repo);
-    const pr = await this.apiPost<GitHubApiPullRequest>(
-      `/repos/${owner}/${repoName}/pulls`,
-      {
-        title: input.title,
-        body: input.body,
-        base: input.baseBranch,
-        head: input.headBranch,
-        labels: input.labels ?? []
-      }
+    const existingPullRequest = await this.findExistingPullRequest(
+      input.repo,
+      input.baseBranch,
+      input.headBranch
     );
-    return {
-      repo: input.repo,
-      number: pr.number,
-      url: pr.html_url,
-      state: pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open",
-      baseBranch: pr.base.ref,
-      headBranch: pr.head.ref,
-      title: pr.title,
-      mergedAt: pr.merged_at
-    };
+    if (existingPullRequest) {
+      return existingPullRequest;
+    }
+
+    const { owner, repoName } = this.parseRepo(input.repo);
+
+    try {
+      const pr = await this.apiPost<GitHubApiPullRequest>(
+        `/repos/${owner}/${repoName}/pulls`,
+        {
+          title: input.title,
+          body: input.body,
+          base: input.baseBranch,
+          head: input.headBranch,
+          labels: input.labels ?? []
+        }
+      );
+      return {
+        repo: input.repo,
+        number: pr.number,
+        url: pr.html_url,
+        state: pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open",
+        baseBranch: pr.base.ref,
+        headBranch: pr.head.ref,
+        title: pr.title,
+        mergedAt: pr.merged_at
+      };
+    } catch (error) {
+      const retriedPullRequest = await this.findExistingPullRequest(
+        input.repo,
+        input.baseBranch,
+        input.headBranch
+      );
+      if (retriedPullRequest) {
+        return retriedPullRequest;
+      }
+      throw error;
+    }
   }
 }
 

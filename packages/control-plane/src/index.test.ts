@@ -1288,6 +1288,194 @@ describe("control-plane", () => {
     }
   });
 
+  it("reuses an existing pull request when SCM is retried after a lost create response", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-reuse-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-reuse-evidence-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic change that verifies SCM idempotency after a lost PR creation response.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["docs/health-check.md"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-scm-reuse-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for SCM idempotency test."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-scm-reuse-001"
+      });
+      const repoBootstrapper = createFixtureWorkspaceRepoBootstrapper();
+      const completionAwaiter = createFixtureOpenClawCompletionAwaiter(
+        "OpenClaw developer session completed with a docs-only repository update."
+      );
+      const github = new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo: planningResult.manifest.source.repo,
+            issueNumber: 99,
+            title: planningResult.manifest.title,
+            body: planningResult.manifest.summary,
+            labels: ["ai-eligible"],
+            url: "https://github.com/acme/platform/issues/99",
+            state: "open"
+          }
+        ],
+        mutations: {
+          allowBranchCreation: true,
+          allowPullRequestCreation: true,
+          pullRequestNumberStart: 71
+        }
+      });
+      const commitPublisher = createFixtureWorkspaceCommitPublisher(github);
+      let shouldDropFirstPullRequestResponse = true;
+      const flakyGithub = {
+        fetchIssueCandidate: github.fetchIssueCandidate.bind(github),
+        listIssueCandidates: github.listIssueCandidates.bind(github),
+        readIssueStatus: github.readIssueStatus.bind(github),
+        convertToPlanningInput: github.convertToPlanningInput.bind(github),
+        addLabels: github.addLabels.bind(github),
+        removeLabels: github.removeLabels.bind(github),
+        createIssue: github.createIssue.bind(github),
+        createBranch: github.createBranch.bind(github),
+        commentOnIssue: github.commentOnIssue.bind(github),
+        async createPullRequest(input: Parameters<typeof github.createPullRequest>[0]) {
+          const pullRequest = await github.createPullRequest(input);
+          if (shouldDropFirstPullRequestResponse) {
+            shouldDropFirstPullRequestResponse = false;
+            throw new Error(`Simulated lost SCM response for ${pullRequest.url}`);
+          }
+          return pullRequest;
+        }
+      };
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scm-reuse",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-scm-reuse-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-scm-reuse-validation"
+        }
+      );
+
+      await expect(
+        runScmPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            scm: new DeterministicScmAgent(),
+            github: flakyGithub,
+            workspaceRepoBootstrapper: repoBootstrapper,
+            workspaceCommitPublisher: commitPublisher,
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-scm-reuse-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const failedSnapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const failureRequest = failedSnapshot.approvalRequests.find(
+        (request) =>
+          request.phase === "scm" &&
+          request.status === "pending" &&
+          request.requestedBy === "failure-automation"
+      );
+      expect(validation.nextAction).toBe("await_scm");
+      expect(failureRequest?.status).toBe("pending");
+
+      await resolveApprovalRequest(
+        {
+          requestId: failureRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Retry SCM after confirming the PR was already created."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:25:00.000Z")
+        }
+      );
+
+      const retryResult = await dispatchReadyTask(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: flakyGithub,
+          openClawDispatch: dispatchAdapter,
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          workspaceCommitPublisher: commitPublisher,
+          clock: () => new Date("2026-03-25T18:30:00.000Z")
+        }
+      );
+
+      const persistedManifest = await repository.getManifest(planningResult.manifest.taskId);
+      expect(retryResult.outcome).toBe("completed");
+      expect(retryResult.finalPhase).toBe("scm");
+      expect(retryResult.pullRequestUrl).toContain("/pull/71");
+      expect(persistedManifest?.prNumber).toBe(71);
+      expect(persistedManifest?.branchName).toMatch(/\/scm$/);
+      expect(persistedManifest?.lifecycleStatus).toBe("completed");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails SCM before publish when repository changes escape the approved path scope", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-scope-workspace-"));
@@ -1991,6 +2179,198 @@ describe("control-plane", () => {
       expect(
         repository.runEvents.some((event) => event.code === "FOLLOW_UP_ISSUE_CREATED")
       ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses an existing follow-up issue after recovery persistence rolls back", async () => {
+    class FollowUpIssueRollbackRepository extends InMemoryPlanningRepository {
+      private failFollowUpIssueSave = true;
+
+      override async saveMemoryRecord(
+        record: Parameters<InMemoryPlanningRepository["saveMemoryRecord"]>[0]
+      ) {
+        if (
+          this.failFollowUpIssueSave &&
+          record.key === "failure.follow_up_issue.validation"
+        ) {
+          this.failFollowUpIssueSave = false;
+          throw new Error("Injected follow-up issue persistence failure.");
+        }
+
+        await super.saveMemoryRecord(record);
+      }
+    }
+
+    const repository = new FollowUpIssueRollbackRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-validation-follow-up-reuse-"));
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 99,
+          title: eligibleInput.title,
+          body: eligibleInput.summary,
+          labels: ["ai-eligible"],
+          url: "https://github.com/acme/platform/issues/99",
+          state: "open"
+        }
+      ],
+      mutations: {
+        allowIssueCreation: true,
+        issueNumberStart: 501
+      }
+    });
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-validation-follow-up-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation follow-up reuse test."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    const failingValidator = {
+      async createPlan() {
+        return {
+          summary: "Force a failing validation command.",
+          commands: [
+            {
+              id: "failing-test",
+              name: "Failing validation command",
+              executable: process.execPath,
+              args: ["-e", "process.exit(9)"]
+            }
+          ]
+        };
+      }
+    };
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation-follow-up-reuse"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-validation-follow-up-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-25T18:15:00.000Z"),
+            idGenerator: () => "run-validation-follow-up-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            github,
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-validation-follow-up-second"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      let snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      expect(
+        snapshot.memoryRecords.some(
+          (record) => record.key === "failure.follow_up_issue.validation"
+        )
+      ).toBe(false);
+      expect(
+        snapshot.approvalRequests.some(
+          (request) =>
+            request.phase === "validation" &&
+            request.requestedBy === "failure-automation"
+        )
+      ).toBe(false);
+
+      const strandedRun = (
+        await repository.listPipelineRuns({
+          taskId: planningResult.manifest.taskId,
+          statuses: ["active"]
+        })
+      ).find((run) => run.runId === "run-validation-follow-up-second");
+      expect(strandedRun?.status).toBe("active");
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...strandedRun!,
+          status: "stale",
+          lastHeartbeatAt: "2026-03-25T18:24:00.000Z",
+          completedAt: "2026-03-25T18:24:00.000Z",
+          staleAt: "2026-03-25T18:24:00.000Z"
+        })
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            github,
+            clock: () => new Date("2026-03-25T18:25:00.000Z"),
+            idGenerator: () => "run-validation-follow-up-third"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const followUpIssue = snapshot.memoryRecords.find(
+        (record) => record.key === "failure.follow_up_issue.validation"
+      );
+      const failureRequest = snapshot.approvalRequests.find(
+        (request) =>
+          request.phase === "validation" &&
+          request.status === "pending" &&
+          request.requestedBy === "failure-automation"
+      );
+
+      expect(followUpIssue?.value).toMatchObject({ issueNumber: 501 });
+      expect(failureRequest?.status).toBe("pending");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

@@ -3618,8 +3618,8 @@ function taskRequestsPullRequest(manifest: TaskManifest): boolean {
   return manifest.requestedCapabilities.includes("can_open_pr");
 }
 
-function createScmBranchName(taskId: string, runId: string): string {
-  return `reddwarf/${sanitizeBranchSegment(taskId)}/${sanitizeBranchSegment(runId)}`;
+function createScmBranchName(taskId: string, _runId: string): string {
+  return `reddwarf/${sanitizeBranchSegment(taskId)}/scm`;
 }
 
 function sanitizeBranchSegment(value: string): string {
