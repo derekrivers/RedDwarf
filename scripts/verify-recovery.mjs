@@ -8,6 +8,7 @@ import {
   DeterministicScmAgent,
   DeterministicValidationAgent,
   PlanningPipelineFailure,
+  createReadyTaskDispatcher,
   destroyTaskWorkspace,
   dispatchReadyTask,
   resolveApprovalRequest,
@@ -16,7 +17,10 @@ import {
   runValidationPhase
 } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { FixtureGitHubAdapter } from "../packages/integrations/dist/index.js";
+import {
+  FixtureGitHubAdapter,
+  FixtureOpenClawDispatchAdapter
+} from "../packages/integrations/dist/index.js";
 import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const issueNumber = Date.now();
@@ -118,45 +122,70 @@ try {
     PlanningPipelineFailure
   );
 
-  await assert.rejects(
-    () =>
-      runValidationPhase(
-        {
-          taskId: planningResult.manifest.taskId,
-          targetRoot
-        },
-        {
-          repository,
-          validator: failingValidator,
-          github: new FixtureGitHubAdapter({
-            candidates: [
-              {
-                repo,
-                issueNumber,
-                title: planningResult.manifest.title,
-                body: planningResult.manifest.summary,
-                labels: ["ai-eligible"],
-                url: `https://github.com/${repo}/issues/${issueNumber}`,
-                state: "open"
-              }
-            ],
-            mutations: {
-              allowIssueCreation: true,
-              issueNumberStart: 701
-            }
-          }),
-          clock: () => new Date("2026-03-25T18:20:00.000Z"),
-          idGenerator: () => `recovery-validation-second-${issueNumber}`
+  const scopedRepository = new Proxy(repository, {
+    get(target, prop, receiver) {
+      if (prop === "listManifestsByLifecycleStatus") {
+        return async (status, limit = 100) => {
+          const manifests = await target.listManifestsByLifecycleStatus(
+            status,
+            Math.max(limit * 10, 50)
+          );
+          return manifests
+            .filter((manifest) => manifest.taskId === planningResult.manifest.taskId)
+            .slice(0, limit);
+        };
+      }
+
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  });
+
+  const dispatcher = createReadyTaskDispatcher(
+    {
+      intervalMs: 5_000,
+      targetRoot,
+      runOnStart: false
+    },
+    {
+      repository: scopedRepository,
+      developer: {
+        async createHandoff() {
+          throw new Error(
+            "Developer phase should not rerun during automatic validation retry verification."
+          );
         }
-      ),
-    PlanningPipelineFailure
+      },
+      validator: failingValidator,
+      scm: new DeterministicScmAgent(),
+      github: new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo,
+            issueNumber,
+            title: planningResult.manifest.title,
+            body: planningResult.manifest.summary,
+            labels: ["ai-eligible"],
+            url: `https://github.com/${repo}/issues/${issueNumber}`,
+            state: "open"
+          }
+        ],
+        mutations: {
+          allowIssueCreation: true,
+          issueNumberStart: 701
+        }
+      }),
+      openClawDispatch: new FixtureOpenClawDispatchAdapter()
+    }
   );
 
+  const retryDispatch = await dispatcher.dispatchOnce();
+  assert.equal(retryDispatch.dispatchedCount, 1);
+  assert.deepEqual(retryDispatch.results[0]?.phasesExecuted, ["validation"]);
+  assert.equal(retryDispatch.results[0]?.finalPhase, "validation");
+  assert.equal(retryDispatch.results[0]?.outcome, "failed");
+
   const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
-  const runSummary = await repository.getRunSummary(
-    planningResult.manifest.taskId,
-    `recovery-validation-second-${issueNumber}`
-  );
   const failureRequest = snapshot.approvalRequests.find(
     (request) =>
       request.phase === "validation" &&
@@ -169,6 +198,12 @@ try {
   const recoveryMemory = snapshot.memoryRecords.find(
     (record) => record.key === "failure.recovery"
   );
+  const runSummary = failureRequest
+    ? await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        failureRequest.runId
+      )
+    : null;
 
   assert.equal(snapshot.manifest?.lifecycleStatus, "blocked");
   assert.equal(snapshot.manifest?.currentPhase, "validation");
@@ -241,6 +276,7 @@ try {
         followUpIssue: followUpIssue?.value ?? null,
         recoveryMemory: recoveryMemory?.value ?? null,
         runSummary,
+        retryDispatch,
         resumeResult
       },
       null,

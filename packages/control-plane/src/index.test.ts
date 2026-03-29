@@ -4791,6 +4791,123 @@ describe("dispatchReadyTask", () => {
     }
   });
 
+  it("resumes an automated validation retry from a blocked manifest without rerunning development", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-blocked-retry-validation-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 321,
+            issueUrl: "https://github.com/acme/platform/issues/321"
+          },
+          title: "Resume automated validation retry from blocked state",
+          summary:
+            "Exercise the automatic retry path so blocked validation work can be dispatched without replaying developer work.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/blocked-retry-validation.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T19:00:00.000Z"),
+          idGenerator: () => "run-blocked-retry-validation-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approve initial execution for blocked retry dispatch coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T19:01:00.000Z")
+        }
+      );
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-blocked-retry-validation"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-29T19:02:00.000Z"),
+          idGenerator: () => "run-blocked-retry-validation-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary: "Force a retryable validation failure.",
+                  commands: [
+                    {
+                      id: "blocked-retry-validation-fail",
+                      name: "Blocked retry validation failing command",
+                      executable: process.execPath,
+                      args: ["-e", "process.exit(7)"]
+                    }
+                  ]
+                };
+              }
+            },
+            clock: () => new Date("2026-03-29T19:03:00.000Z"),
+            idGenerator: () => "run-blocked-retry-validation-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const blockedManifest = await repository.getManifest(planningResult.manifest.taskId);
+      expect(blockedManifest?.lifecycleStatus).toBe("blocked");
+      expect(blockedManifest?.currentPhase).toBe("validation");
+
+      const retryResult = await dispatchReadyTask(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          developer: {
+            async createHandoff() {
+              throw new Error(
+                "Developer phase should not rerun during automated validation retry dispatch."
+              );
+            }
+          } as never,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          clock: () => new Date("2026-03-29T19:04:00.000Z")
+        }
+      );
+
+      expect(retryResult.outcome).toBe("completed");
+      expect(retryResult.finalPhase).toBe("validation");
+      expect(retryResult.phasesExecuted).toEqual(["validation"]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("resumes validation after an approved failure retry without rerunning development", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-resume-validation-"));
@@ -5092,6 +5209,267 @@ describe("createReadyTaskDispatcher", () => {
         }
       )
     ).toThrow("at least 1000ms");
+  });
+
+  it("dispatches a blocked retry task when no ready manifests exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatcher-blocked-retry-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 322,
+            issueUrl: "https://github.com/acme/platform/issues/322"
+          },
+          title: "Dispatcher picks blocked retry task",
+          summary:
+            "Verify the ready-task dispatcher will resume a retry-eligible blocked validation phase when there is no ready work.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/dispatcher-blocked-retry.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T19:10:00.000Z"),
+          idGenerator: () => "run-dispatcher-blocked-retry-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approve initial execution for blocked retry dispatcher coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T19:11:00.000Z")
+        }
+      );
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dispatcher-blocked-retry"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-29T19:12:00.000Z"),
+          idGenerator: () => "run-dispatcher-blocked-retry-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary: "Force a retryable validation failure.",
+                  commands: [
+                    {
+                      id: "dispatcher-blocked-retry-fail",
+                      name: "Dispatcher blocked retry failing command",
+                      executable: process.execPath,
+                      args: ["-e", "process.exit(7)"]
+                    }
+                  ]
+                };
+              }
+            },
+            clock: () => new Date("2026-03-29T19:13:00.000Z"),
+            idGenerator: () => "run-dispatcher-blocked-retry-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const dispatcher = createReadyTaskDispatcher(
+        { intervalMs: 5_000, targetRoot: tempRoot, runOnStart: false },
+        {
+          repository,
+          developer: {
+            async createHandoff() {
+              throw new Error(
+                "Developer phase should not rerun during blocked retry dispatch."
+              );
+            }
+          } as never,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          openClawDispatch: new FixtureOpenClawDispatchAdapter()
+        }
+      );
+
+      const result = await dispatcher.dispatchOnce();
+      expect(result.dispatchedCount).toBe(1);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]?.outcome).toBe("completed");
+      expect(result.results[0]?.finalPhase).toBe("validation");
+      expect(result.results[0]?.phasesExecuted).toEqual(["validation"]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("prioritizes blocked retry tasks ahead of unrelated ready tasks", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatcher-blocked-priority-"));
+
+    try {
+      const readyPlan = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 323,
+            issueUrl: "https://github.com/acme/platform/issues/323"
+          },
+          title: "Unrelated ready task",
+          summary: "Keep one unrelated ready manifest available while retry work is queued.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/unrelated-ready.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T19:20:00.000Z"),
+          idGenerator: () => "run-dispatcher-priority-ready-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: readyPlan.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Keep this task ready but unprocessed for priority coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T19:21:00.000Z")
+        }
+      );
+
+      const retryPlan = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 324,
+            issueUrl: "https://github.com/acme/platform/issues/324"
+          },
+          title: "Blocked retry task",
+          summary: "Queue an automated validation retry and ensure the dispatcher takes it before unrelated ready work.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/blocked-priority.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T19:22:00.000Z"),
+          idGenerator: () => "run-dispatcher-priority-retry-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: retryPlan.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approve initial execution for retry priority coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T19:23:00.000Z")
+        }
+      );
+
+      await runDeveloperPhase(
+        {
+          taskId: retryPlan.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dispatcher-priority-retry"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-29T19:24:00.000Z"),
+          idGenerator: () => "run-dispatcher-priority-retry-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: retryPlan.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary: "Force a retryable validation failure.",
+                  commands: [
+                    {
+                      id: "dispatcher-priority-retry-fail",
+                      name: "Dispatcher priority retry failing command",
+                      executable: process.execPath,
+                      args: ["-e", "process.exit(7)"]
+                    }
+                  ]
+                };
+              }
+            },
+            clock: () => new Date("2026-03-29T19:25:00.000Z"),
+            idGenerator: () => "run-dispatcher-priority-retry-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const dispatcher = createReadyTaskDispatcher(
+        { intervalMs: 5_000, targetRoot: tempRoot, runOnStart: false },
+        {
+          repository,
+          developer: {
+            async createHandoff() {
+              throw new Error(
+                "Developer phase should not rerun during blocked retry priority dispatch."
+              );
+            }
+          } as never,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          openClawDispatch: new FixtureOpenClawDispatchAdapter()
+        }
+      );
+
+      const result = await dispatcher.dispatchOnce();
+      const stillReadyManifest = await repository.getManifest(readyPlan.manifest.taskId);
+
+      expect(result.dispatchedCount).toBe(1);
+      expect(result.results[0]?.phasesExecuted).toEqual(["validation"]);
+      expect(stillReadyManifest?.lifecycleStatus).toBe("ready");
+      expect(stillReadyManifest?.currentPhase).toBe(readyPlan.manifest.currentPhase);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("dispatchOnce returns empty result when no ready manifests exist", async () => {

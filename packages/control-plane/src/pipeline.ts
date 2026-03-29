@@ -5158,6 +5158,16 @@ interface AutomatedFailureRecoveryResult {
   followUpIssue: GitHubCreatedIssueSummary | null;
 }
 
+interface FailureRecoveryMemoryValue {
+  phase: RecoverablePhase;
+  action: "retry" | "escalate";
+  runId: string;
+  failureCode: string;
+  failureClass: FailureClass;
+  retryCount: number;
+  retryLimit: number;
+}
+
 function isRecoverablePhase(phase: TaskPhase): phase is RecoverablePhase {
   return phase === "development" || phase === "validation" || phase === "scm";
 }
@@ -5202,6 +5212,72 @@ function findApprovedFailureEscalationRequest(
           request.requestedBy === failureAutomationRequestedBy
       ) ?? null
   );
+}
+
+function readFailureRecoveryMemory(
+  snapshot: PersistedTaskSnapshot
+): FailureRecoveryMemoryValue | null {
+  const record = snapshot.memoryRecords.find(
+    (entry) => entry.key === failureRecoveryMemoryKey
+  );
+  const value = record?.value;
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  const rawPhase = objectValue.phase;
+  const rawAction = objectValue.action;
+  const runId = objectValue.runId;
+  const failureCode = objectValue.failureCode;
+  const failureClass = objectValue.failureClass;
+  const retryCount = objectValue.retryCount;
+  const retryLimit = objectValue.retryLimit;
+  const phaseCandidate = typeof rawPhase === "string" ? rawPhase : "";
+  const isRecoverablePhaseCandidate =
+    phaseCandidate === "development" ||
+    phaseCandidate === "validation" ||
+    phaseCandidate === "scm";
+
+  if (
+    !isRecoverablePhaseCandidate ||
+    (rawAction !== "retry" && rawAction !== "escalate") ||
+    typeof runId !== "string" ||
+    typeof failureCode !== "string" ||
+    typeof failureClass !== "string" ||
+    typeof retryCount !== "number" ||
+    typeof retryLimit !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    phase: phaseCandidate,
+    action: rawAction,
+    runId,
+    failureCode,
+    failureClass: failureClass as FailureClass,
+    retryCount,
+    retryLimit
+  };
+}
+
+function findAutomatedRetryRecovery(
+  snapshot: PersistedTaskSnapshot,
+  phase: RecoverablePhase
+): FailureRecoveryMemoryValue | null {
+  const recoveryMemory = readFailureRecoveryMemory(snapshot);
+
+  if (
+    recoveryMemory?.action !== "retry" ||
+    recoveryMemory.phase !== phase ||
+    findPendingFailureEscalationRequest(snapshot, phase) !== null
+  ) {
+    return null;
+  }
+
+  return recoveryMemory;
 }
 
 function findExistingFollowUpIssue(
@@ -6161,24 +6237,38 @@ export async function dispatchReadyTask(
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest } = requirePhaseSnapshot(rawSnapshot, taskId);
 
-  if (manifest.lifecycleStatus !== "ready") {
-    throw new Error(
-      `Task ${taskId} has lifecycleStatus "${manifest.lifecycleStatus}" and cannot be dispatched; expected "ready".`
-    );
-  }
-
   const approvedFailureRecoveryRequest =
     isRecoverablePhase(manifest.currentPhase)
       ? findApprovedFailureEscalationRequest(snapshot, manifest.currentPhase)
       : null;
-  let startPhase: RecoverablePhase = "development";
-  if (
-    approvedFailureRecoveryRequest !== null &&
+  const automatedRetryRecovery =
     isRecoverablePhase(manifest.currentPhase)
-  ) {
-    startPhase = manifest.currentPhase;
+      ? findAutomatedRetryRecovery(snapshot, manifest.currentPhase)
+      : null;
+  const isDispatchableReadyManifest = manifest.lifecycleStatus === "ready";
+  const isDispatchableBlockedRetryManifest =
+    manifest.lifecycleStatus === "blocked" && automatedRetryRecovery !== null;
+
+  if (!isDispatchableReadyManifest && !isDispatchableBlockedRetryManifest) {
+    throw new Error(
+      `Task ${taskId} has lifecycleStatus "${manifest.lifecycleStatus}" and cannot be dispatched; expected "ready" or an automated retryable blocked task.`
+    );
   }
-  const isFailureRecoveryResume = approvedFailureRecoveryRequest !== null;
+
+  let startPhase: RecoverablePhase = "development";
+  if (isRecoverablePhase(manifest.currentPhase)) {
+    if (approvedFailureRecoveryRequest !== null) {
+      startPhase = manifest.currentPhase;
+    } else if (automatedRetryRecovery !== null) {
+      startPhase = manifest.currentPhase;
+    }
+  }
+  const dispatchMode =
+    approvedFailureRecoveryRequest !== null
+      ? "resume_failure_recovery"
+      : automatedRetryRecovery !== null
+        ? "resume_automated_retry"
+        : "fresh";
 
   const dispatchLogger = bindPlanningLogger(logger, {
     taskId,
@@ -6193,7 +6283,8 @@ export async function dispatchReadyTask(
     currentPhase: manifest.currentPhase,
     requestedCapabilities: manifest.requestedCapabilities,
     startPhase,
-    dispatchMode: isFailureRecoveryResume ? "resume_failure_recovery" : "fresh"
+    dispatchMode,
+    lifecycleStatus: manifest.lifecycleStatus
   });
 
   const phasesExecuted: string[] = [];

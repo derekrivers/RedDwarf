@@ -6,6 +6,7 @@ import {
   type TaskManifest,
   type ValidationAgent
 } from "@reddwarf/contracts";
+import { type PersistedTaskSnapshot } from "@reddwarf/evidence";
 import {
   createGitHubIssuePollingCursor,
   type PlanningRepository
@@ -551,6 +552,80 @@ export interface ReadyTaskDispatcher {
   dispatchOnce(): Promise<ReadyTaskDispatchCycleResult>;
 }
 
+function isRecoverableDispatchPhase(
+  phase: TaskManifest["currentPhase"]
+): phase is "development" | "validation" | "scm" {
+  return phase === "development" || phase === "validation" || phase === "scm";
+}
+
+function hasPendingFailureEscalationRequest(
+  snapshot: PersistedTaskSnapshot,
+  phase: "development" | "validation" | "scm"
+): boolean {
+  return snapshot.approvalRequests.some(
+    (request) =>
+      request.phase === phase &&
+      request.status === "pending" &&
+      request.requestedBy === "failure-automation"
+  );
+}
+
+function hasAutomatedRetryRecovery(
+  snapshot: PersistedTaskSnapshot,
+  phase: "development" | "validation" | "scm"
+): boolean {
+  const recoveryRecord = snapshot.memoryRecords.find(
+    (record) => record.key === "failure.recovery"
+  );
+  const value = recoveryRecord?.value;
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  return (
+    objectValue["action"] === "retry" &&
+    objectValue["phase"] === phase &&
+    !hasPendingFailureEscalationRequest(snapshot, phase)
+  );
+}
+
+async function findNextDispatchableManifest(
+  repository: PlanningRepository,
+  blockedScanLimit = 25
+): Promise<{ manifest: TaskManifest; selection: "ready" | "blocked_retry" } | null> {
+  const blockedManifests = await repository.listManifestsByLifecycleStatus(
+    "blocked",
+    blockedScanLimit
+  );
+
+  for (const manifest of blockedManifests) {
+    if (!isRecoverableDispatchPhase(manifest.currentPhase)) {
+      continue;
+    }
+
+    const snapshot = await repository.getTaskSnapshot(manifest.taskId);
+    if (hasAutomatedRetryRecovery(snapshot, manifest.currentPhase)) {
+      return {
+        manifest,
+        selection: "blocked_retry"
+      };
+    }
+  }
+
+  const readyManifests = await repository.listManifestsByLifecycleStatus("ready", 1);
+
+  if (readyManifests.length > 0) {
+    return {
+      manifest: readyManifests[0]!,
+      selection: "ready"
+    };
+  }
+
+  return null;
+}
+
 export function createReadyTaskDispatcher(
   config: ReadyTaskDispatcherConfig,
   deps: ReadyTaskDispatcherDependencies
@@ -615,10 +690,12 @@ export function createReadyTaskDispatcher(
         cycleTimeoutMs,
         async () => {
           const cycleResults: DispatchReadyTaskResult[] = [];
-          const readyManifests = await deps.repository.listManifestsByLifecycleStatus("ready", 1);
+          const selectedManifest = await findNextDispatchableManifest(
+            deps.repository
+          );
 
-          if (readyManifests.length > 0) {
-            const manifest = readyManifests[0]!;
+          if (selectedManifest) {
+            const { manifest, selection } = selectedManifest;
             const taskLogger = logger
               ? bindPlanningLogger(logger, {
                   taskId: manifest.taskId,
@@ -626,10 +703,19 @@ export function createReadyTaskDispatcher(
                 })
               : undefined;
 
-            taskLogger?.info("Found ready task for dispatch.", {
-              code: "DISPATCH_READY_TASK_FOUND",
-              currentPhase: manifest.currentPhase
-            });
+            taskLogger?.info(
+              selection === "ready"
+                ? "Found ready task for dispatch."
+                : "Found blocked retry task for dispatch.",
+              {
+                code:
+                  selection === "ready"
+                    ? "DISPATCH_READY_TASK_FOUND"
+                    : "DISPATCH_BLOCKED_RETRY_TASK_FOUND",
+                currentPhase: manifest.currentPhase,
+                lifecycleStatus: manifest.lifecycleStatus
+              }
+            );
 
             const result = await runWithTimeout(
               `Ready-task dispatch cycle for ${manifest.taskId}`,
@@ -673,7 +759,9 @@ export function createReadyTaskDispatcher(
               outcome: result.outcome,
               phasesExecuted: result.phasesExecuted,
               finalPhase: result.finalPhase,
-              pullRequestUrl: result.pullRequestUrl
+              pullRequestUrl: result.pullRequestUrl,
+              lifecycleStatus: manifest.lifecycleStatus,
+              selection
             });
           }
 
