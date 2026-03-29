@@ -18,6 +18,7 @@ import {
 } from "@reddwarf/control-plane";
 import {
   createPostgresPlanningRepository,
+  createEvidenceRecord,
   createMemoryRecord,
   createPipelineRun,
   deriveOrganizationId
@@ -297,6 +298,70 @@ describeIfDatabase("postgres planning repository", () => {
         record.recordId.includes(":approval-decision:")
       )
     ).toBe(true);
+  });
+
+  it("rolls back Postgres repository transactions on failure", async () => {
+    const issueNumber = Date.now() + 1;
+    const repo = `approval-${issueNumber}/platform-${issueNumber}`;
+    const result = await runPlanningPipeline(
+      {
+        source: {
+          provider: "github",
+          repo,
+          issueNumber,
+          issueUrl: `https://github.com/${repo}/issues/${issueNumber}`
+        },
+        title: "Rollback Postgres repository transaction",
+        summary:
+          "Verify Postgres-backed repository transactions roll back manifest and evidence writes when a later statement fails.",
+        priority: 1,
+        labels: ["ai-eligible"],
+        acceptanceCriteria: [
+          "Transactional writes roll back on error"
+        ],
+        affectedPaths: ["src/postgres-transaction.ts"],
+        requestedCapabilities: ["can_write_code"],
+        metadata: {}
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-29T16:00:00.000Z"),
+        idGenerator: () => `transaction-${issueNumber}`
+      }
+    );
+
+    const updatedManifest = {
+      ...result.manifest,
+      lifecycleStatus: "ready" as const,
+      updatedAt: "2026-03-29T16:05:00.000Z"
+    };
+    const evidenceRecordId = `${result.manifest.taskId}:transaction-rollback`;
+
+    await expect(
+      repository.runInTransaction(async (transactionalRepository) => {
+        await transactionalRepository.updateManifest(updatedManifest);
+        await transactionalRepository.saveEvidenceRecord(
+          createEvidenceRecord({
+            recordId: evidenceRecordId,
+            taskId: result.manifest.taskId,
+            kind: "gate_decision",
+            title: "Transaction rollback sentinel",
+            metadata: { step: "before-throw" },
+            createdAt: "2026-03-29T16:05:00.000Z"
+          })
+        );
+        throw new Error("Injected Postgres transaction failure.");
+      })
+    ).rejects.toThrow("Injected Postgres transaction failure.");
+
+    const persistedManifest = await repository.getManifest(result.manifest.taskId);
+    const evidenceRecords = await repository.listEvidenceRecords(result.manifest.taskId);
+
+    expect(persistedManifest?.lifecycleStatus).toBe(result.manifest.lifecycleStatus);
+    expect(
+      evidenceRecords.some((record) => record.recordId === evidenceRecordId)
+    ).toBe(false);
   });
 
   it("persists developer phase orchestration with code writing disabled", async () => {

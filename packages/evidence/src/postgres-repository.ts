@@ -46,6 +46,7 @@ import {
   type ClaimPipelineRunInput,
   type ClaimPipelineRunResult,
   type PlanningRepository,
+  type PlanningTransactionRepository,
   type PersistedTaskSnapshot
 } from "./repository.js";
 export function createPostgresPlanningRepository(
@@ -57,6 +58,45 @@ export function createPostgresPlanningRepository(
 }
 
 type QueryExecutor = pg.Pool | pg.PoolClient;
+
+class PostgresTransactionRepository implements PlanningTransactionRepository {
+  constructor(
+    private readonly owner: PostgresPlanningRepository,
+    private readonly executor: QueryExecutor
+  ) {}
+
+  async saveManifest(manifest: TaskManifest): Promise<void> {
+    await this.owner.saveManifestWithExecutor(this.executor, manifest);
+  }
+
+  async updateManifest(manifest: TaskManifest): Promise<void> {
+    await this.owner.saveManifestWithExecutor(this.executor, manifest);
+  }
+
+  async savePhaseRecord(record: PhaseRecord): Promise<void> {
+    await this.owner.savePhaseRecordWithExecutor(this.executor, record);
+  }
+
+  async saveEvidenceRecord(record: EvidenceRecord): Promise<void> {
+    await this.owner.saveEvidenceRecordWithExecutor(this.executor, record);
+  }
+
+  async saveRunEvent(event: RunEvent): Promise<void> {
+    await this.owner.saveRunEventWithExecutor(this.executor, event);
+  }
+
+  async saveMemoryRecord(record: MemoryRecord): Promise<void> {
+    await this.owner.saveMemoryRecordWithExecutor(this.executor, record);
+  }
+
+  async savePipelineRun(run: PipelineRun): Promise<void> {
+    await this.owner.savePipelineRunWithExecutor(this.executor, run);
+  }
+
+  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
+    await this.owner.saveApprovalRequestWithExecutor(this.executor, request);
+  }
+}
 
 export class PostgresPlanningRepository implements PlanningRepository {
   private readonly pool: pg.Pool;
@@ -73,7 +113,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.pool.end();
   }
 
-  private async savePipelineRunWithExecutor(
+  async savePipelineRunWithExecutor(
     executor: QueryExecutor,
     run: PipelineRun
   ): Promise<void> {
@@ -123,8 +163,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveManifest(manifest: TaskManifest): Promise<void> {
-    await this.pool.query(
+  async saveManifestWithExecutor(
+    executor: QueryExecutor,
+    manifest: TaskManifest
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO task_manifests (
           task_id,
@@ -194,12 +237,19 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async updateManifest(manifest: TaskManifest): Promise<void> {
-    await this.saveManifest(manifest);
+  async saveManifest(manifest: TaskManifest): Promise<void> {
+    await this.saveManifestWithExecutor(this.pool, manifest);
   }
 
-  async savePhaseRecord(record: PhaseRecord): Promise<void> {
-    await this.pool.query(
+  async updateManifest(manifest: TaskManifest): Promise<void> {
+    await this.saveManifestWithExecutor(this.pool, manifest);
+  }
+
+  async savePhaseRecordWithExecutor(
+    executor: QueryExecutor,
+    record: PhaseRecord
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO phase_records (
           record_id,
@@ -230,6 +280,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
         record.createdAt
       ]
     );
+  }
+
+  async savePhaseRecord(record: PhaseRecord): Promise<void> {
+    await this.savePhaseRecordWithExecutor(this.pool, record);
   }
 
   async savePlanningSpec(spec: PlanningSpec): Promise<void> {
@@ -296,8 +350,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveEvidenceRecord(record: EvidenceRecord): Promise<void> {
-    await this.pool.query(
+  async saveEvidenceRecordWithExecutor(
+    executor: QueryExecutor,
+    record: EvidenceRecord
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO evidence_records (
           record_id,
@@ -328,8 +385,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveRunEvent(event: RunEvent): Promise<void> {
-    await this.pool.query(
+  async saveEvidenceRecord(record: EvidenceRecord): Promise<void> {
+    await this.saveEvidenceRecordWithExecutor(this.pool, record);
+  }
+
+  async saveRunEventWithExecutor(
+    executor: QueryExecutor,
+    event: RunEvent
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO run_events (
           event_id,
@@ -372,8 +436,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveMemoryRecord(record: MemoryRecord): Promise<void> {
-    await this.pool.query(
+  async saveRunEvent(event: RunEvent): Promise<void> {
+    await this.saveRunEventWithExecutor(this.pool, event);
+  }
+
+  async saveMemoryRecordWithExecutor(
+    executor: QueryExecutor,
+    record: MemoryRecord
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO memory_records (
           memory_id,
@@ -420,6 +491,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
         record.updatedAt
       ]
     );
+  }
+
+  async saveMemoryRecord(record: MemoryRecord): Promise<void> {
+    await this.saveMemoryRecordWithExecutor(this.pool, record);
   }
 
   async savePipelineRun(run: PipelineRun): Promise<void> {
@@ -503,8 +578,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     }
   }
 
-  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
-    await this.pool.query(
+  async saveApprovalRequestWithExecutor(
+    executor: QueryExecutor,
+    request: ApprovalRequest
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO approval_requests (
           request_id,
@@ -577,10 +655,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveGitHubIssuePollingCursor(
+  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
+    await this.saveApprovalRequestWithExecutor(this.pool, request);
+  }
+
+  async saveGitHubIssuePollingCursorWithExecutor(
+    executor: QueryExecutor,
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
-    await this.pool.query(
+    await executor.query(
       `
         INSERT INTO github_issue_polling_cursors (
           repo,
@@ -612,6 +695,35 @@ export class PostgresPlanningRepository implements PlanningRepository {
         cursor.updatedAt
       ]
     );
+  }
+
+  async saveGitHubIssuePollingCursor(
+    cursor: GitHubIssuePollingCursor
+  ): Promise<void> {
+    await this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor);
+  }
+
+  async runInTransaction<T>(
+    operation: (repository: PlanningTransactionRepository) => Promise<T>
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    const repository = new PostgresTransactionRepository(this, client);
+
+    try {
+      await client.query("BEGIN");
+      const result = await operation(repository);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failures and surface the original error
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getManifest(taskId: string): Promise<TaskManifest | null> {

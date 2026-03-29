@@ -194,8 +194,10 @@
 - Verification so far for the live OpenClaw-runtime fixes: `corepack pnpm build`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm test -- packages/execution-plane/src/index.test.ts packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts`; `docker stop docker-openclaw-1`; move `runtime-data/openclaw-home` to `runtime-data/openclaw-home.backup-20260328-224805`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d --force-recreate openclaw`; confirmed `docker compose ... ps openclaw` healthy, `runtime-data/openclaw-home/openclaw.json` reseeded with hooks plus sandbox-off config, `curl http://localhost:3578/health` returns `200`, and `POST /hooks/agent` with an empty JSON body now returns `400 message required` instead of `404`.
 - Current status: the OpenClaw runtime is now healthy with the corrected hook config, clean runtime state, sandbox-off deployment model, and trimmed tool policy. The last remaining work is to complete a full live E2E run through developer, validation, and SCM without interruption and confirm that it opens a real PR.
 
-- Fixed a host/container workspace-path mismatch in live OpenClaw development runs: the prompt originally told OpenClaw to use /var/lib/reddwarf/workspaces/<workspaceId>, which broke nested E2E workspaces under untime-data/workspaces/e2e-*/.... The control-plane now maps the real host workspace path to the correct runtime-visible path using REDDWARF_HOST_WORKSPACE_ROOT plus REDDWARF_WORKSPACE_ROOT.
-- Verified feature 85 end to end on Saturday, March 28, 2026: live E2E run created GitHub issue #14, completed OpenClaw development, passed validation, published branch eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and opened PR #15 at https://github.com/derekrivers/FirstVoyage/pull/15.
+- Fixed a host/container workspace-path mismatch in live OpenClaw development runs: the prompt originally told OpenClaw to use /var/lib/reddwarf/workspaces/<workspaceId>, which broke nested E2E workspaces under 
+untime-data/workspaces/e2e-*/.... The control-plane now maps the real host workspace path to the correct runtime-visible path using REDDWARF_HOST_WORKSPACE_ROOT plus REDDWARF_WORKSPACE_ROOT.
+- Verified feature 85 end to end on Saturday, March 28, 2026: live E2E run created GitHub issue #14, completed OpenClaw development, passed validation, published branch 
+eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and opened PR #15 at https://github.com/derekrivers/FirstVoyage/pull/15.
 
 ## 2026-03-29
 
@@ -227,3 +229,11 @@
 - Verification for feature 90: `corepack pnpm typecheck`; `corepack pnpm test -- packages/evidence/src/index.test.ts packages/control-plane/src/index.test.ts tests/postgres.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:concurrency`.
 - Likely next board item: feature 91, transactional manifest, approval, phase, evidence, and run-event transitions.
 
+
+- Completed feature 91 from `FEATURE_BOARD.md`: transactional manifest, approval, phase, evidence, and run-event transitions.
+- Added repository-level `runInTransaction(...)` support in the evidence layer with rollback-capable in-memory behavior and Postgres-backed `BEGIN`/`COMMIT`/`ROLLBACK` execution using transaction-scoped write repositories.
+- Wrapped approval resolution, concurrency-block persistence, and automated failure-recovery transitions in explicit repository transactions so approval decisions and retry or escalation state now commit atomically instead of leaving partial manifest, evidence, and run-event state behind on mid-transition failures.
+- Added rollback-focused regression coverage in `packages/control-plane/src/index.test.ts` for approval decisions and validation recovery persistence, plus a Postgres-backed transaction rollback test in `tests/postgres.test.ts`.
+- Updated `scripts/verify-approvals.mjs` and `scripts/verify-recovery.mjs` to use the current `createPostgresPlanningRepository(...)` factory so the live Postgres verifiers still run after the injected-pool repository refactor.
+- Verification for feature 91: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts tests/postgres.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:approvals`; `corepack pnpm verify:recovery`.
+- Likely next board item: feature 92, enforce allowed-path boundaries before commit and push.

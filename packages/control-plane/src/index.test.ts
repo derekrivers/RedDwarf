@@ -428,6 +428,71 @@ describe("control-plane", () => {
     ).toBe(true);
   });
 
+  it("rolls back approval resolution when transactional persistence fails", async () => {
+    class ApprovalDecisionFailureRepository extends InMemoryPlanningRepository {
+      override async saveEvidenceRecord(
+        record: Parameters<InMemoryPlanningRepository["saveEvidenceRecord"]>[0]
+      ) {
+        if (record.recordId.includes(":approval-decision:")) {
+          throw new Error("Injected approval decision persistence failure.");
+        }
+
+        await super.saveEvidenceRecord(record);
+      }
+    }
+
+    const repository = new ApprovalDecisionFailureRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-approve-rollback"
+      }
+    );
+
+    await expect(
+      resolveApprovalRequest(
+        {
+          requestId: result.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for developer orchestration."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:05:00.000Z")
+        }
+      )
+    ).rejects.toThrow("Injected approval decision persistence failure.");
+
+    const persistedRequest = await repository.getApprovalRequest(
+      result.approvalRequest!.requestId
+    );
+    const persistedManifest = await repository.getManifest(result.manifest.taskId);
+
+    expect(persistedRequest?.status).toBe("pending");
+    expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+    expect(
+      repository.phaseRecords.some((record) =>
+        record.recordId.includes(`:approval:${result.approvalRequest!.requestId}`)
+      )
+    ).toBe(false);
+    expect(
+      repository.evidenceRecords.some((record) =>
+        record.recordId.includes(":approval-decision:")
+      )
+    ).toBe(false);
+    expect(
+      repository.runEvents.some((event) => event.code === "APPROVAL_APPROVED")
+    ).toBe(false);
+  });
+
   it("runs the developer phase in a managed workspace with code writing disabled", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(
@@ -1165,6 +1230,127 @@ describe("control-plane", () => {
       expect(
         repository.runEvents.some((event) => event.code === "PHASE_RETRY_SCHEDULED")
       ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back validation recovery persistence when the transactional save fails", async () => {
+    class ValidationRecoveryFailureRepository extends InMemoryPlanningRepository {
+      override async saveRunEvent(
+        event: Parameters<InMemoryPlanningRepository["saveRunEvent"]>[0]
+      ) {
+        if (event.code === "PHASE_RETRY_SCHEDULED") {
+          throw new Error("Injected validation recovery persistence failure.");
+        }
+
+        await super.saveRunEvent(event);
+      }
+    }
+
+    const repository = new ValidationRecoveryFailureRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-validation-rollback-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-validation-rollback-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation rollback test."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation-rollback"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-validation-rollback-dev"
+        }
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary: "Force a failing validation command.",
+                  commands: [
+                    {
+                      id: "failing-test",
+                      name: "Failing validation command",
+                      executable: process.execPath,
+                      args: ["-e", "process.exit(7)"]
+                    }
+                  ]
+                };
+              }
+            },
+            clock: () => new Date("2026-03-25T18:15:00.000Z"),
+            idGenerator: () => "run-validation-rollback-phase"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+
+      expect(persistedManifest?.retryCount).toBe(0);
+      expect(
+        repository.memoryRecords.some((record) => record.key === "failure.recovery")
+      ).toBe(false);
+      expect(
+        repository.phaseRecords.some(
+          (record) =>
+            record.recordId ===
+            `${planningResult.manifest.taskId}:phase:validation:run-validation-rollback-phase:failed`
+        )
+      ).toBe(false);
+      expect(
+        repository.evidenceRecords.some(
+          (record) =>
+            record.recordId ===
+            `${planningResult.manifest.taskId}:recovery:validation:run-validation-rollback-phase`
+        )
+      ).toBe(false);
+      expect(
+        repository.runEvents.some((event) => event.code === "PHASE_RETRY_SCHEDULED")
+      ).toBe(false);
+      expect(
+        repository.runEvents.some((event) => event.code === "PHASE_FAILED")
+      ).toBe(false);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

@@ -4,10 +4,10 @@ import {
   resolveApprovalRequest,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { connectionString } from "./lib/config.mjs";
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString);
 const issueNumber = Date.now();
 const repo = `approval-${issueNumber}/platform-${issueNumber}`;
 

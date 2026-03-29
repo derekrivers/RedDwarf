@@ -568,7 +568,8 @@ export async function runPlanningPipeline(
     return `${runId}:${sequence}:${phase}:${code}`;
   };
   const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
   ): Promise<void> => {
     trackedRun = createPipelineRun({
       ...trackedRun,
@@ -578,7 +579,7 @@ export async function runPlanningPipeline(
         ...(patch.metadata ?? {})
       }
     });
-    await repository.savePipelineRun(trackedRun);
+    await runRepository.savePipelineRun(trackedRun);
   };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
@@ -1532,7 +1533,8 @@ export async function runDeveloperPhase(
     return `${runId}:${sequence}:${phase}:${code}`;
   };
   const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
   ): Promise<void> => {
     trackedRun = createPipelineRun({
       ...trackedRun,
@@ -1542,7 +1544,7 @@ export async function runDeveloperPhase(
         ...(patch.metadata ?? {})
       }
     });
-    await repository.savePipelineRun(trackedRun);
+    await runRepository.savePipelineRun(trackedRun);
   };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
@@ -2143,7 +2145,8 @@ export async function runValidationPhase(
     return `${runId}:${sequence}:${phase}:${code}`;
   };
   const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
   ): Promise<void> => {
     trackedRun = createPipelineRun({
       ...trackedRun,
@@ -2153,7 +2156,7 @@ export async function runValidationPhase(
         ...(patch.metadata ?? {})
       }
     });
-    await repository.savePipelineRun(trackedRun);
+    await runRepository.savePipelineRun(trackedRun);
   };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
@@ -2884,62 +2887,64 @@ export async function resolveApprovalRequest(
     approvalRequestId: approvalRequest.requestId
   });
 
-  await repository.saveApprovalRequest(updatedApprovalRequest);
-  await repository.updateManifest(updatedManifest);
-  await repository.savePhaseRecord(
-    createPhaseRecord({
-      id: `${approvalRequest.taskId}:phase:policy_gate:approval:${approvalRequest.requestId}`,
+  await repository.runInTransaction(async (transactionalRepository) => {
+    await transactionalRepository.saveApprovalRequest(updatedApprovalRequest);
+    await transactionalRepository.updateManifest(updatedManifest);
+    await transactionalRepository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${approvalRequest.taskId}:phase:policy_gate:approval:${approvalRequest.requestId}`,
+        taskId: approvalRequest.taskId,
+        phase: "policy_gate",
+        status: phaseStatus,
+        actor: decidedBy,
+        summary: decisionSummary,
+        details: {
+          requestId: approvalRequest.requestId,
+          decision: input.decision,
+          approvalMode: approvalRequest.approvalMode,
+          comment: input.comment ?? null
+        },
+        createdAt: resolvedAtIso
+      })
+    );
+    await transactionalRepository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`,
+        taskId: approvalRequest.taskId,
+        kind: "gate_decision",
+        title:
+          input.decision === "approve" ? "Approval granted" : "Approval rejected",
+        metadata: {
+          requestId: approvalRequest.requestId,
+          decision: input.decision,
+          decidedBy,
+          decisionSummary,
+          comment: input.comment ?? null,
+          lifecycleStatus
+        },
+        createdAt: resolvedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository: transactionalRepository,
+      logger: runLogger,
+      eventId: `${approvalRequest.requestId}:${decisionCode}`,
       taskId: approvalRequest.taskId,
+      runId: approvalRequest.runId,
       phase: "policy_gate",
-      status: phaseStatus,
-      actor: decidedBy,
-      summary: decisionSummary,
-      details: {
-        requestId: approvalRequest.requestId,
-        decision: input.decision,
-        approvalMode: approvalRequest.approvalMode,
-        comment: input.comment ?? null
-      },
-      createdAt: resolvedAtIso
-    })
-  );
-  await repository.saveEvidenceRecord(
-    createEvidenceRecord({
-      recordId: `${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`,
-      taskId: approvalRequest.taskId,
-      kind: "gate_decision",
-      title:
-        input.decision === "approve" ? "Approval granted" : "Approval rejected",
-      metadata: {
+      level: input.decision === "approve" ? "info" : "warn",
+      code: decisionCode,
+      message: decisionMessage,
+      data: {
         requestId: approvalRequest.requestId,
         decision: input.decision,
         decidedBy,
         decisionSummary,
-        comment: input.comment ?? null,
-        lifecycleStatus
+        lifecycleStatus,
+        ...(input.comment ? { comment: input.comment } : {})
       },
       createdAt: resolvedAtIso
-    })
-  );
-  await recordRunEvent({
-    repository,
-    logger: runLogger,
-    eventId: `${approvalRequest.requestId}:${decisionCode}`,
-    taskId: approvalRequest.taskId,
-    runId: approvalRequest.runId,
-    phase: "policy_gate",
-    level: input.decision === "approve" ? "info" : "warn",
-    code: decisionCode,
-    message: decisionMessage,
-    data: {
-      requestId: approvalRequest.requestId,
-      decision: input.decision,
-      decidedBy,
-      decisionSummary,
-      lifecycleStatus,
-      ...(input.comment ? { comment: input.comment } : {})
-    },
-    createdAt: resolvedAtIso
+    });
   });
 
   return {
@@ -4077,7 +4082,8 @@ export async function runScmPhase(
     return `${runId}:${sequence}:${phase}:${code}`;
   };
   const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
   ): Promise<void> => {
     trackedRun = createPipelineRun({
       ...trackedRun,
@@ -4087,7 +4093,7 @@ export async function runScmPhase(
         ...(patch.metadata ?? {})
       }
     });
-    await repository.savePipelineRun(trackedRun);
+    await runRepository.savePipelineRun(trackedRun);
   };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
@@ -4751,7 +4757,8 @@ async function handleAutomatedPhaseFailure(input: {
   failedAt: Date;
   failedAtIso: string;
   persistTrackedRun: (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github: GitHubAdapter | undefined;
 }): Promise<AutomatedFailureRecoveryResult> {
@@ -4761,103 +4768,14 @@ async function handleAutomatedPhaseFailure(input: {
     policy.retryableFailureClasses.includes(failure.failureClass) &&
     manifest.retryCount < policy.retryLimit;
   const organizationId = deriveOrganizationId(manifest.source.repo);
-
-  if (retryEligible) {
-    const retryCount = manifest.retryCount + 1;
-    const nextManifest = patchManifest(manifest, {
-      currentPhase: phase,
-      lifecycleStatus: "blocked",
-      retryCount,
-      updatedAt: input.failedAtIso
-    });
-    const recoveryMetadata = {
-      phase,
-      action: "retry",
-      runId,
-      failureCode: failure.code,
-      failureClass: failure.failureClass,
-      retryCount,
-      retryLimit: policy.retryLimit
-    };
-    await repository.saveMemoryRecord(
-      createMemoryRecord({
-        memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
-        taskId: manifest.taskId,
-        scope: "task",
-        provenance: "pipeline_derived",
-        key: failureRecoveryMemoryKey,
-        title: "Automated failure recovery plan",
-        value: recoveryMetadata,
-        repo: manifest.source.repo,
-        organizationId,
-        tags: ["failure", "recovery", phase],
-        createdAt: input.failedAtIso,
-        updatedAt: input.failedAtIso
-      })
-    );
-    await repository.saveEvidenceRecord(
-      createEvidenceRecord({
-        recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
-        taskId: manifest.taskId,
-        kind: "gate_decision",
-        title: "Failure recovery decision",
-        metadata: recoveryMetadata,
-        createdAt: input.failedAtIso
-      })
-    );
-    await recordRunEvent({
-      repository,
-      logger: input.runLogger,
-      eventId: input.nextEventId(phase, EventCodes.PHASE_RETRY_SCHEDULED),
-      taskId: manifest.taskId,
-      runId,
-      phase,
-      level: "warn",
-      code: EventCodes.PHASE_RETRY_SCHEDULED,
-      message: `${formatPhaseLabel(phase)} failure was classified as retryable and queued for another attempt.`,
-      failureClass: failure.failureClass,
-      data: recoveryMetadata,
-      createdAt: input.failedAtIso
-    });
-    await recordRunEvent({
-      repository,
-      logger: input.runLogger,
-      eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
-      taskId: manifest.taskId,
-      runId,
-      phase,
-      level: "warn",
-      code: EventCodes.PIPELINE_BLOCKED,
-      message: `${formatPhaseLabel(phase)} phase blocked pending a retry attempt.`,
-      failureClass: failure.failureClass,
-      durationMs: getDurationMs(input.runStartedAt, input.failedAt),
-      data: recoveryMetadata,
-      createdAt: input.failedAtIso
-    });
-    await repository.updateManifest(nextManifest);
-    await input.persistTrackedRun({
-      status: "blocked",
-      lastHeartbeatAt: input.failedAtIso,
-      completedAt: input.failedAtIso,
-      metadata: {
-        currentPhase: phase,
-        failureCode: failure.code,
-        failureClass: failure.failureClass,
-        recoveryAction: "retry",
-        retryCount,
-        retryLimit: policy.retryLimit
-      }
-    });
-
-    return {
-      manifest: nextManifest,
-      recoveryAction: "retry",
-      approvalRequest: null,
-      followUpIssue: null
-    };
-  }
+  const failedPhaseDetails = {
+    code: failure.code,
+    failureClass: failure.failureClass,
+    ...failure.details
+  };
 
   let approvalRequest = findPendingFailureEscalationRequest(snapshot, phase);
+  const shouldPersistApprovalRequest = approvalRequest === null;
 
   if (!approvalRequest) {
     approvalRequest = createApprovalRequest({
@@ -4885,18 +4803,20 @@ async function handleAutomatedPhaseFailure(input: {
       createdAt: input.failedAtIso,
       updatedAt: input.failedAtIso
     });
-    await repository.saveApprovalRequest(approvalRequest);
   }
 
   let followUpIssue = findExistingFollowUpIssue(snapshot, phase);
+  let createdFollowUpIssue: GitHubCreatedIssueSummary | null = null;
+  let followUpIssueError: Record<string, unknown> | null = null;
 
   if (
+    !retryEligible &&
     followUpIssue === null &&
     input.github &&
     manifest.source.issueNumber !== undefined
   ) {
     try {
-      followUpIssue = await input.github.createIssue({
+      createdFollowUpIssue = await input.github.createIssue({
         repo: manifest.source.repo,
         title: `Follow-up: ${formatPhaseLabel(phase)} failure for ${manifest.title}`,
         body: buildFollowUpIssueBody({
@@ -4909,7 +4829,163 @@ async function handleAutomatedPhaseFailure(input: {
         }),
         labels: ["reddwarf", "follow-up", phase]
       });
-      await repository.saveMemoryRecord(
+      followUpIssue = createdFollowUpIssue;
+    } catch (error) {
+      followUpIssueError = serializeError(error);
+    }
+  }
+
+  return repository.runInTransaction(async (transactionalRepository) => {
+    await transactionalRepository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${manifest.taskId}:phase:${phase}:${runId}:failed`,
+        taskId: manifest.taskId,
+        phase,
+        status: "failed",
+        actor: "control-plane",
+        summary: failure.message,
+        details: failedPhaseDetails,
+        createdAt: input.failedAtIso
+      })
+    );
+    await transactionalRepository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${manifest.taskId}:${phase}:failure:${runId}`,
+        taskId: manifest.taskId,
+        kind: "run_event",
+        title: `${phase.charAt(0).toUpperCase() + phase.slice(1)} phase failure`,
+        metadata: {
+          runId,
+          code: failure.code,
+          failureClass: failure.failureClass,
+          details: failure.details
+        },
+        createdAt: input.failedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository: transactionalRepository,
+      logger: input.runLogger,
+      eventId: input.nextEventId(phase, EventCodes.PHASE_FAILED),
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      level: "error",
+      code: EventCodes.PHASE_FAILED,
+      message: failure.message,
+      failureClass: failure.failureClass,
+      data: {
+        causeCode: failure.code,
+        details: failure.details
+      },
+      createdAt: input.failedAtIso
+    });
+
+    if (retryEligible) {
+      const retryCount = manifest.retryCount + 1;
+      const nextManifest = patchManifest(manifest, {
+        currentPhase: phase,
+        lifecycleStatus: "blocked",
+        retryCount,
+        updatedAt: input.failedAtIso
+      });
+      const recoveryMetadata = {
+        phase,
+        action: "retry",
+        runId,
+        failureCode: failure.code,
+        failureClass: failure.failureClass,
+        retryCount,
+        retryLimit: policy.retryLimit
+      };
+
+      await transactionalRepository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
+          taskId: manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: failureRecoveryMemoryKey,
+          title: "Automated failure recovery plan",
+          value: recoveryMetadata,
+          repo: manifest.source.repo,
+          organizationId,
+          tags: ["failure", "recovery", phase],
+          createdAt: input.failedAtIso,
+          updatedAt: input.failedAtIso
+        })
+      );
+      await transactionalRepository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
+          taskId: manifest.taskId,
+          kind: "gate_decision",
+          title: "Failure recovery decision",
+          metadata: recoveryMetadata,
+          createdAt: input.failedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository: transactionalRepository,
+        logger: input.runLogger,
+        eventId: input.nextEventId(phase, EventCodes.PHASE_RETRY_SCHEDULED),
+        taskId: manifest.taskId,
+        runId,
+        phase,
+        level: "warn",
+        code: EventCodes.PHASE_RETRY_SCHEDULED,
+        message: `${formatPhaseLabel(phase)} failure was classified as retryable and queued for another attempt.`,
+        failureClass: failure.failureClass,
+        data: recoveryMetadata,
+        createdAt: input.failedAtIso
+      });
+      await recordRunEvent({
+        repository: transactionalRepository,
+        logger: input.runLogger,
+        eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
+        taskId: manifest.taskId,
+        runId,
+        phase,
+        level: "warn",
+        code: EventCodes.PIPELINE_BLOCKED,
+        message: `${formatPhaseLabel(phase)} phase blocked pending a retry attempt.`,
+        failureClass: failure.failureClass,
+        durationMs: getDurationMs(input.runStartedAt, input.failedAt),
+        data: recoveryMetadata,
+        createdAt: input.failedAtIso
+      });
+      await transactionalRepository.updateManifest(nextManifest);
+      await input.persistTrackedRun(
+        {
+          status: "blocked",
+          lastHeartbeatAt: input.failedAtIso,
+          completedAt: input.failedAtIso,
+          metadata: {
+            currentPhase: phase,
+            failureCode: failure.code,
+            failureClass: failure.failureClass,
+            recoveryAction: "retry",
+            retryCount,
+            retryLimit: policy.retryLimit
+          }
+        },
+        transactionalRepository
+      );
+
+      return {
+        manifest: nextManifest,
+        recoveryAction: "retry",
+        approvalRequest: null,
+        followUpIssue: null
+      };
+    }
+
+    if (shouldPersistApprovalRequest) {
+      await transactionalRepository.saveApprovalRequest(approvalRequest);
+    }
+
+    if (createdFollowUpIssue) {
+      await transactionalRepository.saveMemoryRecord(
         createMemoryRecord({
           memoryId: `${manifest.taskId}:memory:task:follow-up-issue:${phase}`,
           taskId: manifest.taskId,
@@ -4917,7 +4993,7 @@ async function handleAutomatedPhaseFailure(input: {
           provenance: "pipeline_derived",
           key: `${followUpIssueMemoryPrefix}.${phase}`,
           title: "Follow-up issue created for failed phase",
-          value: followUpIssue,
+          value: createdFollowUpIssue,
           repo: manifest.source.repo,
           organizationId,
           tags: ["failure", "follow-up", phase],
@@ -4926,7 +5002,7 @@ async function handleAutomatedPhaseFailure(input: {
         })
       );
       await recordRunEvent({
-        repository,
+        repository: transactionalRepository,
         logger: input.runLogger,
         eventId: input.nextEventId(phase, EventCodes.FOLLOW_UP_ISSUE_CREATED),
         taskId: manifest.taskId,
@@ -4936,14 +5012,14 @@ async function handleAutomatedPhaseFailure(input: {
         code: EventCodes.FOLLOW_UP_ISSUE_CREATED,
         message: `Created a follow-up issue for the ${phase} failure.`,
         data: {
-          followUpIssueNumber: followUpIssue.issueNumber,
-          followUpIssueUrl: followUpIssue.url
+          followUpIssueNumber: createdFollowUpIssue.issueNumber,
+          followUpIssueUrl: createdFollowUpIssue.url
         },
         createdAt: input.failedAtIso
       });
-    } catch (error) {
+    } else if (followUpIssueError) {
       await recordRunEvent({
-        repository,
+        repository: transactionalRepository,
         logger: input.runLogger,
         eventId: input.nextEventId(phase, EventCodes.FOLLOW_UP_ISSUE_SKIPPED),
         taskId: manifest.taskId,
@@ -4954,127 +5030,130 @@ async function handleAutomatedPhaseFailure(input: {
         failureClass: failure.failureClass,
         message: `Failed to create a follow-up issue for the ${phase} failure.`,
         data: {
-          error: serializeError(error)
+          error: followUpIssueError
         },
         createdAt: input.failedAtIso
       });
     }
-  }
 
-  const nextManifest = patchManifest(manifest, {
-    currentPhase: phase,
-    lifecycleStatus: "blocked",
-    updatedAt: input.failedAtIso
-  });
-  const recoveryMetadata = {
-    phase,
-    action: "escalate",
-    runId,
-    failureCode: failure.code,
-    failureClass: failure.failureClass,
-    retryCount: manifest.retryCount,
-    retryLimit: policy.retryLimit,
-    approvalRequestId: approvalRequest.requestId,
-    ...(followUpIssue
-      ? {
-          followUpIssueNumber: followUpIssue.issueNumber,
-          followUpIssueUrl: followUpIssue.url
-        }
-      : {})
-  };
-
-  await repository.savePhaseRecord(
-    createPhaseRecord({
-      id: `${manifest.taskId}:phase:${phase}:escalated:${runId}`,
-      taskId: manifest.taskId,
-      phase,
-      status: "escalated",
-      actor: "control-plane",
-      summary: `${formatPhaseLabel(phase)} failure escalated for human review.`,
-      details: recoveryMetadata,
-      createdAt: input.failedAtIso
-    })
-  );
-  await repository.saveMemoryRecord(
-    createMemoryRecord({
-      memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
-      taskId: manifest.taskId,
-      scope: "task",
-      provenance: "pipeline_derived",
-      key: failureRecoveryMemoryKey,
-      title: "Automated failure recovery plan",
-      value: recoveryMetadata,
-      repo: manifest.source.repo,
-      organizationId,
-      tags: ["failure", "recovery", phase],
-      createdAt: input.failedAtIso,
-      updatedAt: input.failedAtIso
-    })
-  );
-  await repository.saveEvidenceRecord(
-    createEvidenceRecord({
-      recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
-      taskId: manifest.taskId,
-      kind: "gate_decision",
-      title: "Failure recovery decision",
-      metadata: recoveryMetadata,
-      createdAt: input.failedAtIso
-    })
-  );
-  await recordRunEvent({
-    repository,
-    logger: input.runLogger,
-    eventId: input.nextEventId(phase, EventCodes.PHASE_ESCALATED),
-    taskId: manifest.taskId,
-    runId,
-    phase,
-    level: "warn",
-    code: EventCodes.PHASE_ESCALATED,
-    message: `${formatPhaseLabel(phase)} failure escalated for human review.`,
-    failureClass: failure.failureClass,
-    data: recoveryMetadata,
-    createdAt: input.failedAtIso
-  });
-  await recordRunEvent({
-    repository,
-    logger: input.runLogger,
-    eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
-    taskId: manifest.taskId,
-    runId,
-    phase,
-    level: "warn",
-    code: EventCodes.PIPELINE_BLOCKED,
-    message: `${formatPhaseLabel(phase)} phase blocked pending operator review.`,
-    failureClass: failure.failureClass,
-    durationMs: getDurationMs(input.runStartedAt, input.failedAt),
-    data: recoveryMetadata,
-    createdAt: input.failedAtIso
-  });
-  await repository.updateManifest(nextManifest);
-  await input.persistTrackedRun({
-    status: "blocked",
-    lastHeartbeatAt: input.failedAtIso,
-    completedAt: input.failedAtIso,
-    metadata: {
+    const nextManifest = patchManifest(manifest, {
       currentPhase: phase,
+      lifecycleStatus: "blocked",
+      updatedAt: input.failedAtIso
+    });
+    const recoveryMetadata = {
+      phase,
+      action: "escalate",
+      runId,
       failureCode: failure.code,
       failureClass: failure.failureClass,
-      recoveryAction: "escalate",
       retryCount: manifest.retryCount,
       retryLimit: policy.retryLimit,
       approvalRequestId: approvalRequest.requestId,
       ...(followUpIssue
-        ? { followUpIssueNumber: followUpIssue.issueNumber }
+        ? {
+            followUpIssueNumber: followUpIssue.issueNumber,
+            followUpIssueUrl: followUpIssue.url
+          }
         : {})
-    }
-  });
+    };
 
-  return {
-    manifest: nextManifest,
-    recoveryAction: "escalate",
-    approvalRequest,
-    followUpIssue
-  };
+    await transactionalRepository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${manifest.taskId}:phase:${phase}:escalated:${runId}`,
+        taskId: manifest.taskId,
+        phase,
+        status: "escalated",
+        actor: "control-plane",
+        summary: `${formatPhaseLabel(phase)} failure escalated for human review.`,
+        details: recoveryMetadata,
+        createdAt: input.failedAtIso
+      })
+    );
+    await transactionalRepository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
+        taskId: manifest.taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: failureRecoveryMemoryKey,
+        title: "Automated failure recovery plan",
+        value: recoveryMetadata,
+        repo: manifest.source.repo,
+        organizationId,
+        tags: ["failure", "recovery", phase],
+        createdAt: input.failedAtIso,
+        updatedAt: input.failedAtIso
+      })
+    );
+    await transactionalRepository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
+        taskId: manifest.taskId,
+        kind: "gate_decision",
+        title: "Failure recovery decision",
+        metadata: recoveryMetadata,
+        createdAt: input.failedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository: transactionalRepository,
+      logger: input.runLogger,
+      eventId: input.nextEventId(phase, EventCodes.PHASE_ESCALATED),
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      level: "warn",
+      code: EventCodes.PHASE_ESCALATED,
+      message: `${formatPhaseLabel(phase)} failure escalated for human review.`,
+      failureClass: failure.failureClass,
+      data: recoveryMetadata,
+      createdAt: input.failedAtIso
+    });
+    await recordRunEvent({
+      repository: transactionalRepository,
+      logger: input.runLogger,
+      eventId: input.nextEventId(phase, EventCodes.PIPELINE_BLOCKED),
+      taskId: manifest.taskId,
+      runId,
+      phase,
+      level: "warn",
+      code: EventCodes.PIPELINE_BLOCKED,
+      message: `${formatPhaseLabel(phase)} phase blocked pending operator review.`,
+      failureClass: failure.failureClass,
+      durationMs: getDurationMs(input.runStartedAt, input.failedAt),
+      data: recoveryMetadata,
+      createdAt: input.failedAtIso
+    });
+    await transactionalRepository.updateManifest(nextManifest);
+    await input.persistTrackedRun(
+      {
+        status: "blocked",
+        lastHeartbeatAt: input.failedAtIso,
+        completedAt: input.failedAtIso,
+        metadata: {
+          currentPhase: phase,
+          failureCode: failure.code,
+          failureClass: failure.failureClass,
+          recoveryAction: "escalate",
+          retryCount: manifest.retryCount,
+          retryLimit: policy.retryLimit,
+          approvalRequestId: approvalRequest.requestId,
+          ...(followUpIssue
+            ? { followUpIssueNumber: followUpIssue.issueNumber }
+            : {})
+        }
+      },
+      transactionalRepository
+    );
+
+    return {
+      manifest: nextManifest,
+      recoveryAction: "escalate",
+      approvalRequest,
+      followUpIssue
+    };
+  });
 }
 function normalizePipelineFailure(
   error: unknown,
@@ -5170,73 +5249,76 @@ async function persistConcurrencyBlock(
     staleRunIds: ctx.staleRunIds,
     reason: `Active overlapping run ${ctx.blockedByRun.runId} already owns ${ctx.concurrencyKey}.`
   });
-  await ctx.repository.savePipelineRun(
-    createPipelineRun({
-      ...ctx.trackedRun,
-      status: "blocked",
-      blockedByRunId: ctx.blockedByRun.runId,
-      overlapReason: decision.reason,
-      completedAt: ctx.runStartedAtIso,
-      metadata: {
-        ...ctx.trackedRun.metadata,
-        staleRunIds: ctx.staleRunIds
-      }
-    })
-  );
   const phaseLabel =
     ctx.phase === "scm"
       ? "SCM"
       : ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1);
-  await ctx.repository.saveEvidenceRecord(
-    createEvidenceRecord({
-      recordId: `${ctx.taskId}:${ctx.phase}:concurrency:${ctx.runId}`,
+
+  return ctx.repository.runInTransaction(async (repository) => {
+    await repository.savePipelineRun(
+      createPipelineRun({
+        ...ctx.trackedRun,
+        status: "blocked",
+        blockedByRunId: ctx.blockedByRun.runId,
+        overlapReason: decision.reason,
+        completedAt: ctx.runStartedAtIso,
+        metadata: {
+          ...ctx.trackedRun.metadata,
+          staleRunIds: ctx.staleRunIds
+        }
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${ctx.taskId}:${ctx.phase}:concurrency:${ctx.runId}`,
+        taskId: ctx.taskId,
+        kind: "gate_decision",
+        title: `${phaseLabel} concurrency gate decision`,
+        metadata: decision,
+        createdAt: ctx.runStartedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: ctx.runLogger,
+      eventId: ctx.nextEventId(ctx.phase, EventCodes.RUN_BLOCKED_BY_OVERLAP),
       taskId: ctx.taskId,
-      kind: "gate_decision",
-      title: `${phaseLabel} concurrency gate decision`,
-      metadata: decision,
+      runId: ctx.runId,
+      phase: ctx.phase,
+      level: "warn",
+      code: EventCodes.RUN_BLOCKED_BY_OVERLAP,
+      message:
+        decision.reason ?? `${phaseLabel} phase blocked by an overlapping run.`,
+      failureClass: "execution_loop",
+      data: {
+        concurrencyKey: ctx.concurrencyKey,
+        strategy: ctx.strategy,
+        blockedByRunId: ctx.blockedByRun.runId,
+        staleRunIds: ctx.staleRunIds
+      },
       createdAt: ctx.runStartedAtIso
-    })
-  );
-  await recordRunEvent({
-    repository: ctx.repository,
-    logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, EventCodes.RUN_BLOCKED_BY_OVERLAP),
-    taskId: ctx.taskId,
-    runId: ctx.runId,
-    phase: ctx.phase,
-    level: "warn",
-    code: EventCodes.RUN_BLOCKED_BY_OVERLAP,
-    message:
-      decision.reason ?? `${phaseLabel} phase blocked by an overlapping run.`,
-    failureClass: "execution_loop",
-    data: {
-      concurrencyKey: ctx.concurrencyKey,
-      strategy: ctx.strategy,
-      blockedByRunId: ctx.blockedByRun.runId,
-      staleRunIds: ctx.staleRunIds
-    },
-    createdAt: ctx.runStartedAtIso
+    });
+    await recordRunEvent({
+      repository,
+      logger: ctx.runLogger,
+      eventId: ctx.nextEventId(ctx.phase, EventCodes.PIPELINE_BLOCKED),
+      taskId: ctx.taskId,
+      runId: ctx.runId,
+      phase: ctx.phase,
+      level: "warn",
+      code: EventCodes.PIPELINE_BLOCKED,
+      message: `${phaseLabel} phase blocked by concurrency controls.`,
+      failureClass: "execution_loop",
+      durationMs: getDurationMs(ctx.runStartedAt, ctx.runStartedAt),
+      data: {
+        concurrencyKey: ctx.concurrencyKey,
+        strategy: ctx.strategy,
+        blockedByRunId: ctx.blockedByRun.runId
+      },
+      createdAt: ctx.runStartedAtIso
+    });
+    return decision;
   });
-  await recordRunEvent({
-    repository: ctx.repository,
-    logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, EventCodes.PIPELINE_BLOCKED),
-    taskId: ctx.taskId,
-    runId: ctx.runId,
-    phase: ctx.phase,
-    level: "warn",
-    code: EventCodes.PIPELINE_BLOCKED,
-    message: `${phaseLabel} phase blocked by concurrency controls.`,
-    failureClass: "execution_loop",
-    durationMs: getDurationMs(ctx.runStartedAt, ctx.runStartedAt),
-    data: {
-      concurrencyKey: ctx.concurrencyKey,
-      strategy: ctx.strategy,
-      blockedByRunId: ctx.blockedByRun.runId
-    },
-    createdAt: ctx.runStartedAtIso
-  });
-  return decision;
 }
 
 interface PhaseFailureContext {
@@ -5252,7 +5334,8 @@ interface PhaseFailureContext {
   failedAt: Date;
   failedAtIso: string;
   persistTrackedRun: (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> }
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github?: GitHubAdapter | undefined;
 }
@@ -5260,56 +5343,8 @@ interface PhaseFailureContext {
 async function persistPhaseFailure(
   ctx: PhaseFailureContext
 ): Promise<TaskManifest> {
-  const taskId = ctx.manifest.taskId;
-  await ctx.repository.savePhaseRecord(
-    createPhaseRecord({
-      id: `${taskId}:phase:${ctx.phase}:${ctx.runId}:failed`,
-      taskId,
-      phase: ctx.phase,
-      status: "failed",
-      actor: "control-plane",
-      summary: ctx.failure.message,
-      details: {
-        code: ctx.failure.code,
-        failureClass: ctx.failure.failureClass,
-        ...ctx.failure.details
-      },
-      createdAt: ctx.failedAtIso
-    })
-  );
-  await ctx.repository.saveEvidenceRecord(
-    createEvidenceRecord({
-      recordId: `${taskId}:${ctx.phase}:failure:${ctx.runId}`,
-      taskId,
-      kind: "run_event",
-      title: `${ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1)} phase failure`,
-      metadata: {
-        runId: ctx.runId,
-        code: ctx.failure.code,
-        failureClass: ctx.failure.failureClass,
-        details: ctx.failure.details
-      },
-      createdAt: ctx.failedAtIso
-    })
-  );
-  await recordRunEvent({
-    repository: ctx.repository,
-    logger: ctx.runLogger,
-    eventId: ctx.nextEventId(ctx.phase, EventCodes.PHASE_FAILED),
-    taskId,
-    runId: ctx.runId,
-    phase: ctx.phase,
-    level: "error",
-    code: EventCodes.PHASE_FAILED,
-    message: ctx.failure.message,
-    failureClass: ctx.failure.failureClass,
-    data: {
-      causeCode: ctx.failure.code,
-      details: ctx.failure.details
-    },
-    createdAt: ctx.failedAtIso
-  });
   const recoverable: RecoverablePhase[] = ["development", "validation", "scm"];
+
   if (recoverable.includes(ctx.phase as RecoverablePhase)) {
     return (
       await handleAutomatedPhaseFailure({
@@ -5329,11 +5364,63 @@ async function persistPhaseFailure(
       })
     ).manifest;
   }
-  return ctx.manifest;
+
+  const taskId = ctx.manifest.taskId;
+  return ctx.repository.runInTransaction(async (repository) => {
+    await repository.savePhaseRecord(
+      createPhaseRecord({
+        id: `${taskId}:phase:${ctx.phase}:${ctx.runId}:failed`,
+        taskId,
+        phase: ctx.phase,
+        status: "failed",
+        actor: "control-plane",
+        summary: ctx.failure.message,
+        details: {
+          code: ctx.failure.code,
+          failureClass: ctx.failure.failureClass,
+          ...ctx.failure.details
+        },
+        createdAt: ctx.failedAtIso
+      })
+    );
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:${ctx.phase}:failure:${ctx.runId}`,
+        taskId,
+        kind: "run_event",
+        title: `${ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1)} phase failure`,
+        metadata: {
+          runId: ctx.runId,
+          code: ctx.failure.code,
+          failureClass: ctx.failure.failureClass,
+          details: ctx.failure.details
+        },
+        createdAt: ctx.failedAtIso
+      })
+    );
+    await recordRunEvent({
+      repository,
+      logger: ctx.runLogger,
+      eventId: ctx.nextEventId(ctx.phase, EventCodes.PHASE_FAILED),
+      taskId,
+      runId: ctx.runId,
+      phase: ctx.phase,
+      level: "error",
+      code: EventCodes.PHASE_FAILED,
+      message: ctx.failure.message,
+      failureClass: ctx.failure.failureClass,
+      data: {
+        causeCode: ctx.failure.code,
+        details: ctx.failure.details
+      },
+      createdAt: ctx.failedAtIso
+    });
+    return ctx.manifest;
+  });
 }
 
 async function recordRunEvent(input: {
-  repository: PlanningRepository;
+  repository: { saveRunEvent(event: RunEvent): Promise<void> };
   logger: PlanningPipelineLogger;
   eventId: string;
   taskId: string;

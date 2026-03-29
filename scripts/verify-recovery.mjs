@@ -12,7 +12,7 @@ import {
   runPlanningPipeline,
   runValidationPhase
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { FixtureGitHubAdapter } from "../packages/integrations/dist/index.js";
 import { connectionString } from "./lib/config.mjs";
 
@@ -22,7 +22,7 @@ const targetRoot = resolve(
   process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
     join(tmpdir(), "reddwarf-recovery-verify", `verify-${issueNumber}`)
 );
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString);
 
 const failingValidator = {
   async createPlan() {

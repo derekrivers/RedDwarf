@@ -28,19 +28,25 @@ import {
   type TaskManifest
 } from "@reddwarf/contracts";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
-export interface PlanningCommandRepository {
+export interface PlanningTransactionRepository {
   saveManifest(manifest: TaskManifest): Promise<void>;
   updateManifest(manifest: TaskManifest): Promise<void>;
   savePhaseRecord(record: PhaseRecord): Promise<void>;
-  savePlanningSpec(spec: PlanningSpec): Promise<void>;
-  savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
   saveEvidenceRecord(record: EvidenceRecord): Promise<void>;
   saveRunEvent(event: RunEvent): Promise<void>;
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
-  claimPipelineRun(input: ClaimPipelineRunInput): Promise<ClaimPipelineRunResult>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+}
+
+export interface PlanningCommandRepository extends PlanningTransactionRepository {
+  savePlanningSpec(spec: PlanningSpec): Promise<void>;
+  savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
+  claimPipelineRun(input: ClaimPipelineRunInput): Promise<ClaimPipelineRunResult>;
   saveGitHubIssuePollingCursor(cursor: GitHubIssuePollingCursor): Promise<void>;
+  runInTransaction<T>(
+    operation: (repository: PlanningTransactionRepository) => Promise<T>
+  ): Promise<T>;
 }
 
 export interface PlanningQueryRepository {
@@ -217,6 +223,65 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
     this.githubIssuePollingCursors.set(cursor.repo, cursor);
+  }
+
+  async runInTransaction<T>(
+    operation: (repository: PlanningTransactionRepository) => Promise<T>
+  ): Promise<T> {
+    const manifests = cloneInMemoryMap(this.manifests);
+    const phaseRecords = cloneInMemoryArray(this.phaseRecords);
+    const planningSpecs = cloneInMemoryMap(this.planningSpecs);
+    const policySnapshots = cloneInMemoryMap(this.policySnapshots);
+    const evidenceRecords = cloneInMemoryArray(this.evidenceRecords);
+    const runEvents = cloneInMemoryArray(this.runEvents);
+    const memoryRecords = cloneInMemoryArray(this.memoryRecords);
+    const pipelineRuns = cloneInMemoryMap(this.pipelineRuns);
+    const approvalRequests = cloneInMemoryMap(this.approvalRequests);
+    const githubIssuePollingCursors = cloneInMemoryMap(
+      this.githubIssuePollingCursors
+    );
+
+    try {
+      return await operation(this);
+    } catch (error) {
+      this.manifests.clear();
+      for (const [key, value] of manifests.entries()) {
+        this.manifests.set(key, value);
+      }
+
+      this.phaseRecords.splice(0, this.phaseRecords.length, ...phaseRecords);
+
+      this.planningSpecs.clear();
+      for (const [key, value] of planningSpecs.entries()) {
+        this.planningSpecs.set(key, value);
+      }
+
+      this.policySnapshots.clear();
+      for (const [key, value] of policySnapshots.entries()) {
+        this.policySnapshots.set(key, value);
+      }
+
+      this.evidenceRecords.splice(0, this.evidenceRecords.length, ...evidenceRecords);
+      this.runEvents.splice(0, this.runEvents.length, ...runEvents);
+      this.memoryRecords.splice(0, this.memoryRecords.length, ...memoryRecords);
+
+      this.pipelineRuns.clear();
+      for (const [key, value] of pipelineRuns.entries()) {
+        this.pipelineRuns.set(key, value);
+      }
+
+      this.approvalRequests.clear();
+      for (const [key, value] of approvalRequests.entries()) {
+        this.approvalRequests.set(key, value);
+      }
+
+      this.githubIssuePollingCursors.clear();
+      for (const [key, value] of githubIssuePollingCursors.entries()) {
+        this.githubIssuePollingCursors.set(key, value);
+      }
+
+      throw error;
+    }
   }
 
   async getManifest(taskId: string): Promise<TaskManifest | null> {
@@ -413,6 +478,15 @@ export class InMemoryPlanningRepository implements PlanningRepository {
 }
 
 
+function cloneInMemoryMap<TKey, TValue>(
+  input: Map<TKey, TValue>
+): Map<TKey, TValue> {
+  return new Map(structuredClone([...input.entries()]));
+}
+
+function cloneInMemoryArray<T>(input: T[]): T[] {
+  return structuredClone(input);
+}
 export function normalizeMemoryQuery(query: Partial<MemoryQuery>): MemoryQuery {
   return memoryQuerySchema.parse(query);
 }
@@ -476,4 +550,9 @@ export function compareApprovalRequests(
     ? created
     : left.requestId.localeCompare(right.requestId);
 }
+
+
+
+
+
 
