@@ -252,3 +252,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added regression coverage in `packages/control-plane/src/index.test.ts` for sanitizer behavior, SCM failure-persistence redaction, and post-approval dispatch error redaction.
 - Verification for feature 93: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:scm`.
 - Likely next board item: feature 94, authenticate the operator API and constrain manual dispatch roots.
+- Completed feature 94 from `FEATURE_BOARD.md`: authenticate the operator API and constrain manual dispatch roots.
+- Updated `packages/control-plane/src/operator-api.ts` so every operator route except `GET /health` now requires a configured bearer token, request bodies are size-bounded, and manual dispatch roots are constrained to configured managed target and evidence roots.
+- Updated stack entry points and docs to require `REDDWARF_OPERATOR_TOKEN`, including `scripts/start-stack.mjs`, `scripts/start-operator-api.mjs`, `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md`.
+- Added operator API regression coverage in `packages/control-plane/src/index.test.ts` for missing auth, oversized JSON bodies, and escaped manual-dispatch roots.
+- Updated `scripts/verify-operator-api.mjs` to authenticate requests and to assert stable operator API contracts against a shared Postgres state instead of brittle exact-count assumptions.
+- Verification for feature 94: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:operator-api`.
+- No new follow-on feature was added from feature 94; the next board item remains feature 95, align heartbeats, stale windows, and subprocess timeouts.

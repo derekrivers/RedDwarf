@@ -47,7 +47,7 @@ If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>
 ```
 
-After startup, open `http://127.0.0.1:3578/` and authenticate with `OPENCLAW_GATEWAY_TOKEN`.
+After startup, open `http://127.0.0.1:3578/` and authenticate with `OPENCLAW_GATEWAY_TOKEN`. The separate RedDwarf operator API now also requires `REDDWARF_OPERATOR_TOKEN` for every route except `/health`.
 
 ### One-command bootstrap (recommended)
 
@@ -116,6 +116,7 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_POLL_REPOS` | _(disabled)_ | Comma-separated `owner/repo` list to poll (e.g. `acme/platform,acme/api`) |
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
+| `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
 | `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
 
 **Example — full stack with polling:**
@@ -145,8 +146,12 @@ corepack pnpm operator:api                 # operator API on :8080
 Plans requiring human approval appear in the operator API:
 
 ```bash
-curl http://localhost:8080/blocked                          # see what's waiting
+export REDDWARF_OPERATOR_TOKEN=<your-operator-token>
+curl http://localhost:8080/health
+curl http://localhost:8080/blocked \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}"
 curl -X POST http://localhost:8080/approvals/<id>/resolve \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"decision":"approve","decidedBy":"you","decisionSummary":"Looks good"}'
 ```

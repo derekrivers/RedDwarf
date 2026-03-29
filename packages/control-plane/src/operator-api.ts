@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
   type ApprovalDecision,
   type ApprovalRequest,
@@ -10,7 +11,11 @@ import {
   type PipelineRun
 } from "@reddwarf/contracts";
 import { type PlanningRepository } from "@reddwarf/evidence";
-import { dispatchReadyTask, resolveApprovalRequest, type DispatchReadyTaskDependencies } from "./pipeline.js";
+import {
+  dispatchReadyTask,
+  resolveApprovalRequest,
+  type DispatchReadyTaskDependencies
+} from "./pipeline.js";
 import type { ReadyTaskDispatcher } from "./polling.js";
 
 // ============================================================
@@ -20,6 +25,10 @@ import type { ReadyTaskDispatcher } from "./polling.js";
 export interface OperatorApiConfig {
   port: number;
   host?: string;
+  authToken: string;
+  maxRequestBodyBytes?: number;
+  managedTargetRoot?: string;
+  managedEvidenceRoot?: string;
 }
 
 export interface OperatorApiDependencies {
@@ -66,6 +75,18 @@ export interface OperatorApiServer {
   readonly host: string;
 }
 
+class OperatorApiRequestError extends Error {
+  readonly status: number;
+  readonly error: string;
+
+  constructor(status: number, error: string, message: string) {
+    super(message);
+    this.name = "OperatorApiRequestError";
+    this.status = status;
+    this.error = error;
+  }
+}
+
 // ============================================================
 // Operator API server factory
 // ============================================================
@@ -75,14 +96,64 @@ export function createOperatorApiServer(
   deps: OperatorApiDependencies
 ): OperatorApiServer {
   const host = config.host ?? "127.0.0.1";
-  const { repository, clock = () => new Date(), dispatcher, dispatchDependencies } = deps;
+  const authToken = config.authToken.trim();
+  const maxRequestBodyBytes = config.maxRequestBodyBytes ?? 64 * 1024;
+  const managedTargetRoot =
+    config.managedTargetRoot !== undefined
+      ? resolve(config.managedTargetRoot)
+      : undefined;
+  const managedEvidenceRoot =
+    config.managedEvidenceRoot !== undefined
+      ? resolve(config.managedEvidenceRoot)
+      : undefined;
+  const {
+    repository,
+    clock = () => new Date(),
+    dispatcher,
+    dispatchDependencies
+  } = deps;
   let boundPort = config.port;
+
+  if (authToken.length === 0) {
+    throw new Error("Operator API authToken is required.");
+  }
+
+  if (dispatchDependencies && !managedTargetRoot) {
+    throw new Error(
+      "managedTargetRoot is required when dispatchDependencies are configured."
+    );
+  }
+
+  if (dispatchDependencies && !managedEvidenceRoot) {
+    throw new Error(
+      "managedEvidenceRoot is required when dispatchDependencies are configured."
+    );
+  }
 
   const server = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
       try {
-        await handleOperatorRequest(req, res, repository, clock, dispatcher, dispatchDependencies);
+        await handleOperatorRequest(
+          req,
+          res,
+          repository,
+          clock,
+          authToken,
+          maxRequestBodyBytes,
+          dispatcher,
+          dispatchDependencies,
+          managedTargetRoot,
+          managedEvidenceRoot
+        );
       } catch (err) {
+        if (err instanceof OperatorApiRequestError) {
+          writeOperatorJsonResponse(res, err.status, {
+            error: err.error,
+            message: err.message
+          });
+          return;
+        }
+
         writeOperatorJsonResponse(res, 500, {
           error: "internal_error",
           message: err instanceof Error ? err.message : "Unexpected error"
@@ -99,19 +170,19 @@ export function createOperatorApiServer(
       return host;
     },
     async start(): Promise<void> {
-      return new Promise((resolve) => {
+      return new Promise((resolvePromise) => {
         server.listen(config.port, host, () => {
           const addr = server.address();
           if (addr !== null && typeof addr === "object") {
             boundPort = addr.port;
           }
-          resolve();
+          resolvePromise();
         });
       });
     },
     async stop(): Promise<void> {
-      return new Promise((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
+      return new Promise((resolvePromise, reject) => {
+        server.close((err) => (err ? reject(err) : resolvePromise()));
       });
     }
   };
@@ -134,17 +205,45 @@ function writeOperatorJsonResponse(
   res.end(json);
 }
 
-async function readOperatorJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+async function readOperatorJsonBody(
+  req: IncomingMessage,
+  maxRequestBodyBytes: number
+): Promise<unknown> {
+  return new Promise((resolveBody, reject) => {
     let raw = "";
-    req.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+    let rawBytes = 0;
+    let tooLarge = false;
+
+    req.on("data", (chunk: Buffer) => {
+      rawBytes += chunk.length;
+
+      if (rawBytes > maxRequestBodyBytes) {
+        tooLarge = true;
+        return;
+      }
+
+      raw += chunk.toString();
+    });
+
     req.on("end", () => {
+      if (tooLarge) {
+        reject(
+          new OperatorApiRequestError(
+            413,
+            "payload_too_large",
+            `Request body exceeds ${maxRequestBodyBytes} bytes.`
+          )
+        );
+        return;
+      }
+
       try {
-        resolve(raw.length > 0 ? JSON.parse(raw) : null);
+        resolveBody(raw.length > 0 ? JSON.parse(raw) : null);
       } catch {
-        reject(new Error("Invalid JSON body"));
+        reject(new OperatorApiRequestError(400, "bad_request", "Invalid JSON body."));
       }
     });
+
     req.on("error", reject);
   });
 }
@@ -167,13 +266,69 @@ function parseOperatorQueryParams(
   return params;
 }
 
+function readOperatorAuthToken(req: IncomingMessage): string | null {
+  const authorization = req.headers["authorization"];
+
+  if (typeof authorization === "string") {
+    const match = /^Bearer\s+(.+)$/.exec(authorization.trim());
+    if (match) {
+      return match[1] ?? null;
+    }
+  }
+
+  const tokenHeader = req.headers["x-reddwarf-operator-token"];
+  if (typeof tokenHeader === "string" && tokenHeader.trim().length > 0) {
+    return tokenHeader.trim();
+  }
+
+  return null;
+}
+
+function assertOperatorAuthorized(
+  req: IncomingMessage,
+  authToken: string
+): void {
+  const suppliedToken = readOperatorAuthToken(req);
+
+  if (suppliedToken !== authToken) {
+    throw new OperatorApiRequestError(
+      401,
+      "unauthorized",
+      "Valid operator token required. Supply Authorization: Bearer <token>."
+    );
+  }
+}
+
+function resolveManagedDispatchRoot(
+  requestedRoot: string | undefined,
+  managedRoot: string,
+  label: "targetRoot" | "evidenceRoot"
+): string {
+  const resolvedRoot = resolve(requestedRoot ?? managedRoot);
+  const relativePath = relative(managedRoot, resolvedRoot);
+
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new OperatorApiRequestError(
+      400,
+      "bad_request",
+      `${label} ${resolvedRoot} escapes configured root ${managedRoot}.`
+    );
+  }
+
+  return resolvedRoot;
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
   repository: PlanningRepository,
   clock: () => Date,
+  authToken: string,
+  maxRequestBodyBytes: number,
   dispatcher?: ReadyTaskDispatcher,
-  dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">
+  dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
+  managedTargetRoot?: string,
+  managedEvidenceRoot?: string
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -181,7 +336,7 @@ async function handleOperatorRequest(
   const path = urlObj.pathname;
   const qp = parseOperatorQueryParams(url);
 
-  // GET /health
+  // GET /health remains unauthenticated for liveness checks.
   if (method === "GET" && path === "/health") {
     const response: OperatorHealthResponse = {
       status: "ok",
@@ -207,6 +362,8 @@ async function handleOperatorRequest(
     writeOperatorJsonResponse(res, 200, response);
     return;
   }
+
+  assertOperatorAuthorized(req, authToken);
 
   // GET /runs
   if (method === "GET" && path === "/runs") {
@@ -253,7 +410,7 @@ async function handleOperatorRequest(
   const resolveMatch = /^\/approvals\/([^/]+)\/resolve$/.exec(path);
   if (method === "POST" && resolveMatch) {
     const requestId = resolveMatch[1]!;
-    const body = (await readOperatorJsonBody(req)) as Record<
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<
       string,
       unknown
     > | null;
@@ -344,7 +501,7 @@ async function handleOperatorRequest(
   if (method === "POST" && dispatchMatch) {
     const taskId = decodeURIComponent(dispatchMatch[1]!);
 
-    if (!dispatchDependencies) {
+    if (!dispatchDependencies || !managedTargetRoot || !managedEvidenceRoot) {
       writeOperatorJsonResponse(res, 503, {
         error: "service_unavailable",
         message: "Dispatch dependencies are not configured on this server."
@@ -352,21 +509,25 @@ async function handleOperatorRequest(
       return;
     }
 
-    const body = (await readOperatorJsonBody(req)) as Record<string, unknown> | null;
-    const targetRoot = (body && typeof body["targetRoot"] === "string")
-      ? body["targetRoot"]
-      : undefined;
-    const evidenceRoot = (body && typeof body["evidenceRoot"] === "string")
-      ? body["evidenceRoot"]
-      : undefined;
-
-    if (!targetRoot) {
-      writeOperatorJsonResponse(res, 400, {
-        error: "bad_request",
-        message: "targetRoot is required in the request body."
-      });
-      return;
-    }
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null;
+    const requestedTargetRoot =
+      body && typeof body["targetRoot"] === "string"
+        ? body["targetRoot"]
+        : undefined;
+    const requestedEvidenceRoot =
+      body && typeof body["evidenceRoot"] === "string"
+        ? body["evidenceRoot"]
+        : undefined;
+    const targetRoot = resolveManagedDispatchRoot(
+      requestedTargetRoot,
+      managedTargetRoot,
+      "targetRoot"
+    );
+    const evidenceRoot = resolveManagedDispatchRoot(
+      requestedEvidenceRoot,
+      managedEvidenceRoot,
+      "evidenceRoot"
+    );
 
     const result = await dispatchReadyTask(
       { taskId, targetRoot, evidenceRoot },

@@ -84,6 +84,12 @@ const pollIntervalMs = parseInt(
   10
 );
 const skipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW === "true";
+const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
+
+if (operatorApiToken.length === 0) {
+  logError("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
+  process.exit(1);
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 1 — Infrastructure
@@ -336,7 +342,12 @@ if (openClawAvailable) {
 // ── 3c: Operator API ─────────────────────────────────────────────────
 
 const server = createOperatorApiServer(
-  { port: apiPort },
+  {
+    port: apiPort,
+    authToken: operatorApiToken,
+    managedTargetRoot: workspaceTargetRoot,
+    managedEvidenceRoot: evidenceRoot
+  },
   {
     repository,
     ...(dispatcher ? { dispatcher } : {}),
@@ -389,6 +400,7 @@ log("");
 log(`  Postgres:     running (port ${process.env.POSTGRES_HOST_PORT ?? "55532"})`);
 log(`  OpenClaw:     ${openClawAvailable ? "running (port " + (process.env.OPENCLAW_HOST_PORT ?? "3578") + ")" : "not running (deterministic fallback)"}`);
 log(`  Operator API: http://127.0.0.1:${server.port}`);
+log("  Operator Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 log(`  Dispatcher:   ${dispatcher ? "running (every " + (dispatchIntervalMs / 1_000) + "s)" : "disabled (requires OpenClaw)"}`);
 log(`  Polling:      ${daemon ? pollRepos.join(", ") + " every " + (pollIntervalMs / 1_000) + "s" : "disabled"}`);
 log("");

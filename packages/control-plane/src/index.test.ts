@@ -2012,13 +2012,32 @@ describe("control-plane", () => {
   });
 });
 
+const operatorApiToken = "operator-test-token";
+
+function buildOperatorHeaders(authToken: string | null = operatorApiToken): Record<string, string> {
+  if (authToken === null) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${authToken}`
+  };
+}
+
 function operatorGet(
   port: number,
-  path: string
+  path: string,
+  authToken: string | null = operatorApiToken
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
-      { hostname: "127.0.0.1", port, path, method: "GET" },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "GET",
+        headers: buildOperatorHeaders(authToken)
+      },
       (res) => {
         let raw = "";
         res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
@@ -2039,7 +2058,8 @@ function operatorGet(
 function operatorPost(
   port: number,
   path: string,
-  body: unknown
+  body: unknown,
+  authToken: string | null = operatorApiToken
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -2050,6 +2070,7 @@ function operatorPost(
         path,
         method: "POST",
         headers: {
+          ...buildOperatorHeaders(authToken),
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload)
         }
@@ -2076,7 +2097,7 @@ describe("operator API server", () => {
   it("serves health, runs, and blocked endpoints with an empty repository", async () => {
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(
-      { port: 0, host: "127.0.0.1" },
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
       { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
     );
 
@@ -2123,6 +2144,28 @@ describe("operator API server", () => {
   });
 
 
+  it("rejects protected routes without operator auth", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const health = await operatorGet(port, "/health", null);
+      expect(health.status).toBe(200);
+
+      const approvals = await operatorGet(port, "/approvals", null);
+      expect(approvals.status).toBe(401);
+      expect((approvals.body as Record<string, unknown>)["error"]).toBe("unauthorized");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("includes polling cursor health in the /health response", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveGitHubIssuePollingCursor({
@@ -2136,7 +2179,7 @@ describe("operator API server", () => {
       updatedAt: "2026-03-27T10:00:05.000Z"
     });
     const apiServer = createOperatorApiServer(
-      { port: 0, host: "127.0.0.1" },
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
       { repository, clock: () => new Date("2026-03-27T10:01:00.000Z") }
     );
 
@@ -2175,7 +2218,7 @@ describe("operator API server", () => {
     );
 
     const apiServer = createOperatorApiServer(
-      { port: 0, host: "127.0.0.1" },
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
       { repository }
     );
 
@@ -2239,7 +2282,7 @@ describe("operator API server", () => {
 
     const requestId = planResult.approvalRequest!.requestId;
     const apiServer = createOperatorApiServer(
-      { port: 0, host: "127.0.0.1" },
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
       { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
     );
 
@@ -2299,6 +2342,126 @@ describe("operator API server", () => {
     }
   });
 
+  it("rejects oversized operator JSON bodies", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-oversized"
+      }
+    );
+
+    const apiServer = createOperatorApiServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        authToken: operatorApiToken,
+        maxRequestBodyBytes: 64
+      },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const oversized = await operatorPost(
+        port,
+        `/approvals/${planResult.approvalRequest!.requestId}/resolve`,
+        {
+          decision: "approve",
+          decidedBy: "operator-test",
+          decisionSummary: "Approved via operator API test.",
+          comment: "x".repeat(256)
+        }
+      );
+
+      expect(oversized.status).toBe(413);
+      expect((oversized.body as Record<string, unknown>)["error"]).toBe("payload_too_large");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("rejects manual dispatch roots that escape configured managed roots", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-dispatch-roots"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator-test",
+        decisionSummary: "Approved for manual dispatch root validation test."
+      },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    const managedTargetRoot = await mkdtemp(join(tmpdir(), "operator-managed-target-"));
+    const managedEvidenceRoot = await mkdtemp(join(tmpdir(), "operator-managed-evidence-"));
+    const escapedTargetRoot = join(managedTargetRoot, "..", "escaped-target-root");
+    const escapedEvidenceRoot = join(managedEvidenceRoot, "..", "escaped-evidence-root");
+    const apiServer = createOperatorApiServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        authToken: operatorApiToken,
+        managedTargetRoot,
+        managedEvidenceRoot
+      },
+      {
+        repository,
+        dispatchDependencies: {
+          developer: new DeterministicDeveloperAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: new FixtureGitHubAdapter({ candidates: [] })
+        }
+      }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(
+        port,
+        `/tasks/${planResult.manifest.taskId}/dispatch`,
+        {
+          targetRoot: escapedTargetRoot,
+          evidenceRoot: escapedEvidenceRoot
+        }
+      );
+
+      expect(response.status).toBe(400);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("bad_request");
+      expect(String((response.body as Record<string, unknown>)["message"])).toContain("escapes configured root");
+    } finally {
+      await apiServer.stop();
+      await rm(managedTargetRoot, { recursive: true, force: true });
+      await rm(managedEvidenceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("serves task evidence and snapshot endpoints", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(eligibleInput, {
@@ -2310,7 +2473,7 @@ describe("operator API server", () => {
 
     const taskId = planResult.manifest.taskId;
     const apiServer = createOperatorApiServer(
-      { port: 0, host: "127.0.0.1" },
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
       { repository }
     );
 
@@ -3382,7 +3545,7 @@ describe("dispatchReadyTask", () => {
             developer: new DeterministicDeveloperAgent(),
             validator: new DeterministicValidationAgent(),
             scm: new DeterministicScmAgent(),
-            github: fixtureGithub,
+            github: new FixtureGitHubAdapter({ candidates: [] }),
             openClawDispatch: new FixtureOpenClawDispatchAdapter()
           }
         )
@@ -3437,7 +3600,7 @@ describe("dispatchReadyTask", () => {
           developer: new DeterministicDeveloperAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
-          github: fixtureGithub
+          github: new FixtureGitHubAdapter({ candidates: [] })
         }
       );
 
@@ -3496,7 +3659,7 @@ describe("dispatchReadyTask", () => {
           developer: developer as unknown as DeterministicDeveloperAgent,
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
-          github: fixtureGithub
+          github: new FixtureGitHubAdapter({ candidates: [] })
         }
       );
 
@@ -3584,7 +3747,7 @@ describe("createReadyTaskDispatcher", () => {
           developer: new DeterministicDeveloperAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
-          github: fixtureGithub,
+          github: new FixtureGitHubAdapter({ candidates: [] }),
           openClawDispatch: new FixtureOpenClawDispatchAdapter()
         }
       )
@@ -3631,7 +3794,7 @@ describe("createReadyTaskDispatcher", () => {
           developer: new DeterministicDeveloperAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
-          github: fixtureGithub,
+          github: new FixtureGitHubAdapter({ candidates: [] }),
           openClawDispatch: new FixtureOpenClawDispatchAdapter()
         }
       );
@@ -3648,3 +3811,4 @@ describe("createReadyTaskDispatcher", () => {
     }
   });
 });
+

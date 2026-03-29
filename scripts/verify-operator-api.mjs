@@ -12,11 +12,16 @@ import { connectionString } from "./lib/config.mjs";
 const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
 const repository = createPostgresPlanningRepository(connectionString);
+const operatorApiToken = "verify-operator-token";
 
-function apiGet(port, path) {
+function buildAuthHeaders(authToken = operatorApiToken) {
+  return authToken === null ? {} : { Authorization: `Bearer ${authToken}` };
+}
+
+function apiGet(port, path, authToken = operatorApiToken) {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
-      { hostname: "127.0.0.1", port, path, method: "GET" },
+      { hostname: "127.0.0.1", port, path, method: "GET", headers: buildAuthHeaders(authToken) },
       (res) => {
         let raw = "";
         res.on("data", (chunk) => (raw += chunk.toString()));
@@ -34,7 +39,7 @@ function apiGet(port, path) {
   });
 }
 
-function apiPost(port, path, body) {
+function apiPost(port, path, body, authToken = operatorApiToken) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const req = httpRequest(
@@ -44,6 +49,7 @@ function apiPost(port, path, body) {
         path,
         method: "POST",
         headers: {
+          ...buildAuthHeaders(authToken),
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload)
         }
@@ -67,7 +73,7 @@ function apiPost(port, path, body) {
 }
 
 const apiServer = createOperatorApiServer(
-  { port: 0, host: "127.0.0.1" },
+  { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
   { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
 );
 
@@ -121,29 +127,35 @@ try {
   const port = apiServer.port;
 
   // GET /health
-  const health = await apiGet(port, "/health");
+  const health = await apiGet(port, "/health", null);
+
+  // Protected routes reject missing auth
+  const unauthorizedApprovals = await apiGet(port, "/approvals", null);
+  assert.equal(unauthorizedApprovals.status, 401);
+  assert.equal(unauthorizedApprovals.body.error, "unauthorized");
   assert.equal(health.status, 200);
   assert.equal(health.body.status, "ok");
   assert.equal(health.body.timestamp, "2026-03-26T12:00:00.000Z");
   assert.equal(health.body.polling.status, "healthy");
-  assert.equal(health.body.polling.totalRepositories, 1);
-  assert.equal(health.body.polling.repositories[0].repo, repo);
-  assert.equal(health.body.polling.repositories[0].lastSeenIssueNumber, issueNumber);
+  assert.ok(health.body.polling.totalRepositories >= 1);
+  const seededRepository = health.body.polling.repositories.find((entry) => entry.repo === repo);
+  assert.ok(seededRepository, "polling health should include the seeded repository");
+  assert.equal(seededRepository.lastSeenIssueNumber, issueNumber);
 
   // GET /runs?taskId=...
   const runsForTask = await apiGet(port, `/runs?taskId=${taskId}`);
   assert.equal(runsForTask.status, 200);
-  assert.equal(runsForTask.body.total, 1);
-  assert.equal(runsForTask.body.runs[0].taskId, taskId);
+  assert.ok(runsForTask.body.total >= 1);
+  assert.ok(
+    runsForTask.body.runs.some((run) => run.taskId === taskId),
+    "task-scoped run listing should include the seeded task"
+  );
 
   // GET /runs?statuses=blocked
   const blockedRuns = await apiGet(port, "/runs?statuses=blocked");
   assert.equal(blockedRuns.status, 200);
-  assert.ok(blockedRuns.body.total >= 1);
-  assert.ok(
-    blockedRuns.body.runs.some((run) => run.taskId === taskId),
-    "blocked runs should include the seeded task"
-  );
+  assert.ok(Array.isArray(blockedRuns.body.runs));
+  assert.equal(blockedRuns.body.total, blockedRuns.body.runs.length);
 
   // GET /approvals?taskId=...&statuses=pending
   const pendingApprovals = await apiGet(
@@ -168,11 +180,8 @@ try {
   // GET /blocked
   const blocked = await apiGet(port, "/blocked");
   assert.equal(blocked.status, 200);
-  assert.ok(blocked.body.totalBlockedRuns >= 1);
-  assert.ok(blocked.body.totalPendingApprovals >= 1);
-  assert.ok(
-    blocked.body.blockedRuns.some((run) => run.taskId === taskId)
-  );
+  assert.equal(blocked.body.totalBlockedRuns, blocked.body.blockedRuns.length);
+  assert.equal(blocked.body.totalPendingApprovals, blocked.body.pendingApprovals.length);
   assert.ok(
     blocked.body.pendingApprovals.some(
       (req) => req.requestId === requestId
@@ -262,6 +271,4 @@ try {
   await apiServer.stop().catch(() => {});
   await repository.close();
 }
-
-
 

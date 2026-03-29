@@ -274,7 +274,7 @@ The operator API is needed for approvals and monitoring. Start it in a separate 
 corepack pnpm operator:api
 ```
 
-This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The server verifies Postgres connectivity before accepting requests.
+This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The server verifies Postgres connectivity before accepting requests. Set `REDDWARF_OPERATOR_TOKEN` first; every route except `/health` requires `Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>`.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -377,12 +377,15 @@ Check for pending approvals:
 
 **PowerShell:**
 ```powershell
-Invoke-RestMethod http://localhost:8080/approvals
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8080/approvals -Headers @{ Authorization = "Bearer $env:REDDWARF_OPERATOR_TOKEN" }
 ```
 
 **Bash:**
 ```bash
-curl http://localhost:8080/approvals
+curl http://localhost:8080/health
+curl http://localhost:8080/approvals \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}"
 ```
 
 Approve the plan:
@@ -392,6 +395,7 @@ Approve the plan:
 Invoke-RestMethod `
   -Method POST `
   -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
+  -Headers @{ Authorization = "Bearer $env:REDDWARF_OPERATOR_TOKEN" } `
   -ContentType "application/json" `
   -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good"}'
 ```
@@ -399,6 +403,7 @@ Invoke-RestMethod `
 **Bash:**
 ```bash
 curl -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good"}'
 ```

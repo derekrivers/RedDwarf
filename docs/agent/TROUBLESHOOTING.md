@@ -127,3 +127,11 @@
 - Failing approach: relying solely on `git status --porcelain` to detect developer work product.
 - Working workaround: `repositoryHasChanges` now also checks `git rev-list --count HEAD > 1` to detect local commits beyond the initial shallow clone. The commit publisher similarly handles pre-committed changes by checking for commits beyond the base branch instead of requiring uncommitted files.
 - Verification: rerun `E2E_TARGET_REPO=derekrivers/FirstVoyage E2E_USE_OPENCLAW=true corepack pnpm e2e` and confirm the developer phase completes, validation returns `await_scm`, and SCM opens a real PR.
+
+## Operator API now returns `401 unauthorized` for routes that used to work locally
+
+- Symptom: `curl` or a local script can still reach `GET /health`, but `GET /approvals`, `GET /blocked`, `POST /approvals/:id/resolve`, or `POST /tasks/:taskId/dispatch` now return `401 {"error":"unauthorized"...}`.
+- Root cause: feature 94 hardened the localhost operator surface. Every operator route except `GET /health` now requires the configured `REDDWARF_OPERATOR_TOKEN` via `Authorization: Bearer <token>` or `x-reddwarf-operator-token`.
+- Failing approach: treating the operator API as an unauthenticated localhost control port, or starting `scripts/start-stack.mjs` / `scripts/start-operator-api.mjs` without `REDDWARF_OPERATOR_TOKEN` set.
+- Working workaround: set `REDDWARF_OPERATOR_TOKEN` in the environment before starting the stack, then include `Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}` on every protected operator request. Manual dispatch roots are also now restricted to the configured managed roots, so do not pass arbitrary filesystem paths.
+- Verification: `corepack pnpm verify:operator-api`; `curl http://127.0.0.1:8080/health`; `curl http://127.0.0.1:8080/approvals -H "Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>"`.

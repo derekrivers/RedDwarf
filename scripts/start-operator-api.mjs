@@ -5,12 +5,19 @@
 // Default port: 8080
 // Default DB:   postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf
 //               (override with HOST_DATABASE_URL env var)
+// Required env: REDDWARF_OPERATOR_TOKEN
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { connectionString } from "./lib/config.mjs";
 
 const port = parseInt(process.argv[2] ?? "8080", 10);
+const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
+
+if (operatorApiToken.length === 0) {
+  console.error("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
+  process.exit(1);
+}
 
 const repository = createPostgresPlanningRepository(connectionString);
 
@@ -25,10 +32,11 @@ try {
   process.exit(1);
 }
 
-const server = createOperatorApiServer({ port }, { repository });
+const server = createOperatorApiServer({ port, authToken: operatorApiToken }, { repository });
 
 await server.start();
 console.log(`Operator API listening on http://127.0.0.1:${server.port}`);
+console.log("  Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 console.log(`  GET  http://127.0.0.1:${server.port}/approvals`);
 console.log(`  GET  http://127.0.0.1:${server.port}/blocked`);
 console.log(`  GET  http://127.0.0.1:${server.port}/runs`);
