@@ -55,11 +55,57 @@ export interface WorkspaceCommitPublisher {
     workspace: MaterializedManagedWorkspace;
     baseBranch: string;
     branchName: string;
+    allowedPaths: string[];
     logger?: PlanningPipelineLogger;
   }): Promise<WorkspaceCommitPublicationResult>;
 }
 
 type RepoAwareWorkspace = MaterializedManagedWorkspace & { repoRoot?: string | null };
+
+export class AllowedPathViolationError extends Error {
+  readonly allowedPaths: string[];
+  readonly changedFiles: string[];
+  readonly violatingFiles: string[];
+
+  constructor(input: {
+    workspaceId: string;
+    allowedPaths: string[];
+    changedFiles: string[];
+    violatingFiles: string[];
+  }) {
+    const scopeLabel =
+      input.allowedPaths.length > 0 ? input.allowedPaths.join(", ") : "none";
+    const violatingLabel = input.violatingFiles.join(", ");
+    super(
+      `Workspace ${input.workspaceId} changed files outside the approved path scope. Allowed paths: ${scopeLabel}. Violating files: ${violatingLabel}.`
+    );
+    this.name = "AllowedPathViolationError";
+    this.allowedPaths = [...input.allowedPaths];
+    this.changedFiles = [...input.changedFiles];
+    this.violatingFiles = [...input.violatingFiles];
+  }
+}
+
+export function findDisallowedChangedFiles(
+  changedFiles: string[],
+  allowedPaths: string[]
+): string[] {
+  const normalizedAllowedPaths = allowedPaths
+    .map((value) => normalizeRepoRelativePath(value))
+    .filter((value) => value.length > 0);
+
+  return [...new Set(
+    changedFiles
+      .map((value) => normalizeRepoRelativePath(value))
+      .filter((value) => value.length > 0)
+      .filter(
+        (changedFile) =>
+          !normalizedAllowedPaths.some((allowedPath) =>
+            repoPathMatchesAllowedPattern(changedFile, allowedPath)
+          )
+      )
+  )].sort((left, right) => left.localeCompare(right));
+}
 
 export function assignWorkspaceRepoRoot(
   workspace: MaterializedManagedWorkspace,
@@ -247,7 +293,14 @@ export function createGitWorkspaceCommitPublisher(
       await runCommand("git", ["config", "user.email", userEmail], repoRoot, input.logger);
 
       const statusBefore = await runCommand("git", ["status", "--porcelain"], repoRoot, input.logger);
-      const hasUncommittedChanges = statusBefore.stdout.trim().length > 0;
+      const uncommittedChangedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
+      const hasUncommittedChanges = uncommittedChangedFiles.length > 0;
+
+      assertChangedFilesWithinAllowedPaths({
+        workspaceId: input.workspace.workspaceId,
+        allowedPaths: input.allowedPaths,
+        changedFiles: uncommittedChangedFiles
+      });
 
       if (hasUncommittedChanges) {
         await runCommand("git", ["add", "--all"], repoRoot, input.logger);
@@ -281,6 +334,13 @@ export function createGitWorkspaceCommitPublisher(
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
+
+      assertChangedFilesWithinAllowedPaths({
+        workspaceId: input.workspace.workspaceId,
+        allowedPaths: input.allowedPaths,
+        changedFiles
+      });
+
       const diff = (await runCommand(
         "git",
         ["diff", `${input.baseBranch}..HEAD`],
@@ -392,6 +452,87 @@ async function runCommand(
       resolve({ stdout, stderr });
     });
   });
+}
+
+function parseGitStatusChangedFiles(statusOutput: string): string[] {
+  return statusOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length >= 4)
+    .map((line) => line.slice(3).trim())
+    .map((path) => {
+      const renameSeparator = path.lastIndexOf(" -> ");
+      return renameSeparator >= 0 ? path.slice(renameSeparator + 4) : path;
+    })
+    .filter((path) => path.length > 0);
+}
+
+function assertChangedFilesWithinAllowedPaths(input: {
+  workspaceId: string;
+  allowedPaths: string[];
+  changedFiles: string[];
+}): void {
+  const violatingFiles = findDisallowedChangedFiles(
+    input.changedFiles,
+    input.allowedPaths
+  );
+
+  if (violatingFiles.length === 0) {
+    return;
+  }
+
+  throw new AllowedPathViolationError({
+    workspaceId: input.workspaceId,
+    allowedPaths: input.allowedPaths,
+    changedFiles: input.changedFiles,
+    violatingFiles
+  });
+}
+
+function normalizeRepoRelativePath(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/");
+}
+
+function repoPathMatchesAllowedPattern(
+  repoPath: string,
+  allowedPath: string
+): boolean {
+  return globPatternToRegExp(allowedPath).test(repoPath);
+}
+
+function globPatternToRegExp(pattern: string): RegExp {
+  let regex = "^";
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index] ?? "";
+    const nextCharacter = pattern[index + 1] ?? "";
+
+    if (character === "*" && nextCharacter === "*") {
+      regex += ".*";
+      index += 1;
+      continue;
+    }
+
+    if (character === "*") {
+      regex += "[^/]*";
+      continue;
+    }
+
+    if (/[\\[\]{}()+?.^$|]/.test(character)) {
+      regex += `\\${character}`;
+      continue;
+    }
+
+    regex += character;
+  }
+
+  regex += "$";
+  return new RegExp(regex);
 }
 
 function buildGitHubRemoteUrl(repo: string, token: string | null): string {

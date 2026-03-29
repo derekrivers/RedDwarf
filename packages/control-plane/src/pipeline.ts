@@ -108,6 +108,7 @@ import {
   createWorkspaceToolPolicy
 } from "./workspace.js";
 import {
+  AllowedPathViolationError,
   assignWorkspaceRepoRoot,
   createArchitectHandoffAwaiter,
   createDeveloperHandoffAwaiter,
@@ -179,7 +180,8 @@ const EventCodes = {
   SECRETS_ADAPTER_REQUIRED: "SECRETS_ADAPTER_REQUIRED",
   SECRET_LEASE_FAILED: "SECRET_LEASE_FAILED",
   SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING",
-  OPENCLAW_DISPATCH: "OPENCLAW_DISPATCH"
+  OPENCLAW_DISPATCH: "OPENCLAW_DISPATCH",
+  ALLOWED_PATHS_VIOLATED: "ALLOWED_PATHS_VIOLATED"
 } as const;
 
 export interface PlanningConcurrencyOptions {
@@ -4271,13 +4273,40 @@ export async function runScmPhase(
       throw new Error(`SCM draft for ${taskId} did not provide a base branch.`);
     }
 
-    const publication = await workspaceCommitPublisher.publish({
-      manifest: currentManifest,
-      workspace,
-      baseBranch: draft.baseBranch,
-      branchName: draft.branchName,
-      logger: runLogger
-    });
+    let publication: WorkspaceCommitPublicationResult;
+
+    try {
+      publication = await workspaceCommitPublisher.publish({
+        manifest: currentManifest,
+        workspace,
+        baseBranch: draft.baseBranch,
+        branchName: draft.branchName,
+        allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
+        logger: runLogger
+      });
+    } catch (error) {
+      if (error instanceof AllowedPathViolationError) {
+        throw new PlanningPipelineFailure({
+          message: error.message,
+          failureClass: "policy_violation",
+          phase: "scm",
+          code: EventCodes.ALLOWED_PATHS_VIOLATED,
+          details: {
+            workspaceId: workspace.workspaceId,
+            baseBranch: draft.baseBranch,
+            branchName: draft.branchName,
+            allowedPaths: error.allowedPaths,
+            changedFiles: error.changedFiles,
+            violatingFiles: error.violatingFiles
+          },
+          cause: error,
+          taskId,
+          runId
+        });
+      }
+
+      throw error;
+    }
     const branch = publication.branch;
     await recordRunEvent({
       repository,

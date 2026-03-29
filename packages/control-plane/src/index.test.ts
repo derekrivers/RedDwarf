@@ -8,6 +8,7 @@ import {
   DeterministicPlanningAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  AllowedPathViolationError,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
@@ -25,6 +26,7 @@ import {
   destroyTaskWorkspace,
   dispatchReadyTask,
   extractSessionSummary,
+  findDisallowedChangedFiles,
   generateOpenClawConfig,
   ingestKnowledgeSources,
   parseSessionJsonl,
@@ -132,7 +134,7 @@ function createFixtureOpenClawCompletionAwaiter(summary = "OpenClaw developer se
 
 function createFixtureWorkspaceCommitPublisher(github?: { createBranch(repo: string, baseBranch: string, branchName: string): Promise<{ repo: string; baseBranch: string; branchName: string; ref: string; url: string; createdAt: string }> }) {
   return {
-    async publish(input: { manifest: { source: { repo: string } }; baseBranch: string; branchName: string }) {
+    async publish(input: { manifest: { source: { repo: string } }; baseBranch: string; branchName: string; allowedPaths: string[] }) {
       const branch = github
         ? await github.createBranch(input.manifest.source.repo, input.baseBranch, input.branchName)
         : {
@@ -1117,6 +1119,189 @@ describe("control-plane", () => {
         await expect(access(record.metadata.archivePath as string)).resolves.toBeUndefined();
         expect(record.location.startsWith("evidence://")).toBe(true);
       }
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails SCM before publish when repository changes escape the approved path scope", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-scope-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-scope-evidence-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic change that should be blocked when SCM sees repo edits outside the approved path scope.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-scm-scope-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for SCM path-scope enforcement test.",
+        comment: "Reject any out-of-scope repo edits before publish."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-scm-scope-001"
+      });
+      const repoBootstrapper = createFixtureWorkspaceRepoBootstrapper();
+      const completionAwaiter = createFixtureOpenClawCompletionAwaiter(
+        "OpenClaw developer session completed with an out-of-scope docs update."
+      );
+      const github = new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo: planningResult.manifest.source.repo,
+            issueNumber: 99,
+            title: planningResult.manifest.title,
+            body: planningResult.manifest.summary,
+            labels: ["ai-eligible"],
+            url: "https://github.com/acme/platform/issues/99",
+            state: "open"
+          }
+        ]
+      });
+      const commitPublisher = {
+        async publish(input: {
+          workspace: { workspaceId: string };
+          allowedPaths: string[];
+        }) {
+          const changedFiles = ["docs/health-check.md"];
+          const violatingFiles = findDisallowedChangedFiles(
+            changedFiles,
+            input.allowedPaths
+          );
+
+          if (violatingFiles.length > 0) {
+            throw new AllowedPathViolationError({
+              workspaceId: input.workspace.workspaceId,
+              allowedPaths: input.allowedPaths,
+              changedFiles,
+              violatingFiles
+            });
+          }
+
+          throw new Error("Expected the allowed-path gate to block SCM publish.");
+        }
+      };
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scm-scope",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-scm-scope-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-scm-scope-validation"
+        }
+      );
+
+      await expect(
+        runScmPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            scm: new DeterministicScmAgent(),
+            github,
+            workspaceRepoBootstrapper: repoBootstrapper,
+            workspaceCommitPublisher: commitPublisher,
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-scm-scope-phase"
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "ALLOWED_PATHS_VIOLATED",
+        failureClass: "policy_violation",
+        phase: "scm"
+      });
+
+      const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const runSummary = await repository.getRunSummary(
+        planningResult.manifest.taskId,
+        "run-scm-scope-phase"
+      );
+      const failureRequest = snapshot.approvalRequests.find(
+        (request) =>
+          request.phase === "scm" &&
+          request.status === "pending" &&
+          request.requestedBy === "failure-automation"
+      );
+
+      expect(validation.nextAction).toBe("await_scm");
+      expect(snapshot.manifest?.lifecycleStatus).toBe("blocked");
+      expect(snapshot.manifest?.currentPhase).toBe("scm");
+      expect(runSummary?.failureClass).toBe("policy_violation");
+      expect(failureRequest?.status).toBe("pending");
+      expect(
+        snapshot.phaseRecords.some(
+          (record) =>
+            record.phase === "scm" &&
+            record.status === "failed" &&
+            (record.details as { code?: string }).code === "ALLOWED_PATHS_VIOLATED"
+        )
+      ).toBe(true);
+      expect(
+        snapshot.evidenceRecords.some(
+          (record) =>
+            record.recordId === `${planningResult.manifest.taskId}:scm:failure:run-scm-scope-phase` &&
+            (record.metadata as { code?: string }).code === "ALLOWED_PATHS_VIOLATED"
+        )
+      ).toBe(true);
+      expect(
+        snapshot.runEvents.some(
+          (event) =>
+            event.code === "PHASE_FAILED" &&
+            (event.data as { causeCode?: string }).causeCode ===
+              "ALLOWED_PATHS_VIOLATED"
+        )
+      ).toBe(true);
+      expect(
+        snapshot.runEvents.some((event) => event.code === "PULL_REQUEST_CREATED")
+      ).toBe(false);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       await rm(evidenceRoot, { recursive: true, force: true });

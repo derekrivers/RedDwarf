@@ -237,3 +237,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `scripts/verify-approvals.mjs` and `scripts/verify-recovery.mjs` to use the current `createPostgresPlanningRepository(...)` factory so the live Postgres verifiers still run after the injected-pool repository refactor.
 - Verification for feature 91: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts tests/postgres.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:approvals`; `corepack pnpm verify:recovery`.
 - Likely next board item: feature 92, enforce allowed-path boundaries before commit and push.
+
+- Completed feature 92 from `FEATURE_BOARD.md`: enforce allowed-path boundaries before commit and push.
+- Added SCM-side allowed-path enforcement in `live-workflow.ts` so the real git publisher now checks both uncommitted repo edits and final branch diff contents against the approved path scope before commit and push.
+- Added `AllowedPathViolationError` plus reusable changed-file scope matching so SCM can fail closed with explicit violating-file details, and mapped those failures in `runScmPhase(...)` to `policy_violation` pipeline failures with code `ALLOWED_PATHS_VIOLATED`.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` for glob-style allowed-path matching and for SCM path-scope violations, proving that out-of-scope repo edits block before branch or PR publication and persist a clear SCM failure.
+- Updated `scripts/verify-scm.mjs` to the current repository factory and write-enabled fixture workflow so Postgres-backed SCM verification still runs after the repository constructor refactor and the developer read-only gating change.
+- Verification for feature 92: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:scm`.
+- Likely next board item: feature 93, remove tokenized git remotes and redact secret-bearing failures.
