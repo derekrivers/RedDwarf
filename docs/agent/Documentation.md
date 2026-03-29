@@ -245,3 +245,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `scripts/verify-scm.mjs` to the current repository factory and write-enabled fixture workflow so Postgres-backed SCM verification still runs after the repository constructor refactor and the developer read-only gating change.
 - Verification for feature 92: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:scm`.
 - Likely next board item: feature 93, remove tokenized git remotes and redact secret-bearing failures.
+
+- Completed feature 93 from `FEATURE_BOARD.md`: remove tokenized git remotes and redact secret-bearing failures.
+- Updated `packages/control-plane/src/live-workflow.ts` so GitHub clone and push operations now use plain `https://github.com/<repo>.git` remotes with env-backed `http.extraHeader` auth, keeping tokens out of argv and remote URLs while still redacting auth headers, bearer tokens, and tokenized remotes from subprocess failures.
+- Updated `packages/control-plane/src/pipeline.ts` so normalized pipeline failures, serialized error payloads, persisted phase/evidence failure details, and `dispatchReadyTask(...)` operator-visible error strings all pass through the same secret-bearing text sanitizer before storage or response.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` for sanitizer behavior, SCM failure-persistence redaction, and post-approval dispatch error redaction.
+- Verification for feature 93: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:scm`.
+- Likely next board item: feature 94, authenticate the operator API and constrain manual dispatch roots.

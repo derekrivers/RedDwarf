@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { Buffer } from "node:buffer";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -149,10 +150,7 @@ export function createGitHubWorkspaceRepoBootstrapper(
   return {
     async ensureRepo(input) {
       const repoRoot = join(input.workspace.workspaceRoot, "repo");
-      const remoteUrl = buildGitHubRemoteUrl(
-        input.manifest.source.repo,
-        process.env[tokenEnvVar] ?? null
-      );
+      const remoteUrl = buildGitHubRemoteUrl(input.manifest.source.repo);
 
       if (await pathExists(join(repoRoot, ".git"))) {
         return {
@@ -166,7 +164,8 @@ export function createGitHubWorkspaceRepoBootstrapper(
         "git",
         ["clone", "--depth", "1", "--branch", input.baseBranch, remoteUrl, repoRoot],
         input.workspace.workspaceRoot,
-        input.logger
+        input.logger,
+        createGitHubCommandOptions(process.env[tokenEnvVar] ?? null)
       );
 
       return {
@@ -347,16 +346,17 @@ export function createGitWorkspaceCommitPublisher(
         repoRoot,
         input.logger
       )).stdout;
-      const pushRemote = buildGitHubRemoteUrl(
-        input.manifest.source.repo,
+      const githubCommandOptions = createGitHubCommandOptions(
         process.env[tokenEnvVar] ?? null
       );
+      const pushRemote = buildGitHubRemoteUrl(input.manifest.source.repo);
 
       await runCommand(
         "git",
         ["push", "-u", pushRemote, `${input.branchName}:${input.branchName}`],
         repoRoot,
-        input.logger
+        input.logger,
+        githubCommandOptions
       );
 
       return {
@@ -374,6 +374,63 @@ export function createGitWorkspaceCommitPublisher(
       };
     }
   };
+}
+
+interface GitHubCommandOptions extends CommandExecutionOptions {}
+
+function createGitHubCommandOptions(
+  token: string | null | undefined
+): GitHubCommandOptions {
+  const trimmedToken = token?.trim() ?? "";
+
+  if (trimmedToken.length === 0) {
+    return {};
+  }
+
+  const encodedCredential = Buffer.from(
+    `x-access-token:${trimmedToken}`,
+    "utf8"
+  ).toString("base64");
+
+  return {
+    env: {
+      ...process.env,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${encodedCredential}`
+    },
+    redactValues: [trimmedToken, encodedCredential]
+  };
+}
+
+export function sanitizeSecretBearingText(
+  value: string,
+  redactValues: string[] = []
+): string {
+  let sanitized = value;
+
+  for (const candidate of redactValues) {
+    if (candidate.trim().length === 0) {
+      continue;
+    }
+
+    sanitized = sanitized.split(candidate).join("[REDACTED]");
+  }
+
+  sanitized = sanitized.replace(
+    /https:\/\/x-access-token:[^@\s]+@github\.com\//gi,
+    "https://x-access-token:[REDACTED]@github.com/"
+  );
+  sanitized = sanitized.replace(
+    /authorization:\s*basic\s+[a-z0-9+/=]+/gi,
+    "AUTHORIZATION: basic [REDACTED]"
+  );
+  sanitized = sanitized.replace(
+    /authorization:\s*bearer\s+[^\s]+/gi,
+    "Authorization: Bearer [REDACTED]"
+  );
+
+  return sanitized;
 }
 
 async function repositoryHasChanges(
@@ -413,16 +470,22 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface CommandExecutionOptions {
+  env?: NodeJS.ProcessEnv;
+  redactValues?: string[];
+}
+
 async function runCommand(
   executable: string,
   args: string[],
   cwd: string,
-  logger?: PlanningPipelineLogger
+  logger?: PlanningPipelineLogger,
+  options: CommandExecutionOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd,
-      env: process.env,
+      env: options.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"]
     });
     const stdoutChunks: string[] = [];
@@ -439,7 +502,10 @@ async function runCommand(
       if ((exitCode ?? 1) !== 0) {
         reject(
           new Error(
-            `Command ${executable} ${args.join(" ")} failed in ${cwd} with exit code ${exitCode ?? 1}: ${stderr || stdout}`
+            sanitizeSecretBearingText(
+              `Command ${executable} ${args.join(" ")} failed in ${cwd} with exit code ${exitCode ?? 1}: ${stderr || stdout}`,
+              options.redactValues
+            )
           )
         );
         return;
@@ -535,9 +601,6 @@ function globPatternToRegExp(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function buildGitHubRemoteUrl(repo: string, token: string | null): string {
-  return token && token.trim().length > 0
-    ? `https://x-access-token:${encodeURIComponent(token)}@github.com/${repo}.git`
-    : `https://github.com/${repo}.git`;
+function buildGitHubRemoteUrl(repo: string): string {
+  return `https://github.com/${repo}.git`;
 }
-

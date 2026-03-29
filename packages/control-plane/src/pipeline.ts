@@ -115,6 +115,7 @@ import {
   createGitHubWorkspaceRepoBootstrapper,
   createGitWorkspaceCommitPublisher,
   enableWorkspaceCodeWriting,
+  sanitizeSecretBearingText,
   readWorkspaceRepoRoot,
   type OpenClawCompletionAwaiter,
   type WorkspaceCommitPublicationResult,
@@ -5192,11 +5193,11 @@ function normalizePipelineFailure(
 ): PlanningPipelineFailure {
   if (error instanceof PlanningPipelineFailure) {
     return new PlanningPipelineFailure({
-      message: error.message,
+      message: sanitizeSecretBearingText(error.message),
       failureClass: error.failureClass,
       phase: error.phase,
       code: error.code,
-      details: error.details,
+      details: sanitizeSerializedErrorDetails(error.details),
       cause: error,
       taskId: error.taskId ?? taskId,
       runId: error.runId ?? runId
@@ -5206,7 +5207,7 @@ function normalizePipelineFailure(
   return new PlanningPipelineFailure({
     message:
       error instanceof Error
-        ? error.message
+        ? sanitizeSecretBearingText(error.message)
         : `Unexpected failure while running ${phase}.`,
     failureClass: phaseRegistry[phase].failureClass,
     phase,
@@ -5222,27 +5223,68 @@ function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof PlanningPipelineFailure) {
     return {
       name: error.name,
-      message: error.message,
+      message: sanitizeSecretBearingText(error.message),
       code: error.code,
       phase: error.phase,
       failureClass: error.failureClass,
       taskId: error.taskId,
       runId: error.runId,
-      details: error.details
+      details: sanitizeSerializedErrorDetails(error.details)
     };
   }
 
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message,
-      stack: error.stack ?? null
+      message: sanitizeSecretBearingText(error.message),
+      stack: error.stack ? sanitizeSecretBearingText(error.stack) : null
     };
   }
 
   return {
-    message: String(error)
+    message: sanitizeSecretBearingText(String(error))
   };
+}
+
+function sanitizeSerializedErrorDetails(
+  details: Record<string, unknown>
+): Record<string, unknown> {
+  return sanitizeSerializedErrorValue(details) as Record<string, unknown>;
+}
+
+function sanitizeSerializedErrorValue(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet<object>()
+): unknown {
+  if (typeof value === "string") {
+    return sanitizeSecretBearingText(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeSerializedErrorValue(entry, seen));
+  }
+
+  if (value && typeof value === "object") {
+    if (seen.has(value as object)) {
+      return "[Circular]";
+    }
+
+    seen.add(value as object);
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        sanitizeSerializedErrorValue(entry, seen)
+      ])
+    );
+  }
+
+  return value;
+}
+
+function formatDispatchError(error: unknown): string {
+  return sanitizeSecretBearingText(
+    error instanceof Error ? error.message : String(error)
+  );
 }
 
 function getDurationMs(start: Date, end: Date): number {
@@ -5675,14 +5717,14 @@ export async function dispatchReadyTask(
   } catch (error) {
     dispatchLogger.error("Developer phase failed.", {
       taskId,
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     });
     return {
       taskId,
       outcome: "failed",
       phasesExecuted: [...phasesExecuted, "development"],
       finalPhase: "development",
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     };
   }
 
@@ -5735,14 +5777,14 @@ export async function dispatchReadyTask(
   } catch (error) {
     dispatchLogger.error("Validation phase failed.", {
       taskId,
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     });
     return {
       taskId,
       outcome: "failed",
       phasesExecuted: [...phasesExecuted, "validation"],
       finalPhase: "validation",
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     };
   }
 
@@ -5795,15 +5837,14 @@ export async function dispatchReadyTask(
   } catch (error) {
     dispatchLogger.error("SCM phase failed.", {
       taskId,
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     });
     return {
       taskId,
       outcome: "failed",
       phasesExecuted: [...phasesExecuted, "scm"],
       finalPhase: "scm",
-      error: error instanceof Error ? error.message : String(error)
+      error: formatDispatchError(error)
     };
   }
 }
-

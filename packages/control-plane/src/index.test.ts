@@ -27,6 +27,7 @@ import {
   dispatchReadyTask,
   extractSessionSummary,
   findDisallowedChangedFiles,
+  sanitizeSecretBearingText,
   generateOpenClawConfig,
   ingestKnowledgeSources,
   parseSessionJsonl,
@@ -164,6 +165,23 @@ describe("control-plane", () => {
   it("rejects illegal lifecycle transitions", () => {
     expect(() => assertTaskLifecycleTransition("ready", "completed")).toThrow();
     expect(() => assertPhaseLifecycleTransition("passed", "running")).toThrow();
+  });
+
+  it("redacts tokenized remotes and auth headers from secret-bearing text", () => {
+    const token = "ghs_secret_token";
+    const encodedCredential = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+    const sanitized = sanitizeSecretBearingText(
+      [
+        `git push https://x-access-token:${token}@github.com/acme/platform.git`,
+        `AUTHORIZATION: basic ${encodedCredential}`,
+        `Authorization: Bearer ${token}`
+      ].join("\n"),
+      [token, encodedCredential]
+    );
+
+    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).not.toContain(token);
+    expect(sanitized).not.toContain(encodedCredential);
   });
 
   it("completes the planning pipeline and records structured observability output", async () => {
@@ -1302,6 +1320,152 @@ describe("control-plane", () => {
       expect(
         snapshot.runEvents.some((event) => event.code === "PULL_REQUEST_CREATED")
       ).toBe(false);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts secret-bearing SCM failures before persisting phase evidence", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-redaction-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-redaction-evidence-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary: "Plan a deterministic change that verifies SCM failure redaction.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-scm-redaction-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for SCM redaction test.",
+        comment: "Reject and redact any secret-bearing publish failures."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-scm-redaction-001"
+      });
+      const repoBootstrapper = createFixtureWorkspaceRepoBootstrapper();
+      const completionAwaiter = createFixtureOpenClawCompletionAwaiter();
+      const github = new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo: planningResult.manifest.source.repo,
+            issueNumber: 99,
+            title: planningResult.manifest.title,
+            body: planningResult.manifest.summary,
+            labels: ["ai-eligible"],
+            url: "https://github.com/acme/platform/issues/99",
+            state: "open"
+          }
+        ]
+      });
+      const token = "ghs_persist_secret";
+      const encodedCredential = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+      const commitPublisher = {
+        async publish() {
+          throw new Error(
+            [
+              `git push failed for https://x-access-token:${token}@github.com/acme/platform.git`,
+              `AUTHORIZATION: basic ${encodedCredential}`,
+              `Authorization: Bearer ${token}`
+            ].join("\n")
+          );
+        }
+      };
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scm-redaction",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-scm-redaction-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-25T18:15:00.000Z"),
+          idGenerator: () => "run-scm-redaction-validation"
+        }
+      );
+
+      await expect(
+        runScmPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            scm: new DeterministicScmAgent(),
+            github,
+            workspaceRepoBootstrapper: repoBootstrapper,
+            workspaceCommitPublisher: commitPublisher,
+            clock: () => new Date("2026-03-25T18:20:00.000Z"),
+            idGenerator: () => "run-scm-redaction-phase"
+          }
+        )
+      ).rejects.toMatchObject({
+        phase: "scm",
+        message: expect.stringContaining("[REDACTED]")
+      });
+
+      const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+      const failedPhase = snapshot.phaseRecords.find(
+        (record) =>
+          record.phase === "scm" &&
+          record.status === "failed" &&
+          record.recordId === `${planningResult.manifest.taskId}:phase:scm:run-scm-redaction-phase:failed`
+      );
+      const failureEvidence = snapshot.evidenceRecords.find(
+        (record) => record.recordId === `${planningResult.manifest.taskId}:scm:failure:run-scm-redaction-phase`
+      );
+      const phaseDetails = JSON.stringify(failedPhase?.details ?? {});
+      const evidenceMetadata = JSON.stringify(failureEvidence?.metadata ?? {});
+
+      expect(validation.nextAction).toBe("await_scm");
+      expect(phaseDetails).toContain("[REDACTED]");
+      expect(phaseDetails).not.toContain(token);
+      expect(phaseDetails).not.toContain(encodedCredential);
+      expect(evidenceMetadata).toContain("[REDACTED]");
+      expect(evidenceMetadata).not.toContain(token);
+      expect(evidenceMetadata).not.toContain(encodedCredential);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       await rm(evidenceRoot, { recursive: true, force: true });
@@ -3284,6 +3448,67 @@ describe("dispatchReadyTask", () => {
       await rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("redacts secret-bearing developer failures from dispatch results", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planningInput: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 102 },
+      title: "Dispatch redaction test",
+      summary: "Plan a deterministic docs-safe change for dispatch redaction testing.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["src/app.ts"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_archive_evidence"],
+      metadata: {}
+    };
+
+    const planResult = await runPlanningPipeline(planningInput, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+
+    await resolveApprovalRequest(
+      {
+        requestId: planResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "test",
+        decisionSummary: "Approve secret redaction dispatch test"
+      },
+      { repository }
+    );
+
+    const tmpDir = await mkdtemp(join(tmpdir(), "dispatch-redaction-"));
+    const token = "ghs_dispatch_secret";
+    const developer = {
+      async createHandoff() {
+        throw new Error(
+          `git push failed for https://x-access-token:${token}@github.com/acme/platform.git using Authorization: Bearer ${token}`
+        );
+      }
+    };
+
+    try {
+      const result = await dispatchReadyTask(
+        { taskId: planResult.manifest.taskId, targetRoot: tmpDir },
+        {
+          repository,
+          developer: developer as unknown as DeterministicDeveloperAgent,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub
+        }
+      );
+
+      expect(result.outcome).toBe("failed");
+      expect(result.finalPhase).toBe("development");
+      expect(result.error).toContain("[REDACTED]");
+      expect(result.error).not.toContain(token);
+      expect(result.error).not.toContain("x-access-token:ghs_dispatch_secret");
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("listManifestsByLifecycleStatus", () => {
@@ -3423,5 +3648,3 @@ describe("createReadyTaskDispatcher", () => {
     }
   });
 });
-
-
