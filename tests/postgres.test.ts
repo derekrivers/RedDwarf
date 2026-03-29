@@ -783,6 +783,53 @@ describeIfDatabase("postgres planning repository", () => {
       pipelineRuns.find((run) => run.runId === `blocked-${issueNumber}`)?.status
     ).toBe("blocked");
   });
+
+  it("claims only one active owner for concurrent Postgres run claims", async () => {
+    const issueNumber = Date.now() + 6;
+    const repo = `claim-${issueNumber}/platform-${issueNumber}`;
+    const concurrencyKey = `github:${repo}:${issueNumber}`;
+    const taskId = `${repo.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()}-${issueNumber}`;
+    const runA = createPipelineRun({
+      runId: `claim-a-${issueNumber}`,
+      taskId,
+      concurrencyKey,
+      strategy: "serialize",
+      status: "active",
+      startedAt: "2026-03-25T18:30:00.000Z",
+      lastHeartbeatAt: "2026-03-25T18:30:00.000Z"
+    });
+    const runB = createPipelineRun({
+      runId: `claim-b-${issueNumber}`,
+      taskId,
+      concurrencyKey,
+      strategy: "serialize",
+      status: "active",
+      startedAt: "2026-03-25T18:30:00.000Z",
+      lastHeartbeatAt: "2026-03-25T18:30:00.000Z"
+    });
+
+    const [claimA, claimB] = await Promise.all([
+      repository.claimPipelineRun({ run: runA, staleAfterMs: 60_000 }),
+      repository.claimPipelineRun({ run: runB, staleAfterMs: 60_000 })
+    ]);
+    const claimResults = [
+      { runId: runA.runId, result: claimA },
+      { runId: runB.runId, result: claimB }
+    ];
+    const claimed = claimResults.filter((entry) => entry.result.blockedByRun === null);
+    const blocked = claimResults.filter((entry) => entry.result.blockedByRun !== null);
+    const activeRuns = await repository.listPipelineRuns({
+      concurrencyKey,
+      statuses: ["active"],
+      limit: 10
+    });
+
+    expect(claimed).toHaveLength(1);
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]?.result.blockedByRun?.runId).toBe(claimed[0]?.runId);
+    expect(activeRuns.map((run) => run.runId)).toEqual([claimed[0]!.runId]);
+    await expect(repository.getPipelineRun(blocked[0]!.runId)).resolves.toBeNull();
+  });
   it("persists GitHub polling cursors in Postgres", async () => {
     const repo = `polling-${Date.now()}/platform`;
 

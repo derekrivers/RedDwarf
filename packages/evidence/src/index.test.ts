@@ -199,6 +199,61 @@ describe("evidence memory partitions", () => {
       })
     ).resolves.toBe(false);
   });
-});
 
+  it("claims active runs atomically in memory, retiring stale overlaps and blocking fresh ones", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const concurrencyKey = "github:acme/platform:55";
+
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-stale",
+        taskId: "task-55",
+        concurrencyKey,
+        strategy: "serialize",
+        status: "active",
+        startedAt: "2026-03-25T18:00:00.000Z",
+        lastHeartbeatAt: "2026-03-25T18:00:00.000Z"
+      })
+    );
+
+    const firstClaim = await repository.claimPipelineRun({
+      run: createPipelineRun({
+        runId: "run-fresh",
+        taskId: "task-55",
+        concurrencyKey,
+        strategy: "serialize",
+        status: "active",
+        startedAt: "2026-03-25T18:05:00.000Z",
+        lastHeartbeatAt: "2026-03-25T18:05:00.000Z"
+      }),
+      staleAfterMs: 60_000
+    });
+
+    const secondClaim = await repository.claimPipelineRun({
+      run: createPipelineRun({
+        runId: "run-blocked",
+        taskId: "task-55",
+        concurrencyKey,
+        strategy: "serialize",
+        status: "active",
+        startedAt: "2026-03-25T18:05:30.000Z",
+        lastHeartbeatAt: "2026-03-25T18:05:30.000Z"
+      }),
+      staleAfterMs: 60_000
+    });
+
+    await expect(repository.getPipelineRun("run-stale")).resolves.toMatchObject({
+      status: "stale",
+      staleAt: "2026-03-25T18:05:00.000Z"
+    });
+    await expect(repository.getPipelineRun("run-fresh")).resolves.toMatchObject({
+      status: "active"
+    });
+    await expect(repository.getPipelineRun("run-blocked")).resolves.toBeNull();
+    expect(firstClaim.staleRunIds).toEqual(["run-stale"]);
+    expect(firstClaim.blockedByRun).toBeNull();
+    expect(secondClaim.staleRunIds).toEqual([]);
+    expect(secondClaim.blockedByRun?.runId).toBe("run-fresh");
+  });
+});
 

@@ -1,9 +1,9 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { DeterministicPlanningAgent, runPlanningPipeline } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository, createPipelineRun } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository, createPipelineRun } from "../packages/evidence/dist/index.js";
 import { connectionString } from "./lib/config.mjs";
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString);
 const issueNumber = Date.now();
 const repo = `concurrency-${issueNumber}/platform-${issueNumber}`;
 const concurrencyKey = `github:${repo}:${issueNumber}`;
@@ -108,3 +108,4 @@ try {
 } finally {
   await repository.close();
 }
+

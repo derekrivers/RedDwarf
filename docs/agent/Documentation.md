@@ -220,3 +220,10 @@
 - Full audit handoff is documented in [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) - read this before implementing features 90-99.
 - Existing pending feature work for OpenAI provider support (feature 86) and GitHub intake allowlisting (feature 87) is intentionally deferred behind the new hardening queue because the audit found production-correctness and security gaps with higher blast radius.
 
+- Completed feature 90 from `FEATURE_BOARD.md`: atomic run claiming for each pipeline phase.
+- Added a repository-level `claimPipelineRun(...)` primitive in the evidence layer with an in-memory implementation and a Postgres implementation that takes a transaction-scoped advisory lock on the `concurrencyKey`, retires stale active runs, and persists the claiming active run in the same claim path.
+- Replaced the old `detectOverlappingRuns(...)` read-then-write flow in planning, development, validation, and SCM so each phase now claims ownership through the repository before proceeding, while preserving the existing blocked-run evidence and run-event behavior above that seam.
+- Added in-memory and Postgres-backed coverage for the new claim primitive, and updated `scripts/verify-concurrency.mjs` to use the current `createPostgresPlanningRepository(...)` factory before verifying stale takeover and fresh-overlap blocking.
+- Verification for feature 90: `corepack pnpm typecheck`; `corepack pnpm test -- packages/evidence/src/index.test.ts packages/control-plane/src/index.test.ts tests/postgres.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:concurrency`.
+- Likely next board item: feature 91, transactional manifest, approval, phase, evidence, and run-event transitions.
+

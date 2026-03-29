@@ -38,6 +38,7 @@ export interface PlanningCommandRepository {
   saveRunEvent(event: RunEvent): Promise<void>;
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
+  claimPipelineRun(input: ClaimPipelineRunInput): Promise<ClaimPipelineRunResult>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
   saveGitHubIssuePollingCursor(cursor: GitHubIssuePollingCursor): Promise<void>;
 }
@@ -85,6 +86,16 @@ export interface PersistedTaskSnapshot {
   memoryRecords: MemoryRecord[];
   pipelineRuns: PipelineRun[];
   approvalRequests: ApprovalRequest[];
+}
+
+export interface ClaimPipelineRunInput {
+  run: PipelineRun;
+  staleAfterMs: number;
+}
+
+export interface ClaimPipelineRunResult {
+  staleRunIds: string[];
+  blockedByRun: PipelineRun | null;
 }
 
 export class InMemoryPlanningRepository implements PlanningRepository {
@@ -145,6 +156,57 @@ export class InMemoryPlanningRepository implements PlanningRepository {
 
   async savePipelineRun(run: PipelineRun): Promise<void> {
     this.pipelineRuns.set(run.runId, run);
+  }
+
+  async claimPipelineRun(
+    input: ClaimPipelineRunInput
+  ): Promise<ClaimPipelineRunResult> {
+    const activeRuns = [...this.pipelineRuns.values()]
+      .filter(
+        (run) =>
+          run.concurrencyKey === input.run.concurrencyKey &&
+          run.status === "active"
+      )
+      .sort(comparePipelineRuns);
+    const staleRunIds: string[] = [];
+    let blockedByRun: PipelineRun | null = null;
+    const claimedAt = new Date(input.run.startedAt);
+    const claimedAtIso = input.run.startedAt;
+
+    for (const overlap of activeRuns) {
+      if (overlap.runId === input.run.runId) {
+        continue;
+      }
+
+      if (claimedAt.getTime() - new Date(overlap.lastHeartbeatAt).getTime() > input.staleAfterMs) {
+        this.pipelineRuns.set(
+          overlap.runId,
+          pipelineRunSchema.parse({
+            ...overlap,
+            status: "stale",
+            lastHeartbeatAt: claimedAtIso,
+            completedAt: claimedAtIso,
+            staleAt: claimedAtIso,
+            overlapReason: `Marked stale by run ${input.run.runId}`,
+            metadata: {
+              ...overlap.metadata,
+              staleDetectedByRunId: input.run.runId
+            }
+          })
+        );
+        staleRunIds.push(overlap.runId);
+        continue;
+      }
+
+      blockedByRun = overlap;
+      break;
+    }
+
+    if (!blockedByRun) {
+      this.pipelineRuns.set(input.run.runId, input.run);
+    }
+
+    return { staleRunIds, blockedByRun };
   }
 
   async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
@@ -414,5 +476,4 @@ export function compareApprovalRequests(
     ? created
     : left.requestId.localeCompare(right.requestId);
 }
-
 

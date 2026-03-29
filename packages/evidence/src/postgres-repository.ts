@@ -43,6 +43,8 @@ import {
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
   normalizePipelineRunQuery,
+  type ClaimPipelineRunInput,
+  type ClaimPipelineRunResult,
   type PlanningRepository,
   type PersistedTaskSnapshot
 } from "./repository.js";
@@ -53,6 +55,8 @@ export function createPostgresPlanningRepository(
   const pool = new pg.Pool({ connectionString, max: max ?? 10 });
   return new PostgresPlanningRepository(pool);
 }
+
+type QueryExecutor = pg.Pool | pg.PoolClient;
 
 export class PostgresPlanningRepository implements PlanningRepository {
   private readonly pool: pg.Pool;
@@ -67,6 +71,56 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  private async savePipelineRunWithExecutor(
+    executor: QueryExecutor,
+    run: PipelineRun
+  ): Promise<void> {
+    await executor.query(
+      `
+        INSERT INTO pipeline_runs (
+          run_id,
+          task_id,
+          concurrency_key,
+          strategy,
+          status,
+          blocked_by_run_id,
+          overlap_reason,
+          started_at,
+          last_heartbeat_at,
+          completed_at,
+          stale_at,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+        ON CONFLICT (run_id) DO UPDATE SET
+          task_id = EXCLUDED.task_id,
+          concurrency_key = EXCLUDED.concurrency_key,
+          strategy = EXCLUDED.strategy,
+          status = EXCLUDED.status,
+          blocked_by_run_id = EXCLUDED.blocked_by_run_id,
+          overlap_reason = EXCLUDED.overlap_reason,
+          started_at = EXCLUDED.started_at,
+          last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+          completed_at = EXCLUDED.completed_at,
+          stale_at = EXCLUDED.stale_at,
+          metadata = EXCLUDED.metadata
+      `,
+      [
+        run.runId,
+        run.taskId,
+        run.concurrencyKey,
+        run.strategy,
+        run.status,
+        run.blockedByRunId,
+        run.overlapReason,
+        run.startedAt,
+        run.lastHeartbeatAt,
+        run.completedAt,
+        run.staleAt,
+        JSON.stringify(run.metadata)
+      ]
+    );
   }
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
@@ -369,50 +423,84 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async savePipelineRun(run: PipelineRun): Promise<void> {
-    await this.pool.query(
-      `
-        INSERT INTO pipeline_runs (
-          run_id,
-          task_id,
-          concurrency_key,
-          strategy,
-          status,
-          blocked_by_run_id,
-          overlap_reason,
-          started_at,
-          last_heartbeat_at,
-          completed_at,
-          stale_at,
-          metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-        ON CONFLICT (run_id) DO UPDATE SET
-          task_id = EXCLUDED.task_id,
-          concurrency_key = EXCLUDED.concurrency_key,
-          strategy = EXCLUDED.strategy,
-          status = EXCLUDED.status,
-          blocked_by_run_id = EXCLUDED.blocked_by_run_id,
-          overlap_reason = EXCLUDED.overlap_reason,
-          started_at = EXCLUDED.started_at,
-          last_heartbeat_at = EXCLUDED.last_heartbeat_at,
-          completed_at = EXCLUDED.completed_at,
-          stale_at = EXCLUDED.stale_at,
-          metadata = EXCLUDED.metadata
-      `,
-      [
-        run.runId,
-        run.taskId,
-        run.concurrencyKey,
-        run.strategy,
-        run.status,
-        run.blockedByRunId,
-        run.overlapReason,
-        run.startedAt,
-        run.lastHeartbeatAt,
-        run.completedAt,
-        run.staleAt,
-        JSON.stringify(run.metadata)
-      ]
-    );
+    await this.savePipelineRunWithExecutor(this.pool, run);
+  }
+
+  async claimPipelineRun(
+    input: ClaimPipelineRunInput
+  ): Promise<ClaimPipelineRunResult> {
+    const client = await this.pool.connect();
+    const staleRunIds: string[] = [];
+    const claimedAtIso = input.run.startedAt;
+    const claimedAt = new Date(claimedAtIso);
+
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+        ["reddwarf.pipeline_run_claim", input.run.concurrencyKey]
+      );
+
+      const overlappingResult = await client.query(
+        `
+          SELECT *
+          FROM pipeline_runs
+          WHERE concurrency_key = $1
+            AND status = 'active'
+          ORDER BY started_at DESC, run_id ASC
+          FOR UPDATE
+        `,
+        [input.run.concurrencyKey]
+      );
+      const overlappingRuns = overlappingResult.rows.map(mapPipelineRunRow);
+      let blockedByRun: PipelineRun | null = null;
+
+      for (const overlap of overlappingRuns) {
+        if (overlap.runId === input.run.runId) {
+          continue;
+        }
+
+        if (
+          claimedAt.getTime() - new Date(overlap.lastHeartbeatAt).getTime() >
+          input.staleAfterMs
+        ) {
+          const staleRun = pipelineRunSchema.parse({
+            ...overlap,
+            status: "stale",
+            lastHeartbeatAt: claimedAtIso,
+            completedAt: claimedAtIso,
+            staleAt: claimedAtIso,
+            overlapReason: `Marked stale by run ${input.run.runId}`,
+            metadata: {
+              ...overlap.metadata,
+              staleDetectedByRunId: input.run.runId
+            }
+          });
+          await this.savePipelineRunWithExecutor(client, staleRun);
+          staleRunIds.push(overlap.runId);
+          continue;
+        }
+
+        blockedByRun = overlap;
+        break;
+      }
+
+      if (!blockedByRun) {
+        await this.savePipelineRunWithExecutor(client, input.run);
+      }
+
+      await client.query("COMMIT");
+      return { staleRunIds, blockedByRun };
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failures and surface the original error
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
