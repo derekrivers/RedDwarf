@@ -159,6 +159,20 @@ curl -X POST http://localhost:8080/approvals/<id>/resolve \
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
 | Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","polling":{...}}` |
 
+### Teardown
+
+```bash
+corepack pnpm teardown
+```
+
+Safely shuts down the stack: sweeps stale pipeline runs, stops Docker services, cleans old workspaces, and removes stale OpenClaw config. The database volume is **preserved by default**.
+
+```bash
+corepack pnpm teardown -- --dry-run            # preview only
+corepack pnpm teardown -- --clean-evidence 14  # also clean evidence >14 days
+corepack pnpm teardown -- --destroy-volumes    # full reset (destroys database)
+```
+
 ### Boot-up safety
 
 Every startup (via `pnpm start` or `pnpm run setup`) performs automatic housekeeping:

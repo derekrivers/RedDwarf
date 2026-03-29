@@ -475,15 +475,32 @@ corepack pnpm query:evidence
 
 ---
 
-## Part 6 — Clean Up
+## Part 6 — Teardown
+
+Use the teardown script to safely shut down the stack:
 
 ```bash
-# Stop the Docker stack (Postgres + OpenClaw)
-corepack pnpm compose:down
+# Safe default — sweep stale runs, stop services, clean old workspaces
+corepack pnpm teardown
 
-# (Optional) Clean up old evidence
-node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
+# Preview what would happen without taking action
+corepack pnpm teardown -- --dry-run
+
+# Also remove evidence directories older than 14 days
+corepack pnpm teardown -- --clean-evidence 14
+
+# Full reset — stop services AND destroy database volumes
+corepack pnpm teardown -- --destroy-volumes
 ```
+
+The teardown script:
+1. Sweeps active pipeline runs to stale (prevents zombie state on next boot)
+2. Stops Docker Compose services gracefully
+3. Cleans up workspace directories older than 24 hours
+4. Optionally cleans old evidence directories
+5. Removes stale OpenClaw config artifacts (`.clobbered.*` files)
+
+The database volume is **preserved by default** so you can restart without losing state. Only `--destroy-volumes` removes it.
 
 ---
 
@@ -492,9 +509,10 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 | Command | Purpose |
 |---------|---------|
 | `corepack pnpm start` | **Boot the full stack** — infrastructure, housekeeping, operator API, and optional polling daemon |
+| `corepack pnpm teardown` | **Safely shut down** — sweep stale runs, stop services, clean workspaces |
 | `corepack pnpm run setup` | Infrastructure only — Postgres + migrations + health check + workspace cleanup |
 | `corepack pnpm compose:up:openclaw` | Start OpenClaw alongside Postgres |
-| `corepack pnpm compose:down` | Stop Docker stack |
+| `corepack pnpm compose:down` | Stop Docker stack (without housekeeping) |
 | `corepack pnpm build` | TypeScript build |
 | `corepack pnpm test` | Run unit tests (does **not** run E2E) |
 | `corepack pnpm e2e` | Run full E2E integration test against a real GitHub repo |
