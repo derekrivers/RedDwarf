@@ -3287,7 +3287,9 @@ export function buildRuntimeWorkspacePath(
   const hostWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
 
   if (hostWorkspaceRoot) {
-    const relativeWorkspacePath = relative(hostWorkspaceRoot, workspace.workspaceRoot).replace(
+    const normalizedHost = hostWorkspaceRoot.replace(/\\/g, "/");
+    const normalizedWorkspace = workspace.workspaceRoot.replace(/\\/g, "/");
+    const relativeWorkspacePath = relative(normalizedHost, normalizedWorkspace).replace(
       /\\/g,
       "/"
     );
