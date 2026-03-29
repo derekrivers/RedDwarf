@@ -9,6 +9,7 @@ import {
   DeterministicScmAgent,
   DeterministicValidationAgent,
   AllowedPathViolationError,
+  ExternalCommandTimeoutError,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
@@ -17,6 +18,7 @@ import {
   buildSessionSummaryMarkdown,
   captureSessionEvidence,
   createBufferedPlanningLogger,
+  createArchitectHandoffAwaiter,
   createGitHubIssuePollingDaemon,
   createOperatorApiServer,
   createReadyTaskDispatcher,
@@ -3320,6 +3322,331 @@ describe("developer phase with OpenClaw dispatch", () => {
   });
 });
 
+
+describe("phase timing hardening", () => {
+  it("heartbeats the architect awaiter while waiting for a handoff", async () => {
+    const architectRoot = await mkdtemp(join(tmpdir(), "architect-heartbeat-"));
+    const artifactsDir = join(architectRoot, "artifacts");
+    const awaiter = createArchitectHandoffAwaiter({
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+      heartbeatIntervalMs: 50
+    });
+    let heartbeatCount = 0;
+
+    try {
+      const pending = awaiter.waitForCompletion({
+        manifest: {} as never,
+        workspace: {
+          workspaceId: "architect-heartbeat",
+          workspaceRoot: architectRoot,
+          artifactsDir,
+          stateFile: join(architectRoot, ".workspace", "workspace.json"),
+          descriptor: {} as never
+        } as never,
+        sessionKey: "github:issue:acme/platform:501",
+        dispatchResult: {
+          accepted: true,
+          sessionKey: "github:issue:acme/platform:501",
+          agentId: "reddwarf-analyst",
+          sessionId: "architect-heartbeat-session",
+          respondedAt: new Date().toISOString(),
+          statusMessage: null
+        },
+        onHeartbeat: async () => {
+          heartbeatCount += 1;
+          if (heartbeatCount >= 2) {
+            await mkdir(artifactsDir, { recursive: true });
+            await writeFile(
+              join(artifactsDir, "architect-handoff.md"),
+              [
+                "# Architecture Handoff",
+                "",
+                "## Summary",
+                "",
+                "Use a docs-first architecture handoff for heartbeat verification.",
+                "",
+                "## Implementation Approach",
+                "",
+                "- Write the architect handoff file after heartbeat callbacks fire.",
+                "",
+                "## Affected Files",
+                "",
+                "- docs/architecture.md",
+                "",
+                "## Risks and Assumptions",
+                "",
+                "- none",
+                "",
+                "## Test Strategy",
+                "",
+                "- Verify the planning run heartbeat advances while the handoff is pending."
+              ].join("\n"),
+              "utf8"
+            );
+          }
+        },
+        heartbeatIntervalMs: 50
+      });
+
+      await expect(pending).resolves.toMatchObject({
+        handoffPath: join(artifactsDir, "architect-handoff.md"),
+        repoRoot: null
+      });
+      expect(heartbeatCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      await rm(architectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies timed-out validation commands separately", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const targetRoot = await mkdtemp(join(tmpdir(), "validation-timeout-"));
+    const evidenceRoot = join(targetRoot, "evidence");
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 610,
+            issueUrl: "https://github.com/acme/platform/issues/610"
+          },
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["docs/guide.md"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T15:00:00.000Z"),
+          idGenerator: () => "validation-timeout-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for validation timeout coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T15:01:00.000Z")
+        }
+      );
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot,
+          evidenceRoot,
+          workspaceId: `${planningResult.manifest.taskId}-validation-timeout`
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-29T15:02:00.000Z"),
+          idGenerator: () => "validation-timeout-dev"
+        }
+      );
+
+      const hangingValidator = {
+        async createPlan() {
+          return {
+            summary: "Run a command that never exits within the configured timeout.",
+            commands: [
+              {
+                id: "hang",
+                name: "hang",
+                executable: process.execPath,
+                args: ["-e", "setTimeout(() => {}, 60000)"]
+              }
+            ]
+          };
+        }
+      };
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            validator: hangingValidator as unknown as DeterministicValidationAgent,
+            clock: () => new Date("2026-03-29T15:03:00.000Z"),
+            idGenerator: () => "validation-timeout-run",
+            timing: {
+              validationCommandTimeoutMs: 100,
+              heartbeatIntervalMs: 25
+            }
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "VALIDATION_COMMAND_TIMED_OUT",
+        phase: "validation"
+      });
+
+      const failedRecord = repository.phaseRecords.find(
+        (record) =>
+          record.taskId === planningResult.manifest.taskId &&
+          record.phase === "validation" &&
+          record.status === "failed"
+      );
+      expect((failedRecord?.details as Record<string, unknown>)?.code).toBe(
+        "VALIDATION_COMMAND_TIMED_OUT"
+      );
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.runId === "validation-timeout-run" &&
+            event.code === "VALIDATION_COMMAND_TIMED_OUT"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(targetRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies timed-out git publication failures in the scm phase", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "scm-timeout-"));
+    const evidenceRoot = join(tempRoot, "evidence");
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 611,
+            issueUrl: "https://github.com/acme/platform/issues/611"
+          },
+          requestedCapabilities: ["can_write_code", "can_open_pr"],
+          affectedPaths: ["docs/guide.md"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T16:00:00.000Z"),
+          idGenerator: () => "scm-timeout-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for scm timeout coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T16:01:00.000Z")
+        }
+      );
+
+      const repoBootstrapper = createFixtureWorkspaceRepoBootstrapper();
+      const completionAwaiter = createFixtureOpenClawCompletionAwaiter(
+        "OpenClaw developer session completed with a docs-only repository update."
+      );
+      const github = new FixtureGitHubAdapter({
+        candidates: [],
+        mutations: {
+          allowBranchCreation: true,
+          allowPullRequestCreation: true,
+          pullRequestNumberStart: 81
+        }
+      });
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot,
+          workspaceId: "workspace-scm-timeout"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({ fixedSessionId: "session-scm-timeout" }),
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-03-29T16:02:00.000Z"),
+          idGenerator: () => "scm-timeout-dev"
+        }
+      );
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-03-29T16:03:00.000Z"),
+          idGenerator: () => "scm-timeout-validation"
+        }
+      );
+      expect(validation.nextAction).toBe("await_scm");
+
+      const timeoutPublisher = {
+        async publish() {
+          throw new ExternalCommandTimeoutError({
+            executable: "git",
+            args: ["push", "-u", "origin", "branch"],
+            cwd: tempRoot,
+            timeoutMs: 100,
+            stdout: "",
+            stderr: "simulated push hang"
+          });
+        }
+      };
+
+      await expect(
+        runScmPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            evidenceRoot
+          },
+          {
+            repository,
+            scm: new DeterministicScmAgent(),
+            github,
+            workspaceRepoBootstrapper: repoBootstrapper,
+            workspaceCommitPublisher: timeoutPublisher as unknown as ReturnType<typeof createFixtureWorkspaceCommitPublisher>,
+            clock: () => new Date("2026-03-29T16:04:00.000Z"),
+            idGenerator: () => "scm-timeout-run"
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "GIT_COMMAND_TIMED_OUT",
+        phase: "scm"
+      });
+
+      const failedRecord = repository.phaseRecords.find(
+        (record) =>
+          record.taskId === planningResult.manifest.taskId &&
+          record.phase === "scm" &&
+          record.status === "failed"
+      );
+      expect((failedRecord?.details as Record<string, unknown>)?.code).toBe(
+        "GIT_COMMAND_TIMED_OUT"
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
 describe("sweepStaleRuns", () => {
   it("marks active runs with old heartbeats as stale during startup sweep", async () => {
     const repository = new InMemoryPlanningRepository();
@@ -3504,9 +3831,9 @@ describe("GitHub issue polling daemon backoff", () => {
   });
 });
 
-// ══════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Post-approval dispatcher tests
-// ══════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 describe("dispatchReadyTask", () => {
   const fixtureGithub = new FixtureGitHubAdapter({ candidates: [] });
@@ -3811,4 +4138,3 @@ describe("createReadyTaskDispatcher", () => {
     }
   });
 });
-

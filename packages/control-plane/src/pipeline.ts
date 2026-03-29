@@ -109,6 +109,11 @@ import {
 } from "./workspace.js";
 import {
   AllowedPathViolationError,
+  ExternalCommandTimeoutError,
+  OpenClawCompletionTimeoutError,
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
+  DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS,
   assignWorkspaceRepoRoot,
   createArchitectHandoffAwaiter,
   createDeveloperHandoffAwaiter,
@@ -182,14 +187,35 @@ const EventCodes = {
   SECRET_LEASE_FAILED: "SECRET_LEASE_FAILED",
   SECRET_LEASE_MISSING: "SECRET_LEASE_MISSING",
   OPENCLAW_DISPATCH: "OPENCLAW_DISPATCH",
+  OPENCLAW_COMPLETION_TIMED_OUT: "OPENCLAW_COMPLETION_TIMED_OUT",
+  VALIDATION_COMMAND_TIMED_OUT: "VALIDATION_COMMAND_TIMED_OUT",
+  GIT_COMMAND_TIMED_OUT: "GIT_COMMAND_TIMED_OUT",
   ALLOWED_PATHS_VIOLATED: "ALLOWED_PATHS_VIOLATED"
 } as const;
+
+const DEFAULT_PHASE_STALE_AFTER_MS = 5 * 60_000;
+const PHASE_HEARTBEAT_INTERVAL_MS = DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
+const PHASE_STALE_GRACE_MS = PHASE_HEARTBEAT_INTERVAL_MS * 3;
+const DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS = 10 * 60_000;
+
+const phaseTimeoutBudgetsMs: Partial<Record<TaskPhase, number>> = {
+  planning: DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
+  development: DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
+  validation: DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS,
+  scm: DEFAULT_GIT_COMMAND_TIMEOUT_MS
+};
 
 export interface PlanningConcurrencyOptions {
   strategy?: ConcurrencyStrategy;
   staleAfterMs?: number;
 }
 
+export interface PhaseTimingOptions {
+  heartbeatIntervalMs?: number;
+  openClawCompletionTimeoutMs?: number;
+  gitCommandTimeoutMs?: number;
+  validationCommandTimeoutMs?: number;
+}
 export interface PlanningPipelineDependencies {
   repository: PlanningRepository;
   planner: PlanningAgent;
@@ -218,6 +244,7 @@ export interface PlanningPipelineDependencies {
   clock?: () => Date;
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
 }
 
 export interface PlanningPipelineResult {
@@ -281,6 +308,7 @@ export interface DevelopmentPhaseDependencies {
   clock?: () => Date;
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
 }
 
 export interface ValidationPhaseDependencies {
@@ -293,6 +321,7 @@ export interface ValidationPhaseDependencies {
   clock?: () => Date;
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
 }
 
 export interface ScmPhaseDependencies {
@@ -305,6 +334,7 @@ export interface ScmPhaseDependencies {
   clock?: () => Date;
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
 }
 
 export interface DevelopmentPhaseResult {
@@ -501,7 +531,9 @@ export async function runPlanningPipeline(
   const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
   const concurrency = {
     strategy: dependencies.concurrency?.strategy ?? "serialize",
-    staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+    staleAfterMs:
+      dependencies.concurrency?.staleAfterMs ??
+      defaultStaleAfterMsForPhase("planning")
   } satisfies Required<PlanningConcurrencyOptions>;
 
   const runId = idGenerator();
@@ -925,12 +957,32 @@ export async function runPlanningPipeline(
           architectTargetRoot: dependencies.architectTargetRoot,
           openClawDispatch: dependencies.openClawDispatch,
           openClawArchitectAgentId: dependencies.openClawArchitectAgentId ?? "reddwarf-analyst",
-          openClawArchitectAwaiter: dependencies.openClawArchitectAwaiter ?? createArchitectHandoffAwaiter(),
+          openClawArchitectAwaiter:
+            dependencies.openClawArchitectAwaiter ??
+            createArchitectHandoffAwaiter({
+              ...(dependencies.timing?.openClawCompletionTimeoutMs !== undefined
+                ? { timeoutMs: dependencies.timing.openClawCompletionTimeoutMs }
+                : {}),
+              ...(dependencies.timing?.heartbeatIntervalMs !== undefined
+                ? { heartbeatIntervalMs: dependencies.timing.heartbeatIntervalMs }
+                : {})
+            }),
           repository,
           logger: runLogger,
           clock,
           idGenerator,
-          nextEventId
+          nextEventId,
+          onHeartbeat: () =>
+            heartbeatTrackedRun({
+              phase: "planning",
+              persistTrackedRun,
+              clock,
+              metadata: {
+                currentPhase: "planning"
+              }
+            }),
+          heartbeatIntervalMs:
+            dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS
         });
         draft = architectResult.draft;
         hollyHandoffMarkdown = architectResult.hollyHandoffMarkdown;
@@ -1471,11 +1523,26 @@ export async function runDeveloperPhase(
 
   const repository = dependencies.repository;
   const developer = dependencies.developer;
-  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies("development", dependencies);
+  const heartbeatIntervalMs =
+    dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS;
   const workspaceRepoBootstrapper =
-    dependencies.workspaceRepoBootstrapper ?? createGitHubWorkspaceRepoBootstrapper();
+    dependencies.workspaceRepoBootstrapper ??
+    createGitHubWorkspaceRepoBootstrapper({
+      ...(dependencies.timing?.gitCommandTimeoutMs !== undefined
+        ? { commandTimeoutMs: dependencies.timing.gitCommandTimeoutMs }
+        : {})
+    });
   const openClawCompletionAwaiter =
-    dependencies.openClawCompletionAwaiter ?? createDeveloperHandoffAwaiter();
+    dependencies.openClawCompletionAwaiter ??
+    createDeveloperHandoffAwaiter({
+      ...(dependencies.timing?.openClawCompletionTimeoutMs !== undefined
+        ? { timeoutMs: dependencies.timing.openClawCompletionTimeoutMs }
+        : {}),
+      ...(dependencies.timing?.heartbeatIntervalMs !== undefined
+        ? { heartbeatIntervalMs: dependencies.timing.heartbeatIntervalMs }
+        : {})
+    });
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "development");
@@ -1746,14 +1813,33 @@ export async function runDeveloperPhase(
     let handoff: DevelopmentDraft;
     let dispatchResult: OpenClawDispatchResult | null = null;
     const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
+    const developmentHeartbeatMetadata = {
+      workspaceId: workspace.workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    };
 
     if (dependencies.openClawDispatch) {
       await enableWorkspaceCodeWriting(workspace);
-      const repoBootstrap = await workspaceRepoBootstrapper.ensureRepo({
-        manifest: currentManifest,
-        workspace,
-        baseBranch,
-        logger: runLogger
+      const repoBootstrap = await waitWithHeartbeat({
+        work: workspaceRepoBootstrapper.ensureRepo({
+          manifest: currentManifest,
+          workspace,
+          baseBranch,
+          logger: runLogger
+        }),
+        heartbeatIntervalMs,
+        onHeartbeat: () =>
+          heartbeatTrackedRun({
+            phase: "development",
+            persistTrackedRun,
+            clock,
+            metadata: {
+              ...developmentHeartbeatMetadata,
+              developmentStep: "repo_bootstrap"
+            }
+          })
       });
       assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
@@ -1802,7 +1888,19 @@ export async function runDeveloperPhase(
         workspace,
         sessionKey,
         dispatchResult,
-        logger: runLogger
+        logger: runLogger,
+        onHeartbeat: () =>
+          heartbeatTrackedRun({
+            phase: "development",
+            persistTrackedRun,
+            clock,
+            metadata: {
+              ...developmentHeartbeatMetadata,
+              sessionKey,
+              openClawAgentId
+            }
+          }),
+        heartbeatIntervalMs
       });
       assignWorkspaceRepoRoot(workspace, completion.repoRoot ?? repoBootstrap.repoRoot);
       handoff = parseDevelopmentHandoffMarkdown(
@@ -2068,7 +2166,12 @@ export async function runValidationPhase(
 
   const repository = dependencies.repository;
   const validator = dependencies.validator;
-  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies("validation", dependencies);
+  const heartbeatIntervalMs =
+    dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS;
+  const validationCommandTimeoutMs =
+    dependencies.timing?.validationCommandTimeoutMs ??
+    DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS;
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "validation");
@@ -2399,13 +2502,27 @@ export async function runValidationPhase(
         },
         createdAt: commandStartedAtIso
       });
-      const executed = await executeValidationCommand({
-        command,
-        workspace,
-        startedAt: commandStartedAt,
-        secretLease
+      const executed = await waitWithHeartbeat({
+        work: executeValidationCommand({
+          command,
+          workspace,
+          startedAt: commandStartedAt,
+          secretLease,
+          timeoutMs: validationCommandTimeoutMs
+        }),
+        heartbeatIntervalMs,
+        onHeartbeat: () =>
+          heartbeatTrackedRun({
+            phase: "validation",
+            persistTrackedRun,
+            clock,
+            metadata: {
+              workspaceId: workspace.workspaceId,
+              lastValidationCommandId: command.id
+            }
+          })
       });
-      const { stdout: _stdout, stderr: _stderr, ...commandResult } = executed;
+      const { stdout: _stdout, stderr: _stderr, timedOut, timeoutMs, ...commandResult } = executed;
       commandResults.push(commandResult);
       const commandLogSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/validation-${command.id}.log`;
       const archivedCommandLog = await archiveEvidenceArtifact({
@@ -2434,6 +2551,8 @@ export async function runValidationPhase(
             durationMs: commandResult.durationMs,
             status: commandResult.status,
             logPath: commandResult.logPath,
+            timedOut,
+            timeoutMs,
             ...buildArchivedArtifactMetadata({
               archivedArtifact: archivedCommandLog,
               artifactClass: "log",
@@ -2446,16 +2565,22 @@ export async function runValidationPhase(
       );
 
       if (commandResult.exitCode !== 0) {
+        const commandFailedCode = timedOut
+          ? EventCodes.VALIDATION_COMMAND_TIMED_OUT
+          : EventCodes.VALIDATION_COMMAND_FAILED;
+        const commandFailedMessage = timedOut
+          ? `Validation command ${command.id} timed out after ${timeoutMs}ms.`
+          : `Validation command ${command.id} failed.`;
         await recordRunEvent({
           repository,
           logger: runLogger,
-          eventId: nextEventId("validation", EventCodes.VALIDATION_COMMAND_FAILED),
+          eventId: nextEventId("validation", commandFailedCode),
           taskId,
           runId,
           phase: "validation",
           level: "error",
-          code: EventCodes.VALIDATION_COMMAND_FAILED,
-          message: `Validation command ${command.id} failed.`,
+          code: commandFailedCode,
+          message: commandFailedMessage,
           failureClass: "validation_failure",
           durationMs: commandResult.durationMs,
           data: {
@@ -2464,22 +2589,26 @@ export async function runValidationPhase(
             exitCode: commandResult.exitCode,
             signal: commandResult.signal,
             logPath: commandResult.logPath,
-            workspaceId: workspace.workspaceId
+            workspaceId: workspace.workspaceId,
+            timedOut,
+            timeoutMs
           },
           createdAt: commandStartedAtIso
         });
         throw new PlanningPipelineFailure({
-          message: `Validation command ${command.id} failed with exit code ${commandResult.exitCode}.`,
+          message: commandFailedMessage,
           failureClass: "validation_failure",
           phase: "validation",
-          code: EventCodes.VALIDATION_COMMAND_FAILED,
+          code: commandFailedCode,
           details: {
             commandId: command.id,
             commandName: command.name,
             exitCode: commandResult.exitCode,
             signal: commandResult.signal,
             logPath: commandResult.logPath,
-            workspaceId: workspace.workspaceId
+            workspaceId: workspace.workspaceId,
+            timedOut,
+            timeoutMs
           },
           taskId,
           runId
@@ -2505,10 +2634,11 @@ export async function runValidationPhase(
         },
         createdAt: commandStartedAtIso
       });
-      await persistTrackedRun({
-        lastHeartbeatAt: commandStartedAtIso,
+      await heartbeatTrackedRun({
+        phase: "validation",
+        persistTrackedRun,
+        clock,
         metadata: {
-          currentPhase: "validation",
           workspaceId: workspace.workspaceId,
           lastValidationCommandId: command.id
         }
@@ -3058,21 +3188,85 @@ interface ResolvedPhaseDependencies {
   concurrency: Required<PlanningConcurrencyOptions>;
 }
 
-function resolvePhaseDependencies(dependencies: {
-  logger?: PlanningPipelineLogger;
-  clock?: () => Date;
-  idGenerator?: () => string;
-  concurrency?: PlanningConcurrencyOptions;
-}): ResolvedPhaseDependencies {
+function defaultStaleAfterMsForPhase(phase: TaskPhase): number {
+  const phaseBudgetMs = phaseTimeoutBudgetsMs[phase];
+  return phaseBudgetMs === undefined
+    ? DEFAULT_PHASE_STALE_AFTER_MS
+    : phaseBudgetMs + PHASE_STALE_GRACE_MS;
+}
+
+function resolvePhaseDependencies(
+  phase: TaskPhase,
+  dependencies: {
+    logger?: PlanningPipelineLogger;
+    clock?: () => Date;
+    idGenerator?: () => string;
+    concurrency?: PlanningConcurrencyOptions;
+  }
+): ResolvedPhaseDependencies {
   return {
     logger: dependencies.logger ?? defaultLogger,
     clock: dependencies.clock ?? (() => new Date()),
     idGenerator: dependencies.idGenerator ?? (() => randomUUID()),
     concurrency: {
       strategy: dependencies.concurrency?.strategy ?? "serialize",
-      staleAfterMs: dependencies.concurrency?.staleAfterMs ?? 5 * 60_000
+      staleAfterMs:
+        dependencies.concurrency?.staleAfterMs ?? defaultStaleAfterMsForPhase(phase)
     }
   };
+}
+
+async function waitWithHeartbeat<T>(input: {
+  work: Promise<T>;
+  heartbeatIntervalMs?: number;
+  onHeartbeat?: () => Promise<void>;
+}): Promise<T> {
+  if (!input.onHeartbeat) {
+    return await input.work;
+  }
+
+  const heartbeatIntervalMs = input.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS;
+  const taggedWork = input.work.then(
+    (value) => ({ kind: "result" as const, value }),
+    (error) => ({ kind: "error" as const, error })
+  );
+
+  while (true) {
+    const outcome = await Promise.race([
+      taggedWork,
+      new Promise<{ kind: "heartbeat" }>((resolve) => {
+        setTimeout(() => resolve({ kind: "heartbeat" }), heartbeatIntervalMs);
+      })
+    ]);
+
+    if (outcome.kind === "result") {
+      return outcome.value;
+    }
+
+    if (outcome.kind === "error") {
+      throw outcome.error;
+    }
+
+    await input.onHeartbeat();
+  }
+}
+
+async function heartbeatTrackedRun(input: {
+  phase: TaskPhase;
+  persistTrackedRun: (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
+  ) => Promise<void>;
+  clock: () => Date;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await input.persistTrackedRun({
+    lastHeartbeatAt: asIsoTimestamp(input.clock()),
+    metadata: {
+      currentPhase: input.phase,
+      ...(input.metadata ?? {})
+    }
+  });
 }
 
 function createSourceConcurrencyKey(
@@ -3084,6 +3278,26 @@ function createSourceConcurrencyKey(
 
 function createTaskConcurrencyKey(input: PlanningTaskInput): string {
   return createSourceConcurrencyKey(input.source);
+}
+
+function resolvePipelineRunStaleAfterMs(
+  run: PipelineRun,
+  overrideStaleAfterMs?: number
+): number {
+  if (overrideStaleAfterMs !== undefined) {
+    return overrideStaleAfterMs;
+  }
+
+  const metadataPhase =
+    typeof run.metadata?.currentPhase === "string"
+      ? run.metadata.currentPhase
+      : typeof run.metadata?.phase === "string"
+        ? run.metadata.phase
+        : null;
+
+  return metadataPhase && metadataPhase in phaseTimeoutBudgetsMs
+    ? defaultStaleAfterMsForPhase(metadataPhase as TaskPhase)
+    : DEFAULT_PHASE_STALE_AFTER_MS;
 }
 
 function isPipelineRunStale(
@@ -3110,7 +3324,6 @@ export async function sweepStaleRuns(
   options?: SweepStaleRunsOptions
 ): Promise<SweepStaleRunsResult> {
   const clock = options?.clock ?? (() => new Date());
-  const staleAfterMs = options?.staleAfterMs ?? 5 * 60_000;
   const now = clock();
   const nowIso = asIsoTimestamp(now);
 
@@ -3122,6 +3335,7 @@ export async function sweepStaleRuns(
   const sweptRunIds: string[] = [];
 
   for (const run of activeRuns) {
+    const staleAfterMs = resolvePipelineRunStaleAfterMs(run, options?.staleAfterMs);
     if (isPipelineRunStale(run, now, staleAfterMs)) {
       await repository.savePipelineRun(
         createPipelineRun({
@@ -3315,6 +3529,8 @@ interface DispatchHollyArchitectPhaseInput {
   clock: () => Date;
   idGenerator: () => string;
   nextEventId: (phase: TaskPhase, code: string) => string;
+  onHeartbeat?: () => Promise<void>;
+  heartbeatIntervalMs?: number;
 }
 
 interface DispatchHollyArchitectPhaseResult {
@@ -3398,7 +3614,9 @@ async function dispatchHollyArchitectPhase(
     workspace: minimalWorkspace,
     sessionKey,
     dispatchResult,
-    logger: ctx.logger
+    logger: ctx.logger,
+    onHeartbeat: ctx.onHeartbeat,
+    heartbeatIntervalMs: ctx.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS
   });
 
   const hollyHandoffMarkdown = await readFile(completion.handoffPath, "utf8");
@@ -3869,6 +4087,8 @@ function createValidationNodeScript(kind: "lint" | "test"): string {
 interface ExecutedValidationCommandResult extends ValidationCommandResult {
   stdout: string;
   stderr: string;
+  timedOut: boolean;
+  timeoutMs: number | null;
 }
 
 async function executeValidationCommand(input: {
@@ -3876,15 +4096,18 @@ async function executeValidationCommand(input: {
   workspace: MaterializedManagedWorkspace;
   startedAt: Date;
   secretLease?: SecretLease | null;
+  timeoutMs?: number;
 }): Promise<ExecutedValidationCommandResult> {
   const { command, workspace, startedAt } = input;
   const logPath = join(workspace.artifactsDir, `validation-${command.id}.log`);
+  const timeoutMs = input.timeoutMs ?? DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS;
   const execution = await new Promise<{
     exitCode: number;
     signal: NodeJS.Signals | null;
     stdout: string;
     stderr: string;
     completedAt: Date;
+    timedOut: boolean;
   }>((resolveCommand, rejectCommand) => {
     const child = spawn(command.executable, command.args, {
       cwd: workspace.workspaceRoot,
@@ -3898,6 +4121,30 @@ async function executeValidationCommand(input: {
     });
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
+    let timedOut = false;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    let forceKillHandle: NodeJS.Timeout | null = null;
+
+    const clearTimers = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      if (forceKillHandle) {
+        clearTimeout(forceKillHandle);
+        forceKillHandle = null;
+      }
+    };
+
+    if (timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+        forceKillHandle = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 5 * 1000);
+      }, timeoutMs);
+    }
 
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
@@ -3908,15 +4155,18 @@ async function executeValidationCommand(input: {
       stderrChunks.push(chunk);
     });
     child.on("error", (error) => {
+      clearTimers();
       rejectCommand(error);
     });
     child.on("close", (exitCode, signal) => {
+      clearTimers();
       resolveCommand({
-        exitCode: exitCode ?? 1,
+        exitCode: timedOut ? 124 : exitCode ?? 1,
         signal: signal ?? null,
         stdout: stdoutChunks.join(""),
         stderr: stderrChunks.join(""),
-        completedAt: new Date()
+        completedAt: new Date(),
+        timedOut
       });
     });
   });
@@ -3940,6 +4190,8 @@ async function executeValidationCommand(input: {
       `- Exit Code: ${execution.exitCode}`,
       `- Signal: ${execution.signal ?? "none"}`,
       `- Duration (ms): ${durationMs}`,
+      `- Timed Out: ${execution.timedOut ? "yes" : "no"}`,
+      `- Timeout (ms): ${timeoutMs}`,
       "",
       "## Stdout",
       "",
@@ -3964,7 +4216,9 @@ async function executeValidationCommand(input: {
     status: execution.exitCode === 0 ? "passed" : "failed",
     logPath,
     stdout,
-    stderr
+    stderr,
+    timedOut: execution.timedOut,
+    timeoutMs
   };
 }
 
@@ -3981,11 +4235,23 @@ export async function runScmPhase(
   const repository = dependencies.repository;
   const scm = dependencies.scm;
   const github = dependencies.github;
-  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies(dependencies);
+  const { logger, clock, idGenerator, concurrency } = resolvePhaseDependencies("scm", dependencies);
+  const heartbeatIntervalMs =
+    dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS;
   const workspaceRepoBootstrapper =
-    dependencies.workspaceRepoBootstrapper ?? createGitHubWorkspaceRepoBootstrapper();
+    dependencies.workspaceRepoBootstrapper ??
+    createGitHubWorkspaceRepoBootstrapper({
+      ...(dependencies.timing?.gitCommandTimeoutMs !== undefined
+        ? { commandTimeoutMs: dependencies.timing.gitCommandTimeoutMs }
+        : {})
+    });
   const workspaceCommitPublisher =
-    dependencies.workspaceCommitPublisher ?? createGitWorkspaceCommitPublisher();
+    dependencies.workspaceCommitPublisher ??
+    createGitWorkspaceCommitPublisher({
+      ...(dependencies.timing?.gitCommandTimeoutMs !== undefined
+        ? { commandTimeoutMs: dependencies.timing.gitCommandTimeoutMs }
+        : {})
+    });
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
 
@@ -4203,11 +4469,30 @@ export async function runScmPhase(
       workspaceId,
       createdAt: scmStartedAtIso
     });
-    const repoBootstrap = await workspaceRepoBootstrapper.ensureRepo({
-      manifest: currentManifest,
-      workspace,
-      baseBranch,
-      logger: runLogger
+    const scmHeartbeatMetadata = {
+      workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    };
+    const repoBootstrap = await waitWithHeartbeat({
+      work: workspaceRepoBootstrapper.ensureRepo({
+        manifest: currentManifest,
+        workspace,
+        baseBranch,
+        logger: runLogger
+      }),
+      heartbeatIntervalMs,
+      onHeartbeat: () =>
+        heartbeatTrackedRun({
+          phase: "scm",
+          persistTrackedRun,
+          clock,
+          metadata: {
+            ...scmHeartbeatMetadata,
+            scmStep: "repo_bootstrap"
+          }
+        })
     });
     assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
     currentManifest = patchManifest(currentManifest, {
@@ -4277,13 +4562,28 @@ export async function runScmPhase(
     let publication: WorkspaceCommitPublicationResult;
 
     try {
-      publication = await workspaceCommitPublisher.publish({
-        manifest: currentManifest,
-        workspace,
-        baseBranch: draft.baseBranch,
-        branchName: draft.branchName,
-        allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
-        logger: runLogger
+      publication = await waitWithHeartbeat({
+        work: workspaceCommitPublisher.publish({
+          manifest: currentManifest,
+          workspace,
+          baseBranch: draft.baseBranch,
+          branchName: draft.branchName,
+          allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
+          logger: runLogger
+        }),
+        heartbeatIntervalMs,
+        onHeartbeat: () =>
+          heartbeatTrackedRun({
+            phase: "scm",
+            persistTrackedRun,
+            clock,
+            metadata: {
+              ...scmHeartbeatMetadata,
+              scmStep: "publish",
+              branchName: draft.branchName,
+              baseBranch: draft.baseBranch
+            }
+          })
       });
     } catch (error) {
       if (error instanceof AllowedPathViolationError) {
@@ -4330,10 +4630,11 @@ export async function runScmPhase(
       },
       createdAt: scmStartedAtIso
     });
-    await persistTrackedRun({
-      lastHeartbeatAt: scmStartedAtIso,
+    await heartbeatTrackedRun({
+      phase: "scm",
+      persistTrackedRun,
+      clock,
       metadata: {
-        currentPhase: "scm",
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
         commitSha: publication.commitSha
@@ -5204,6 +5505,42 @@ function normalizePipelineFailure(
     });
   }
 
+  if (error instanceof OpenClawCompletionTimeoutError) {
+    return new PlanningPipelineFailure({
+      message: sanitizeSecretBearingText(error.message),
+      failureClass: phaseRegistry[phase].failureClass,
+      phase,
+      code: EventCodes.OPENCLAW_COMPLETION_TIMED_OUT,
+      details: {
+        sessionKey: error.sessionKey,
+        timeoutMs: error.timeoutMs
+      },
+      cause: error,
+      taskId,
+      runId
+    });
+  }
+
+  if (error instanceof ExternalCommandTimeoutError) {
+    return new PlanningPipelineFailure({
+      message: sanitizeSecretBearingText(error.message),
+      failureClass: phaseRegistry[phase].failureClass,
+      phase,
+      code: EventCodes.GIT_COMMAND_TIMED_OUT,
+      details: {
+        executable: error.executable,
+        args: error.args,
+        cwd: error.cwd,
+        timeoutMs: error.timeoutMs,
+        stdout: sanitizeSecretBearingText(error.stdout),
+        stderr: sanitizeSecretBearingText(error.stderr)
+      },
+      cause: error,
+      taskId,
+      runId
+    });
+  }
+
   return new PlanningPipelineFailure({
     message:
       error instanceof Error
@@ -5577,6 +5914,7 @@ export interface DispatchReadyTaskDependencies {
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
 }
 
 export type DispatchPhaseOutcome = "completed" | "blocked" | "failed";

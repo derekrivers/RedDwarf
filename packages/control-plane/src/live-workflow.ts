@@ -40,6 +40,8 @@ export interface OpenClawCompletionAwaiter {
     sessionKey: string;
     dispatchResult: OpenClawDispatchResult;
     logger?: PlanningPipelineLogger;
+    onHeartbeat: (() => Promise<void>) | undefined;
+    heartbeatIntervalMs?: number;
   }): Promise<OpenClawCompletionResult>;
 }
 
@@ -62,6 +64,58 @@ export interface WorkspaceCommitPublisher {
 }
 
 type RepoAwareWorkspace = MaterializedManagedWorkspace & { repoRoot?: string | null };
+
+export const DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+export const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
+const COMMAND_FORCE_KILL_AFTER_TIMEOUT_MS = 5 * 1000;
+
+export class OpenClawCompletionTimeoutError extends Error {
+  readonly sessionKey: string;
+  readonly timeoutMs: number;
+
+  constructor(input: { sessionKey: string; timeoutMs: number; phase: "architect" | "developer" }) {
+    super(
+      `Timed out waiting for OpenClaw ${input.phase} completion for session ${input.sessionKey} after ${input.timeoutMs}ms.`
+    );
+    this.name = "OpenClawCompletionTimeoutError";
+    this.sessionKey = input.sessionKey;
+    this.timeoutMs = input.timeoutMs;
+  }
+}
+
+export class ExternalCommandTimeoutError extends Error {
+  readonly executable: string;
+  readonly args: string[];
+  readonly cwd: string;
+  readonly timeoutMs: number;
+  readonly stdout: string;
+  readonly stderr: string;
+
+  constructor(input: {
+    executable: string;
+    args: string[];
+    cwd: string;
+    timeoutMs: number;
+    stdout: string;
+    stderr: string;
+    redactValues?: string[] | undefined;
+  }) {
+    super(
+      sanitizeSecretBearingText(
+        `Command ${input.executable} ${input.args.join(" ")} timed out in ${input.cwd} after ${input.timeoutMs}ms: ${input.stderr || input.stdout || "(no output)"}`,
+        input.redactValues ?? []
+      )
+    );
+    this.name = "ExternalCommandTimeoutError";
+    this.executable = input.executable;
+    this.args = [...input.args];
+    this.cwd = input.cwd;
+    this.timeoutMs = input.timeoutMs;
+    this.stdout = input.stdout;
+    this.stderr = input.stderr;
+  }
+}
 
 export class AllowedPathViolationError extends Error {
   readonly allowedPaths: string[];
@@ -140,12 +194,14 @@ export async function enableWorkspaceCodeWriting(
 
 export interface GitHubWorkspaceRepoBootstrapperOptions {
   tokenEnvVar?: string;
+  commandTimeoutMs?: number;
 }
 
 export function createGitHubWorkspaceRepoBootstrapper(
   options: GitHubWorkspaceRepoBootstrapperOptions = {}
 ): WorkspaceRepoBootstrapper {
   const tokenEnvVar = options.tokenEnvVar ?? "GITHUB_TOKEN";
+  const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_GIT_COMMAND_TIMEOUT_MS;
 
   return {
     async ensureRepo(input) {
@@ -165,7 +221,10 @@ export function createGitHubWorkspaceRepoBootstrapper(
         ["clone", "--depth", "1", "--branch", input.baseBranch, remoteUrl, repoRoot],
         input.workspace.workspaceRoot,
         input.logger,
-        createGitHubCommandOptions(process.env[tokenEnvVar] ?? null)
+        {
+          ...createGitHubCommandOptions(process.env[tokenEnvVar] ?? null),
+          timeoutMs: commandTimeoutMs
+        }
       );
 
       return {
@@ -180,18 +239,24 @@ export function createGitHubWorkspaceRepoBootstrapper(
 export interface ArchitectHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
+  heartbeatIntervalMs?: number;
 }
 
 export function createArchitectHandoffAwaiter(
   options: ArchitectHandoffAwaiterOptions = {}
 ): OpenClawCompletionAwaiter {
-  const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 2000;
+  const defaultHeartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
 
   return {
     async waitForCompletion(input) {
       const handoffPath = join(input.workspace.artifactsDir, "architect-handoff.md");
       const deadline = Date.now() + timeoutMs;
+      let lastHeartbeatAt = Date.now();
+      const heartbeatIntervalMs =
+        input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
 
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
@@ -211,12 +276,19 @@ export function createArchitectHandoffAwaiter(
           }
         }
 
+        lastHeartbeatAt = await emitHeartbeatIfDue({
+          lastHeartbeatAt,
+          heartbeatIntervalMs,
+          onHeartbeat: input.onHeartbeat
+        });
         await sleep(pollIntervalMs);
       }
 
-      throw new Error(
-        `Timed out waiting for OpenClaw architect completion for session ${input.sessionKey}.`
-      );
+      throw new OpenClawCompletionTimeoutError({
+        sessionKey: input.sessionKey,
+        timeoutMs,
+        phase: "architect"
+      });
     }
   };
 }
@@ -224,19 +296,25 @@ export function createArchitectHandoffAwaiter(
 export interface DeveloperHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
+  heartbeatIntervalMs?: number;
 }
 
 export function createDeveloperHandoffAwaiter(
   options: DeveloperHandoffAwaiterOptions = {}
 ): OpenClawCompletionAwaiter {
-  const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 2000;
+  const defaultHeartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
 
   return {
     async waitForCompletion(input) {
       const handoffPath = join(input.workspace.artifactsDir, "developer-handoff.md");
       const repoRoot = readWorkspaceRepoRoot(input.workspace);
       const deadline = Date.now() + timeoutMs;
+      let lastHeartbeatAt = Date.now();
+      const heartbeatIntervalMs =
+        input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
 
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
@@ -257,12 +335,19 @@ export function createDeveloperHandoffAwaiter(
           }
         }
 
+        lastHeartbeatAt = await emitHeartbeatIfDue({
+          lastHeartbeatAt,
+          heartbeatIntervalMs,
+          onHeartbeat: input.onHeartbeat
+        });
         await sleep(pollIntervalMs);
       }
 
-      throw new Error(
-        `Timed out waiting for OpenClaw developer completion for session ${input.sessionKey}.`
-      );
+      throw new OpenClawCompletionTimeoutError({
+        sessionKey: input.sessionKey,
+        timeoutMs,
+        phase: "developer"
+      });
     }
   };
 }
@@ -271,6 +356,7 @@ export interface GitWorkspaceCommitPublisherOptions {
   userName?: string;
   userEmail?: string;
   tokenEnvVar?: string;
+  commandTimeoutMs?: number;
 }
 
 export function createGitWorkspaceCommitPublisher(
@@ -279,6 +365,7 @@ export function createGitWorkspaceCommitPublisher(
   const userName = options.userName ?? "RedDwarf";
   const userEmail = options.userEmail ?? "reddwarf@local.invalid";
   const tokenEnvVar = options.tokenEnvVar ?? "GITHUB_TOKEN";
+  const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_GIT_COMMAND_TIMEOUT_MS;
 
   return {
     async publish(input) {
@@ -287,11 +374,13 @@ export function createGitWorkspaceCommitPublisher(
         throw new Error(`Workspace ${input.workspace.workspaceId} does not have a repo checkout to publish.`);
       }
 
-      await runCommand("git", ["checkout", "-B", input.branchName], repoRoot, input.logger);
-      await runCommand("git", ["config", "user.name", userName], repoRoot, input.logger);
-      await runCommand("git", ["config", "user.email", userEmail], repoRoot, input.logger);
+      const commandOptions = { timeoutMs: commandTimeoutMs };
 
-      const statusBefore = await runCommand("git", ["status", "--porcelain"], repoRoot, input.logger);
+      await runCommand("git", ["checkout", "-B", input.branchName], repoRoot, input.logger, commandOptions);
+      await runCommand("git", ["config", "user.name", userName], repoRoot, input.logger, commandOptions);
+      await runCommand("git", ["config", "user.email", userEmail], repoRoot, input.logger, commandOptions);
+
+      const statusBefore = await runCommand("git", ["status", "--porcelain"], repoRoot, input.logger, commandOptions);
       const uncommittedChangedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
       const hasUncommittedChanges = uncommittedChangedFiles.length > 0;
 
@@ -302,12 +391,13 @@ export function createGitWorkspaceCommitPublisher(
       });
 
       if (hasUncommittedChanges) {
-        await runCommand("git", ["add", "--all"], repoRoot, input.logger);
+        await runCommand("git", ["add", "--all"], repoRoot, input.logger, commandOptions);
         await runCommand(
           "git",
           ["commit", "-m", `[RedDwarf] ${input.manifest.title}`],
           repoRoot,
-          input.logger
+          input.logger,
+          commandOptions
         );
       } else {
         // The developer agent may have already committed changes directly.
@@ -316,19 +406,21 @@ export function createGitWorkspaceCommitPublisher(
           "git",
           ["rev-list", "--count", `${input.baseBranch}..HEAD`],
           repoRoot,
-          input.logger
+          input.logger,
+          commandOptions
         );
         if (parseInt(revCount.stdout.trim(), 10) === 0) {
           throw new Error(`Workspace ${input.workspace.workspaceId} does not contain any product-repo changes to publish.`);
         }
       }
 
-      const commitSha = (await runCommand("git", ["rev-parse", "HEAD"], repoRoot, input.logger)).stdout.trim();
+      const commitSha = (await runCommand("git", ["rev-parse", "HEAD"], repoRoot, input.logger, commandOptions)).stdout.trim();
       const changedFiles = (await runCommand(
         "git",
         ["diff", "--name-only", `${input.baseBranch}..HEAD`],
         repoRoot,
-        input.logger
+        input.logger,
+        commandOptions
       )).stdout
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -344,11 +436,13 @@ export function createGitWorkspaceCommitPublisher(
         "git",
         ["diff", `${input.baseBranch}..HEAD`],
         repoRoot,
-        input.logger
+        input.logger,
+        commandOptions
       )).stdout;
-      const githubCommandOptions = createGitHubCommandOptions(
-        process.env[tokenEnvVar] ?? null
-      );
+      const githubCommandOptions = {
+        ...createGitHubCommandOptions(process.env[tokenEnvVar] ?? null),
+        timeoutMs: commandTimeoutMs
+      };
       const pushRemote = buildGitHubRemoteUrl(input.manifest.source.repo);
 
       await runCommand(
@@ -470,9 +564,28 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function emitHeartbeatIfDue(input: {
+  lastHeartbeatAt: number;
+  heartbeatIntervalMs: number;
+  onHeartbeat: (() => Promise<void>) | undefined;
+}): Promise<number> {
+  if (!input.onHeartbeat) {
+    return input.lastHeartbeatAt;
+  }
+
+  const now = Date.now();
+  if (now - input.lastHeartbeatAt < input.heartbeatIntervalMs) {
+    return input.lastHeartbeatAt;
+  }
+
+  await input.onHeartbeat();
+  return now;
+}
+
 interface CommandExecutionOptions {
   env?: NodeJS.ProcessEnv;
   redactValues?: string[];
+  timeoutMs?: number;
 }
 
 async function runCommand(
@@ -490,15 +603,58 @@ async function runCommand(
     });
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
+    const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_COMMAND_TIMEOUT_MS;
+    let timedOut = false;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    let forceKillHandle: NodeJS.Timeout | null = null;
+
+    const clearTimers = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      if (forceKillHandle) {
+        clearTimeout(forceKillHandle);
+        forceKillHandle = null;
+      }
+    };
+
+    if (timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+        forceKillHandle = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, COMMAND_FORCE_KILL_AFTER_TIMEOUT_MS);
+      }, timeoutMs);
+    }
 
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk) => stdoutChunks.push(chunk));
     child.stderr?.on("data", (chunk) => stderrChunks.push(chunk));
-    child.on("error", reject);
+    child.on("error", (error) => {
+      clearTimers();
+      reject(error);
+    });
     child.on("close", (exitCode) => {
+      clearTimers();
       const stdout = stdoutChunks.join("");
       const stderr = stderrChunks.join("");
+      if (timedOut) {
+        reject(
+          new ExternalCommandTimeoutError({
+            executable,
+            args,
+            cwd,
+            timeoutMs,
+            stdout,
+            stderr,
+            redactValues: options.redactValues
+          })
+        );
+        return;
+      }
       if ((exitCode ?? 1) !== 0) {
         reject(
           new Error(
@@ -604,3 +760,12 @@ function globPatternToRegExp(pattern: string): RegExp {
 function buildGitHubRemoteUrl(repo: string): string {
   return `https://github.com/${repo}.git`;
 }
+
+
+
+
+
+
+
+
+

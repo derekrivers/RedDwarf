@@ -259,3 +259,12 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `scripts/verify-operator-api.mjs` to authenticate requests and to assert stable operator API contracts against a shared Postgres state instead of brittle exact-count assumptions.
 - Verification for feature 94: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:operator-api`.
 - No new follow-on feature was added from feature 94; the next board item remains feature 95, align heartbeats, stale windows, and subprocess timeouts.
+
+- Completed feature 95 from `FEATURE_BOARD.md`: align heartbeats, stale windows, and subprocess timeouts.
+- Updated `packages/control-plane/src/pipeline.ts` so stale-run detection is phase-aware, long repo-bootstrap and publish waits heartbeat active runs instead of going silent, validation commands enforce explicit timeouts, and timeout-classified failures persist distinct event codes for validation and git subprocess hangs.
+- Updated `packages/control-plane/src/live-workflow.ts` so architect and developer OpenClaw waiters can heartbeat while pending, git clone and publish commands enforce bounded timeouts, and command timeouts raise explicit `OpenClawCompletionTimeoutError` / `ExternalCommandTimeoutError` failures instead of hanging indefinitely.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` for architect heartbeat waiting, timed-out validation commands, and timed-out SCM publication failures, and fixed `waitWithHeartbeat(...)` so already-settled work returns immediately instead of sleeping for the full heartbeat interval.
+- Updated `scripts/verify-validation.mjs` to the current `createPostgresPlanningRepository(...)` factory so the validation verifier still closes cleanly after the repository pool-injection refactor. Feature 100 remains the tracked sweep for the other legacy script call sites.
+- Verification for feature 95: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:validation`; `corepack pnpm verify:scm`.
+- No new follow-on feature was added from feature 95; the next board item is feature 96, scrub or destroy secret-bearing workspaces on phase exit.
+
