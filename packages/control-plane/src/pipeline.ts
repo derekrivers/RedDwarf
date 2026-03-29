@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import {
   asIsoTimestamp,
@@ -109,6 +109,7 @@ import {
 } from "./workspace.js";
 import {
   assignWorkspaceRepoRoot,
+  createArchitectHandoffAwaiter,
   createDeveloperHandoffAwaiter,
   createGitHubWorkspaceRepoBootstrapper,
   createGitWorkspaceCommitPublisher,
@@ -189,6 +190,27 @@ export interface PlanningConcurrencyOptions {
 export interface PlanningPipelineDependencies {
   repository: PlanningRepository;
   planner: PlanningAgent;
+  /**
+   * Optional OpenClaw dispatch adapter. When provided, the planning phase
+   * dispatches to the OpenClaw architect agent (Holly) instead of using the
+   * injected PlanningAgent directly.
+   */
+  openClawDispatch?: OpenClawDispatchAdapter;
+  /**
+   * OpenClaw agent ID to dispatch to for architecture planning.
+   * Defaults to "reddwarf-analyst". Only used when openClawDispatch is provided.
+   */
+  openClawArchitectAgentId?: string;
+  /**
+   * Awaiter that polls for Holly's architect handoff file.
+   * Defaults to createArchitectHandoffAwaiter(). Only used when openClawDispatch is provided.
+   */
+  openClawArchitectAwaiter?: OpenClawCompletionAwaiter;
+  /**
+   * Root directory under which the architect workspace is created.
+   * Required when openClawDispatch is provided.
+   */
+  architectTargetRoot?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -201,6 +223,8 @@ export interface PlanningPipelineResult {
   spec?: PlanningSpec;
   policySnapshot?: PolicySnapshot;
   approvalRequest?: ApprovalRequest;
+  /** Raw markdown from Holly's architect handoff when planning was dispatched to OpenClaw. */
+  hollyHandoffMarkdown?: string;
   nextAction: "complete" | "await_human" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
 }
@@ -244,6 +268,11 @@ export interface DevelopmentPhaseDependencies {
    * Only used when openClawDispatch is provided.
    */
   openClawAgentId?: string;
+  /**
+   * Raw markdown from Holly's architect handoff. When provided, it is included
+   * in the OpenClaw developer prompt so Lister can follow Holly's plan.
+   */
+  hollyHandoffMarkdown?: string;
   environment?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
@@ -885,14 +914,39 @@ export async function runPlanningPipeline(
     assertPhaseExecutable("planning");
 
     let draft: PlanningDraft;
+    let hollyHandoffMarkdown: string | null = null;
 
-    try {
-      draft = await planner.createSpec(input, {
-        manifest: currentManifest,
-        runId
-      });
-    } catch (error) {
-      throw normalizePipelineFailure(error, activePhase, taskId, runId);
+    if (dependencies.openClawDispatch && dependencies.architectTargetRoot) {
+      try {
+        const architectResult = await dispatchHollyArchitectPhase({
+          input,
+          manifest: currentManifest,
+          runId,
+          taskId,
+          architectTargetRoot: dependencies.architectTargetRoot,
+          openClawDispatch: dependencies.openClawDispatch,
+          openClawArchitectAgentId: dependencies.openClawArchitectAgentId ?? "reddwarf-analyst",
+          openClawArchitectAwaiter: dependencies.openClawArchitectAwaiter ?? createArchitectHandoffAwaiter(),
+          repository,
+          logger: runLogger,
+          clock,
+          idGenerator,
+          nextEventId
+        });
+        draft = architectResult.draft;
+        hollyHandoffMarkdown = architectResult.hollyHandoffMarkdown;
+      } catch (error) {
+        throw normalizePipelineFailure(error, activePhase, taskId, runId);
+      }
+    } else {
+      try {
+        draft = await planner.createSpec(input, {
+          manifest: currentManifest,
+          runId
+        });
+      } catch (error) {
+        throw normalizePipelineFailure(error, activePhase, taskId, runId);
+      }
     }
 
     const planningCompletedAt = clock();
@@ -933,6 +987,44 @@ export async function runPlanningPipeline(
         createdAt: planningCompletedAtIso
       })
     );
+    if (hollyHandoffMarkdown) {
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:architect-handoff`,
+          taskId,
+          kind: "file_artifact",
+          title: "Holly architect handoff",
+          metadata: {
+            source: "openclaw:reddwarf-analyst",
+            contentLength: hollyHandoffMarkdown.length
+          },
+          createdAt: planningCompletedAtIso
+        })
+      );
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${taskId}:memory:task:architect-handoff`,
+          taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "architect.handoff",
+          title: "Holly architect handoff",
+          value: {
+            summary: draft.summary,
+            affectedAreas: draft.affectedAreas,
+            assumptions: draft.assumptions,
+            constraints: draft.constraints,
+            testExpectations: draft.testExpectations,
+            source: "openclaw:reddwarf-analyst"
+          },
+          repo: input.source.repo,
+          organizationId: deriveOrganizationId(input.source.repo),
+          tags: ["planning", "architect", "task"],
+          createdAt: planningCompletedAtIso,
+          updatedAt: planningCompletedAtIso
+        })
+      );
+    }
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -1244,6 +1336,7 @@ export async function runPlanningPipeline(
       spec,
       policySnapshot,
       ...(approvalRequest ? { approvalRequest } : {}),
+      ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
       nextAction: approvalRequest ? "await_human" : "complete",
       concurrencyDecision
     };
@@ -1670,7 +1763,7 @@ export async function runDeveloperPhase(
       assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
-      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace);
+      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown);
 
       dispatchResult = await dependencies.openClawDispatch.dispatch({
         sessionKey,
@@ -3213,10 +3306,219 @@ export function buildRuntimeWorkspacePath(
   return join(runtimeWorkspaceRoot, workspace.workspaceId).replace(/\\/g, "/");
 }
 
+interface DispatchHollyArchitectPhaseInput {
+  input: PlanningTaskInput;
+  manifest: TaskManifest;
+  runId: string;
+  taskId: string;
+  architectTargetRoot: string;
+  openClawDispatch: OpenClawDispatchAdapter;
+  openClawArchitectAgentId: string;
+  openClawArchitectAwaiter: OpenClawCompletionAwaiter;
+  repository: PlanningRepository;
+  logger: PlanningPipelineLogger;
+  clock: () => Date;
+  idGenerator: () => string;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+}
+
+interface DispatchHollyArchitectPhaseResult {
+  draft: PlanningDraft;
+  hollyHandoffMarkdown: string;
+}
+
+async function dispatchHollyArchitectPhase(
+  ctx: DispatchHollyArchitectPhaseInput
+): Promise<DispatchHollyArchitectPhaseResult> {
+  const workspaceId = `${ctx.taskId}-architect`;
+  const workspaceRoot = join(ctx.architectTargetRoot, workspaceId);
+  const artifactsDir = join(workspaceRoot, "artifacts");
+  await mkdir(artifactsDir, { recursive: true });
+
+  const runtimeWorkspaceRoot = (process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces").replace(/\\/g, "/");
+  const hostWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+  let runtimeWorkspacePath: string;
+  if (hostWorkspaceRoot) {
+    const rel = relative(hostWorkspaceRoot, workspaceRoot).replace(/\\/g, "/");
+    if (rel.length > 0 && rel !== "." && !rel.startsWith("../") && rel !== ".." && !rel.includes(":")) {
+      runtimeWorkspacePath = join(runtimeWorkspaceRoot, rel).replace(/\\/g, "/");
+    } else {
+      runtimeWorkspacePath = join(runtimeWorkspaceRoot, workspaceId).replace(/\\/g, "/");
+    }
+  } else {
+    runtimeWorkspacePath = join(runtimeWorkspaceRoot, workspaceId).replace(/\\/g, "/");
+  }
+
+  const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "architect-handoff.md").replace(/\\/g, "/");
+
+  const prompt = buildOpenClawArchitectPrompt(ctx.input, ctx.manifest, runtimeWorkspacePath, runtimeHandoffPath);
+
+  const sessionKey = `github:issue:${ctx.manifest.source.repo}:${ctx.manifest.source.issueNumber ?? ctx.taskId}`;
+  const dispatchResult = await ctx.openClawDispatch.dispatch({
+    sessionKey,
+    agentId: ctx.openClawArchitectAgentId,
+    prompt,
+    metadata: {
+      taskId: ctx.taskId,
+      runId: ctx.runId,
+      phase: "planning",
+      workspaceId
+    }
+  });
+
+  await recordRunEvent({
+    repository: ctx.repository,
+    logger: ctx.logger,
+    eventId: ctx.nextEventId("planning", EventCodes.OPENCLAW_DISPATCH),
+    taskId: ctx.taskId,
+    runId: ctx.runId,
+    phase: "planning",
+    level: "info",
+    code: EventCodes.OPENCLAW_DISPATCH,
+    message: `Dispatched to OpenClaw architect ${ctx.openClawArchitectAgentId} with session key ${sessionKey}.`,
+    data: {
+      sessionKey,
+      agentId: ctx.openClawArchitectAgentId,
+      accepted: dispatchResult.accepted,
+      sessionId: dispatchResult.sessionId,
+      workspaceId
+    },
+    createdAt: asIsoTimestamp(ctx.clock())
+  });
+
+  if (!dispatchResult.accepted) {
+    throw new Error(`OpenClaw architect dispatch for ${ctx.taskId} was not accepted.`);
+  }
+
+  const minimalWorkspace = {
+    workspaceId,
+    workspaceRoot,
+    artifactsDir,
+    stateFile: join(workspaceRoot, ".workspace", "workspace.json"),
+    descriptor: {} as MaterializedManagedWorkspace["descriptor"]
+  } as MaterializedManagedWorkspace;
+
+  const completion = await ctx.openClawArchitectAwaiter.waitForCompletion({
+    manifest: ctx.manifest,
+    workspace: minimalWorkspace,
+    sessionKey,
+    dispatchResult,
+    logger: ctx.logger
+  });
+
+  const hollyHandoffMarkdown = await readFile(completion.handoffPath, "utf8");
+  const draft = parseArchitectHandoffMarkdown(hollyHandoffMarkdown);
+
+  return { draft, hollyHandoffMarkdown };
+}
+
+function buildOpenClawArchitectPrompt(
+  input: PlanningTaskInput,
+  manifest: TaskManifest,
+  runtimeWorkspacePath: string,
+  runtimeHandoffPath: string
+): string {
+  return [
+    `Task ID: ${manifest.taskId}`,
+    `Title: ${manifest.title}`,
+    `Repository: ${manifest.source.repo}`,
+    ...(manifest.source.issueNumber !== undefined
+      ? [`Issue: #${manifest.source.issueNumber}`]
+      : []),
+    `Risk class: ${manifest.riskClass}`,
+    `Workspace root: ${runtimeWorkspacePath}`,
+    `Handoff path: ${runtimeHandoffPath}`,
+    "",
+    "## Task Summary",
+    "",
+    input.summary,
+    "",
+    "## Acceptance Criteria",
+    "",
+    ...input.acceptanceCriteria.map((item) => `- ${item}`),
+    "",
+    "## Requested Capabilities",
+    "",
+    ...input.requestedCapabilities.map((cap) => `- ${cap}`),
+    "",
+    "## Instructions",
+    "",
+    "Inspect the repository, understand the current structure, and produce an architecture plan.",
+    "The repository is available at `/var/lib/reddwarf/workspaces` if you need to inspect it via the GitHub API or your web tools.",
+    "Write the handoff file to the handoff path above using the exact headings below.",
+    "The handoff must follow this exact format:",
+    "",
+    "# Architecture Handoff",
+    "",
+    `- Task ID: ${manifest.taskId}`,
+    `- Repository: ${manifest.source.repo}`,
+    `- Architect: Holly (reddwarf-analyst)`,
+    "",
+    "## Summary",
+    "",
+    "One paragraph summarizing the problem and chosen direction.",
+    "",
+    "## Implementation Approach",
+    "",
+    "Describe the concrete implementation steps the Developer should follow.",
+    "",
+    "## Affected Files",
+    "",
+    "- Bullet list of files that will be created or modified.",
+    "",
+    "## Risks and Assumptions",
+    "",
+    "- Bullet list of risks, edge cases, or assumptions.",
+    "",
+    "## Test Strategy",
+    "",
+    "- Bullet list describing how the change should be validated.",
+    "",
+    "## Non-Goals",
+    "",
+    "- Bullet list of things explicitly out of scope."
+  ].join("\n");
+}
+
+function parseArchitectHandoffMarkdown(markdown: string): PlanningDraft {
+  const summarySection = readMarkdownSectionSafe(markdown, "## Summary");
+  const approachSection = readMarkdownSectionSafe(markdown, "## Implementation Approach");
+  const affectedSection = readMarkdownBulletSectionSafe(markdown, "## Affected Files");
+  const risksSection = readMarkdownBulletSectionSafe(markdown, "## Risks and Assumptions");
+  const testSection = readMarkdownBulletSectionSafe(markdown, "## Test Strategy");
+  const nonGoalsSection = readMarkdownBulletSectionSafe(markdown, "## Non-Goals");
+
+  return {
+    summary: [summarySection, approachSection].filter((s) => s.length > 0).join("\n\n"),
+    assumptions: risksSection,
+    affectedAreas: affectedSection,
+    constraints: nonGoalsSection,
+    testExpectations: testSection
+  };
+}
+
+function readMarkdownSectionSafe(markdown: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markdown.match(new RegExp(`${escapedHeading}\\n\\n([\\s\\S]*?)(?:\\n## |$)`));
+  return match ? match[1]!.trim() : "";
+}
+
+function readMarkdownBulletSectionSafe(markdown: string, heading: string): string[] {
+  const section = readMarkdownSectionSafe(markdown, heading);
+  if (section.length === 0) return [];
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.length > 0);
+}
+
 function buildOpenClawDeveloperPrompt(
   bundle: WorkspaceContextBundle,
   manifest: TaskManifest,
-  workspace: MaterializedManagedWorkspace
+  workspace: MaterializedManagedWorkspace,
+  hollyHandoffMarkdown?: string | null
 ): string {
   const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace);
   const runtimeRepoPath = join(runtimeWorkspacePath, "repo").replace(/\\/g, "/");
@@ -3247,9 +3549,22 @@ function buildOpenClawDeveloperPrompt(
     "",
     ...bundle.allowedPaths.map((item) => `- ${item}`),
     "",
+    ...(hollyHandoffMarkdown
+      ? [
+          "## Architecture Plan (from Holly)",
+          "",
+          hollyHandoffMarkdown,
+          "",
+          "---",
+          ""
+        ]
+      : []),
     "## Instructions",
     "",
     "Implement the approved change directly in the checked-out repository.",
+    ...(hollyHandoffMarkdown
+      ? ["Follow Holly's architecture plan above as your primary implementation guide."]
+      : []),
     "Keep edits inside the allowed paths and leave unrelated files untouched.",
     "Write the handoff file to the handoff path above using the exact headings below.",
     "The handoff must include the line `- Code writing enabled: yes` before the section headings.",

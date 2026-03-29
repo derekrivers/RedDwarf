@@ -92,7 +92,7 @@ The board is ordered by implementation priority.
 | 85       | PR-capable OpenClaw E2E path - materialize target-repo workspaces, wait for completed developer sessions, publish workspace changes as commits, and open real PRs at SCM handoff | M12 | completed | Execution Plane, Control Plane, Integration Plane, SCM Agent          |
 | 86       | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M13 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
 | 87       | GitHub user allowlist for issue intake - reject issues from non-whitelisted authors before processing, configurable via env or policy config, default-deny posture | M14 | pending | Integration Plane, Isolation and Security Model, Control Plane        |
-| 88       | Restore Holly to the live OpenClaw workflow - route architecture planning through reddwarf-analyst, persist Holly handoff as evidence, and pass the approved plan into Lister and downstream review | M14 | pending | Execution Plane, Control Plane, Knowledge & Policy Plane              |
+| 88       | Restore Holly to the live OpenClaw workflow - route architecture planning through reddwarf-analyst, persist Holly handoff as evidence, and pass the approved plan into Lister and downstream review | M14 | completed | Execution Plane, Control Plane, Knowledge & Policy Plane              |
 
 
 

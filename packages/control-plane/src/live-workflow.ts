@@ -132,6 +132,50 @@ export function createGitHubWorkspaceRepoBootstrapper(
   };
 }
 
+export interface ArchitectHandoffAwaiterOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+export function createArchitectHandoffAwaiter(
+  options: ArchitectHandoffAwaiterOptions = {}
+): OpenClawCompletionAwaiter {
+  const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+  const pollIntervalMs = options.pollIntervalMs ?? 2000;
+
+  return {
+    async waitForCompletion(input) {
+      const handoffPath = join(input.workspace.artifactsDir, "architect-handoff.md");
+      const deadline = Date.now() + timeoutMs;
+
+      while (Date.now() < deadline) {
+        if (await pathExists(handoffPath)) {
+          const handoff = await readFile(handoffPath, "utf8");
+          const headings = [
+            "# Architecture Handoff",
+            "## Summary",
+            "## Implementation Approach",
+            "## Affected Files",
+            "## Risks and Assumptions",
+            "## Test Strategy"
+          ];
+          const hasAllHeadings = headings.every((heading) => handoff.includes(heading));
+
+          if (hasAllHeadings) {
+            return { handoffPath, repoRoot: null };
+          }
+        }
+
+        await sleep(pollIntervalMs);
+      }
+
+      throw new Error(
+        `Timed out waiting for OpenClaw architect completion for session ${input.sessionKey}.`
+      );
+    }
+  };
+}
+
 export interface DeveloperHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
@@ -199,20 +243,33 @@ export function createGitWorkspaceCommitPublisher(
       }
 
       await runCommand("git", ["checkout", "-B", input.branchName], repoRoot, input.logger);
-      const statusBefore = await runCommand("git", ["status", "--porcelain"], repoRoot, input.logger);
-      if (statusBefore.stdout.trim().length === 0) {
-        throw new Error(`Workspace ${input.workspace.workspaceId} does not contain any product-repo changes to publish.`);
-      }
-
       await runCommand("git", ["config", "user.name", userName], repoRoot, input.logger);
       await runCommand("git", ["config", "user.email", userEmail], repoRoot, input.logger);
-      await runCommand("git", ["add", "--all"], repoRoot, input.logger);
-      await runCommand(
-        "git",
-        ["commit", "-m", `[RedDwarf] ${input.manifest.title}`],
-        repoRoot,
-        input.logger
-      );
+
+      const statusBefore = await runCommand("git", ["status", "--porcelain"], repoRoot, input.logger);
+      const hasUncommittedChanges = statusBefore.stdout.trim().length > 0;
+
+      if (hasUncommittedChanges) {
+        await runCommand("git", ["add", "--all"], repoRoot, input.logger);
+        await runCommand(
+          "git",
+          ["commit", "-m", `[RedDwarf] ${input.manifest.title}`],
+          repoRoot,
+          input.logger
+        );
+      } else {
+        // The developer agent may have already committed changes directly.
+        // Verify there are commits beyond the base branch before proceeding.
+        const revCount = await runCommand(
+          "git",
+          ["rev-list", "--count", `${input.baseBranch}..HEAD`],
+          repoRoot,
+          input.logger
+        );
+        if (parseInt(revCount.stdout.trim(), 10) === 0) {
+          throw new Error(`Workspace ${input.workspace.workspaceId} does not contain any product-repo changes to publish.`);
+        }
+      }
 
       const commitSha = (await runCommand("git", ["rev-parse", "HEAD"], repoRoot, input.logger)).stdout.trim();
       const changedFiles = (await runCommand(
@@ -268,7 +325,19 @@ async function repositoryHasChanges(
   }
 
   const status = await runCommand("git", ["status", "--porcelain"], repoRoot, logger);
-  return status.stdout.trim().length > 0;
+  if (status.stdout.trim().length > 0) {
+    return true;
+  }
+
+  // Also detect committed changes: compare HEAD against the initial clone ref.
+  // A shallow clone with --depth 1 starts with exactly one commit; any additional
+  // local commits indicate the developer agent made and committed changes.
+  try {
+    const revCount = await runCommand("git", ["rev-list", "--count", "HEAD"], repoRoot, logger);
+    return parseInt(revCount.stdout.trim(), 10) > 1;
+  } catch {
+    return false;
+  }
 }
 
 async function pathExists(path: string): Promise<boolean> {

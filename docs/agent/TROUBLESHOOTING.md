@@ -111,3 +111,11 @@
 - Failing approach: deriving runtime-visible workspace paths as join(REDDWARF_WORKSPACE_ROOT, workspace.workspaceId) for every run.
 - Working workaround: set REDDWARF_HOST_WORKSPACE_ROOT in the E2E runner and derive the runtime-visible path from the relative path between the real host workspace root and workspace.workspaceRoot; keep REDDWARF_WORKSPACE_ROOT as the container-visible mount root.
 - Verification: rerun E2E_TARGET_REPO=derekrivers/FirstVoyage E2E_USE_OPENCLAW=true E2E_CLEANUP=false corepack pnpm e2e and confirm the developer phase completes, validation returns wait_scm, and SCM opens a real PR.
+
+## OpenClaw developer handoff times out even though the developer agent committed changes
+
+- Symptom: `pnpm e2e` reaches developer dispatch, the OpenClaw developer agent writes `developer-handoff.md` and commits code changes to the repo, but the handoff awaiter times out because `git status --porcelain` reports a clean working tree.
+- Root cause: the developer agent (Lister) committed changes directly using `git add && git commit` instead of leaving them as unstaged modifications. The `repositoryHasChanges` check only tested `git status --porcelain`, which returns empty for a committed repo.
+- Failing approach: relying solely on `git status --porcelain` to detect developer work product.
+- Working workaround: `repositoryHasChanges` now also checks `git rev-list --count HEAD > 1` to detect local commits beyond the initial shallow clone. The commit publisher similarly handles pre-committed changes by checking for commits beyond the base branch instead of requiring uncommitted files.
+- Verification: rerun `E2E_TARGET_REPO=derekrivers/FirstVoyage E2E_USE_OPENCLAW=true corepack pnpm e2e` and confirm the developer phase completes, validation returns `await_scm`, and SCM opens a real PR.

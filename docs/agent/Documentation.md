@@ -196,3 +196,17 @@
 
 - Fixed a host/container workspace-path mismatch in live OpenClaw development runs: the prompt originally told OpenClaw to use /var/lib/reddwarf/workspaces/<workspaceId>, which broke nested E2E workspaces under untime-data/workspaces/e2e-*/.... The control-plane now maps the real host workspace path to the correct runtime-visible path using REDDWARF_HOST_WORKSPACE_ROOT plus REDDWARF_WORKSPACE_ROOT.
 - Verified feature 85 end to end on Saturday, March 28, 2026: live E2E run created GitHub issue #14, completed OpenClaw development, passed validation, published branch eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and opened PR #15 at https://github.com/derekrivers/FirstVoyage/pull/15.
+
+## 2026-03-29
+
+- Completed feature 88 from `FEATURE_BOARD.md` (M14): Restore Holly to the live OpenClaw workflow.
+  - Added `createArchitectHandoffAwaiter` to `live-workflow.ts` that polls for `architect-handoff.md` with required headings (Architecture Handoff, Summary, Implementation Approach, Affected Files, Risks and Assumptions, Test Strategy).
+  - Added `dispatchHollyArchitectPhase` and `buildOpenClawArchitectPrompt` to `pipeline.ts` that create a lightweight architect workspace, dispatch to `reddwarf-analyst` (Holly) via OpenClaw hooks, await Holly's handoff, and parse it into a `PlanningDraft`.
+  - Extended `PlanningPipelineDependencies` with optional `openClawDispatch`, `openClawArchitectAgentId`, `openClawArchitectAwaiter`, and `architectTargetRoot` so the planning pipeline can route through Holly instead of the direct `PlanningAgent`.
+  - Holly's raw architect handoff markdown is persisted as evidence and as a task memory record (`architect.handoff`), and returned on `PlanningPipelineResult.hollyHandoffMarkdown`.
+  - Extended `DevelopmentPhaseDependencies` with optional `hollyHandoffMarkdown` and updated `buildOpenClawDeveloperPrompt` to include Holly's architecture plan in Lister's prompt when available.
+  - Fixed `repositoryHasChanges` in `live-workflow.ts` to also detect committed changes (Lister commits directly rather than leaving unstaged files), by checking `git rev-list --count HEAD > 1`.
+  - Fixed `createGitWorkspaceCommitPublisher` to handle pre-committed changes: if `git status --porcelain` is clean, it checks for local commits beyond the base branch instead of erroring.
+  - Updated E2E test criteria to request `index.html` with a Red Dwarf cast short story instead of `docs/health-check.md`.
+  - Updated E2E script to dispatch Holly for architecture planning when `E2E_USE_OPENCLAW=true`, log Holly handoff size, and pass `hollyHandoffMarkdown` to the developer phase.
+- Verified feature 88 end to end: live E2E run created GitHub issue #18, Holly completed architecture planning in 24.9s, Lister implemented `index.html` in 83.5s, validation passed, SCM published branch and opened PR #20 at https://github.com/derekrivers/FirstVoyage/pull/20. Total duration: 111.5s.

@@ -63,6 +63,7 @@ import {
   DeterministicDeveloperAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  createArchitectHandoffAwaiter,
   createDeveloperHandoffAwaiter,
   createGitHubWorkspaceRepoBootstrapper,
   createGitWorkspaceCommitPublisher,
@@ -297,20 +298,22 @@ try {
       "",
       "## Task",
       "",
-      "Add a `docs/health-check.md` file that documents the project's health check endpoints.",
-      "The file should include:",
-      "- A table listing each health endpoint (path, method, expected response)",
-      "- A short description of what each endpoint verifies",
-      "- Example curl commands for local verification",
+      "Add an `index.html` file at the repository root that displays a short story about the Red Dwarf cast members.",
+      "The page should:",
+      "- Be a valid, self-contained HTML5 document with inline CSS styling",
+      "- Include a title heading: \"Red Dwarf: A Short Story\"",
+      "- Tell a short fictional story (3-5 paragraphs) featuring Lister, Rimmer, Cat, Kryten, and Holly",
+      "- Include character names styled in bold",
+      "- Have a simple, readable layout with a max-width container",
       "",
       "## Acceptance Criteria",
-      "- `docs/health-check.md` exists and is valid Markdown",
-      "- The table covers at least the `/health` endpoint on the operator API",
-      "- Example curl commands are correct for `localhost:8080`",
+      "- `index.html` exists at the repository root and is valid HTML5",
+      "- The story mentions all five main characters: Lister, Rimmer, Cat, Kryten, and Holly",
+      "- The page renders correctly when opened in a browser",
       "- No existing files are modified",
       "",
       "## Affected Paths",
-      "- docs/health-check.md",
+      "- index.html",
       "",
       "## Requested Capabilities",
       "- can_plan",
@@ -326,20 +329,32 @@ try {
   createdIssueNumber = issue.issueNumber;
   log(`  Created issue #${issue.issueNumber}: ${issue.url} (${elapsed(issueStart)})`);
 
-  log("Step 2/7: Running intake and planning pipeline (LLM call)...");
+  log(`Step 2/7: Running intake and planning pipeline (${useOpenClaw ? "Holly via OpenClaw" : "LLM call"})...`);
   const planningStart = Date.now();
 
   const intake = await intakeGitHubIssue({ github, repo, issueNumber: issue.issueNumber });
   log(`  Intake complete: "${intake.candidate.title}"`);
 
-  const planningResult = await runPlanningPipeline(intake.planningInput, {
+  const planningDeps = {
     repository,
     planner
-  });
+  };
+
+  if (useOpenClaw) {
+    planningDeps.openClawDispatch = createHttpOpenClawDispatchAdapter();
+    planningDeps.openClawArchitectAgentId = "reddwarf-analyst";
+    planningDeps.openClawArchitectAwaiter = createArchitectHandoffAwaiter();
+    planningDeps.architectTargetRoot = targetRoot;
+  }
+
+  const planningResult = await runPlanningPipeline(intake.planningInput, planningDeps);
 
   log(`  Planning complete (${elapsed(planningStart)})`);
   log(`  Task ID: ${planningResult.manifest.taskId}`);
   log(`  Next action: ${planningResult.nextAction}`);
+  if (planningResult.hollyHandoffMarkdown) {
+    log(`  Holly architect handoff: ${planningResult.hollyHandoffMarkdown.length} chars`);
+  }
   if (planningResult.spec) {
     log(`  Plan summary: ${planningResult.spec.summary?.slice(0, 120)}...`);
   }
@@ -377,6 +392,9 @@ try {
     devDeps.openClawAgentId = "reddwarf-developer";
     devDeps.workspaceRepoBootstrapper = createGitHubWorkspaceRepoBootstrapper();
     devDeps.openClawCompletionAwaiter = createDeveloperHandoffAwaiter();
+    if (planningResult.hollyHandoffMarkdown) {
+      devDeps.hollyHandoffMarkdown = planningResult.hollyHandoffMarkdown;
+    }
   }
 
   const devResult = await runDeveloperPhase(
