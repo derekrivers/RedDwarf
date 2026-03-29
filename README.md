@@ -202,7 +202,7 @@ The fastest way to prove the full pipeline end-to-end is the automated integrati
 E2E_TARGET_REPO=owner/repo corepack pnpm e2e
 ```
 
-This creates a real GitHub issue, runs every pipeline phase (planning → approval → developer → validation → SCM), and opens a real pull request. Set `E2E_CLEANUP=true` to close all created GitHub resources afterwards. Set `E2E_USE_OPENCLAW=true` to dispatch through the live OpenClaw agent runtime.
+This creates a real GitHub issue, runs intake and planning, auto-approves the resulting request, then drives the approved task through the same `dispatchReadyTask(...)` post-approval path the live stack uses (developer -> validation -> optional SCM). Set `E2E_CLEANUP=true` to close all created GitHub resources afterwards. Set `E2E_USE_OPENCLAW=true` to dispatch the developer phase through the live OpenClaw agent runtime.
 
 The E2E test is **not** part of `pnpm test` — it will never run during CI or local unit testing, and each run consumes Anthropic API tokens.
 

@@ -330,3 +330,6 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 
 - Added `scripts/cleanup-approvals.mjs` plus the `corepack pnpm cleanup:approvals` package script for repeatable approval-row cleanup in Postgres.
 - The approvals cleanup script is dry-run by default, targets only resolved approvals for terminal manifests by default, supports `--task-id`, `--statuses`, `--older-than-days`, and `--include-nonterminal-manifests`, and requires `--allow-pending-delete` before it will remove pending approvals because doing so can orphan blocked tasks.
+
+- Reviewed and updated `scripts/e2e-integration.mjs` so the E2E harness now auto-approves the planning request and drives the task through `dispatchReadyTask(...)` instead of manually calling developer, validation, and SCM phases. This keeps E2E aligned with the live post-approval execution path and with failure-recovery / retry semantics added in features 102 and 103.
+- Updated `README.md` and `docs/DEMO_RUNBOOK.md` to document the dispatcher-driven E2E flow and the stable SCM branch naming (`reddwarf/<task-id>/scm`) introduced by the idempotent SCM work.

@@ -4,7 +4,7 @@
  * Full end-to-end integration test against a real GitHub repository.
  *
  * Creates a GitHub issue, runs the RedDwarf pipeline
- * (intake -> planning -> approval -> developer -> validation -> optional SCM),
+ * (intake -> planning -> approval -> dispatch -> developer -> validation -> optional SCM),
  * inspects the resulting state, and optionally cleans up.
  *
  * Required environment:
@@ -55,11 +55,9 @@ try {
 }
 
 import {
+  dispatchReadyTask,
   resolveApprovalRequest,
-  runDeveloperPhase,
   runPlanningPipeline,
-  runScmPhase,
-  runValidationPhase,
   DeterministicDeveloperAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
@@ -116,6 +114,16 @@ function elapsed(startMs) {
   return `${((Date.now() - startMs) / 1000).toFixed(1)}s`;
 }
 
+function findLatestRunEvent(snapshot, code) {
+  const runEvents = snapshot?.runEvents ?? [];
+  for (let index = runEvents.length - 1; index >= 0; index -= 1) {
+    if (runEvents[index]?.code === code) {
+      return runEvents[index];
+    }
+  }
+  return null;
+}
+
 async function closeIssue(issueNumber) {
   const [owner, repoName] = repo.split("/");
   const res = await fetch(
@@ -156,8 +164,9 @@ async function closePullRequest(prNumber) {
 
 async function deleteBranch(branchName) {
   const [owner, repoName] = repo.split("/");
+  const encodedRef = encodeURIComponent(`heads/${branchName}`);
   const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repoName}/git/refs/heads/${branchName}`,
+    `https://api.github.com/repos/${owner}/${repoName}/git/refs/${encodedRef}`,
     {
       method: "DELETE",
       headers: {
@@ -280,7 +289,7 @@ const runStart = Date.now();
 let createdIssueNumber = null;
 let createdPrNumber = null;
 let createdBranch = null;
-let scmResult = null;
+let dispatchResult = null;
 
 try {
   await ensureLocalStackReady();
@@ -379,100 +388,65 @@ try {
 
   log(`  Approved request ${planningResult.approvalRequest.requestId} (${elapsed(approvalStart)})`);
 
-  log(`Step 4/7: Running developer phase (${useOpenClaw ? "OpenClaw dispatch" : "deterministic"})...`);
-  const devStart = Date.now();
+  log(`Step 4/5: Dispatching approved task (${useOpenClaw ? "OpenClaw developer handoff" : "deterministic dispatcher"})...`);
+  const dispatchStart = Date.now();
 
-  const devDeps = {
+  const dispatchDeps = {
     repository,
-    developer: new DeterministicDeveloperAgent()
+    developer: new DeterministicDeveloperAgent(),
+    validator: new DeterministicValidationAgent(),
+    scm: new DeterministicScmAgent(),
+    github,
+    workspaceRepoBootstrapper: createGitHubWorkspaceRepoBootstrapper(),
+    workspaceCommitPublisher: createGitWorkspaceCommitPublisher()
   };
 
   if (useOpenClaw) {
-    devDeps.openClawDispatch = createHttpOpenClawDispatchAdapter();
-    devDeps.openClawAgentId = "reddwarf-developer";
-    devDeps.workspaceRepoBootstrapper = createGitHubWorkspaceRepoBootstrapper();
-    devDeps.openClawCompletionAwaiter = createDeveloperHandoffAwaiter();
-    if (planningResult.hollyHandoffMarkdown) {
-      devDeps.hollyHandoffMarkdown = planningResult.hollyHandoffMarkdown;
-    }
+    dispatchDeps.openClawDispatch = createHttpOpenClawDispatchAdapter();
+    dispatchDeps.openClawCompletionAwaiter = createDeveloperHandoffAwaiter();
   }
 
-  const devResult = await runDeveloperPhase(
+  dispatchResult = await dispatchReadyTask(
     {
       taskId: planningResult.manifest.taskId,
       targetRoot,
       evidenceRoot
     },
-    devDeps
+    dispatchDeps
   );
 
-  log(`  Developer phase complete (${elapsed(devStart)})`);
-  log(`  Next action: ${devResult.nextAction}`);
-  if (devResult.openClawDispatchResult) {
-    log(`  OpenClaw session: ${devResult.openClawDispatchResult.sessionId}`);
+  log(`  Dispatch complete (${elapsed(dispatchStart)})`);
+  log(`  Outcome: ${dispatchResult.outcome}`);
+  log(`  Final phase: ${dispatchResult.finalPhase}`);
+  log(`  Phases executed: ${dispatchResult.phasesExecuted.join(" -> ") || "(none)"}`);
+  if (dispatchResult.error) {
+    log(`  Error: ${dispatchResult.error}`);
   }
 
-  log("Step 5/7: Running validation phase...");
-  const validationStart = Date.now();
-
-  const valResult = await runValidationPhase(
-    {
-      taskId: planningResult.manifest.taskId,
-      targetRoot,
-      evidenceRoot
-    },
-    {
-      repository,
-      validator: new DeterministicValidationAgent()
-    }
-  );
-
-  log(`  Validation complete (${elapsed(validationStart)})`);
-  log(`  Next action: ${valResult.nextAction}`);
-
-  if (valResult.nextAction === "await_scm") {
-    log("Step 6/7: Running SCM phase (creating real branch + PR)...");
-    const scmStart = Date.now();
-
-    scmResult = await runScmPhase(
-      {
-        taskId: planningResult.manifest.taskId,
-        targetRoot,
-        evidenceRoot
-      },
-      {
-        repository,
-        scm: new DeterministicScmAgent(),
-        github,
-        workspaceRepoBootstrapper: createGitHubWorkspaceRepoBootstrapper(),
-        workspaceCommitPublisher: createGitWorkspaceCommitPublisher()
-      }
-    );
-
-    log(`  SCM phase complete (${elapsed(scmStart)})`);
-    log(`  Next action: ${scmResult.nextAction}`);
-
-    if (scmResult.branch) {
-      createdBranch = scmResult.branch.branchName;
-      log(`  Branch: ${scmResult.branch.branchName}`);
-    }
-    if (scmResult.pullRequest) {
-      createdPrNumber = scmResult.pullRequest.number;
-      log(`  PR #${scmResult.pullRequest.number}: ${scmResult.pullRequest.url}`);
-    }
-  } else {
-    log(`Step 6/7: Skipping SCM phase because validation returned ${valResult.nextAction}.`);
-  }
-
-  log("Step 7/7: Inspecting pipeline results...");
+  log("Step 5/5: Inspecting pipeline results...");
 
   const finalManifest = await repository.getManifest(planningResult.manifest.taskId);
   const snapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+  const openClawDispatchEvent = findLatestRunEvent(snapshot, "OPENCLAW_DISPATCH");
+  const openClawDispatchData =
+    openClawDispatchEvent &&
+    typeof openClawDispatchEvent.data === "object" &&
+    openClawDispatchEvent.data !== null
+      ? openClawDispatchEvent.data
+      : null;
+
+  createdPrNumber = finalManifest?.prNumber ?? createdPrNumber;
+  createdBranch = finalManifest?.branchName ?? createdBranch;
+
   const report = {
     success:
-      scmResult !== null
-        ? scmResult.nextAction === "complete"
-        : valResult.nextAction === "await_review",
+      dispatchResult?.outcome === "completed" &&
+      ((dispatchResult.finalPhase === "validation" &&
+        finalManifest?.lifecycleStatus === "blocked" &&
+        finalManifest?.currentPhase === "validation") ||
+        (dispatchResult.finalPhase === "scm" &&
+          finalManifest?.lifecycleStatus === "completed" &&
+          finalManifest?.currentPhase === "scm")),
     totalDuration: elapsed(runStart),
     repo,
     issue: {
@@ -486,46 +460,24 @@ try {
       prNumber: finalManifest?.prNumber,
       branchName: finalManifest?.branchName
     },
-    phases: {
-      planning: {
-        runId: planningResult.runId,
-        nextAction: planningResult.nextAction,
-        specSummary: planningResult.spec?.summary?.slice(0, 200)
-      },
-      developer: {
-        runId: devResult.runId,
-        nextAction: devResult.nextAction,
-        openClaw: devResult.openClawDispatchResult
-          ? {
-              accepted: devResult.openClawDispatchResult.accepted,
-              sessionId: devResult.openClawDispatchResult.sessionId
-            }
-          : null
-      },
-      validation: {
-        runId: valResult.runId,
-        nextAction: valResult.nextAction
-      },
-      scm:
-        scmResult !== null
-          ? {
-              runId: scmResult.runId,
-              nextAction: scmResult.nextAction,
-              branch: scmResult.branch
-                ? {
-                    name: scmResult.branch.branchName,
-                    sha: scmResult.branch.sha
-                  }
-                : null,
-              pullRequest: scmResult.pullRequest
-                ? {
-                    number: scmResult.pullRequest.prNumber,
-                    url: scmResult.pullRequest.url
-                  }
-                : null
-            }
-          : null
+    planning: {
+      runId: planningResult.runId,
+      nextAction: planningResult.nextAction,
+      specSummary: planningResult.spec?.summary?.slice(0, 200)
     },
+    dispatch: {
+      outcome: dispatchResult?.outcome ?? null,
+      finalPhase: dispatchResult?.finalPhase ?? null,
+      phasesExecuted: dispatchResult?.phasesExecuted ?? [],
+      error: dispatchResult?.error ?? null
+    },
+    openClaw:
+      openClawDispatchData
+        ? {
+            accepted: openClawDispatchData.accepted ?? null,
+            sessionId: openClawDispatchData.sessionId ?? null
+          }
+        : null,
     evidence: {
       phaseRecordCount: snapshot?.phaseRecords?.length ?? 0,
       evidenceRecordCount: snapshot?.evidenceRecords?.length ?? 0,
@@ -533,7 +485,6 @@ try {
       runEventCount: snapshot?.runEvents?.length ?? 0
     }
   };
-
   log("");
   log("================================================================");
   log("  E2E INTEGRATION TEST RESULTS");
@@ -547,11 +498,17 @@ try {
   log(`  Status:     ${report.task.lifecycleStatus}`);
   log(`  Phase:      ${report.task.currentPhase}`);
 
-  if (report.phases.scm?.pullRequest) {
-    log(`  PR:         #${report.phases.scm.pullRequest.number} - ${report.phases.scm.pullRequest.url}`);
+  log(`  Dispatch:   ${report.dispatch.outcome} (final phase: ${report.dispatch.finalPhase})`);
+  log(`  Executed:   ${report.dispatch.phasesExecuted.join(" -> ") || "(none)"}`);
+
+  if (report.task.prNumber) {
+    log(`  PR:         #${report.task.prNumber}`);
   }
-  if (report.phases.scm?.branch) {
-    log(`  Branch:     ${report.phases.scm.branch.name}`);
+  if (report.task.branchName) {
+    log(`  Branch:     ${report.task.branchName}`);
+  }
+  if (report.dispatch.error) {
+    log(`  Error:      ${report.dispatch.error}`);
   }
 
   log("");
@@ -562,13 +519,12 @@ try {
   log(`    Run events:       ${report.evidence.runEventCount}`);
   log("");
 
-  if (report.phases.developer.openClaw) {
+  if (report.openClaw) {
     log("  OpenClaw:");
-    log(`    Accepted:   ${report.phases.developer.openClaw.accepted}`);
-    log(`    Session ID: ${report.phases.developer.openClaw.sessionId}`);
+    log(`    Accepted:   ${report.openClaw.accepted}`);
+    log(`    Session ID: ${report.openClaw.sessionId}`);
     log("");
   }
-
   log("  Full report:");
   console.log(JSON.stringify(report, null, 2));
   log("");
@@ -626,4 +582,3 @@ try {
   await rm(evidenceRoot, { recursive: true, force: true }).catch(() => {});
   await repository.close();
 }
-

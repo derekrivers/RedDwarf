@@ -208,20 +208,18 @@ E2E_TARGET_REPO=owner/repo E2E_CLEANUP=true corepack pnpm e2e
 
 ```
 [e2e] Preflight complete: local Postgres is already reachable.
-[e2e] Step 1/7: Creating GitHub issue...
+[e2e] Step 1/5: Creating GitHub issue...
 [e2e]   Created issue #14: https://github.com/owner/repo/issues/14 (1.2s)
-[e2e] Step 2/7: Running intake and planning pipeline...
+[e2e] Step 2/5: Running intake and planning pipeline...
 [e2e]   Planning complete (8.3s)
 [e2e]   Task ID: owner-repo-14
-[e2e] Step 3/7: Auto-approving plan...
-[e2e] Step 4/7: Running developer phase...
-[e2e]   Developer phase complete (45.2s)
-[e2e] Step 5/7: Running validation phase...
-[e2e]   Validation complete (0.1s)
-[e2e] Step 6/7: Running SCM phase (creating real branch + PR)...
-[e2e]   Branch: reddwarf/owner-repo-14/abc123
-[e2e]   PR #15: https://github.com/owner/repo/pull/15
-[e2e] Step 7/7: Inspecting pipeline results...
+[e2e] Step 3/5: Auto-approving plan...
+[e2e] Step 4/5: Dispatching approved task...
+[e2e]   Dispatch complete (45.2s)
+[e2e]   Outcome: completed
+[e2e]   Final phase: scm
+[e2e]   Phases executed: development -> validation -> scm
+[e2e] Step 5/5: Inspecting pipeline results...
 [e2e]
 [e2e] ================================================================
 [e2e]   E2E INTEGRATION TEST RESULTS
@@ -229,7 +227,10 @@ E2E_TARGET_REPO=owner/repo E2E_CLEANUP=true corepack pnpm e2e
 [e2e]
 [e2e]   Result:     PASS
 [e2e]   Duration:   55.1s
-[e2e]   PR:         #15 - https://github.com/owner/repo/pull/15
+[e2e]   Dispatch:   completed (final phase: scm)
+[e2e]   Executed:   development -> validation -> scm
+[e2e]   PR:         #15
+[e2e]   Branch:     reddwarf/owner-repo-14/scm
 [e2e]
 [e2e] E2E integration test passed.
 ```
@@ -237,7 +238,7 @@ E2E_TARGET_REPO=owner/repo E2E_CLEANUP=true corepack pnpm e2e
 ### 3.6 What it creates on GitHub
 
 - A new issue titled `[E2E Test] RedDwarf pipeline validation <timestamp>` with the `ai-eligible` label
-- A branch named `reddwarf/<task-id>/<run-id>`
+- A branch named `reddwarf/<task-id>/scm` when the task reaches SCM
 - A pull request from that branch to the repo's default branch
 
 If `E2E_CLEANUP=true`, all three are closed/deleted after the test completes (even on failure).
@@ -247,7 +248,7 @@ If `E2E_CLEANUP=true`, all three are closed/deleted after the test completes (ev
 If you ran without `E2E_CLEANUP=true` and want to clean up afterwards:
 
 ```bash
-E2E_TARGET_REPO=owner/repo corepack pnpm e2e:cleanup -- --issue 14 --pr 15 --branch reddwarf/owner-repo-14/abc123
+E2E_TARGET_REPO=owner/repo corepack pnpm e2e:cleanup -- --issue 14 --pr 15 --branch reddwarf/owner-repo-14/scm
 ```
 
 Pass any combination of `--issue`, `--pr`, and `--branch`. The cleanup script closes PRs before deleting branches, and closes issues last.
