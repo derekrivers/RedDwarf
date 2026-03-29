@@ -1,17 +1,33 @@
 import assert from "node:assert/strict";
 import {
+  DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicScmAgent,
+  DeterministicValidationAgent,
   PlanningPipelineFailure,
   createBufferedPlanningLogger,
+  createGitHubIssuePollingDaemon,
+  createReadyTaskDispatcher,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import {
+  InMemoryPlanningRepository,
+  createPostgresPlanningRepository
+} from "../packages/evidence/dist/index.js";
+import {
+  FixtureGitHubAdapter,
+  FixtureOpenClawDispatchAdapter
+} from "../packages/integrations/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(
+  connectionString,
+  postgresPoolConfig
+);
 const unique = Date.now();
 const successLogger = createBufferedPlanningLogger();
 const failureLogger = createBufferedPlanningLogger();
+const runtimeLogger = createBufferedPlanningLogger();
 
 const successInput = {
   source: {
@@ -55,13 +71,21 @@ try {
     planner: new DeterministicPlanningAgent(),
     logger: successLogger.logger
   });
-  const successSummary = await repository.getRunSummary(successResult.manifest.taskId, successResult.runId);
+  const successSummary = await repository.getRunSummary(
+    successResult.manifest.taskId,
+    successResult.runId
+  );
 
   assert.ok(successSummary, "Expected a run summary for the successful planning run.");
   assert.equal(successSummary.status, "completed");
-  assert.ok(successSummary.eventCounts.info >= 6, "Expected structured info events for the run.");
   assert.ok(
-    successLogger.records.some((record) => record.bindings.code === "PIPELINE_COMPLETED"),
+    successSummary.eventCounts.info >= 6,
+    "Expected structured info events for the run."
+  );
+  assert.ok(
+    successLogger.records.some(
+      (record) => record.bindings.code === "PIPELINE_COMPLETED"
+    ),
     "Expected a structured completion log record."
   );
 
@@ -79,20 +103,84 @@ try {
     });
     assert.fail("Expected the failure verification run to throw.");
   } catch (error) {
-    assert.ok(error instanceof PlanningPipelineFailure, "Expected a classified planning pipeline failure.");
+    assert.ok(
+      error instanceof PlanningPipelineFailure,
+      "Expected a classified planning pipeline failure."
+    );
     failure = error;
   }
 
   const failedManifest = await repository.getManifest(failure.taskId);
-  const failureSummary = await repository.getRunSummary(failure.taskId, failure.runId);
+  const failureSummary = await repository.getRunSummary(
+    failure.taskId,
+    failure.runId
+  );
 
   assert.ok(failureSummary, "Expected a run summary for the failed planning run.");
   assert.equal(failureSummary.status, "failed");
   assert.equal(failureSummary.failureClass, "planning_failure");
   assert.equal(failedManifest?.lifecycleStatus, "failed");
   assert.ok(
-    failureLogger.records.some((record) => record.bindings.failureClass === "planning_failure"),
+    failureLogger.records.some(
+      (record) => record.bindings.failureClass === "planning_failure"
+    ),
     "Expected a structured failure log record."
+  );
+
+  const runtimeRepository = new InMemoryPlanningRepository();
+
+  const pollingDaemon = createGitHubIssuePollingDaemon(
+    {
+      intervalMs: 5_000,
+      repositories: [{ repo: "acme/platform" }],
+      runOnStart: false
+    },
+    {
+      repository: runtimeRepository,
+      github: new FixtureGitHubAdapter({ candidates: [] }),
+      planner: new DeterministicPlanningAgent(),
+      logger: runtimeLogger.logger,
+      clock: () => new Date("2026-03-29T18:00:00.000Z")
+    }
+  );
+
+  await pollingDaemon.pollOnce();
+
+  const dispatcher = createReadyTaskDispatcher(
+    {
+      intervalMs: 5_000,
+      targetRoot: process.cwd(),
+      runOnStart: false
+    },
+    {
+      repository: runtimeRepository,
+      developer: new DeterministicDeveloperAgent(),
+      validator: new DeterministicValidationAgent(),
+      scm: new DeterministicScmAgent(),
+      github: new FixtureGitHubAdapter({ candidates: [] }),
+      openClawDispatch: new FixtureOpenClawDispatchAdapter(),
+      logger: runtimeLogger.logger,
+      clock: () => new Date("2026-03-29T18:01:00.000Z")
+    }
+  );
+
+  await dispatcher.dispatchOnce();
+
+  assert.ok(
+    runtimeLogger.records.some(
+      (record) =>
+        record.bindings.code === "POLLING_CYCLE_COMPLETED" &&
+        record.bindings.component === "github-poller"
+    ),
+    "Expected a structured polling runtime log record."
+  );
+  assert.ok(
+    runtimeLogger.records.some(
+      (record) =>
+        record.bindings.code === "DISPATCH_CYCLE_COMPLETED" &&
+        record.bindings.component === "ready-dispatcher"
+    ),
+    "Expected a structured dispatcher runtime log record."
   );
 
   console.log(
@@ -107,7 +195,8 @@ try {
         failureClass: failureSummary.failureClass,
         failureCodes: failureSummary.failureCodes,
         successLogCount: successLogger.records.length,
-        failureLogCount: failureLogger.records.length
+        failureLogCount: failureLogger.records.length,
+        runtimeLogCount: runtimeLogger.records.length
       },
       null,
       2

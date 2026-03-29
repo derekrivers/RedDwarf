@@ -278,7 +278,7 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The serve
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Server health check (includes polling cursor state) |
+| GET | `/health` | Server health check (includes repository, polling runtime, cursor, and dispatcher state) |
 | GET | `/runs` | List pipeline runs (filter: `taskId`, `statuses`, `limit`) |
 | GET | `/approvals` | List approval requests (filter: `taskId`, `runId`, `statuses`, `limit`) |
 | POST | `/approvals/:id/resolve` | Resolve an approval request |

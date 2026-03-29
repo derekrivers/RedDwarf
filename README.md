@@ -123,6 +123,7 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_DB_POOL_QUERY_TIMEOUT_MS` | `15000` | Fail Postgres queries after this many milliseconds |
 | `REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS` | `15000` | Ask Postgres to cancel statements that exceed this runtime |
 | `REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS` | `300` | Recycle Postgres clients after this lifetime |
+| `REDDWARF_LOG_LEVEL` | `info` | Structured runtime log level for poller, dispatcher, and pipeline logs |
 | `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
 
 **Example — full stack with polling:**
@@ -168,7 +169,7 @@ curl -X POST http://localhost:8080/approvals/<id>/resolve \
 |---------|----------|----------|
 | Postgres | `pg_isready` via Docker health check | Automatic |
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
-| Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...}}` |
+| Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...},"dispatcher":{...}}` |
 
 ### Teardown
 

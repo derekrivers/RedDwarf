@@ -18,10 +18,18 @@ import type {
   OpenClawDispatchAdapter,
   SecretsAdapter
 } from "@reddwarf/integrations";
-import type { PlanningPipelineLogger } from "./logger.js";
-import type { OpenClawCompletionAwaiter, WorkspaceCommitPublisher, WorkspaceRepoBootstrapper } from "./live-workflow.js";
-import { dispatchReadyTask, type DispatchReadyTaskResult, type PlanningConcurrencyOptions } from "./pipeline.js";
-import { runPlanningPipeline } from "./pipeline.js";
+import { bindPlanningLogger, type PlanningPipelineLogger } from "./logger.js";
+import type {
+  OpenClawCompletionAwaiter,
+  WorkspaceCommitPublisher,
+  WorkspaceRepoBootstrapper
+} from "./live-workflow.js";
+import {
+  dispatchReadyTask,
+  runPlanningPipeline,
+  type DispatchReadyTaskResult,
+  type PlanningConcurrencyOptions
+} from "./pipeline.js";
 
 export interface GitHubPollingRepoConfig {
   repo: string;
@@ -61,6 +69,15 @@ export interface PollingScheduler {
   clearInterval(handle: unknown): void;
 }
 
+export interface PollingLoopHealthSnapshot {
+  status: "idle" | "running" | "healthy" | "degraded";
+  startupStatus: "idle" | "healthy" | "degraded";
+  lastCycleStartedAt: string | null;
+  lastCycleCompletedAt: string | null;
+  lastCycleDurationMs: number | null;
+  lastError: string | null;
+}
+
 export interface GitHubIssuePollingDependencies {
   repository: PlanningRepository;
   github: GitHubAdapter;
@@ -76,6 +93,7 @@ export interface GitHubIssuePollingDaemon {
   readonly intervalMs: number;
   readonly isRunning: boolean;
   readonly consecutiveFailures: number;
+  readonly health: PollingLoopHealthSnapshot;
   start(): Promise<void>;
   stop(): Promise<void>;
   pollOnce(): Promise<GitHubIssuePollingCycleResult>;
@@ -86,6 +104,49 @@ const defaultPollingLabels = ["ai-eligible"];
 const DEFAULT_MAX_BATCH_SIZE = 50;
 const DEFAULT_POLLING_CYCLE_TIMEOUT_MS = 120_000;
 const DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS = 5 * 60_000;
+
+interface MutableLoopHealthState {
+  startupStatus: PollingLoopHealthSnapshot["startupStatus"];
+  lastCycleStartedAt: string | null;
+  lastCycleCompletedAt: string | null;
+  lastCycleDurationMs: number | null;
+  lastError: string | null;
+}
+
+function createMutableLoopHealthState(): MutableLoopHealthState {
+  return {
+    startupStatus: "idle",
+    lastCycleStartedAt: null,
+    lastCycleCompletedAt: null,
+    lastCycleDurationMs: null,
+    lastError: null
+  };
+}
+
+function snapshotLoopHealth(input: {
+  intervalHandle: unknown;
+  cycleRunning: boolean;
+  consecutiveFailures: number;
+  healthState: MutableLoopHealthState;
+}): PollingLoopHealthSnapshot {
+  const status =
+    input.intervalHandle === null
+      ? "idle"
+      : input.cycleRunning
+        ? "running"
+        : input.consecutiveFailures > 0 || input.healthState.startupStatus === "degraded"
+          ? "degraded"
+          : "healthy";
+
+  return {
+    status,
+    startupStatus: input.healthState.startupStatus,
+    lastCycleStartedAt: input.healthState.lastCycleStartedAt,
+    lastCycleCompletedAt: input.healthState.lastCycleCompletedAt,
+    lastCycleDurationMs: input.healthState.lastCycleDurationMs,
+    lastError: input.healthState.lastError
+  };
+}
 
 export function createGitHubIssuePollingDaemon(
   config: GitHubIssuePollingDaemonConfig,
@@ -104,25 +165,33 @@ export function createGitHubIssuePollingDaemon(
   }
 
   const clock = deps.clock ?? (() => new Date());
-  const cycleTimeoutMs =
-    config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS;
-  const scheduler = deps.scheduler ?? {
-    setInterval: (callback: () => void, delayMs: number) =>
-      globalThis.setInterval(callback, delayMs),
-    clearInterval: (handle: unknown) =>
-      globalThis.clearInterval(handle as NodeJS.Timeout)
-  };
+  const cycleTimeoutMs = config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS;
+  const scheduler =
+    deps.scheduler ??
+    {
+      setInterval: (callback: () => void, delayMs: number) =>
+        globalThis.setInterval(callback, delayMs),
+      clearInterval: (handle: unknown) =>
+        globalThis.clearInterval(handle as NodeJS.Timeout)
+    };
+  const logger = deps.logger
+    ? bindPlanningLogger(deps.logger, { component: "github-poller" })
+    : undefined;
+
   let intervalHandle: unknown = null;
   let polling = false;
   let consecutiveFailures = 0;
   let nextAllowedPollAt = 0;
+  const healthState = createMutableLoopHealthState();
 
   const MAX_BACKOFF_MS = 5 * 60_000;
 
   function computeBackoffMs(failures: number): number {
-    if (failures <= 0) return 0;
-    const baseMs = Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
-    return baseMs;
+    if (failures <= 0) {
+      return 0;
+    }
+
+    return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
   }
 
   async function pollRepository(
@@ -135,12 +204,13 @@ export function createGitHubIssuePollingDaemon(
     const pollStartedAt = clock();
     const pollStartedAtIso = asIsoTimestamp(pollStartedAt);
     const cycleLabel = `GitHub issue polling cycle for ${repoConfig.repo}`;
+    const repoLogger = logger
+      ? bindPlanningLogger(logger, { sourceRepo: repoConfig.repo })
+      : undefined;
 
     try {
       await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
-        existingCursor = await deps.repository.getGitHubIssuePollingCursor(
-          repoConfig.repo
-        );
+        existingCursor = await deps.repository.getGitHubIssuePollingCursor(repoConfig.repo);
 
         const query: GitHubIssueQuery = {
           repo: repoConfig.repo,
@@ -159,6 +229,13 @@ export function createGitHubIssuePollingDaemon(
           existingCursor?.lastSeenIssueNumber ?? null
         ).slice(0, batchSize);
 
+        repoLogger?.info("GitHub polling repository batch loaded.", {
+          code: "POLLING_REPO_BATCH",
+          candidateCount: candidates.length,
+          unseenCandidateCount: unseenCandidates.length,
+          batchSize
+        });
+
         for (const candidate of unseenCandidates) {
           const source: TaskManifest["source"] = {
             provider: "github",
@@ -166,9 +243,7 @@ export function createGitHubIssuePollingDaemon(
             issueNumber: candidate.issueNumber,
             issueUrl: candidate.url
           };
-          const existingSpec = await deps.repository.hasPlanningSpecForSource(
-            source
-          );
+          const existingSpec = await deps.repository.hasPlanningSpecForSource(source);
 
           if (existingSpec) {
             decisions.push({
@@ -180,20 +255,14 @@ export function createGitHubIssuePollingDaemon(
             continue;
           }
 
-          const planningInput = await deps.github.convertToPlanningInput(
-            candidate
-          );
+          const planningInput = await deps.github.convertToPlanningInput(candidate);
           const result = await runPlanningPipeline(planningInput, {
             repository: deps.repository,
             planner: deps.planner,
             ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
             clock,
-            ...(deps.idGenerator !== undefined
-              ? { idGenerator: deps.idGenerator }
-              : {}),
-            ...(deps.concurrency !== undefined
-              ? { concurrency: deps.concurrency }
-              : {})
+            ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
+            ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
           });
 
           decisions.push({
@@ -248,10 +317,10 @@ export function createGitHubIssuePollingDaemon(
             )
         );
       } catch (cursorError) {
-        deps.logger?.error(
+        repoLogger?.error(
           "Failed to persist GitHub issue polling cursor after poll failure.",
           {
-            repo: repoConfig.repo,
+            code: "POLLING_CURSOR_PERSIST_FAILED",
             originalError: serializePollingError(error),
             persistenceError: serializePollingError(cursorError)
           }
@@ -269,20 +338,73 @@ export function createGitHubIssuePollingDaemon(
 
     polling = true;
     const startedAt = clock();
+    const startedAtIso = asIsoTimestamp(startedAt);
     const decisions: GitHubIssuePollingDecision[] = [];
+    healthState.lastCycleStartedAt = startedAtIso;
+
+    logger?.info("GitHub issue polling cycle started.", {
+      code: "POLLING_CYCLE_STARTED",
+      startedAt: startedAtIso,
+      repositoryCount: config.repositories.length
+    });
 
     try {
       for (const repoConfig of config.repositories) {
         await pollRepository(repoConfig, decisions);
       }
+
       consecutiveFailures = 0;
       nextAllowedPollAt = 0;
+      healthState.startupStatus = intervalHandle === null && config.runOnStart === false
+        ? "idle"
+        : "healthy";
+      healthState.lastError = null;
+
+      const completedAt = clock();
+      const completedAtIso = asIsoTimestamp(completedAt);
+      const durationMs = completedAt.getTime() - startedAt.getTime();
+      healthState.lastCycleCompletedAt = completedAtIso;
+      healthState.lastCycleDurationMs = durationMs;
+
+      const result = {
+        startedAt: startedAtIso,
+        completedAt: completedAtIso,
+        polledIssueCount: decisions.length,
+        plannedIssueCount: decisions.filter((decision) => decision.action === "planned").length,
+        skippedIssueCount: decisions.filter((decision) => decision.action === "skipped").length,
+        decisions
+      } satisfies GitHubIssuePollingCycleResult;
+
+      logger?.info("GitHub issue polling cycle completed.", {
+        code: "POLLING_CYCLE_COMPLETED",
+        startedAt: result.startedAt,
+        completedAt: result.completedAt,
+        durationMs,
+        polledIssueCount: result.polledIssueCount,
+        plannedIssueCount: result.plannedIssueCount,
+        skippedIssueCount: result.skippedIssueCount
+      });
+
+      return result;
     } catch (error) {
-      consecutiveFailures++;
+      consecutiveFailures += 1;
       const backoffMs = computeBackoffMs(consecutiveFailures);
-      nextAllowedPollAt = clock().getTime() + backoffMs;
-      deps.logger?.error("GitHub issue polling cycle failed.", {
-        error: serializePollingError(error),
+      const completedAt = clock();
+      nextAllowedPollAt = completedAt.getTime() + backoffMs;
+      const completedAtIso = asIsoTimestamp(completedAt);
+      const durationMs = completedAt.getTime() - startedAt.getTime();
+      const serializedError = serializePollingError(error);
+      healthState.startupStatus = "degraded";
+      healthState.lastCycleCompletedAt = completedAtIso;
+      healthState.lastCycleDurationMs = durationMs;
+      healthState.lastError = serializedError;
+
+      logger?.error("GitHub issue polling cycle failed.", {
+        code: "POLLING_CYCLE_FAILED",
+        startedAt: startedAtIso,
+        completedAt: completedAtIso,
+        durationMs,
+        error: serializedError,
         consecutiveFailures,
         backoffMs
       });
@@ -290,16 +412,6 @@ export function createGitHubIssuePollingDaemon(
     } finally {
       polling = false;
     }
-
-    const completedAt = clock();
-    return {
-      startedAt: asIsoTimestamp(startedAt),
-      completedAt: asIsoTimestamp(completedAt),
-      polledIssueCount: decisions.length,
-      plannedIssueCount: decisions.filter((decision) => decision.action === "planned").length,
-      skippedIssueCount: decisions.filter((decision) => decision.action === "skipped").length,
-      decisions
-    };
   }
 
   return {
@@ -312,6 +424,14 @@ export function createGitHubIssuePollingDaemon(
     get consecutiveFailures() {
       return consecutiveFailures;
     },
+    get health() {
+      return snapshotLoopHealth({
+        intervalHandle,
+        cycleRunning: polling,
+        consecutiveFailures,
+        healthState
+      });
+    },
     async start(): Promise<void> {
       if (intervalHandle !== null) {
         return;
@@ -320,19 +440,39 @@ export function createGitHubIssuePollingDaemon(
       intervalHandle = scheduler.setInterval(() => {
         const now = clock().getTime();
         if (now < nextAllowedPollAt) {
-          deps.logger?.info("GitHub issue polling cycle skipped due to backoff.", {
+          logger?.warn("GitHub issue polling cycle skipped due to backoff.", {
+            code: "POLLING_CYCLE_BACKOFF",
             consecutiveFailures,
             resumesInMs: nextAllowedPollAt - now
           });
           return;
         }
+
         void pollOnce().catch(() => {
           // Error already logged and backoff applied inside pollOnce
         });
       }, config.intervalMs);
 
-      if (config.runOnStart !== false) {
+      if (config.runOnStart === false) {
+        return;
+      }
+
+      try {
         await pollOnce();
+        logger?.info("GitHub issue polling daemon startup cycle completed.", {
+          code: "POLLING_STARTUP_COMPLETED",
+          consecutiveFailures
+        });
+      } catch (error) {
+        logger?.warn(
+          "GitHub issue polling daemon started in degraded mode after startup cycle failure.",
+          {
+            code: "POLLING_STARTUP_DEGRADED",
+            error: serializePollingError(error),
+            consecutiveFailures,
+            resumesInMs: Math.max(0, nextAllowedPollAt - clock().getTime())
+          }
+        );
       }
     },
     async stop(): Promise<void> {
@@ -344,6 +484,8 @@ export function createGitHubIssuePollingDaemon(
       intervalHandle = null;
       consecutiveFailures = 0;
       nextAllowedPollAt = 0;
+      healthState.startupStatus = "idle";
+      healthState.lastError = null;
     },
     pollOnce
   };
@@ -365,10 +507,6 @@ function selectUnseenCandidates(
 function serializePollingError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Ready-task dispatcher
-// ══════════════════════════════════════════════════════════════════════════════
 
 export interface ReadyTaskDispatcherConfig {
   intervalMs: number;
@@ -407,6 +545,7 @@ export interface ReadyTaskDispatcher {
   readonly isRunning: boolean;
   readonly consecutiveFailures: number;
   readonly lastDispatchResult: DispatchReadyTaskResult | null;
+  readonly health: PollingLoopHealthSnapshot;
   start(): Promise<void>;
   stop(): Promise<void>;
   dispatchOnce(): Promise<ReadyTaskDispatchCycleResult>;
@@ -425,25 +564,33 @@ export function createReadyTaskDispatcher(
   }
 
   const clock = deps.clock ?? (() => new Date());
-  const cycleTimeoutMs =
-    config.cycleTimeoutMs ?? DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS;
-  const scheduler = deps.scheduler ?? {
-    setInterval: (callback: () => void, delayMs: number) =>
-      globalThis.setInterval(callback, delayMs),
-    clearInterval: (handle: unknown) =>
-      globalThis.clearInterval(handle as NodeJS.Timeout)
-  };
+  const cycleTimeoutMs = config.cycleTimeoutMs ?? DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS;
+  const scheduler =
+    deps.scheduler ??
+    {
+      setInterval: (callback: () => void, delayMs: number) =>
+        globalThis.setInterval(callback, delayMs),
+      clearInterval: (handle: unknown) =>
+        globalThis.clearInterval(handle as NodeJS.Timeout)
+    };
+  const logger = deps.logger
+    ? bindPlanningLogger(deps.logger, { component: "ready-dispatcher" })
+    : undefined;
 
   let intervalHandle: unknown = null;
   let dispatching = false;
   let consecutiveFailures = 0;
   let nextAllowedDispatchAt = 0;
   let lastResult: DispatchReadyTaskResult | null = null;
+  const healthState = createMutableLoopHealthState();
 
   const MAX_BACKOFF_MS = 5 * 60_000;
 
   function computeBackoffMs(failures: number): number {
-    if (failures <= 0) return 0;
+    if (failures <= 0) {
+      return 0;
+    }
+
     return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
   }
 
@@ -454,6 +601,13 @@ export function createReadyTaskDispatcher(
 
     dispatching = true;
     const startedAt = clock();
+    const startedAtIso = asIsoTimestamp(startedAt);
+    healthState.lastCycleStartedAt = startedAtIso;
+
+    logger?.info("Ready-task dispatch cycle started.", {
+      code: "DISPATCH_CYCLE_STARTED",
+      startedAt: startedAtIso
+    });
 
     try {
       const results = await runWithTimeout(
@@ -461,17 +615,19 @@ export function createReadyTaskDispatcher(
         cycleTimeoutMs,
         async () => {
           const cycleResults: DispatchReadyTaskResult[] = [];
-
-          // Find the oldest ready manifest (one at a time)
-          const readyManifests =
-            await deps.repository.listManifestsByLifecycleStatus("ready", 1);
+          const readyManifests = await deps.repository.listManifestsByLifecycleStatus("ready", 1);
 
           if (readyManifests.length > 0) {
             const manifest = readyManifests[0]!;
+            const taskLogger = logger
+              ? bindPlanningLogger(logger, {
+                  taskId: manifest.taskId,
+                  sourceRepo: manifest.source.repo
+                })
+              : undefined;
 
-            deps.logger?.info("Found ready task for dispatch.", {
-              taskId: manifest.taskId,
-              sourceRepo: manifest.source.repo,
+            taskLogger?.info("Found ready task for dispatch.", {
+              code: "DISPATCH_READY_TASK_FOUND",
               currentPhase: manifest.currentPhase
             });
 
@@ -483,9 +639,7 @@ export function createReadyTaskDispatcher(
                   {
                     taskId: manifest.taskId,
                     targetRoot: config.targetRoot,
-                    ...(config.evidenceRoot
-                      ? { evidenceRoot: config.evidenceRoot }
-                      : {})
+                    ...(config.evidenceRoot ? { evidenceRoot: config.evidenceRoot } : {})
                   },
                   {
                     repository: deps.repository,
@@ -496,28 +650,17 @@ export function createReadyTaskDispatcher(
                     openClawDispatch: deps.openClawDispatch,
                     ...(deps.secrets ? { secrets: deps.secrets } : {}),
                     ...(deps.workspaceRepoBootstrapper
-                      ? {
-                          workspaceRepoBootstrapper:
-                            deps.workspaceRepoBootstrapper
-                        }
+                      ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper }
                       : {}),
                     ...(deps.openClawCompletionAwaiter
-                      ? {
-                          openClawCompletionAwaiter:
-                            deps.openClawCompletionAwaiter
-                        }
+                      ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter }
                       : {}),
                     ...(deps.workspaceCommitPublisher
-                      ? {
-                          workspaceCommitPublisher:
-                            deps.workspaceCommitPublisher
-                        }
+                      ? { workspaceCommitPublisher: deps.workspaceCommitPublisher }
                       : {}),
                     ...(deps.logger ? { logger: deps.logger } : {}),
                     ...(deps.clock ? { clock: deps.clock } : {}),
-                    ...(deps.concurrency
-                      ? { concurrency: deps.concurrency }
-                      : {})
+                    ...(deps.concurrency ? { concurrency: deps.concurrency } : {})
                   }
                 )
             );
@@ -525,8 +668,8 @@ export function createReadyTaskDispatcher(
             cycleResults.push(result);
             lastResult = result;
 
-            deps.logger?.info("Task dispatch completed.", {
-              taskId: result.taskId,
+            taskLogger?.info("Task dispatch completed.", {
+              code: "DISPATCH_TASK_COMPLETED",
               outcome: result.outcome,
               phasesExecuted: result.phasesExecuted,
               finalPhase: result.finalPhase,
@@ -540,20 +683,52 @@ export function createReadyTaskDispatcher(
 
       consecutiveFailures = 0;
       nextAllowedDispatchAt = 0;
+      healthState.startupStatus = intervalHandle === null && config.runOnStart === false
+        ? "idle"
+        : "healthy";
+      healthState.lastError = null;
 
       const completedAt = clock();
-      return {
-        startedAt: asIsoTimestamp(startedAt),
-        completedAt: asIsoTimestamp(completedAt),
+      const completedAtIso = asIsoTimestamp(completedAt);
+      const durationMs = completedAt.getTime() - startedAt.getTime();
+      healthState.lastCycleCompletedAt = completedAtIso;
+      healthState.lastCycleDurationMs = durationMs;
+
+      const result = {
+        startedAt: startedAtIso,
+        completedAt: completedAtIso,
         dispatchedCount: results.length,
         results
-      };
+      } satisfies ReadyTaskDispatchCycleResult;
+
+      logger?.info("Ready-task dispatch cycle completed.", {
+        code: "DISPATCH_CYCLE_COMPLETED",
+        startedAt: result.startedAt,
+        completedAt: result.completedAt,
+        durationMs,
+        dispatchedCount: result.dispatchedCount
+      });
+
+      return result;
     } catch (error) {
-      consecutiveFailures++;
+      consecutiveFailures += 1;
       const backoffMs = computeBackoffMs(consecutiveFailures);
-      nextAllowedDispatchAt = clock().getTime() + backoffMs;
-      deps.logger?.error("Ready-task dispatch cycle failed.", {
-        error: serializePollingError(error),
+      const completedAt = clock();
+      nextAllowedDispatchAt = completedAt.getTime() + backoffMs;
+      const completedAtIso = asIsoTimestamp(completedAt);
+      const durationMs = completedAt.getTime() - startedAt.getTime();
+      const serializedError = serializePollingError(error);
+      healthState.startupStatus = "degraded";
+      healthState.lastCycleCompletedAt = completedAtIso;
+      healthState.lastCycleDurationMs = durationMs;
+      healthState.lastError = serializedError;
+
+      logger?.error("Ready-task dispatch cycle failed.", {
+        code: "DISPATCH_CYCLE_FAILED",
+        startedAt: startedAtIso,
+        completedAt: completedAtIso,
+        durationMs,
+        error: serializedError,
         consecutiveFailures,
         backoffMs
       });
@@ -576,6 +751,14 @@ export function createReadyTaskDispatcher(
     get lastDispatchResult() {
       return lastResult;
     },
+    get health() {
+      return snapshotLoopHealth({
+        intervalHandle,
+        cycleRunning: dispatching,
+        consecutiveFailures,
+        healthState
+      });
+    },
     async start(): Promise<void> {
       if (intervalHandle !== null) {
         return;
@@ -584,19 +767,39 @@ export function createReadyTaskDispatcher(
       intervalHandle = scheduler.setInterval(() => {
         const now = clock().getTime();
         if (now < nextAllowedDispatchAt) {
-          deps.logger?.info("Ready-task dispatch cycle skipped due to backoff.", {
+          logger?.warn("Ready-task dispatch cycle skipped due to backoff.", {
+            code: "DISPATCH_CYCLE_BACKOFF",
             consecutiveFailures,
             resumesInMs: nextAllowedDispatchAt - now
           });
           return;
         }
+
         void dispatchOnce().catch(() => {
           // Error already logged and backoff applied inside dispatchOnce
         });
       }, config.intervalMs);
 
-      if (config.runOnStart !== false) {
+      if (config.runOnStart === false) {
+        return;
+      }
+
+      try {
         await dispatchOnce();
+        logger?.info("Ready-task dispatcher startup cycle completed.", {
+          code: "DISPATCH_STARTUP_COMPLETED",
+          consecutiveFailures
+        });
+      } catch (error) {
+        logger?.warn(
+          "Ready-task dispatcher started in degraded mode after startup cycle failure.",
+          {
+            code: "DISPATCH_STARTUP_DEGRADED",
+            error: serializePollingError(error),
+            consecutiveFailures,
+            resumesInMs: Math.max(0, nextAllowedDispatchAt - clock().getTime())
+          }
+        );
       }
     },
     async stop(): Promise<void> {
@@ -608,6 +811,8 @@ export function createReadyTaskDispatcher(
       intervalHandle = null;
       consecutiveFailures = 0;
       nextAllowedDispatchAt = 0;
+      healthState.startupStatus = "idle";
+      healthState.lastError = null;
     },
     dispatchOnce
   };
@@ -624,6 +829,7 @@ function runWithTimeout<T>(
       if (settled) {
         return;
       }
+
       settled = true;
       reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
@@ -633,6 +839,7 @@ function runWithTimeout<T>(
         if (settled) {
           return;
         }
+
         settled = true;
         globalThis.clearTimeout(timer);
         resolve(result);
@@ -641,6 +848,7 @@ function runWithTimeout<T>(
         if (settled) {
           return;
         }
+
         settled = true;
         globalThis.clearTimeout(timer);
         reject(error);

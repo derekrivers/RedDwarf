@@ -2367,12 +2367,99 @@ describe("operator API server", () => {
       expect(polling["status"]).toBe("healthy");
       expect(polling["totalRepositories"]).toBe(1);
       expect(polling["failingRepositories"]).toBe(0);
+      expect(polling["runtimeStatus"]).toBe("idle");
+      expect(polling["startupStatus"]).toBe("idle");
+      expect(polling["consecutiveFailures"]).toBe(0);
       expect(repositories[0]?.["repo"]).toBe("acme/platform");
       expect(repositories[0]?.["lastSeenIssueNumber"]).toBe(42);
     } finally {
       await apiServer.stop();
     }
   });
+  it("includes degraded runtime loop health in the /health response", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const pollingDaemon = {
+      intervalMs: 5_000,
+      isRunning: true,
+      consecutiveFailures: 2,
+      health: {
+        status: "degraded",
+        startupStatus: "degraded",
+        lastCycleStartedAt: "2026-03-27T10:00:00.000Z",
+        lastCycleCompletedAt: "2026-03-27T10:00:02.000Z",
+        lastCycleDurationMs: 2_000,
+        lastError: "startup poll failure"
+      },
+      async start() {},
+      async stop() {},
+      async pollOnce() {
+        return {
+          startedAt: "2026-03-27T10:00:00.000Z",
+          completedAt: "2026-03-27T10:00:02.000Z",
+          polledIssueCount: 0,
+          plannedIssueCount: 0,
+          skippedIssueCount: 0,
+          decisions: []
+        };
+      }
+    };
+    const dispatcher = {
+      intervalMs: 5_000,
+      isRunning: true,
+      consecutiveFailures: 1,
+      lastDispatchResult: null,
+      health: {
+        status: "degraded",
+        startupStatus: "degraded",
+        lastCycleStartedAt: "2026-03-27T10:00:03.000Z",
+        lastCycleCompletedAt: "2026-03-27T10:00:05.000Z",
+        lastCycleDurationMs: 2_000,
+        lastError: "startup dispatch failure"
+      },
+      async start() {},
+      async stop() {},
+      async dispatchOnce() {
+        return {
+          startedAt: "2026-03-27T10:00:03.000Z",
+          completedAt: "2026-03-27T10:00:05.000Z",
+          dispatchedCount: 0,
+          results: []
+        };
+      }
+    };
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        pollingDaemon: pollingDaemon as never,
+        dispatcher: dispatcher as never,
+        clock: () => new Date("2026-03-27T10:06:00.000Z")
+      }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const health = await operatorGet(port, "/health");
+      const polling = (health.body as Record<string, unknown>)["polling"] as Record<string, unknown>;
+      const dispatcherHealth = (health.body as Record<string, unknown>)["dispatcher"] as Record<string, unknown>;
+
+      expect(health.status).toBe(200);
+      expect(polling["status"]).toBe("degraded");
+      expect(polling["runtimeStatus"]).toBe("degraded");
+      expect(polling["startupStatus"]).toBe("degraded");
+      expect(polling["consecutiveFailures"]).toBe(2);
+      expect(polling["lastError"]).toBe("startup poll failure");
+      expect(dispatcherHealth["status"]).toBe("degraded");
+      expect(dispatcherHealth["startupStatus"]).toBe("degraded");
+      expect(dispatcherHealth["consecutiveFailures"]).toBe(1);
+      expect(dispatcherHealth["lastError"]).toBe("startup dispatch failure");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("returns runs and approvals filtered by status after a planning run", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(
@@ -4104,6 +4191,77 @@ describe("GitHub issue polling daemon backoff", () => {
     expect(daemon.consecutiveFailures).toBe(0);
   });
 
+  it("keeps the poller running after a startup-cycle failure and records degraded health", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const adapter = new FixtureGitHubAdapter({ candidates: [] });
+    const bufferedLogger = createBufferedPlanningLogger();
+    adapter.listIssueCandidates = async () => {
+      throw new Error("GitHub API unavailable");
+    };
+
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }]
+      },
+      {
+        repository,
+        github: adapter,
+        planner: new DeterministicPlanningAgent(),
+        logger: bufferedLogger.logger,
+        scheduler: {
+          setInterval: () => ({ handle: "poll" }),
+          clearInterval() {}
+        },
+        clock: () => new Date("2026-03-29T13:05:00.000Z")
+      }
+    );
+
+    await expect(daemon.start()).resolves.toBeUndefined();
+    expect(daemon.isRunning).toBe(true);
+    expect(daemon.consecutiveFailures).toBe(1);
+    expect(daemon.health.status).toBe("degraded");
+    expect(daemon.health.startupStatus).toBe("degraded");
+    expect(daemon.health.lastError).toBe("GitHub API unavailable");
+    expect(
+      bufferedLogger.records.some(
+        (record) => record.bindings.code === "POLLING_STARTUP_DEGRADED"
+      )
+    ).toBe(true);
+
+    await daemon.stop();
+    expect(daemon.health.status).toBe("idle");
+  });
+
+  it("emits structured log records for successful poll cycles", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const bufferedLogger = createBufferedPlanningLogger();
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github: new FixtureGitHubAdapter({ candidates: [] }),
+        planner: new DeterministicPlanningAgent(),
+        logger: bufferedLogger.logger,
+        clock: () => new Date("2026-03-29T13:10:00.000Z")
+      }
+    );
+
+    await daemon.pollOnce();
+
+    expect(
+      bufferedLogger.records.some(
+        (record) =>
+          record.bindings.code === "POLLING_CYCLE_COMPLETED" &&
+          record.bindings.component === "github-poller"
+      )
+    ).toBe(true);
+  });
+
   it("fails fast when a poll cycle exceeds the configured timeout", async () => {
     vi.useFakeTimers();
 
@@ -4412,6 +4570,77 @@ describe("createReadyTaskDispatcher", () => {
     const result = await dispatcher.dispatchOnce();
     expect(result.dispatchedCount).toBe(0);
     expect(result.results).toHaveLength(0);
+  });
+
+  it("keeps the dispatcher running after a startup-cycle failure and records degraded health", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const bufferedLogger = createBufferedPlanningLogger();
+    repository.listManifestsByLifecycleStatus = async () => {
+      throw new Error("dispatch startup failed");
+    };
+
+    const dispatcher = createReadyTaskDispatcher(
+      {
+        intervalMs: 5_000,
+        targetRoot: "/tmp"
+      },
+      {
+        repository,
+        developer: new DeterministicDeveloperAgent(),
+        validator: new DeterministicValidationAgent(),
+        scm: new DeterministicScmAgent(),
+        github: new FixtureGitHubAdapter({ candidates: [] }),
+        openClawDispatch: new FixtureOpenClawDispatchAdapter(),
+        logger: bufferedLogger.logger,
+        scheduler: {
+          setInterval: () => ({ handle: "dispatch" }),
+          clearInterval() {}
+        },
+        clock: () => new Date("2026-03-29T13:20:00.000Z")
+      }
+    );
+
+    await expect(dispatcher.start()).resolves.toBeUndefined();
+    expect(dispatcher.isRunning).toBe(true);
+    expect(dispatcher.consecutiveFailures).toBe(1);
+    expect(dispatcher.health.status).toBe("degraded");
+    expect(dispatcher.health.startupStatus).toBe("degraded");
+    expect(dispatcher.health.lastError).toBe("dispatch startup failed");
+    expect(
+      bufferedLogger.records.some(
+        (record) => record.bindings.code === "DISPATCH_STARTUP_DEGRADED"
+      )
+    ).toBe(true);
+
+    await dispatcher.stop();
+    expect(dispatcher.health.status).toBe("idle");
+  });
+
+  it("emits structured log records for successful dispatch cycles", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const bufferedLogger = createBufferedPlanningLogger();
+    const dispatcher = createReadyTaskDispatcher(
+      { intervalMs: 5_000, targetRoot: "/tmp", runOnStart: false },
+      {
+        repository,
+        developer: new DeterministicDeveloperAgent(),
+        validator: new DeterministicValidationAgent(),
+        scm: new DeterministicScmAgent(),
+        github: fixtureGithub,
+        openClawDispatch: new FixtureOpenClawDispatchAdapter(),
+        logger: bufferedLogger.logger
+      }
+    );
+
+    await dispatcher.dispatchOnce();
+
+    expect(
+      bufferedLogger.records.some(
+        (record) =>
+          record.bindings.code === "DISPATCH_CYCLE_COMPLETED" &&
+          record.bindings.component === "ready-dispatcher"
+      )
+    ).toBe(true);
   });
 
   it("fails fast when a dispatch cycle exceeds the configured timeout", async () => {

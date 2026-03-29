@@ -7,11 +7,11 @@ import {
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
-const repository = createPostgresPlanningRepository(connectionString);
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const operatorApiToken = "verify-operator-token";
 
 function buildAuthHeaders(authToken = operatorApiToken) {
@@ -139,6 +139,10 @@ try {
   assert.equal(health.body.repository.storage, "postgres");
   assert.ok(health.body.repository.postgresPool.maxConnections >= 1);
   assert.equal(health.body.polling.status, "healthy");
+  assert.equal(health.body.polling.runtimeStatus, "idle");
+  assert.equal(health.body.polling.startupStatus, "idle");
+  assert.equal(health.body.polling.consecutiveFailures, 0);
+  assert.equal(health.body.polling.lastError, null);
   assert.ok(health.body.polling.totalRepositories >= 1);
   const seededRepository = health.body.polling.repositories.find((entry) => entry.repo === repo);
   assert.ok(seededRepository, "polling health should include the seeded repository");

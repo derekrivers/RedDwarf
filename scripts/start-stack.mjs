@@ -236,6 +236,7 @@ const {
   createGitHubWorkspaceRepoBootstrapper,
   createDeveloperHandoffAwaiter,
   createGitWorkspaceCommitPublisher,
+  createPinoPlanningLogger,
   sweepStaleRuns,
   DeterministicDeveloperAgent,
   DeterministicValidationAgent,
@@ -252,6 +253,9 @@ const repository = createPostgresPlanningRepository(
   connectionString,
   postgresPoolConfig
 );
+const runtimeLogger = createPinoPlanningLogger({
+  baseBindings: { surface: "runtime" }
+});
 
 // ── 2a: Sweep stale pipeline runs ─────────────────────────────────────
 
@@ -303,7 +307,7 @@ try {
 
 log("Phase 3: Starting services...");
 
-// ── 3a: Shared adapters ──────────────────────────────────────────────
+// Phase 3a: Shared adapters
 
 const github = createRestGitHubAdapter();
 const workspaceTargetRoot = resolve(repoRoot, "runtime-data", "workspaces");
@@ -313,7 +317,7 @@ const dispatchIntervalMs = parseInt(
   10
 );
 
-// ── 3b: Ready-task dispatcher (auto-dispatch after approval) ─────────
+// Phase 3b: Ready-task dispatcher (auto-dispatch after approval)
 
 let dispatcher = null;
 let dispatchDeps = null;
@@ -339,37 +343,11 @@ if (openClawAvailable) {
       evidenceRoot,
       runOnStart: false
     },
-    { repository, ...dispatchDeps }
+    { repository, ...dispatchDeps, logger: runtimeLogger }
   );
 }
 
-// ── 3c: Operator API ─────────────────────────────────────────────────
-
-const server = createOperatorApiServer(
-  {
-    port: apiPort,
-    authToken: operatorApiToken,
-    managedTargetRoot: workspaceTargetRoot,
-    managedEvidenceRoot: evidenceRoot
-  },
-  {
-    repository,
-    ...(dispatcher ? { dispatcher } : {}),
-    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
-  }
-);
-await server.start();
-log(`Operator API listening on http://127.0.0.1:${server.port}`);
-
-if (dispatcher) {
-  log(`Starting ready-task dispatcher (every ${dispatchIntervalMs / 1_000}s)...`);
-  await dispatcher.start();
-  log("Ready-task dispatcher started.");
-} else {
-  log("Ready-task dispatcher not started — OpenClaw not available.");
-}
-
-// ── 3d: Polling daemon (optional) ────────────────────────────────────
+// Phase 3c: Polling daemon (optional)
 
 let daemon = null;
 
@@ -382,17 +360,53 @@ if (pollRepos.length > 0) {
       repositories: pollRepos.map((repo) => ({ repo, labels: ["ai-eligible"] })),
       runOnStart: true
     },
-    { repository, github, planner }
+    { repository, github, planner, logger: runtimeLogger }
   );
-
-  log(`Starting polling daemon for ${pollRepos.join(", ")} (every ${pollIntervalMs / 1_000}s)...`);
-  await daemon.start();
-  log("Polling daemon started.");
-} else {
-  log("Polling daemon not started — set REDDWARF_POLL_REPOS to enable.");
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// Phase 3d: Operator API
+
+const server = createOperatorApiServer(
+  {
+    port: apiPort,
+    authToken: operatorApiToken,
+    managedTargetRoot: workspaceTargetRoot,
+    managedEvidenceRoot: evidenceRoot
+  },
+  {
+    repository,
+    ...(dispatcher ? { dispatcher } : {}),
+    ...(daemon ? { pollingDaemon: daemon } : {}),
+    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+  }
+);
+await server.start();
+log(`Operator API listening on http://127.0.0.1:${server.port}`);
+
+if (dispatcher) {
+  log(`Starting ready-task dispatcher (every ${dispatchIntervalMs / 1_000}s)...`);
+  await dispatcher.start();
+  if (dispatcher.health.startupStatus === "degraded") {
+    log("Ready-task dispatcher started in degraded mode; inspect /health and runtime logs for the startup failure.");
+  } else {
+    log("Ready-task dispatcher started.");
+  }
+} else {
+  log("Ready-task dispatcher not started - OpenClaw not available.");
+}
+
+if (daemon) {
+  log(`Starting polling daemon for ${pollRepos.join(", ")} (every ${pollIntervalMs / 1_000}s)...`);
+  await daemon.start();
+  if (daemon.health.startupStatus === "degraded") {
+    log("Polling daemon started in degraded mode; inspect /health and runtime logs for the startup failure.");
+  } else {
+    log("Polling daemon started.");
+  }
+} else {
+  log("Polling daemon not started - set REDDWARF_POLL_REPOS to enable.");
+}
+
 // Ready
 // ══════════════════════════════════════════════════════════════════════════
 

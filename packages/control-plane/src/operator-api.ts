@@ -19,7 +19,11 @@ import {
   resolveApprovalRequest,
   type DispatchReadyTaskDependencies
 } from "./pipeline.js";
-import type { ReadyTaskDispatcher } from "./polling.js";
+import type {
+  GitHubIssuePollingDaemon,
+  PollingLoopHealthSnapshot,
+  ReadyTaskDispatcher
+} from "./polling.js";
 
 // ============================================================
 // Operator API interfaces
@@ -39,6 +43,7 @@ export interface OperatorApiDependencies {
   clock?: () => Date;
   /** When provided, enables POST /tasks/:taskId/dispatch and dispatcher health reporting. */
   dispatcher?: ReadyTaskDispatcher;
+  pollingDaemon?: GitHubIssuePollingDaemon;
   /** Dependencies for manual dispatch via POST /tasks/:taskId/dispatch. */
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
 }
@@ -55,13 +60,25 @@ export interface OperatorPollingHealthSummary {
   repositories: GitHubIssuePollingCursor[];
   totalRepositories: number;
   failingRepositories: number;
+  runtimeStatus: PollingLoopHealthSnapshot["status"];
+  startupStatus: PollingLoopHealthSnapshot["startupStatus"];
+  consecutiveFailures: number;
+  lastCycleStartedAt: string | null;
+  lastCycleCompletedAt: string | null;
+  lastCycleDurationMs: number | null;
+  lastError: string | null;
 }
 
 export interface OperatorDispatcherHealthSummary {
-  status: "idle" | "running" | "degraded";
+  status: PollingLoopHealthSnapshot["status"];
+  startupStatus: PollingLoopHealthSnapshot["startupStatus"];
   consecutiveFailures: number;
   lastDispatchOutcome: string | null;
   lastDispatchTaskId: string | null;
+  lastCycleStartedAt: string | null;
+  lastCycleCompletedAt: string | null;
+  lastCycleDurationMs: number | null;
+  lastError: string | null;
 }
 
 export interface OperatorHealthResponse {
@@ -114,6 +131,7 @@ export function createOperatorApiServer(
     repository,
     clock = () => new Date(),
     dispatcher,
+    pollingDaemon,
     dispatchDependencies
   } = deps;
   let boundPort = config.port;
@@ -145,6 +163,7 @@ export function createOperatorApiServer(
           authToken,
           maxRequestBodyBytes,
           dispatcher,
+          pollingDaemon,
           dispatchDependencies,
           managedTargetRoot,
           managedEvidenceRoot
@@ -330,6 +349,7 @@ async function handleOperatorRequest(
   authToken: string,
   maxRequestBodyBytes: number,
   dispatcher?: ReadyTaskDispatcher,
+  pollingDaemon?: GitHubIssuePollingDaemon,
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
   managedTargetRoot?: string,
   managedEvidenceRoot?: string
@@ -347,19 +367,21 @@ async function handleOperatorRequest(
       timestamp: clock().toISOString(),
       repository: await repository.getRepositoryHealth(),
       polling: summarizePollingHealth(
-        await repository.listGitHubIssuePollingCursors()
+        await repository.listGitHubIssuePollingCursors(),
+        pollingDaemon
       ),
       ...(dispatcher
         ? {
             dispatcher: {
-              status: dispatcher.isRunning
-                ? dispatcher.consecutiveFailures > 0
-                  ? "degraded"
-                  : "running"
-                : "idle",
+              status: dispatcher.health.status,
+              startupStatus: dispatcher.health.startupStatus,
               consecutiveFailures: dispatcher.consecutiveFailures,
               lastDispatchOutcome: dispatcher.lastDispatchResult?.outcome ?? null,
-              lastDispatchTaskId: dispatcher.lastDispatchResult?.taskId ?? null
+              lastDispatchTaskId: dispatcher.lastDispatchResult?.taskId ?? null,
+              lastCycleStartedAt: dispatcher.health.lastCycleStartedAt,
+              lastCycleCompletedAt: dispatcher.health.lastCycleCompletedAt,
+              lastCycleDurationMs: dispatcher.health.lastCycleDurationMs,
+              lastError: dispatcher.health.lastError
             }
           }
         : {})
@@ -566,21 +588,37 @@ async function handleOperatorRequest(
 }
 
 function summarizePollingHealth(
-  repositories: GitHubIssuePollingCursor[]
+  repositories: GitHubIssuePollingCursor[],
+  pollingDaemon?: GitHubIssuePollingDaemon
 ): OperatorPollingHealthSummary {
   const failingRepositories = repositories.filter(
     (record) => record.lastPollStatus === "failed"
   ).length;
+  const runtimeHealth = pollingDaemon?.health ?? {
+    status: "idle",
+    startupStatus: "idle",
+    lastCycleStartedAt: null,
+    lastCycleCompletedAt: null,
+    lastCycleDurationMs: null,
+    lastError: null
+  };
 
   return {
     status:
-      repositories.length === 0
-        ? "idle"
-        : failingRepositories > 0
-          ? "degraded"
+      failingRepositories > 0 || runtimeHealth.status === "degraded"
+        ? "degraded"
+        : repositories.length === 0 && runtimeHealth.status === "idle"
+          ? "idle"
           : "healthy",
     repositories,
     totalRepositories: repositories.length,
-    failingRepositories
+    failingRepositories,
+    runtimeStatus: runtimeHealth.status,
+    startupStatus: runtimeHealth.startupStatus,
+    consecutiveFailures: pollingDaemon?.consecutiveFailures ?? 0,
+    lastCycleStartedAt: runtimeHealth.lastCycleStartedAt,
+    lastCycleCompletedAt: runtimeHealth.lastCycleCompletedAt,
+    lastCycleDurationMs: runtimeHealth.lastCycleDurationMs,
+    lastError: runtimeHealth.lastError
   };
 }

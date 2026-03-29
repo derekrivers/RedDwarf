@@ -292,3 +292,12 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Verification for feature 98: `corepack pnpm typecheck`; `corepack pnpm test -- packages/evidence/src/index.test.ts packages/control-plane/src/index.test.ts tests/postgres.test.ts`; `corepack pnpm verify:operator-api`; `corepack pnpm verify:postgres`; `node --check scripts/start-stack.mjs`; `node --check scripts/start-operator-api.mjs`.
 - No new follow-on feature was added from feature 98; the next board item is feature 99, wire structured runtime logging and degraded-startup health across poller and dispatcher.
 
+
+- Completed feature 99 from `FEATURE_BOARD.md`: wire structured runtime logging and degraded-startup health across poller and dispatcher.
+- Updated `packages/control-plane/src/polling.ts` so both the GitHub poller and ready-task dispatcher now emit structured cycle logs with component bindings, duration/backoff fields, and explicit startup-degraded warnings while keeping their interval loops alive after a failing immediate startup cycle.
+- Updated `packages/control-plane/src/operator-api.ts` and `scripts/start-stack.mjs` so `/health` now exposes live poller and dispatcher runtime health alongside persisted cursor state, and the stack bootstrap now wires a real `createPinoPlanningLogger(...)` runtime logger into the long-running services instead of relying on the noop default.
+- Updated `scripts/verify-observability.mjs` and `scripts/verify-operator-api.mjs` to cover the new runtime health and structured loop-log paths, and documented `REDDWARF_LOG_LEVEL` in `.env.example` and `README.md`.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` for degraded startup health reporting, non-fatal poller and dispatcher startup failures, and structured cycle logging on both loops.
+- Verification for feature 99: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:operator-api`; `corepack pnpm verify:observability`; `node --check scripts/start-stack.mjs`; `node --check scripts/start-operator-api.mjs`.
+- No new follow-on feature was added from feature 99; the next board item remains feature 100, sweep stale script call sites to the current Postgres repository factory.
+
