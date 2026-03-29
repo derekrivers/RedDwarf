@@ -1,0 +1,109 @@
+# RedDwarf Completed Features Archive
+
+This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
+
+Archived from the live board on 2026-03-29. Completed feature count: 101.
+
+| Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
+| -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
+| 1        | Docker topology for OpenClaw, Postgres, workspace, and evidence mounts         | M0        | completed | System Context, Integration Plane, Isolation and Security Model        |
+| 2        | TypeScript monorepo foundation and shared package boundaries                   | M0        | completed | Core Architectural Decision                                            |
+| 3        | Mounted policy-pack assets for agents, prompts, schemas, and standards         | M0        | completed | Knowledge & Policy Plane                                               |
+| 4        | Shared runtime contracts and Zod schemas                                       | M1        | completed | Runtime Data Model                                                     |
+| 5        | Lifecycle engine and legal phase transitions                                   | M1        | completed | Task Lifecycle Model                                                   |
+| 6        | Eligibility, risk, and approval rule engine                                    | M1        | completed | Approval and Risk Model                                                |
+| 7        | Planning-only pipeline with disabled downstream phases                         | M1        | completed | Refactored Workflow, Execution Plane                                   |
+| 8        | Postgres evidence persistence and audit records                                | M1        | completed | Evidence Plane                                                         |
+| 9        | OpenClaw context materialization helpers                                       | M1        | completed | Workspace Context                                                      |
+| 10       | Observability, run IDs, failure classes, and event records                     | M2        | completed | Observability Model, Failure Recovery Model                            |
+| 11       | GitHub and CI adapter contracts with mutation disabled                         | M2        | completed | Integration Plane                                                      |
+| 12       | Memory partitions for task, project, organization, and external retrieval      | M2        | completed | Memory Model                                                           |
+| 13       | Concurrency strategy contracts and stale-run detection                         | M3        | completed | Concurrency and Conflict Handling                                      |
+| 14       | Versioned policy-pack packaging beyond bind mounts                             | M3        | completed | Extension Points                                                       |
+| 15       | Runtime instruction layer generation for OpenClaw workspaces                   | M3        | completed | Knowledge & Policy Plane, Workspace Context, Runtime Instruction Layer |
+| 16       | Workspace manager and isolated workspace lifecycle                             | M3        | completed | Execution Plane, Workspace Manager, Isolation and Security Model       |
+| 17       | Human approval queue and decision workflow                                     | M3        | completed | Approval and Risk Model, Control Plane                                 |
+| 18       | Developer phase orchestration with code-write disabled by default              | M4        | completed | Execution Plane, Refactored Workflow                                   |
+| 19       | Validation phase runner for lint and test execution in workspaces              | M4        | completed | Validation Agent, Execution Plane                                      |
+| 20       | Secrets adapter and scoped credential injection rules                          | M4        | completed | Integration Plane, Isolation and Security Model                        |
+| 21       | SCM adapter with branch and PR creation behind approval gates                  | M4        | completed | SCM Agent, Integration Plane                                           |
+| 22       | Evidence artifact archival for diffs, logs, test results, and review outputs   | M4        | completed | Evidence Plane                                                         |
+| 23       | Retry, escalation, and follow-up issue automation                              | M4        | completed | Failure Recovery Model                                                 |
+| 24       | Operator dashboard or API for runs, approvals, evidence, and blocked tasks     | M5        | completed | Control Plane, Observability Model                                     |
+| 25       | Knowledge ingestion pipeline for ADRs, standards, and curated external context | M5        | completed | Knowledge & Policy Plane, External Knowledge Retrieval                 |
+| 26       | Extract concurrency detection into a shared utility function                   | M6        | completed | Control Plane, Concurrency and Conflict Handling                       |
+| 27       | Split control-plane/src/index.ts into focused module files                     | M6        | completed | Control Plane                                                          |
+| 28       | Split evidence/src/index.ts into repository, factories, and utilities          | M6        | completed | Evidence Plane                                                         |
+| 29       | Consolidate duplicate phase-capability constants across packages               | M6        | completed | Policy, Control Plane, Execution Plane                                 |
+| 30       | Fix InMemoryPlanningRepository.getTaskSnapshot to use Promise.all              | M6        | completed | Evidence Plane                                                         |
+| 31       | Eliminate redundant Zod re-parsing in workspace materialization path           | M6        | completed | Control Plane                                                          |
+| 32       | Move deterministic agent classes from control-plane into execution-plane       | M6        | completed | Execution Plane, Control Plane                                         |
+| 33       | Replace if/else phase chains with capability-per-phase map in policy package   | M6        | completed | Policy                                                                 |
+| 34       | Fix SecretLeaseRequest to use imported RiskClass and ApprovalMode types        | M6        | completed | Integration Plane                                                      |
+| 35       | Fix isCapability guard to derive values from the contracts array               | M6        | completed | Integration Plane                                                      |
+| 36       | Merge disabled-phases list into a single shared constant                       | M6        | completed | Policy, Execution Plane                                                |
+| 37       | Fix archive phase to measure real duration rather than always reporting zero   | M6        | completed | Control Plane                                                          |
+| 38       | Optimize InMemoryPlanningRepository filter chain and redactSecretValues        | M6        | completed | Evidence Plane, Integration Plane                                      |
+| 39       | Split PlanningRepository interface into read and write contracts               | M7        | completed | Evidence Plane                                                         |
+| 40       | Inject pg.Pool dependency into PostgresPlanningRepository constructor          | M7        | completed | Evidence Plane                                                         |
+| 41       | Move agent interfaces and draft types to contracts to unblock F32              | M7        | completed | Contracts, Execution Plane, Control Plane                              |
+| 42       | Move deterministic agent classes to execution-plane (unblocked by F41)         | M7        | completed | Execution Plane, Control Plane                                         |
+| 43       | Real GitHub issue intake adapter reading live repositories and issues via GitHub REST API | M8 | completed | Integration Plane                                                      |
+| 44       | Live LLM planning agent binding through OpenClaw system prompt and configurable agent selection | M8 | completed | Execution Plane, Knowledge & Policy Plane                              |
+| 45       | Real GitHub SCM adapter for live branch and PR creation behind existing approval gates | M8 | completed | Integration Plane, SCM Agent                                           |
+| 46       | Concrete env-var-backed secret vault adapter as first non-fixture secrets implementation | M8 | completed | Integration Plane, Isolation and Security Model                        |
+| 47       | Unit test suite for DeterministicPlanningAgent, DeterministicDeveloperAgent, DeterministicValidationAgent, and DeterministicScmAgent | M8 | completed | Execution Plane                                                        |
+| 48       | verify:all composite script running all eighteen verify scripts in sequence     | M8        | completed | Observability Model                                                    |
+| 49       | Idempotent setup script combining compose:up, db:migrate, and stack health check | M8       | completed | System Context                                                         |
+| 50       | Evidence volume retention policy with configurable age threshold and cleanup script | M8     | completed | Evidence Plane                                                         |
+| 51       | End-to-end local demo runbook targeting a real GitHub repository with live inputs and outputs | M8 | completed | System Context, Refactored Workflow                                   |
+| 52       | README improvements covering Windows host configuration, registry access, and boot health check | M8 | completed | System Context                                                        |
+| 53       | GitHub issue polling daemon with configurable interval and deduplication against existing planning specs | M9 | completed | Integration Plane, Control Plane                                      |
+| 54       | Polling cursor persistence in Postgres with per-repo last-seen issue tracking and operator API health exposure | M9 | completed | Integration Plane, Evidence Plane, Observability Model                |
+| 55       | OpenClaw agent role definitions and bootstrap files for coordinator, analyst, and validator agents | M9 | completed | Knowledge & Policy Plane, Execution Plane, Isolation and Security Model |
+| 56       | Per-agent tool policy specification with profiles, allow/deny lists, sandbox settings, and Anthropic model binding | M9 | completed | Knowledge & Policy Plane, Isolation and Security Model                |
+| 82       | Rename OpenClaw agents from coordinator/analyst/validator to rimmer/holly/kryten with full Red Dwarf persona files | M10 | completed | Knowledge & Policy Plane, Execution Plane                             |
+| 83       | Update docs/openclaw to reflect Anthropic as primary provider with model equivalents across all five docs | M10 | completed | Knowledge & Policy Plane                                              |
+| 57       | openclaw.json generation from RedDwarf policy configuration with per-agent workspace paths, tool profiles, and skipBootstrap | M10 | completed | System Context, Knowledge & Policy Plane, Integration Plane           |
+| 58       | Hook token secret wiring through EnvVarSecretsAdapter with .env.example and runbook documentation | M10 | completed | Integration Plane, Isolation and Security Model                       |
+| 59       | OpenClawDispatchAdapter contract and fixture adapter registered alongside existing integration adapters | M10 | completed | Integration Plane, Execution Plane                                    |
+| 60       | HTTP implementation of OpenClawDispatchAdapter posting to /hooks/agent with sessionKey, agentId, bearer auth, and retry | M10 | completed | Integration Plane, Execution Plane                                    |
+| 61       | Session result and transcript capture reading OpenClaw session JSONL and persisting agent output as phase evidence | M10 | completed | Integration Plane, Evidence Plane, Observability Model                |
+| 62       | Wire developer phase to OpenClaw dispatch for read-only analyst handoff replacing the deterministic stub | M10 | completed | Execution Plane, Control Plane, Integration Plane                     |
+| 63       | Workspace bootstrap alignment verifying IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md, and SKILL.md match OpenClaw consumption format | M10 | completed | Workspace Context, Knowledge & Policy Plane, Execution Plane          |
+| 64       | Fix SQL injection vector in hasPlanningSpecForSource and ReDoS vulnerability in redactSecretValues | M11 | completed | Evidence Plane, Integration Plane                                      |
+| 65       | Extract shared script configuration module for connection string, workspace root, and error formatting | M11 | completed | System Context                                                         |
+| 66       | Split contracts/src/index.ts into focused domain modules with barrel re-export | M11 | completed | Contracts                                                              |
+| 67       | Extract duplicate pipeline phase helpers for snapshot validation, approval lookup, and phase initialization | M11 | completed | Control Plane                                                          |
+| 68       | Decompose monolithic pipeline phase functions into orchestrated sub-steps | M11 | completed | Control Plane                                                          |
+| 69       | Deduplicate dedupeMemoryRecords and consolidate magic event-code string constants | M11 | completed | Evidence Plane                                                         |
+| 70       | Extract tool-policy mode literals and validation-schema magic numbers into named constants | M11 | completed | Control Plane, Contracts, Execution Plane                              |
+| 71       | Fix silent exception swallowing in cleanup-evidence and cap polling batch growth | M11 | completed | System Context, Control Plane                                          |
+| 72       | Parallelize verify-all.mjs script execution with configurable concurrency | M11 | completed | Observability Model                                                    |
+| 73       | Optimize PostgresPlanningRepository.getTaskSnapshot to reduce from 9 queries to 1–2 via JOINs | M11 | completed | Evidence Plane                                                         |
+| 74       | Reduce repeated taskManifestSchema.parse calls in pipeline.ts by parsing once at phase entry | M11 | completed | Control Plane                                                          |
+| 75       | Stream file hashing in archiveEvidenceArtifact instead of buffering entire file | M11 | completed | Control Plane                                                          |
+| 76       | Extract AnthropicPlanningAgent retry logic and response parsing into reusable concerns | M11 | completed | Execution Plane                                                        |
+| 77       | Segment GitHubAdapter interface into separate read and write contracts | M11 | completed | Integration Plane                                                      |
+| 78       | Replace hardcoded phase failure maps and approval rules with extensible registry pattern | M11 | completed | Control Plane, Policy                                                  |
+| 79       | Split PostgresPlanningRepository row mappers into standalone testable module | M11 | completed | Evidence Plane                                                         |
+| 80       | Fix defaultLogger.child() LSP violation returning same instance | M11 | completed | Control Plane                                                          |
+| 81       | Enable no-floating-promises ESLint rule and fix all unawaited promise call sites | M11 | completed | All Packages                                                           |
+| 84       | Dave Lister developer agent - workspace_write sandbox, scoped file edit capability, implement_architecture_plan and report_deviation_or_blocker skills, wired to developer phase | M12 | completed | Execution Plane, Knowledge & Policy Plane                             |
+| 85       | PR-capable OpenClaw E2E path - materialize target-repo workspaces, wait for completed developer sessions, publish workspace changes as commits, and open real PRs at SCM handoff | M12 | completed | Execution Plane, Control Plane, Integration Plane, SCM Agent          |
+| 89       | Post-approval execution dispatcher - auto-dispatch ready manifests through developer/validation/SCM phases via OpenClaw agents (Holly→Lister→Kryten), single-pass sequencing, one task at a time, block on failure for human intervention, integrate as parallel polling loop in start-stack | M13 | completed | Control Plane, Execution Plane, Integration Plane                     |
+| 90       | Atomic run claiming for each pipeline phase - replace read-then-write overlap checks with database-backed ownership claims and stale-run takeover in one path | M15 | completed | Control Plane, Concurrency and Conflict Handling, Evidence Plane      |
+| 91       | Transactional manifest, approval, phase, evidence, and run-event transitions - commit each logical state change as one database transaction | M15 | completed | Control Plane, Evidence Plane, Approval and Risk Model                |
+| 92       | Enforce allowed-path boundaries before commit and push - fail SCM when workspace changes escape policy-approved file scopes | M15 | completed | Control Plane, SCM Agent, Isolation and Security Model                |
+| 93       | Remove tokenized git remotes and redact secret-bearing failures - keep credentials out of argv, persisted errors, and operator-visible responses | M15 | completed | Integration Plane, SCM Agent, Isolation and Security Model          |
+| 94       | Authenticate the operator API and constrain manual dispatch roots - require operator auth, bound request size, and reject writes outside managed roots | M15 | completed | Control Plane, Isolation and Security Model                           |
+| 95       | Align heartbeats, stale windows, and subprocess timeouts - heartbeat long waits and bound git and validation child processes end to end | M15 | completed | Control Plane, Failure Recovery Model, Execution Plane              |
+| 96       | Scrub or destroy secret-bearing workspaces on phase exit - remove scoped secret files once the requiring phase finishes or fails | M15 | completed | Control Plane, Isolation and Security Model, Evidence Plane         |
+| 97       | Fence untrusted issue content inside planner and agent prompts - isolate GitHub issue text as data instead of executable instruction context | M15 | completed | Integration Plane, Execution Plane, Knowledge & Policy Plane        |
+| 98       | Harden the Postgres pool with timeouts, sizing, and telemetry - make DB stalls fail boundedly and expose saturation before the pipeline wedges | M16 | completed | Evidence Plane, Observability Model, Control Plane                  |
+| 99       | Wire structured runtime logging and degraded-startup health across poller and dispatcher - replace noop defaults and keep startup alive on first-cycle failures | M16 | completed | Observability Model, Control Plane, Integration Plane               |
+| 100      | Sweep stale script call sites to the current Postgres repository factory - replace legacy constructor usage so verifiers and maintenance scripts survive repository DI changes | M16 | completed | Evidence Plane, System Context                                      |
+| 101      | Add idempotent guards for external side effects during retries and recovery - prevent duplicate follow-up issues, branch publication, and PR mutations when phases restart or transactions retry | M16 | completed | Control Plane, Integration Plane, Failure Recovery Model           |
+| 102      | Resume approved retries from the failed phase instead of replaying upstream phases - let operator-approved recovery restart validation or SCM directly without re-running developer work | M16 | completed | Control Plane, Failure Recovery Model, Execution Plane             |
+| 103      | Auto-dispatch retry-eligible blocked phases without manual intervention - let failure-recovery retries actually re-enter validation or SCM when automation schedules another attempt | M16 | completed | Control Plane, Failure Recovery Model, Execution Plane             |
+| 88       | Restore Holly to the live OpenClaw workflow - route architecture planning through reddwarf-analyst, persist Holly handoff as evidence, and pass the approved plan into Lister and downstream review | M14 | completed | Execution Plane, Control Plane, Knowledge & Policy Plane              |
