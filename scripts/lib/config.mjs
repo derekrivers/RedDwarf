@@ -63,6 +63,31 @@ export function createScriptLogger(name) {
   };
 }
 
+// ── OpenClaw config ─────────────────────────────────────────────────────
+
+/** Path to the OpenClaw config template. */
+export const openClawConfigTemplatePath = resolve(repoRoot, "infra", "docker", "openclaw.json");
+
+/** Path to the resolved OpenClaw runtime config (host-mounted into the container). */
+export const openClawConfigRuntimePath = resolve(repoRoot, "runtime-data", "openclaw-home", "openclaw.json");
+
+/**
+ * Resolve ${VAR} placeholders in the OpenClaw config template using
+ * process.env and write the result to the runtime config path.
+ *
+ * @param {{ log?: (msg: string) => void }} [options]
+ */
+export async function resolveOpenClawConfig(options) {
+  const { readFile, writeFile, mkdir } = await import("node:fs/promises");
+  const template = await readFile(openClawConfigTemplatePath, "utf8");
+  const resolved = template.replace(/\$\{(\w+)\}/g, (_match, name) => {
+    return process.env[name] ?? "";
+  });
+  await mkdir(resolve(repoRoot, "runtime-data", "openclaw-home"), { recursive: true });
+  await writeFile(openClawConfigRuntimePath, resolved, "utf8");
+  options?.log?.("OpenClaw config resolved and written to runtime-data/openclaw-home/openclaw.json");
+}
+
 // ── Error formatting ─────────────────────────────────────────────────────────
 
 /**

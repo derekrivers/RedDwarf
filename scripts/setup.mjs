@@ -26,7 +26,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { readdir, stat, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { connectionString, repoRoot, scriptsDir, createScriptLogger, formatError } from "./lib/config.mjs";
+import { connectionString, repoRoot, scriptsDir, createScriptLogger, formatError, resolveOpenClawConfig } from "./lib/config.mjs";
 
 const { Client } = pg;
 
@@ -35,6 +35,14 @@ const POLL_INTERVAL_MS = 2_000;
 const MAX_WAIT_MS = 60_000;
 
 const { log, logError } = createScriptLogger("setup");
+
+// ── Step 0: Resolve OpenClaw config template ─────────────────────────────
+
+try {
+  await resolveOpenClawConfig({ log });
+} catch {
+  log("OpenClaw config resolution skipped (tokens may not be set yet).");
+}
 
 // ── Step 1: Start the Docker Compose stack ─────────────────────────────────
 

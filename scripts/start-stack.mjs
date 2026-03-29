@@ -60,7 +60,8 @@ import {
   repoRoot,
   scriptsDir,
   createScriptLogger,
-  formatError
+  formatError,
+  resolveOpenClawConfig
 } from "./lib/config.mjs";
 
 const { Client } = pg;
@@ -90,7 +91,18 @@ const skipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW === "true";
 
 log("Phase 1: Starting infrastructure...");
 
-// ── 1a: Docker Compose (Postgres + optional OpenClaw) ─────────────────
+// ── 1a: Resolve OpenClaw config template ──────────────────────────────
+
+if (!skipOpenClaw) {
+  try {
+    await resolveOpenClawConfig({ log });
+  } catch (err) {
+    logError(`Failed to resolve OpenClaw config: ${formatError(err)}`);
+    logError("OpenClaw will fall back to the template with unresolved placeholders.");
+  }
+}
+
+// ── 1b: Docker Compose (Postgres + optional OpenClaw) ─────────────────
 
 log("Starting Docker Compose stack...");
 try {
