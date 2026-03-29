@@ -136,6 +136,8 @@ try {
   assert.equal(health.status, 200);
   assert.equal(health.body.status, "ok");
   assert.equal(health.body.timestamp, "2026-03-26T12:00:00.000Z");
+  assert.equal(health.body.repository.storage, "postgres");
+  assert.ok(health.body.repository.postgresPool.maxConnections >= 1);
   assert.equal(health.body.polling.status, "healthy");
   assert.ok(health.body.polling.totalRepositories >= 1);
   const seededRepository = health.body.polling.repositories.find((entry) => entry.repo === repo);

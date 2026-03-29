@@ -57,6 +57,7 @@ try {
 
 import {
   connectionString,
+  postgresPoolConfig,
   repoRoot,
   scriptsDir,
   createScriptLogger,
@@ -247,7 +248,10 @@ const { createRestGitHubAdapter, createHttpOpenClawDispatchAdapter } =
 const { createPlanningAgent } =
   await import("../packages/execution-plane/dist/index.js");
 
-const repository = createPostgresPlanningRepository(connectionString);
+const repository = createPostgresPlanningRepository(
+  connectionString,
+  postgresPoolConfig
+);
 
 // ── 2a: Sweep stale pipeline runs ─────────────────────────────────────
 

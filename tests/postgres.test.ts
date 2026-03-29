@@ -41,6 +41,42 @@ describeIfDatabase("postgres planning repository", () => {
     await repository.close();
   });
 
+  it("reports configured Postgres pool limits and live telemetry", async () => {
+    const poolAwareRepository = createPostgresPlanningRepository(connectionString!, {
+      max: 3,
+      connectionTimeoutMillis: 2_500,
+      idleTimeoutMillis: 12_000,
+      queryTimeoutMillis: 9_000,
+      statementTimeoutMillis: 8_000,
+      maxLifetimeSeconds: 45
+    });
+
+    try {
+      await poolAwareRepository.healthcheck();
+      const health = await poolAwareRepository.getRepositoryHealth();
+
+      expect(health.storage).toBe("postgres");
+      expect(health.status).toBe("healthy");
+      expect(health.postgresPool).toMatchObject({
+        status: "healthy",
+        maxConnections: 3,
+        connectionTimeoutMs: 2_500,
+        idleTimeoutMs: 12_000,
+        queryTimeoutMs: 9_000,
+        statementTimeoutMs: 8_000,
+        maxLifetimeSeconds: 45,
+        errorCount: 0,
+        lastErrorAt: null,
+        lastErrorMessage: null
+      });
+      expect(health.postgresPool?.totalConnections).toBeGreaterThanOrEqual(0);
+      expect(health.postgresPool?.idleConnections).toBeGreaterThanOrEqual(0);
+      expect(health.postgresPool?.waitingRequests).toBeGreaterThanOrEqual(0);
+    } finally {
+      await poolAwareRepository.close();
+    }
+  });
+
   it("persists a planning pipeline run and can provision and destroy a managed workspace", async () => {
     const issueNumber = Date.now();
     const repo = `acme-${issueNumber}/platform-${issueNumber}`;

@@ -9,7 +9,7 @@
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const port = parseInt(process.argv[2] ?? "8080", 10);
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
@@ -19,7 +19,10 @@ if (operatorApiToken.length === 0) {
   process.exit(1);
 }
 
-const repository = createPostgresPlanningRepository(connectionString);
+const repository = createPostgresPlanningRepository(
+  connectionString,
+  postgresPoolConfig
+);
 
 console.log("Checking Postgres readiness...");
 try {

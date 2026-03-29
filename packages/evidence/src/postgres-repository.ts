@@ -47,14 +47,119 @@ import {
   type ClaimPipelineRunResult,
   type PlanningRepository,
   type PlanningTransactionRepository,
-  type PersistedTaskSnapshot
+  type PersistedTaskSnapshot,
+  type RepositoryHealthSnapshot
 } from "./repository.js";
+export interface PostgresPlanningRepositoryOptions {
+  max?: number;
+  connectionTimeoutMillis?: number;
+  idleTimeoutMillis?: number;
+  queryTimeoutMillis?: number;
+  statementTimeoutMillis?: number | false;
+  maxLifetimeSeconds?: number;
+}
+
+interface NormalizedPostgresPlanningRepositoryOptions {
+  max: number;
+  connectionTimeoutMillis: number;
+  idleTimeoutMillis: number;
+  queryTimeoutMillis: number | null;
+  statementTimeoutMillis: number | null;
+  maxLifetimeSeconds: number;
+}
+
+interface PostgresPoolTelemetryState {
+  errorCount: number;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
+}
+
+const DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS: NormalizedPostgresPlanningRepositoryOptions = {
+  max: 10,
+  connectionTimeoutMillis: 5_000,
+  idleTimeoutMillis: 30_000,
+  queryTimeoutMillis: 15_000,
+  statementTimeoutMillis: 15_000,
+  maxLifetimeSeconds: 300
+};
+
+function normalizePositiveInteger(
+  value: unknown,
+  fallback: number,
+  minimum = 1
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized >= minimum ? normalized : fallback;
+}
+
+function normalizeTimeoutValue(value: unknown, fallback: number): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function normalizePostgresPlanningRepositoryOptions(
+  options?: number | PostgresPlanningRepositoryOptions
+): NormalizedPostgresPlanningRepositoryOptions {
+  const rawOptions =
+    typeof options === "number" ? { max: options } : options ?? {};
+
+  return {
+    max: normalizePositiveInteger(
+      rawOptions.max,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.max
+    ),
+    connectionTimeoutMillis: normalizePositiveInteger(
+      rawOptions.connectionTimeoutMillis,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.connectionTimeoutMillis
+    ),
+    idleTimeoutMillis: normalizePositiveInteger(
+      rawOptions.idleTimeoutMillis,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.idleTimeoutMillis
+    ),
+    queryTimeoutMillis: normalizeTimeoutValue(
+      rawOptions.queryTimeoutMillis,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.queryTimeoutMillis ?? 0
+    ),
+    statementTimeoutMillis: normalizeTimeoutValue(
+      rawOptions.statementTimeoutMillis === false
+        ? 0
+        : rawOptions.statementTimeoutMillis,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.statementTimeoutMillis ?? 0
+    ),
+    maxLifetimeSeconds: normalizePositiveInteger(
+      rawOptions.maxLifetimeSeconds,
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS.maxLifetimeSeconds
+    )
+  };
+}
+
 export function createPostgresPlanningRepository(
   connectionString: string,
-  max?: number
+  options?: number | PostgresPlanningRepositoryOptions
 ): PostgresPlanningRepository {
-  const pool = new pg.Pool({ connectionString, max: max ?? 10 });
-  return new PostgresPlanningRepository(pool);
+  const poolOptions = normalizePostgresPlanningRepositoryOptions(options);
+  const pool = new pg.Pool({
+    connectionString,
+    max: poolOptions.max,
+    connectionTimeoutMillis: poolOptions.connectionTimeoutMillis,
+    idleTimeoutMillis: poolOptions.idleTimeoutMillis,
+    maxLifetimeSeconds: poolOptions.maxLifetimeSeconds,
+    ...(poolOptions.queryTimeoutMillis !== null
+      ? { query_timeout: poolOptions.queryTimeoutMillis }
+      : {}),
+    ...(poolOptions.statementTimeoutMillis !== null
+      ? { statement_timeout: poolOptions.statementTimeoutMillis }
+      : {})
+  });
+  return new PostgresPlanningRepository(pool, poolOptions);
 }
 
 type QueryExecutor = pg.Pool | pg.PoolClient;
@@ -100,13 +205,64 @@ class PostgresTransactionRepository implements PlanningTransactionRepository {
 
 export class PostgresPlanningRepository implements PlanningRepository {
   private readonly pool: pg.Pool;
+  private readonly poolOptions: NormalizedPostgresPlanningRepositoryOptions;
+  private readonly poolTelemetry: PostgresPoolTelemetryState;
 
-  constructor(pool: pg.Pool) {
+  constructor(
+    pool: pg.Pool,
+    poolOptions: NormalizedPostgresPlanningRepositoryOptions =
+      DEFAULT_POSTGRES_PLANNING_REPOSITORY_OPTIONS
+  ) {
     this.pool = pool;
+    this.poolOptions = poolOptions;
+    this.poolTelemetry = {
+      errorCount: 0,
+      lastErrorAt: null,
+      lastErrorMessage: null
+    };
+
+    this.pool.on("error", (error) => {
+      this.poolTelemetry.errorCount += 1;
+      this.poolTelemetry.lastErrorAt = asIsoTimestamp();
+      this.poolTelemetry.lastErrorMessage =
+        error instanceof Error ? error.message : String(error);
+    });
   }
 
   async healthcheck(): Promise<void> {
     await this.pool.query("SELECT 1");
+  }
+
+  async getRepositoryHealth(): Promise<RepositoryHealthSnapshot> {
+    const maxConnections = this.poolOptions.max;
+    const totalConnections = this.pool.totalCount;
+    const idleConnections = this.pool.idleCount;
+    const waitingRequests = this.pool.waitingCount;
+    const saturated =
+      waitingRequests > 0 ||
+      (maxConnections > 0 &&
+        totalConnections >= maxConnections &&
+        idleConnections === 0);
+
+    return {
+      storage: "postgres",
+      status: saturated ? "degraded" : "healthy",
+      postgresPool: {
+        status: saturated ? "degraded" : "healthy",
+        maxConnections,
+        totalConnections,
+        idleConnections,
+        waitingRequests,
+        connectionTimeoutMs: this.poolOptions.connectionTimeoutMillis,
+        idleTimeoutMs: this.poolOptions.idleTimeoutMillis,
+        queryTimeoutMs: this.poolOptions.queryTimeoutMillis,
+        statementTimeoutMs: this.poolOptions.statementTimeoutMillis,
+        maxLifetimeSeconds: this.poolOptions.maxLifetimeSeconds,
+        errorCount: this.poolTelemetry.errorCount,
+        lastErrorAt: this.poolTelemetry.lastErrorAt,
+        lastErrorMessage: this.poolTelemetry.lastErrorMessage
+      }
+    };
   }
 
   async close(): Promise<void> {

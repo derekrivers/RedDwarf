@@ -283,3 +283,12 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Verification for feature 97: `corepack pnpm typecheck`; `corepack pnpm test -- packages/execution-plane/src/index.test.ts packages/control-plane/src/index.test.ts`.
 - No new follow-on feature was added from feature 97; the next board item is feature 98, harden the Postgres pool with timeouts, sizing, and telemetry.
 
+- Completed feature 98 from `FEATURE_BOARD.md`: harden the Postgres pool with timeouts, sizing, and telemetry.
+- Updated `packages/evidence/src/postgres-repository.ts` so the shared `pg.Pool` now uses bounded defaults for connection timeout, idle timeout, query timeout, statement timeout, and client lifetime, while exposing live pool counters and recorded pool-error telemetry through `getRepositoryHealth()`.
+- Updated `packages/evidence/src/repository.ts` and `packages/control-plane/src/operator-api.ts` so repository health is part of the operator `/health` response; in-memory repositories report a simple healthy in-memory status and Postgres-backed repositories expose live pool saturation signals.
+- Updated `scripts/lib/config.mjs`, `scripts/start-stack.mjs`, and `scripts/start-operator-api.mjs` so stack bootstrap reads Postgres pool policy from environment variables instead of leaving the pool hard-coded in the evidence factory.
+- Updated `.env.example`, `README.md`, and `scripts/verify-postgres-pipeline.mjs` so the new pool settings are documented and the Postgres verifier now checks that pool telemetry is present. This verifier fix narrows one stale script path, but feature 100 still tracks the broader legacy-script sweep.
+- Added regression coverage in `packages/evidence/src/index.test.ts`, `packages/control-plane/src/index.test.ts`, and `tests/postgres.test.ts` for repository health reporting, operator health exposure, and custom Postgres pool configuration.
+- Verification for feature 98: `corepack pnpm typecheck`; `corepack pnpm test -- packages/evidence/src/index.test.ts packages/control-plane/src/index.test.ts tests/postgres.test.ts`; `corepack pnpm verify:operator-api`; `corepack pnpm verify:postgres`; `node --check scripts/start-stack.mjs`; `node --check scripts/start-operator-api.mjs`.
+- No new follow-on feature was added from feature 98; the next board item is feature 99, wire structured runtime logging and degraded-startup health across poller and dispatcher.
+

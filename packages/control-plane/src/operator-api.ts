@@ -10,7 +10,10 @@ import {
   type GitHubIssuePollingCursor,
   type PipelineRun
 } from "@reddwarf/contracts";
-import { type PlanningRepository } from "@reddwarf/evidence";
+import {
+  type PlanningRepository,
+  type RepositoryHealthSnapshot
+} from "@reddwarf/evidence";
 import {
   dispatchReadyTask,
   resolveApprovalRequest,
@@ -64,6 +67,7 @@ export interface OperatorDispatcherHealthSummary {
 export interface OperatorHealthResponse {
   status: "ok";
   timestamp: string;
+  repository: RepositoryHealthSnapshot;
   polling: OperatorPollingHealthSummary;
   dispatcher?: OperatorDispatcherHealthSummary;
 }
@@ -341,6 +345,7 @@ async function handleOperatorRequest(
     const response: OperatorHealthResponse = {
       status: "ok",
       timestamp: clock().toISOString(),
+      repository: await repository.getRepositoryHealth(),
       polling: summarizePollingHealth(
         await repository.listGitHubIssuePollingCursors()
       ),

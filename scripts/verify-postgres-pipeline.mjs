@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { DeterministicPlanningAgent, runPlanningPipeline } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(
+  connectionString,
+  postgresPoolConfig
+);
 const unique = Date.now();
 const input = {
   source: {
@@ -32,8 +35,12 @@ try {
   const manifest = await repository.getManifest(result.manifest.taskId);
   const snapshot = await repository.getTaskSnapshot(result.manifest.taskId);
   const runSummary = await repository.getRunSummary(result.manifest.taskId, result.runId);
+  const repositoryHealth = await repository.getRepositoryHealth();
 
   assert.ok(manifest, "Expected a persisted manifest.");
+  assert.equal(repositoryHealth.storage, "postgres");
+  assert.ok(repositoryHealth.postgresPool, "Expected Postgres pool telemetry.");
+  assert.ok(repositoryHealth.postgresPool.maxConnections >= 1);
   assert.ok(snapshot.spec, "Expected a persisted planning spec.");
   assert.ok(snapshot.policySnapshot, "Expected a persisted policy snapshot.");
   assert.equal(snapshot.phaseRecords.length, 5, "Expected 5 phase records.");

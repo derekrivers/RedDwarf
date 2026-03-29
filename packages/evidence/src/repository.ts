@@ -28,6 +28,30 @@ import {
   type TaskManifest
 } from "@reddwarf/contracts";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
+
+export type RepositoryHealthStatus = "healthy" | "degraded";
+
+export interface PostgresPoolHealthSnapshot {
+  status: RepositoryHealthStatus;
+  maxConnections: number;
+  totalConnections: number;
+  idleConnections: number;
+  waitingRequests: number;
+  connectionTimeoutMs: number;
+  idleTimeoutMs: number;
+  queryTimeoutMs: number | null;
+  statementTimeoutMs: number | null;
+  maxLifetimeSeconds: number;
+  errorCount: number;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
+}
+
+export interface RepositoryHealthSnapshot {
+  storage: "in_memory" | "postgres";
+  status: RepositoryHealthStatus;
+  postgresPool: PostgresPoolHealthSnapshot | null;
+}
 export interface PlanningTransactionRepository {
   saveManifest(manifest: TaskManifest): Promise<void>;
   updateManifest(manifest: TaskManifest): Promise<void>;
@@ -78,6 +102,7 @@ export interface PlanningQueryRepository {
     organizationId?: string | null;
     limitPerScope?: number;
   }): Promise<MemoryContext>;
+  getRepositoryHealth(): Promise<RepositoryHealthSnapshot>;
 }
 
 export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;
@@ -474,6 +499,14 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext> {
     return buildMemoryContextForRepository(this, input);
+  }
+
+  async getRepositoryHealth(): Promise<RepositoryHealthSnapshot> {
+    return {
+      storage: "in_memory",
+      status: "healthy",
+      postgresPool: null
+    };
   }
 }
 

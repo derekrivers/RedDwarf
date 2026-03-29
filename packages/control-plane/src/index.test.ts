@@ -2257,6 +2257,9 @@ describe("operator API server", () => {
         "2026-03-26T12:00:00.000Z"
       );
       expect(
+        ((health.body as Record<string, unknown>)["repository"] as Record<string, unknown>)["storage"]
+      ).toBe("in_memory");
+      expect(
         ((health.body as Record<string, unknown>)["polling"] as Record<string, unknown>)["status"]
       ).toBe("idle");
       expect(
@@ -2306,6 +2309,30 @@ describe("operator API server", () => {
       const approvals = await operatorGet(port, "/approvals", null);
       expect(approvals.status).toBe(401);
       expect((approvals.body as Record<string, unknown>)["error"]).toBe("unauthorized");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("includes repository health in the /health response", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-27T10:01:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const health = await operatorGet(port, "/health");
+      const repositoryHealth =
+        (health.body as Record<string, unknown>)["repository"] as Record<string, unknown>;
+
+      expect(health.status).toBe(200);
+      expect(repositoryHealth["storage"]).toBe("in_memory");
+      expect(repositoryHealth["status"]).toBe("healthy");
+      expect(repositoryHealth["postgresPool"]).toBeNull();
     } finally {
       await apiServer.stop();
     }

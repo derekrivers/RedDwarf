@@ -107,6 +107,16 @@ describe("evidence memory partitions", () => {
   });
 
 
+  it("reports in-memory repository health without a Postgres pool", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await expect(repository.getRepositoryHealth()).resolves.toEqual({
+      storage: "in_memory",
+      status: "healthy",
+      postgresPool: null
+    });
+  });
+
   it("stores and lists GitHub issue polling cursors", async () => {
     const repository = new InMemoryPlanningRepository();
 

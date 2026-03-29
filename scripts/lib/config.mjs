@@ -36,6 +36,40 @@ export const connectionString =
   process.env.DATABASE_URL ??
   DEFAULT_CONNECTION_STRING;
 
+function readPositiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export const postgresPoolConfig = {
+  max: readPositiveIntegerEnv("REDDWARF_DB_POOL_MAX", 10),
+  connectionTimeoutMillis: readPositiveIntegerEnv(
+    "REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS",
+    5_000
+  ),
+  idleTimeoutMillis: readPositiveIntegerEnv(
+    "REDDWARF_DB_POOL_IDLE_TIMEOUT_MS",
+    30_000
+  ),
+  queryTimeoutMillis: readPositiveIntegerEnv(
+    "REDDWARF_DB_POOL_QUERY_TIMEOUT_MS",
+    15_000
+  ),
+  statementTimeoutMillis: readPositiveIntegerEnv(
+    "REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS",
+    15_000
+  ),
+  maxLifetimeSeconds: readPositiveIntegerEnv(
+    "REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS",
+    300
+  )
+};
+
 // ── Evidence ─────────────────────────────────────────────────────────────────
 
 /** Default host-side evidence root directory. */

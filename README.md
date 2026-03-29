@@ -117,6 +117,12 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
 | `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
+| `REDDWARF_DB_POOL_MAX` | `10` | Max Postgres connections in the shared `pg.Pool` |
+| `REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Fail DB connection attempts after this many milliseconds |
+| `REDDWARF_DB_POOL_IDLE_TIMEOUT_MS` | `30000` | Evict idle Postgres clients after this many milliseconds |
+| `REDDWARF_DB_POOL_QUERY_TIMEOUT_MS` | `15000` | Fail Postgres queries after this many milliseconds |
+| `REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS` | `15000` | Ask Postgres to cancel statements that exceed this runtime |
+| `REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS` | `300` | Recycle Postgres clients after this lifetime |
 | `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
 
 **Example — full stack with polling:**
@@ -162,7 +168,7 @@ curl -X POST http://localhost:8080/approvals/<id>/resolve \
 |---------|----------|----------|
 | Postgres | `pg_isready` via Docker health check | Automatic |
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
-| Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","polling":{...}}` |
+| Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...}}` |
 
 ### Teardown
 
