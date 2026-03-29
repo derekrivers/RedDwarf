@@ -7,7 +7,7 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - planning-first
 - human-gated
 - durable and auditable
-- developer orchestration, workspace-local validation, durable evidence archival, and scoped secret leases are available today; SCM PR handoff remains gated on a write-enabled developer workflow while product code-writing is still disabled by default
+- full pipeline from GitHub issue intake through planning, developer code generation (via OpenClaw), validation, and SCM branch/PR creation — proven end-to-end with real GitHub PRs
 
 ## Repository Shape
 
@@ -57,7 +57,7 @@ cd RedDwarf
 corepack enable
 corepack pnpm install
 cp .env.example .env          # review and edit as needed
-corepack pnpm run setup           # compose:up → wait for Postgres → db:migrate → health check
+corepack pnpm run setup           # compose:up → Postgres → migrate → health check → workspace cleanup
 ```
 
 `pnpm run setup` is idempotent — safe to re-run if the stack is already running.
@@ -92,9 +92,82 @@ corepack pnpm verify:package   # packaged policy-pack integrity
 - Postgres is exposed on port `55532` (not the standard `5432`) to avoid conflicts with any locally installed Postgres.
 - Some verification scripts spawn child processes. If you see `spawn EPERM` errors inside a sandboxed environment (e.g., Claude Code terminal), re-run the command with elevated permissions or outside the sandbox. See `docs/agent/TROUBLESHOOTING.md` for documented workarounds.
 
+## Running the Full Stack
+
+Once the stack is bootstrapped, you can run RedDwarf as a live service that watches GitHub for issues and processes them autonomously.
+
+### 1. Start infrastructure
+
+```bash
+corepack pnpm run setup                    # Postgres + migrations + health check
+corepack pnpm compose:up:openclaw          # OpenClaw gateway (optional but recommended)
+```
+
+### 2. Start the operator API
+
+In a dedicated terminal:
+
+```bash
+corepack pnpm operator:api
+```
+
+The operator API starts on `http://127.0.0.1:8080` after confirming Postgres is reachable. It serves the approval queue, run inspection, evidence queries, and health status.
+
+### 3. Start the polling daemon
+
+There is no committed start script for the polling daemon yet. Create a one-off launcher (see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) Part 4.3 for the full script) or use the E2E integration test to exercise the complete pipeline in one shot.
+
+The polling daemon:
+- Watches configured GitHub repositories for issues with the `ai-eligible` label
+- Deduplicates against existing planning specs in Postgres
+- Runs new issues through the planning pipeline automatically
+- Persists per-repo polling cursors so restarts don't reprocess old issues
+- Applies exponential backoff (up to 5 minutes) if GitHub is unreachable
+
+### 4. Approve plans
+
+Plans requiring human approval appear in the operator API:
+
+```bash
+curl http://localhost:8080/blocked                          # see what's waiting
+curl -X POST http://localhost:8080/approvals/<id>/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"decision":"approve","decidedBy":"you","decisionSummary":"Looks good"}'
+```
+
+### Service health checks
+
+| Service | Endpoint | Expected |
+|---------|----------|----------|
+| Postgres | `pg_isready` via Docker health check | Automatic |
+| OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
+| Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","polling":{...}}` |
+
+### Boot-up safety
+
+The setup script performs automatic housekeeping on each run:
+- Applies pending database migrations idempotently
+- Cleans up stale workspace directories (older than 24 hours)
+- The operator API verifies Postgres connectivity before accepting HTTP requests
+- The polling daemon detects and marks stale pipeline runs from prior crashed processes
+
+## E2E Integration Test
+
+The fastest way to prove the full pipeline end-to-end is the automated integration test:
+
+```bash
+E2E_TARGET_REPO=owner/repo corepack pnpm e2e
+```
+
+This creates a real GitHub issue, runs every pipeline phase (planning → approval → developer → validation → SCM), and opens a real pull request. Set `E2E_CLEANUP=true` to close all created GitHub resources afterwards. Set `E2E_USE_OPENCLAW=true` to dispatch through the live OpenClaw agent runtime.
+
+The E2E test is **not** part of `pnpm test` — it will never run during CI or local unit testing, and each run consumes Anthropic API tokens.
+
+See [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) Part 3 for full environment variable reference, expected output, and cleanup instructions.
+
 ## Demo
 
-For a complete walkthrough from a fresh clone to a real planning cycle with GitHub inputs and an LLM-generated plan, see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
+For a complete walkthrough from a fresh clone through each pipeline phase, see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
 
 ## Runtime Model
 
