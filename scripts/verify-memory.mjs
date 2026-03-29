@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { DeterministicPlanningAgent, runPlanningPipeline } from "../packages/control-plane/dist/index.js";
 import {
-import { connectionString } from "./lib/config.mjs";
-  PostgresPlanningRepository,
   createMemoryRecord,
+  createPostgresPlanningRepository,
   deriveOrganizationId
 } from "../packages/evidence/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const unique = Date.now();
 const repo = `acme-${unique}/platform-${unique}`;
 const organizationId = deriveOrganizationId(repo);

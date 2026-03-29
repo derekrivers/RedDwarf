@@ -10,8 +10,8 @@ import {
   runDeveloperPhase,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const baseTargetRoot = resolve(
   process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
@@ -21,7 +21,7 @@ const baseEvidenceRoot = resolve(
   process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
     join(tmpdir(), "reddwarf-runtime-evidence-development-verify")
 );
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const issueNumber = Date.now();
 const targetRoot = resolve(baseTargetRoot, `verify-${issueNumber}`);
 const evidenceRoot = resolve(baseEvidenceRoot, `verify-${issueNumber}`);

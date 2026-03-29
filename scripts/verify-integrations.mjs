@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { DeterministicPlanningAgent, runPlanningPipeline } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import {
-import { connectionString } from "./lib/config.mjs";
   DenyAllSecretsAdapter,
   FixtureCiAdapter,
   FixtureGitHubAdapter,
@@ -12,13 +11,9 @@ import { connectionString } from "./lib/config.mjs";
   intakeGitHubIssue,
   redactSecretValues
 } from "../packages/integrations/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf";
-
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const unique = Date.now();
 const repo = "acme/platform";
 const candidate = {

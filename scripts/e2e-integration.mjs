@@ -76,7 +76,7 @@ import {
   createHttpOpenClawDispatchAdapter
 } from "../packages/integrations/dist/index.js";
 import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
-import { connectionString, createScriptLogger, formatError } from "./lib/config.mjs";
+import { connectionString, createScriptLogger, formatError, postgresPoolConfig } from "./lib/config.mjs";
 
 const { log, logError } = createScriptLogger("e2e");
 
@@ -108,7 +108,7 @@ const targetRoot = resolve(baseTargetRoot, `e2e-${timestamp}`);
 const evidenceRoot = resolve(targetRoot, "..", `e2e-evidence-${timestamp}`);
 const setupScriptPath = resolve(__scriptdir, "setup.mjs");
 
-const repository = createPostgresPlanningRepository(connectionString);
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const github = createRestGitHubAdapter();
 const planner = createPlanningAgent({ type: "anthropic" });
 

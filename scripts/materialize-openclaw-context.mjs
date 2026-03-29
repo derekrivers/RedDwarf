@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { createWorkspaceContextBundleFromSnapshot, provisionTaskWorkspace } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const positionalArgs = process.argv.slice(2).filter((arg) => arg !== "--");
 const taskId = positionalArgs[0];
@@ -15,7 +15,7 @@ if (!taskId) {
   throw new Error("Usage: node scripts/materialize-openclaw-context.mjs <taskId> [targetRoot] [workspaceId]");
 }
 
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 
 try {
   const snapshot = await repository.getTaskSnapshot(taskId);

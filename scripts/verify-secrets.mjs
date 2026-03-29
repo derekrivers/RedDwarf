@@ -13,13 +13,13 @@ import {
 } from "../packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { FixtureSecretsAdapter } from "../packages/integrations/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const baseTargetRoot = resolve(
   process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
     join(tmpdir(), "reddwarf-secrets-verify")
 );
-const repository = createPostgresPlanningRepository(connectionString);
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const issueNumber = Date.now();
 const targetRoot = resolve(baseTargetRoot, `verify-${issueNumber}`);
 const repo = `secrets-${issueNumber}/platform-${issueNumber}`;

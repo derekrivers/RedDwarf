@@ -4,14 +4,14 @@ import {
   ingestKnowledgeSources,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository, deriveOrganizationId } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository, deriveOrganizationId } from "../packages/evidence/dist/index.js";
 import { FixtureKnowledgeIngestionAdapter } from "../packages/integrations/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const unique = Date.now();
 const repo = `acme-knowledge-${unique}/platform-${unique}`;
 const organizationId = deriveOrganizationId(repo);
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 
 const sources = [
   {

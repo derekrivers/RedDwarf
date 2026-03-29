@@ -51,6 +51,7 @@ try {
 
 import {
   connectionString,
+  postgresPoolConfig,
   repoRoot,
   createScriptLogger,
   formatError
@@ -121,7 +122,7 @@ if (dbReachable) {
     const { sweepStaleRuns } =
       await import("../packages/control-plane/dist/index.js");
 
-    const repository = createPostgresPlanningRepository(connectionString);
+    const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
     try {
       if (dryRun) {
         const activeRuns = await repository.listPipelineRuns({

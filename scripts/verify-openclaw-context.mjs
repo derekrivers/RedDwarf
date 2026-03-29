@@ -7,11 +7,11 @@ import {
   materializeWorkspaceContext,
   runPlanningPipeline
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString } from "./lib/config.mjs";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const targetRoot = resolve(process.env.REDDWARF_HOST_WORKSPACE_ROOT ?? "runtime-data/workspaces");
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const unique = Date.now();
 
 try {
