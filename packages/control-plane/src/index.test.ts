@@ -32,7 +32,8 @@ import {
   runPlanningPipeline,
   runScmPhase,
   runValidationPhase,
-  serializeOpenClawConfig
+  serializeOpenClawConfig,
+  sweepStaleRuns
 } from "@reddwarf/control-plane";
 import {
   FixtureKnowledgeIngestionAdapter,
@@ -2619,8 +2620,149 @@ describe("developer phase with OpenClaw dispatch", () => {
   });
 });
 
+describe("sweepStaleRuns", () => {
+  it("marks active runs with old heartbeats as stale during startup sweep", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-03-29T12:00:00.000Z");
 
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-old",
+        taskId: "task-1",
+        status: "active",
+        concurrencyKey: "github:acme/platform:1",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:00:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:00:00.000Z"
+      })
+    );
 
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-recent",
+        taskId: "task-2",
+        status: "active",
+        concurrencyKey: "github:acme/platform:2",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:58:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:58:00.000Z"
+      })
+    );
 
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-completed",
+        taskId: "task-3",
+        status: "completed",
+        concurrencyKey: "github:acme/platform:3",
+        strategy: "serialize",
+        startedAt: "2026-03-29T10:00:00.000Z",
+        lastHeartbeatAt: "2026-03-29T10:00:00.000Z",
+        completedAt: "2026-03-29T10:05:00.000Z"
+      })
+    );
+
+    const result = await sweepStaleRuns(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000
+    });
+
+    expect(result.sweptRunIds).toEqual(["run-old"]);
+    expect(result.sweptAt).toBe("2026-03-29T12:00:00.000Z");
+
+    const runs = await repository.listPipelineRuns({});
+    const oldRun = runs.find((r) => r.runId === "run-old");
+    const recentRun = runs.find((r) => r.runId === "run-recent");
+    const completedRun = runs.find((r) => r.runId === "run-completed");
+
+    expect(oldRun?.status).toBe("stale");
+    expect(oldRun?.staleAt).toBe("2026-03-29T12:00:00.000Z");
+    expect(oldRun?.metadata?.staleDetectedBy).toBe("startup-sweep");
+    expect(recentRun?.status).toBe("active");
+    expect(completedRun?.status).toBe("completed");
+  });
+
+  it("returns empty result when no active runs exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await sweepStaleRuns(repository);
+    expect(result.sweptRunIds).toEqual([]);
+  });
+});
+
+describe("GitHub issue polling daemon backoff", () => {
+  it("applies exponential backoff after consecutive failures", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const errorAdapter = new FixtureGitHubAdapter({ candidates: [] });
+    errorAdapter.listIssueCandidates = async () => {
+      throw new Error("GitHub API unavailable");
+    };
+
+    const logMessages: { level: string; msg: string; meta?: unknown }[] = [];
+    const logger = {
+      info: (msg: string, meta?: unknown) => logMessages.push({ level: "info", msg, meta }),
+      warn: (msg: string, meta?: unknown) => logMessages.push({ level: "warn", msg, meta }),
+      error: (msg: string, meta?: unknown) => logMessages.push({ level: "error", msg, meta }),
+      child: () => logger
+    };
+
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github: errorAdapter,
+        planner: new DeterministicPlanningAgent(),
+        logger
+      }
+    );
+
+    expect(daemon.consecutiveFailures).toBe(0);
+
+    await daemon.pollOnce().catch(() => {});
+    expect(daemon.consecutiveFailures).toBe(1);
+
+    await daemon.pollOnce().catch(() => {});
+    expect(daemon.consecutiveFailures).toBe(2);
+
+    const errorLogs = logMessages.filter((l) => l.level === "error");
+    expect(errorLogs.length).toBeGreaterThanOrEqual(2);
+    expect((errorLogs[1]?.meta as Record<string, unknown>)?.backoffMs).toBeGreaterThan(0);
+  });
+
+  it("resets backoff after a successful poll", async () => {
+    const repository = new InMemoryPlanningRepository();
+    let shouldFail = true;
+
+    const adapter = new FixtureGitHubAdapter({ candidates: [] });
+    const originalList = adapter.listIssueCandidates.bind(adapter);
+    adapter.listIssueCandidates = async (query) => {
+      if (shouldFail) throw new Error("temporary failure");
+      return originalList(query);
+    };
+
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github: adapter,
+        planner: new DeterministicPlanningAgent()
+      }
+    );
+
+    await daemon.pollOnce().catch(() => {});
+    expect(daemon.consecutiveFailures).toBe(1);
+
+    shouldFail = false;
+    await daemon.pollOnce();
+    expect(daemon.consecutiveFailures).toBe(0);
+  });
+});
 
 

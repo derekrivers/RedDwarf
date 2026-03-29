@@ -8,6 +8,8 @@
  *   2. Wait for Postgres to become reachable (up to 60s).
  *   3. Apply any pending database migrations (db:migrate).
  *   4. Confirm the stack is healthy by running a lightweight Postgres ping.
+ *   5. Check OpenClaw availability.
+ *   6. Clean up stale workspace directories (older than 24h by default).
  *
  * Usage:
  *   corepack pnpm build && node scripts/setup.mjs
@@ -21,7 +23,8 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { join } from "node:path";
+import { readdir, stat, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import pg from "pg";
 import { connectionString, repoRoot, scriptsDir, createScriptLogger, formatError } from "./lib/config.mjs";
 
@@ -64,6 +67,7 @@ while (Date.now() < deadline) {
     connected = true;
     break;
   } catch {
+    await client.end().catch(() => {});
     // Not ready yet — wait and retry
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
@@ -137,6 +141,40 @@ if (!openClawAvailable) {
   log("The pipeline will use deterministic agent fallbacks.");
   log("To start OpenClaw (when the image is available):");
   log("  docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d");
+}
+
+// ── Step 6: Clean up stale workspace directories ─────────────────────────
+
+const workspaceRoot = resolve(repoRoot, "runtime-data", "workspaces");
+const WORKSPACE_MAX_AGE_MS = 24 * 60 * 60_000; // 24 hours
+
+log("Scanning for stale workspace directories...");
+try {
+  const entries = await readdir(workspaceRoot).catch(() => []);
+  let removedCount = 0;
+  const now = Date.now();
+
+  for (const entry of entries) {
+    const entryPath = join(workspaceRoot, entry);
+    try {
+      const info = await stat(entryPath);
+      if (info.isDirectory() && now - info.mtimeMs > WORKSPACE_MAX_AGE_MS) {
+        await rm(entryPath, { recursive: true, force: true });
+        removedCount++;
+        log(`  Removed stale workspace: ${entry}`);
+      }
+    } catch {
+      // Skip entries that cannot be stat'd
+    }
+  }
+
+  if (removedCount > 0) {
+    log(`Cleaned up ${removedCount} stale workspace directory(ies).`);
+  } else {
+    log("No stale workspace directories found.");
+  }
+} catch (err) {
+  log(`Workspace cleanup skipped: ${formatError(err)}`);
 }
 
 log("──────────────────────────────────────────────────────────────────");

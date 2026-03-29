@@ -13,6 +13,18 @@ import { connectionString } from "./lib/config.mjs";
 const port = parseInt(process.argv[2] ?? "8080", 10);
 
 const repository = createPostgresPlanningRepository(connectionString);
+
+console.log("Checking Postgres readiness...");
+try {
+  await repository.healthcheck();
+  console.log("Postgres is reachable.");
+} catch (err) {
+  console.error(`Postgres is not reachable at startup: ${err.message}`);
+  console.error("Run `corepack pnpm run setup` to start the stack.");
+  await repository.close();
+  process.exit(1);
+}
+
 const server = createOperatorApiServer({ port }, { repository });
 
 await server.start();

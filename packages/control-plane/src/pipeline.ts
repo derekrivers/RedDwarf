@@ -3158,6 +3158,65 @@ async function detectOverlappingRuns(input: {
   return { staleRunIds, blockedByRun };
 }
 
+// ── Startup stale-run sweep ──────────────────────────────────────────────
+
+export interface SweepStaleRunsOptions {
+  staleAfterMs?: number;
+  clock?: () => Date;
+  logger?: PlanningPipelineLogger;
+}
+
+export interface SweepStaleRunsResult {
+  sweptRunIds: string[];
+  sweptAt: string;
+}
+
+export async function sweepStaleRuns(
+  repository: PlanningRepository,
+  options?: SweepStaleRunsOptions
+): Promise<SweepStaleRunsResult> {
+  const clock = options?.clock ?? (() => new Date());
+  const staleAfterMs = options?.staleAfterMs ?? 5 * 60_000;
+  const now = clock();
+  const nowIso = asIsoTimestamp(now);
+
+  const activeRuns = await repository.listPipelineRuns({
+    statuses: ["active"],
+    limit: 100
+  });
+
+  const sweptRunIds: string[] = [];
+
+  for (const run of activeRuns) {
+    if (isPipelineRunStale(run, now, staleAfterMs)) {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          ...run,
+          status: "stale",
+          lastHeartbeatAt: nowIso,
+          completedAt: nowIso,
+          staleAt: nowIso,
+          overlapReason: "Marked stale during startup sweep",
+          metadata: {
+            ...run.metadata,
+            staleDetectedBy: "startup-sweep"
+          }
+        })
+      );
+      sweptRunIds.push(run.runId);
+    }
+  }
+
+  if (sweptRunIds.length > 0) {
+    options?.logger?.info(
+      `Startup sweep marked ${sweptRunIds.length} stale run(s).`,
+      { sweptRunIds }
+    );
+  }
+
+  return { sweptRunIds, sweptAt: nowIso };
+}
+
 function createTaskId(input: PlanningTaskInput, runId: string): string {
   const sourceIssue = input.source.issueNumber ?? input.source.issueId ?? runId;
   const repo = input.source.repo.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();

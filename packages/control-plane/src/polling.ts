@@ -67,6 +67,7 @@ export interface GitHubIssuePollingDependencies {
 export interface GitHubIssuePollingDaemon {
   readonly intervalMs: number;
   readonly isRunning: boolean;
+  readonly consecutiveFailures: number;
   start(): Promise<void>;
   stop(): Promise<void>;
   pollOnce(): Promise<GitHubIssuePollingCycleResult>;
@@ -97,6 +98,16 @@ export function createGitHubIssuePollingDaemon(
   };
   let intervalHandle: unknown = null;
   let polling = false;
+  let consecutiveFailures = 0;
+  let nextAllowedPollAt = 0;
+
+  const MAX_BACKOFF_MS = 5 * 60_000;
+
+  function computeBackoffMs(failures: number): number {
+    if (failures <= 0) return 0;
+    const baseMs = Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
+    return baseMs;
+  }
 
   async function pollRepository(
     repoConfig: GitHubPollingRepoConfig,
@@ -209,6 +220,18 @@ export function createGitHubIssuePollingDaemon(
       for (const repoConfig of config.repositories) {
         await pollRepository(repoConfig, decisions);
       }
+      consecutiveFailures = 0;
+      nextAllowedPollAt = 0;
+    } catch (error) {
+      consecutiveFailures++;
+      const backoffMs = computeBackoffMs(consecutiveFailures);
+      nextAllowedPollAt = clock().getTime() + backoffMs;
+      deps.logger?.error("GitHub issue polling cycle failed.", {
+        error: serializePollingError(error),
+        consecutiveFailures,
+        backoffMs
+      });
+      throw error;
     } finally {
       polling = false;
     }
@@ -231,17 +254,26 @@ export function createGitHubIssuePollingDaemon(
     get isRunning() {
       return intervalHandle !== null;
     },
+    get consecutiveFailures() {
+      return consecutiveFailures;
+    },
     async start(): Promise<void> {
       if (intervalHandle !== null) {
         return;
       }
 
       intervalHandle = scheduler.setInterval(() => {
-        void pollOnce().catch((error) =>
-          deps.logger?.error("GitHub issue polling cycle failed.", {
-            error: serializePollingError(error)
-          })
-        );
+        const now = clock().getTime();
+        if (now < nextAllowedPollAt) {
+          deps.logger?.info("GitHub issue polling cycle skipped due to backoff.", {
+            consecutiveFailures,
+            resumesInMs: nextAllowedPollAt - now
+          });
+          return;
+        }
+        void pollOnce().catch(() => {
+          // Error already logged and backoff applied inside pollOnce
+        });
       }, config.intervalMs);
 
       if (config.runOnStart !== false) {
@@ -255,6 +287,8 @@ export function createGitHubIssuePollingDaemon(
 
       scheduler.clearInterval(intervalHandle);
       intervalHandle = null;
+      consecutiveFailures = 0;
+      nextAllowedPollAt = 0;
     },
     pollOnce
   };
