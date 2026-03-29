@@ -62,25 +62,31 @@ OPENCLAW_GATEWAY_TOKEN=<long-random-token>
 
 The `.env` file is referenced by both the Node.js app and the Docker Compose stack (`env_file: ../../.env`). All tokens and secrets are loaded from this single file.
 
-### 1.2 Start the stack
+### 1.2 Boot the full stack (one command)
 
 ```bash
-corepack pnpm run setup
+corepack pnpm start
 ```
 
-This runs: `build` → `compose:up` → wait for Postgres → `db:migrate` → health check → stale workspace cleanup.
+This boots everything in a single process: Docker Compose (Postgres + OpenClaw), migrations, stale-run sweep, workspace cleanup, operator API, and optionally the polling daemon. See the README for configuration options (`REDDWARF_POLL_REPOS`, `REDDWARF_API_PORT`, etc.).
 
-Expected output:
+To also enable GitHub polling:
 
-```
-[setup] Postgres is reachable.
-[setup] Migrations applied.
-[setup] Health check passed. Public tables: reddwarf_schema_migrations, ...
-[setup] No stale workspace directories found.
-[setup] Setup complete.
+```bash
+REDDWARF_POLL_REPOS=owner/repo corepack pnpm start
 ```
 
-### 1.3 Start OpenClaw (required for live agent dispatch)
+### 1.2b Alternative: start services separately
+
+If you prefer separate terminals for each service:
+
+```bash
+corepack pnpm run setup                     # infrastructure only
+corepack pnpm compose:up:openclaw           # OpenClaw (if not using pnpm start)
+corepack pnpm operator:api                  # operator API in a separate terminal
+```
+
+### 1.3 Start OpenClaw (if running services separately)
 
 ```bash
 corepack pnpm compose:up:openclaw
@@ -485,14 +491,15 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 
 | Command | Purpose |
 |---------|---------|
-| `corepack pnpm run setup` | Build + start Postgres + migrate + health check + workspace cleanup |
+| `corepack pnpm start` | **Boot the full stack** — infrastructure, housekeeping, operator API, and optional polling daemon |
+| `corepack pnpm run setup` | Infrastructure only — Postgres + migrations + health check + workspace cleanup |
 | `corepack pnpm compose:up:openclaw` | Start OpenClaw alongside Postgres |
 | `corepack pnpm compose:down` | Stop Docker stack |
 | `corepack pnpm build` | TypeScript build |
 | `corepack pnpm test` | Run unit tests (does **not** run E2E) |
 | `corepack pnpm e2e` | Run full E2E integration test against a real GitHub repo |
 | `corepack pnpm e2e:cleanup` | Clean up GitHub resources from a prior E2E run |
-| `corepack pnpm operator:api` | Start operator API on :8080 |
+| `corepack pnpm operator:api` | Start operator API on :8080 (standalone) |
 | `corepack pnpm query:evidence` | Query Postgres evidence |
 | `corepack pnpm cleanup:evidence` | Remove old evidence (dry-run default) |
 | `corepack pnpm generate:openclaw-config` | Generate openclaw.json from policy |

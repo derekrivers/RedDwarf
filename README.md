@@ -94,37 +94,53 @@ corepack pnpm verify:package   # packaged policy-pack integrity
 
 ## Running the Full Stack
 
-Once the stack is bootstrapped, you can run RedDwarf as a live service that watches GitHub for issues and processes them autonomously.
-
-### 1. Start infrastructure
+### One command (recommended)
 
 ```bash
-corepack pnpm run setup                    # Postgres + migrations + health check
-corepack pnpm compose:up:openclaw          # OpenClaw gateway (optional but recommended)
+corepack pnpm start
 ```
 
-### 2. Start the operator API
+This single command boots the entire RedDwarf stack:
 
-In a dedicated terminal:
+1. **Infrastructure** — starts Docker Compose (Postgres + OpenClaw), waits for Postgres, applies migrations
+2. **Housekeeping** — sweeps stale pipeline runs from prior crashes, cleans up old workspace directories (>24h)
+3. **Operator API** — starts the HTTP server on port 8080 for approvals, evidence, and monitoring
+4. **Polling daemon** — watches GitHub for `ai-eligible` issues (if configured)
+
+Press `Ctrl+C` to shut down all services gracefully.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDDWARF_POLL_REPOS` | _(disabled)_ | Comma-separated `owner/repo` list to poll (e.g. `acme/platform,acme/api`) |
+| `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
+| `REDDWARF_API_PORT` | `8080` | Operator API port |
+| `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
+
+**Example — full stack with polling:**
 
 ```bash
-corepack pnpm operator:api
+REDDWARF_POLL_REPOS=owner/repo corepack pnpm start
 ```
 
-The operator API starts on `http://127.0.0.1:8080` after confirming Postgres is reachable. It serves the approval queue, run inspection, evidence queries, and health status.
+**Example — infrastructure + operator API only (no polling):**
 
-### 3. Start the polling daemon
+```bash
+corepack pnpm start
+```
 
-There is no committed start script for the polling daemon yet. Create a one-off launcher (see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) Part 4.3 for the full script) or use the E2E integration test to exercise the complete pipeline in one shot.
+### Starting services separately
 
-The polling daemon:
-- Watches configured GitHub repositories for issues with the `ai-eligible` label
-- Deduplicates against existing planning specs in Postgres
-- Runs new issues through the planning pipeline automatically
-- Persists per-repo polling cursors so restarts don't reprocess old issues
-- Applies exponential backoff (up to 5 minutes) if GitHub is unreachable
+If you prefer to run services in separate terminals:
 
-### 4. Approve plans
+```bash
+corepack pnpm run setup                    # infrastructure + migrations + health check
+corepack pnpm compose:up:openclaw          # OpenClaw gateway (if not already started)
+corepack pnpm operator:api                 # operator API on :8080
+```
+
+### Approving plans
 
 Plans requiring human approval appear in the operator API:
 
@@ -145,11 +161,12 @@ curl -X POST http://localhost:8080/approvals/<id>/resolve \
 
 ### Boot-up safety
 
-The setup script performs automatic housekeeping on each run:
+Every startup (via `pnpm start` or `pnpm run setup`) performs automatic housekeeping:
 - Applies pending database migrations idempotently
-- Cleans up stale workspace directories (older than 24 hours)
-- The operator API verifies Postgres connectivity before accepting HTTP requests
-- The polling daemon detects and marks stale pipeline runs from prior crashed processes
+- Sweeps stale pipeline runs from prior crashed processes
+- Cleans up workspace directories older than 24 hours
+- Verifies Postgres connectivity before accepting HTTP requests
+- Applies exponential backoff on the polling daemon if GitHub is unreachable
 
 ## E2E Integration Test
 
