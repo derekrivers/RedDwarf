@@ -8,6 +8,14 @@
 - Working workaround: use narrow PowerShell or inline Python file edits, then immediately rerun `corepack pnpm typecheck` and the affected test/verify commands.
 - Verification: `corepack pnpm typecheck`, `corepack pnpm test`, and any feature-specific Postgres verification still pass after the scripted edit.
 
+## New GitHub issues stop appearing in /approvals even though the source issue is open
+
+- Symptom: a fresh `ai-eligible` GitHub issue exists upstream, but RedDwarf never creates the corresponding manifest or approval row, `GET /approvals` stays unchanged, and the stack appears idle rather than failed.
+- Root cause: before the March 29, 2026 fail-fast patch, unresolved repository or network promises could leave the poller or ready-task dispatcher stuck in an in-flight state forever, so later interval ticks only saw `already running` behavior and never advanced the cursor or dispatch queue.
+- Failing approach: checking only issue labels or approvals API output without also checking persisted polling health and long-running active tasks.
+- Working workaround: on older builds, inspect `GET /health` polling cursor timestamps plus any long-running active run, then manually re-run intake or restart the stack. On current builds, rely on the added cycle/request timeouts so the loop fails fast, logs an error, and enters backoff instead of silently freezing.
+- Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/index.test.ts packages/execution-plane/src/index.test.ts`.
+
 ## Vitest commands fail or skip in the sandbox
 
 - Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.

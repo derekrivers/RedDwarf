@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
@@ -2765,6 +2765,45 @@ describe("GitHub issue polling daemon backoff", () => {
     await daemon.pollOnce();
     expect(daemon.consecutiveFailures).toBe(0);
   });
+
+  it("fails fast when a poll cycle exceeds the configured timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const adapter = new FixtureGitHubAdapter({ candidates: [] });
+      adapter.listIssueCandidates = async () => new Promise(() => {});
+
+      const daemon = createGitHubIssuePollingDaemon(
+        {
+          intervalMs: 5_000,
+          cycleTimeoutMs: 2_000,
+          repositories: [{ repo: "acme/platform" }],
+          runOnStart: false
+        },
+        {
+          repository,
+          github: adapter,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T13:00:00.000Z")
+        }
+      );
+
+      const pending = daemon.pollOnce();
+      const expectation = expect(pending).rejects.toThrow(
+        "GitHub issue polling cycle for acme/platform timed out after 2000ms."
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expectation;
+      expect(daemon.consecutiveFailures).toBe(1);
+
+      const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
+      expect(cursor?.lastPollStatus).toBe("failed");
+      expect(cursor?.lastPollError).toContain("timed out after 2000ms");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2974,6 +3013,43 @@ describe("createReadyTaskDispatcher", () => {
     const result = await dispatcher.dispatchOnce();
     expect(result.dispatchedCount).toBe(0);
     expect(result.results).toHaveLength(0);
+  });
+
+  it("fails fast when a dispatch cycle exceeds the configured timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const repository = new InMemoryPlanningRepository();
+      repository.listManifestsByLifecycleStatus = async () =>
+        await new Promise(() => {});
+
+      const dispatcher = createReadyTaskDispatcher(
+        {
+          intervalMs: 5_000,
+          cycleTimeoutMs: 2_000,
+          targetRoot: "/tmp",
+          runOnStart: false
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          openClawDispatch: new FixtureOpenClawDispatchAdapter()
+        }
+      );
+
+      const pending = dispatcher.dispatchOnce();
+      const expectation = expect(pending).rejects.toThrow(
+        "Ready-task dispatch cycle timed out after 2000ms."
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expectation;
+      expect(dispatcher.consecutiveFailures).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

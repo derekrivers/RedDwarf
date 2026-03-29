@@ -840,15 +840,22 @@ interface GitHubApiPullRequest {
 export interface RestGitHubAdapterOptions {
   token: string;
   baseUrl?: string;
+  requestTimeoutMs?: number;
 }
+
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS = 15_000;
 
 export class RestGitHubAdapter implements GitHubAdapter {
   private readonly token: string;
   private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: RestGitHubAdapterOptions) {
     this.token = options.token;
     this.baseUrl = options.baseUrl ?? "https://api.github.com";
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_GITHUB_REQUEST_TIMEOUT_MS;
   }
 
   private parseRepo(repo: string): { owner: string; repoName: string } {
@@ -870,10 +877,20 @@ export class RestGitHubAdapter implements GitHubAdapter {
   }
 
   private async apiGet<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: "GET",
-      headers: this.apiHeaders()
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "GET",
+        headers: this.apiHeaders(),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(
+        error,
+        `GitHub API GET ${path}`,
+        this.requestTimeoutMs
+      );
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
@@ -882,11 +899,21 @@ export class RestGitHubAdapter implements GitHubAdapter {
   }
 
   private async apiPost<T>(path: string, payload: unknown): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: this.apiHeaders(),
-      body: JSON.stringify(payload)
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(
+        error,
+        `GitHub API POST ${path}`,
+        this.requestTimeoutMs
+      );
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
@@ -1232,7 +1259,7 @@ export function createOpenClawSecretsAdapter(
  * Reads GITHUB_TOKEN from the environment when no token is provided.
  */
 export function createRestGitHubAdapter(
-  options: { token?: string; baseUrl?: string } = {}
+  options: { token?: string; baseUrl?: string; requestTimeoutMs?: number } = {}
 ): RestGitHubAdapter {
   const token = options.token ?? process.env["GITHUB_TOKEN"];
   if (!token) {
@@ -1242,7 +1269,10 @@ export function createRestGitHubAdapter(
   }
   return new RestGitHubAdapter({
     token,
-    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {})
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(options.requestTimeoutMs !== undefined
+      ? { requestTimeoutMs: options.requestTimeoutMs }
+      : {})
   });
 }
 
@@ -1360,6 +1390,8 @@ export interface HttpOpenClawDispatchAdapterOptions {
   baseDelayMs?: number;
   /** HTTP status codes that trigger a retry. Defaults to 429 and 529. */
   retryableStatuses?: Set<number>;
+  /** Per-request timeout in milliseconds. Defaults to 15000. */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -1374,6 +1406,7 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   private readonly maxAttempts: number;
   private readonly baseDelayMs: number;
   private readonly retryableStatuses: Set<number>;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: HttpOpenClawDispatchAdapterOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
@@ -1395,6 +1428,8 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     this.maxAttempts = options.maxAttempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 2000;
     this.retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS;
   }
 
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
@@ -1412,14 +1447,24 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     let attempt = 0;
     while (true) {
       attempt++;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.hookToken}`,
-          "Content-Type": "application/json"
-        },
-        body
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${this.hookToken}`,
+            "Content-Type": "application/json"
+          },
+          body,
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        });
+      } catch (error) {
+        throw normalizeFetchTimeoutError(
+          error,
+          `OpenClaw dispatch to ${url}`,
+          this.requestTimeoutMs
+        );
+      }
 
       if (!response.ok) {
         if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
@@ -1459,4 +1504,19 @@ export function createHttpOpenClawDispatchAdapter(
   options: HttpOpenClawDispatchAdapterOptions = {}
 ): HttpOpenClawDispatchAdapter {
   return new HttpOpenClawDispatchAdapter(options);
+}
+
+function normalizeFetchTimeoutError(
+  error: unknown,
+  context: string,
+  timeoutMs: number
+): Error {
+  if (
+    error instanceof DOMException &&
+    error.name === "TimeoutError"
+  ) {
+    return new Error(`${context} timed out after ${timeoutMs}ms.`);
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
 }

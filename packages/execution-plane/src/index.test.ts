@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
@@ -8,6 +8,7 @@ import {
   DeterministicValidationAgent,
   agentDefinitions,
   createPlanningAgent,
+  fetchWithRetry,
   expectedBootstrapFileNames,
   getOpenClawAgentRoleDefinition,
   openClawAgentRoleDefinitions,
@@ -464,6 +465,11 @@ describe("phaseIsExecutable", () => {
 // ============================================================
 
 describe("createPlanningAgent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
   it("returns a DeterministicPlanningAgent for type deterministic", () => {
     const agent = createPlanningAgent({ type: "deterministic" });
     expect(agent).toBeInstanceOf(DeterministicPlanningAgent);
@@ -481,6 +487,29 @@ describe("createPlanningAgent", () => {
         process.env["ANTHROPIC_API_KEY"] = original;
       }
     }
+  });
+
+  it("fails fast when the Anthropic request exceeds the timeout", async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi.fn().mockImplementation((_url, init) =>
+      new Promise((_, reject) => {
+        const signal = (init as RequestInit).signal;
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = fetchWithRetry({
+      url: "https://api.anthropic.com/v1/messages",
+      init: { method: "POST" },
+      requestTimeoutMs: 25
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(pending).rejects.toThrow(
+      "Anthropic API request timed out after 25ms."
+    );
   });
 });
 

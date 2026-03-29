@@ -6,6 +6,7 @@ import {
   FixtureOpenClawDispatchAdapter,
   FixtureSecretsAdapter,
   HttpOpenClawDispatchAdapter,
+  RestGitHubAdapter,
   OPENCLAW_BASE_URL_ENV,
   OPENCLAW_HOOK_TOKEN_ENV,
   OPENCLAW_HOOK_TOKEN_SCOPE,
@@ -310,9 +311,46 @@ describe("FixtureOpenClawDispatchAdapter", () => {
   });
 });
 
+describe("RestGitHubAdapter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("fails fast when the GitHub API request exceeds the timeout", async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi.fn().mockImplementation((_url, init) =>
+      new Promise((_, reject) => {
+        const signal = (init as RequestInit).signal;
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({
+      token: "test-token",
+      requestTimeoutMs: 25
+    });
+
+    const pending = adapter.listIssueCandidates({
+      repo: "acme/platform",
+      labels: ["ai-eligible"],
+      states: ["open"],
+      limit: 10
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(pending).rejects.toThrow(
+      "GitHub API GET /repos/acme/platform/issues?state=open&labels=ai-eligible&per_page=10 timed out after 25ms."
+    );
+  });
+});
+
 describe("HttpOpenClawDispatchAdapter", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("throws when no base URL is available", () => {
@@ -345,6 +383,35 @@ describe("HttpOpenClawDispatchAdapter", () => {
       hookToken: "test-token"
     });
     expect(adapter).toBeInstanceOf(HttpOpenClawDispatchAdapter);
+  });
+
+  it("times out when the OpenClaw hook does not respond", async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi.fn().mockImplementation((_url, init) =>
+      new Promise((_, reject) => {
+        const signal = (init as RequestInit).signal;
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new HttpOpenClawDispatchAdapter({
+      baseUrl: "http://localhost:3578/",
+      hookToken: "test-token",
+      requestTimeoutMs: 25
+    });
+
+    const pending = adapter.dispatch({
+      sessionKey: "github:issue:acme/repo:42",
+      agentId: "reddwarf-developer",
+      prompt: "Implement the requested change"
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(pending).rejects.toThrow(
+      "OpenClaw dispatch to http://localhost:3578/hooks/agent timed out after 25ms."
+    );
   });
 
   it("posts webhook-compatible payloads to /hooks/agent", async () => {

@@ -35,6 +35,7 @@ export interface GitHubIssuePollingDaemonConfig {
   intervalMs: number;
   repositories: GitHubPollingRepoConfig[];
   runOnStart?: boolean;
+  cycleTimeoutMs?: number;
 }
 
 export interface GitHubIssuePollingDecision {
@@ -83,6 +84,8 @@ export interface GitHubIssuePollingDaemon {
 const defaultGitHubIssueStates: GitHubIssueState[] = ["open"];
 const defaultPollingLabels = ["ai-eligible"];
 const DEFAULT_MAX_BATCH_SIZE = 50;
+const DEFAULT_POLLING_CYCLE_TIMEOUT_MS = 120_000;
+const DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS = 5 * 60_000;
 
 export function createGitHubIssuePollingDaemon(
   config: GitHubIssuePollingDaemonConfig,
@@ -96,7 +99,13 @@ export function createGitHubIssuePollingDaemon(
     throw new Error("GitHub issue polling requires at least one repository.");
   }
 
+  if ((config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS) < 1_000) {
+    throw new Error("GitHub issue polling cycle timeout must be at least 1000ms.");
+  }
+
   const clock = deps.clock ?? (() => new Date());
+  const cycleTimeoutMs =
+    config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS;
   const scheduler = deps.scheduler ?? {
     setInterval: (callback: () => void, delayMs: number) =>
       globalThis.setInterval(callback, delayMs),
@@ -120,96 +129,135 @@ export function createGitHubIssuePollingDaemon(
     repoConfig: GitHubPollingRepoConfig,
     decisions: GitHubIssuePollingDecision[]
   ): Promise<void> {
-    const existingCursor = await deps.repository.getGitHubIssuePollingCursor(repoConfig.repo);
+    let existingCursor: Awaited<
+      ReturnType<PlanningRepository["getGitHubIssuePollingCursor"]>
+    > = null;
     const pollStartedAt = clock();
     const pollStartedAtIso = asIsoTimestamp(pollStartedAt);
+    const cycleLabel = `GitHub issue polling cycle for ${repoConfig.repo}`;
 
     try {
-      const query: GitHubIssueQuery = {
-        repo: repoConfig.repo,
-        ...(repoConfig.labels !== undefined
-          ? { labels: repoConfig.labels }
-          : { labels: defaultPollingLabels }),
-        ...(repoConfig.limit !== undefined ? { limit: repoConfig.limit } : {}),
-        ...(repoConfig.states !== undefined
-          ? { states: repoConfig.states }
-          : { states: defaultGitHubIssueStates })
-      };
-      const candidates = await deps.github.listIssueCandidates(query);
-      const batchSize = repoConfig.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
-      const unseenCandidates = selectUnseenCandidates(
-        candidates,
-        existingCursor?.lastSeenIssueNumber ?? null
-      ).slice(0, batchSize);
+      await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
+        existingCursor = await deps.repository.getGitHubIssuePollingCursor(
+          repoConfig.repo
+        );
 
-      for (const candidate of unseenCandidates) {
-        const source: TaskManifest["source"] = {
-          provider: "github",
-          repo: candidate.repo,
-          issueNumber: candidate.issueNumber,
-          issueUrl: candidate.url
+        const query: GitHubIssueQuery = {
+          repo: repoConfig.repo,
+          ...(repoConfig.labels !== undefined
+            ? { labels: repoConfig.labels }
+            : { labels: defaultPollingLabels }),
+          ...(repoConfig.limit !== undefined ? { limit: repoConfig.limit } : {}),
+          ...(repoConfig.states !== undefined
+            ? { states: repoConfig.states }
+            : { states: defaultGitHubIssueStates })
         };
-        const existingSpec = await deps.repository.hasPlanningSpecForSource(source);
+        const candidates = await deps.github.listIssueCandidates(query);
+        const batchSize = repoConfig.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
+        const unseenCandidates = selectUnseenCandidates(
+          candidates,
+          existingCursor?.lastSeenIssueNumber ?? null
+        ).slice(0, batchSize);
 
-        if (existingSpec) {
+        for (const candidate of unseenCandidates) {
+          const source: TaskManifest["source"] = {
+            provider: "github",
+            repo: candidate.repo,
+            issueNumber: candidate.issueNumber,
+            issueUrl: candidate.url
+          };
+          const existingSpec = await deps.repository.hasPlanningSpecForSource(
+            source
+          );
+
+          if (existingSpec) {
+            decisions.push({
+              repo: candidate.repo,
+              issueNumber: candidate.issueNumber,
+              action: "skipped",
+              reason: "existing_planning_spec"
+            });
+            continue;
+          }
+
+          const planningInput = await deps.github.convertToPlanningInput(
+            candidate
+          );
+          const result = await runPlanningPipeline(planningInput, {
+            repository: deps.repository,
+            planner: deps.planner,
+            ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+            clock,
+            ...(deps.idGenerator !== undefined
+              ? { idGenerator: deps.idGenerator }
+              : {}),
+            ...(deps.concurrency !== undefined
+              ? { concurrency: deps.concurrency }
+              : {})
+          });
+
           decisions.push({
             repo: candidate.repo,
             issueNumber: candidate.issueNumber,
-            action: "skipped",
-            reason: "existing_planning_spec"
+            action: "planned",
+            taskId: result.manifest.taskId,
+            runId: result.runId
           });
-          continue;
         }
 
-        const planningInput = await deps.github.convertToPlanningInput(candidate);
-        const result = await runPlanningPipeline(planningInput, {
-          repository: deps.repository,
-          planner: deps.planner,
-          ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-          clock,
-          ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
-          ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
-        });
-
-        decisions.push({
-          repo: candidate.repo,
-          issueNumber: candidate.issueNumber,
-          action: "planned",
-          taskId: result.manifest.taskId,
-          runId: result.runId
-        });
-      }
-
-      const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
-      const pollCompletedAtIso = asIsoTimestamp(clock());
-      await deps.repository.saveGitHubIssuePollingCursor(
-        createGitHubIssuePollingCursor({
-          repo: repoConfig.repo,
-          lastSeenIssueNumber:
-            lastSeenCandidate?.issueNumber ?? existingCursor?.lastSeenIssueNumber ?? null,
-          lastSeenUpdatedAt:
-            lastSeenCandidate?.updatedAt ?? existingCursor?.lastSeenUpdatedAt ?? null,
-          lastPollStartedAt: pollStartedAtIso,
-          lastPollCompletedAt: pollCompletedAtIso,
-          lastPollStatus: "succeeded",
-          lastPollError: null,
-          updatedAt: pollCompletedAtIso
-        })
-      );
+        const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
+        const pollCompletedAtIso = asIsoTimestamp(clock());
+        await deps.repository.saveGitHubIssuePollingCursor(
+          createGitHubIssuePollingCursor({
+            repo: repoConfig.repo,
+            lastSeenIssueNumber:
+              lastSeenCandidate?.issueNumber ??
+              existingCursor?.lastSeenIssueNumber ??
+              null,
+            lastSeenUpdatedAt:
+              lastSeenCandidate?.updatedAt ??
+              existingCursor?.lastSeenUpdatedAt ??
+              null,
+            lastPollStartedAt: pollStartedAtIso,
+            lastPollCompletedAt: pollCompletedAtIso,
+            lastPollStatus: "succeeded",
+            lastPollError: null,
+            updatedAt: pollCompletedAtIso
+          })
+        );
+      });
     } catch (error) {
       const failedAtIso = asIsoTimestamp(clock());
-      await deps.repository.saveGitHubIssuePollingCursor(
-        createGitHubIssuePollingCursor({
-          repo: repoConfig.repo,
-          lastSeenIssueNumber: existingCursor?.lastSeenIssueNumber ?? null,
-          lastSeenUpdatedAt: existingCursor?.lastSeenUpdatedAt ?? null,
-          lastPollStartedAt: pollStartedAtIso,
-          lastPollCompletedAt: failedAtIso,
-          lastPollStatus: "failed",
-          lastPollError: serializePollingError(error),
-          updatedAt: failedAtIso
-        })
-      );
+
+      try {
+        await runWithTimeout(
+          `GitHub issue polling cursor persistence for ${repoConfig.repo}`,
+          cycleTimeoutMs,
+          async () =>
+            deps.repository.saveGitHubIssuePollingCursor(
+              createGitHubIssuePollingCursor({
+                repo: repoConfig.repo,
+                lastSeenIssueNumber: existingCursor?.lastSeenIssueNumber ?? null,
+                lastSeenUpdatedAt: existingCursor?.lastSeenUpdatedAt ?? null,
+                lastPollStartedAt: pollStartedAtIso,
+                lastPollCompletedAt: failedAtIso,
+                lastPollStatus: "failed",
+                lastPollError: serializePollingError(error),
+                updatedAt: failedAtIso
+              })
+            )
+        );
+      } catch (cursorError) {
+        deps.logger?.error(
+          "Failed to persist GitHub issue polling cursor after poll failure.",
+          {
+            repo: repoConfig.repo,
+            originalError: serializePollingError(error),
+            persistenceError: serializePollingError(cursorError)
+          }
+        );
+      }
+
       throw error;
     }
   }
@@ -327,6 +375,7 @@ export interface ReadyTaskDispatcherConfig {
   targetRoot: string;
   evidenceRoot?: string;
   runOnStart?: boolean;
+  cycleTimeoutMs?: number;
 }
 
 export interface ReadyTaskDispatcherDependencies {
@@ -371,7 +420,13 @@ export function createReadyTaskDispatcher(
     throw new Error("Ready-task dispatch interval must be at least 1000ms.");
   }
 
+  if ((config.cycleTimeoutMs ?? DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS) < 1_000) {
+    throw new Error("Ready-task dispatch cycle timeout must be at least 1000ms.");
+  }
+
   const clock = deps.clock ?? (() => new Date());
+  const cycleTimeoutMs =
+    config.cycleTimeoutMs ?? DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS;
   const scheduler = deps.scheduler ?? {
     setInterval: (callback: () => void, delayMs: number) =>
       globalThis.setInterval(callback, delayMs),
@@ -399,58 +454,100 @@ export function createReadyTaskDispatcher(
 
     dispatching = true;
     const startedAt = clock();
-    const results: DispatchReadyTaskResult[] = [];
 
     try {
-      // Find the oldest ready manifest (one at a time)
-      const readyManifests = await deps.repository.listManifestsByLifecycleStatus("ready", 1);
+      const results = await runWithTimeout(
+        "Ready-task dispatch cycle",
+        cycleTimeoutMs,
+        async () => {
+          const cycleResults: DispatchReadyTaskResult[] = [];
 
-      if (readyManifests.length > 0) {
-        const manifest = readyManifests[0]!;
+          // Find the oldest ready manifest (one at a time)
+          const readyManifests =
+            await deps.repository.listManifestsByLifecycleStatus("ready", 1);
 
-        deps.logger?.info("Found ready task for dispatch.", {
-          taskId: manifest.taskId,
-          sourceRepo: manifest.source.repo,
-          currentPhase: manifest.currentPhase
-        });
+          if (readyManifests.length > 0) {
+            const manifest = readyManifests[0]!;
 
-        const result = await dispatchReadyTask(
-          {
-            taskId: manifest.taskId,
-            targetRoot: config.targetRoot,
-            ...(config.evidenceRoot ? { evidenceRoot: config.evidenceRoot } : {})
-          },
-          {
-            repository: deps.repository,
-            developer: deps.developer,
-            validator: deps.validator,
-            scm: deps.scm,
-            github: deps.github,
-            openClawDispatch: deps.openClawDispatch,
-            ...(deps.secrets ? { secrets: deps.secrets } : {}),
-            ...(deps.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper } : {}),
-            ...(deps.openClawCompletionAwaiter ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter } : {}),
-            ...(deps.workspaceCommitPublisher ? { workspaceCommitPublisher: deps.workspaceCommitPublisher } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
-            ...(deps.clock ? { clock: deps.clock } : {}),
-            ...(deps.concurrency ? { concurrency: deps.concurrency } : {})
+            deps.logger?.info("Found ready task for dispatch.", {
+              taskId: manifest.taskId,
+              sourceRepo: manifest.source.repo,
+              currentPhase: manifest.currentPhase
+            });
+
+            const result = await runWithTimeout(
+              `Ready-task dispatch cycle for ${manifest.taskId}`,
+              cycleTimeoutMs,
+              async () =>
+                dispatchReadyTask(
+                  {
+                    taskId: manifest.taskId,
+                    targetRoot: config.targetRoot,
+                    ...(config.evidenceRoot
+                      ? { evidenceRoot: config.evidenceRoot }
+                      : {})
+                  },
+                  {
+                    repository: deps.repository,
+                    developer: deps.developer,
+                    validator: deps.validator,
+                    scm: deps.scm,
+                    github: deps.github,
+                    openClawDispatch: deps.openClawDispatch,
+                    ...(deps.secrets ? { secrets: deps.secrets } : {}),
+                    ...(deps.workspaceRepoBootstrapper
+                      ? {
+                          workspaceRepoBootstrapper:
+                            deps.workspaceRepoBootstrapper
+                        }
+                      : {}),
+                    ...(deps.openClawCompletionAwaiter
+                      ? {
+                          openClawCompletionAwaiter:
+                            deps.openClawCompletionAwaiter
+                        }
+                      : {}),
+                    ...(deps.workspaceCommitPublisher
+                      ? {
+                          workspaceCommitPublisher:
+                            deps.workspaceCommitPublisher
+                        }
+                      : {}),
+                    ...(deps.logger ? { logger: deps.logger } : {}),
+                    ...(deps.clock ? { clock: deps.clock } : {}),
+                    ...(deps.concurrency
+                      ? { concurrency: deps.concurrency }
+                      : {})
+                  }
+                )
+            );
+
+            cycleResults.push(result);
+            lastResult = result;
+
+            deps.logger?.info("Task dispatch completed.", {
+              taskId: result.taskId,
+              outcome: result.outcome,
+              phasesExecuted: result.phasesExecuted,
+              finalPhase: result.finalPhase,
+              pullRequestUrl: result.pullRequestUrl
+            });
           }
-        );
 
-        results.push(result);
-        lastResult = result;
-
-        deps.logger?.info("Task dispatch completed.", {
-          taskId: result.taskId,
-          outcome: result.outcome,
-          phasesExecuted: result.phasesExecuted,
-          finalPhase: result.finalPhase,
-          pullRequestUrl: result.pullRequestUrl
-        });
-      }
+          return cycleResults;
+        }
+      );
 
       consecutiveFailures = 0;
       nextAllowedDispatchAt = 0;
+
+      const completedAt = clock();
+      return {
+        startedAt: asIsoTimestamp(startedAt),
+        completedAt: asIsoTimestamp(completedAt),
+        dispatchedCount: results.length,
+        results
+      };
     } catch (error) {
       consecutiveFailures++;
       const backoffMs = computeBackoffMs(consecutiveFailures);
@@ -464,14 +561,6 @@ export function createReadyTaskDispatcher(
     } finally {
       dispatching = false;
     }
-
-    const completedAt = clock();
-    return {
-      startedAt: asIsoTimestamp(startedAt),
-      completedAt: asIsoTimestamp(completedAt),
-      dispatchedCount: results.length,
-      results
-    };
   }
 
   return {
@@ -522,4 +611,39 @@ export function createReadyTaskDispatcher(
     },
     dispatchOnce
   };
+}
+
+function runWithTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  operation: () => Promise<T>
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = globalThis.setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    void operation()
+      .then((result) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timer);
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timer);
+        reject(error);
+      });
+  });
 }

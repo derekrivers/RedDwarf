@@ -434,6 +434,7 @@ export interface AnthropicPlanningAgentOptions {
   maxTokens?: number;
   systemPrompt?: string;
   baseUrl?: string;
+  requestTimeoutMs?: number;
 }
 
 interface AnthropicMessagesResponse {
@@ -446,17 +447,30 @@ export interface FetchWithRetryOptions {
   maxAttempts?: number;
   retryableStatuses?: Set<number>;
   baseDelayMs?: number;
+  requestTimeoutMs?: number;
 }
+
+const DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS = 60_000;
 
 export async function fetchWithRetry(options: FetchWithRetryOptions): Promise<Response> {
   const maxAttempts = options.maxAttempts ?? 3;
   const retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
   const baseDelayMs = options.baseDelayMs ?? 2000;
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS;
   let attempt = 0;
 
   while (true) {
     attempt++;
-    const response = await fetch(options.url, options.init);
+    let response: Response;
+    try {
+      response = await fetch(options.url, {
+        ...options.init,
+        signal: AbortSignal.timeout(requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeAnthropicFetchError(error, requestTimeoutMs);
+    }
 
     if (!response.ok) {
       if (retryableStatuses.has(response.status) && attempt < maxAttempts) {
@@ -486,6 +500,7 @@ export class AnthropicPlanningAgent implements PlanningAgent {
   private readonly maxTokens: number;
   private readonly systemPrompt: string;
   private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: AnthropicPlanningAgentOptions = {}) {
     const apiKey = options.apiKey ?? process.env["ANTHROPIC_API_KEY"];
@@ -500,6 +515,8 @@ export class AnthropicPlanningAgent implements PlanningAgent {
     this.maxTokens = options.maxTokens ?? 2048;
     this.systemPrompt = options.systemPrompt ?? DEFAULT_PLANNING_SYSTEM_PROMPT;
     this.baseUrl = options.baseUrl ?? "https://api.anthropic.com";
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS;
   }
 
   async createSpec(
@@ -523,7 +540,8 @@ export class AnthropicPlanningAgent implements PlanningAgent {
           system: this.systemPrompt,
           messages: [{ role: "user", content: userMessage }]
         })
-      }
+      },
+      requestTimeoutMs: this.requestTimeoutMs
     });
 
     const result = (await response.json()) as AnthropicMessagesResponse;
@@ -540,6 +558,20 @@ export function createAnthropicPlanningAgent(
   options: AnthropicPlanningAgentOptions = {}
 ): AnthropicPlanningAgent {
   return new AnthropicPlanningAgent(options);
+}
+
+function normalizeAnthropicFetchError(
+  error: unknown,
+  timeoutMs: number
+): Error {
+  if (
+    error instanceof DOMException &&
+    error.name === "TimeoutError"
+  ) {
+    return new Error(`Anthropic API request timed out after ${timeoutMs}ms.`);
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export type PlanningAgentConfig =
