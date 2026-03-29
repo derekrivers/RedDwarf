@@ -1,6 +1,6 @@
 # RedDwarf End-to-End Runbook
 
-This runbook walks through a complete demonstration of RedDwarf — from a fresh clone through the current read-only pipeline: automated issue polling, planning, OpenClaw analyst dispatch, validation, and review-pending handoff. Real SCM PR creation remains reserved for a future write-enabled developer workflow.
+This runbook covers how to set up, run, and verify the RedDwarf autonomous pipeline — from a fresh clone through to a real GitHub pull request.
 
 > **Prerequisites:** Docker Desktop (or Docker Engine + Compose), Node.js ≥ 22, Corepack, Git, a GitHub Personal Access Token, and an Anthropic API key.
 
@@ -8,40 +8,31 @@ This runbook walks through a complete demonstration of RedDwarf — from a fresh
 
 ## What Are We Proving?
 
-The MVP goal is to demonstrate the full autonomous loop:
+The full autonomous loop:
 
 1. A GitHub issue is filed with the `ai-eligible` label
-2. RedDwarf's polling daemon detects it and runs the planning pipeline
-3. The plan is approved via the operator API
-4. The developer phase dispatches to the OpenClaw dev team (Holly — read-only analyst)
-5. Evidence is captured and archived to Postgres
-6. Validation and SCM phases complete the pipeline
-
-**Current constraints:**
-- Code writing is **disabled** — Holly performs read-only analysis only
-- Dave Lister (the writing developer agent, Feature 84) is not yet implemented
-- The polling daemon automates intake-through-planning; downstream phases (developer, validation, SCM) are triggered manually
-- Review phase is deferred to Phase 3
-
-Once this loop is proven working, we can move forward to enabling code writes with Lister.
+2. RedDwarf plans the work using an LLM (or Holly via OpenClaw)
+3. The plan is approved (auto-approved in E2E mode)
+4. The developer phase dispatches to Dave Lister via OpenClaw (or falls back to a deterministic agent)
+5. Validation runs against the workspace
+6. The SCM phase publishes a branch and opens a real pull request
+7. Evidence is captured and archived to Postgres throughout
 
 ### Pipeline Overview
 
 ```
 GitHub Issue (ai-eligible label)
     ↓
-Polling Daemon (auto-detects new issues)
+Intake → Eligibility → Planning (Anthropic LLM / Holly architect via OpenClaw)
     ↓
-Intake → Eligibility → Planning (Anthropic LLM) → Policy Gate
+[Approval Queue — human review via operator API on :8080, auto-approved in E2E]
     ↓
-[Approval Queue — human review via operator API on :8080]
-    ↓
-Developer Phase → OpenClaw dispatch to Holly (read-only analyst)
+Developer Phase → OpenClaw dispatch to Lister (workspace_write sandbox)
     │                 OR deterministic fallback (if OpenClaw unavailable)
     ↓
 Validation Phase → workspace-local lint/test
     ↓
-SCM Phase → branch + pull request (approval-gated)
+SCM Phase → commit publication → branch + pull request
     ↓
 Evidence archived to Postgres
 ```
@@ -71,13 +62,13 @@ OPENCLAW_GATEWAY_TOKEN=<long-random-token>
 
 The `.env` file is referenced by both the Node.js app and the Docker Compose stack (`env_file: ../../.env`). All tokens and secrets are loaded from this single file.
 
-### 1.2 Start the stack (Postgres only)
+### 1.2 Start the stack
 
 ```bash
 corepack pnpm run setup
 ```
 
-This runs: `build` → `compose:up` → wait for Postgres → `db:migrate` → health check.
+This runs: `build` → `compose:up` → wait for Postgres → `db:migrate` → health check → stale workspace cleanup.
 
 Expected output:
 
@@ -85,6 +76,7 @@ Expected output:
 [setup] Postgres is reachable.
 [setup] Migrations applied.
 [setup] Health check passed. Public tables: reddwarf_schema_migrations, ...
+[setup] No stale workspace directories found.
 [setup] Setup complete.
 ```
 
@@ -113,11 +105,11 @@ Verify the agent roster is loaded:
 docker compose -f infra/docker/docker-compose.yml exec openclaw sh -lc "node openclaw.mjs agents list"
 ```
 
-You should see three agents: `reddwarf-coordinator` (Rimmer), `reddwarf-analyst` (Holly), `reddwarf-validator` (Kryten).
+You should see four agents: `reddwarf-coordinator` (Rimmer), `reddwarf-analyst` (Holly), `reddwarf-developer` (Lister), `reddwarf-validator` (Kryten).
 
 Browse the OpenClaw Control UI at `http://127.0.0.1:3578/` — authenticate with your `OPENCLAW_GATEWAY_TOKEN`.
 
-> **If OpenClaw is not running**, the pipeline still works — the developer phase falls back to a deterministic agent stub. But proving the OpenClaw dispatch is the point of this MVP.
+> **If OpenClaw is not running**, the pipeline still works — the developer phase falls back to a deterministic agent stub. But the live OpenClaw dispatch is the real proof.
 
 ### 1.4 Build all packages
 
@@ -129,15 +121,16 @@ corepack pnpm build
 
 ## Part 2 — Agent Roster
 
-RedDwarf's OpenClaw dev team uses three agent personas:
+RedDwarf's OpenClaw dev team uses four agent personas:
 
 | Agent | Character | Role | ID | Tool Policy | Model | Sandbox |
 |-------|-----------|------|----|-------------|-------|---------|
 | **Holly** | Ship's Computer | Architect / Analyst | `reddwarf-analyst` | `coding` (read-only) | claude-opus-4-6 | ro |
 | **Rimmer** | Session Coordinator | Coordinator | `reddwarf-coordinator` | `minimal` (read-only) | claude-sonnet-4-6 | ro |
+| **Lister** | Last Human Alive | Developer | `reddwarf-developer` | `coding` (workspace-write) | claude-sonnet-4-6 | rw |
 | **Kryten** | Mechanoid | Validator / Reviewer | `reddwarf-validator` | `coding` (workspace-write) | claude-sonnet-4-6 | rw |
 
-Agent bootstrap files are in `agents/openclaw/{holly,rimmer,kryten}/`:
+Agent bootstrap files are in `agents/openclaw/{holly,rimmer,lister,kryten}/`:
 - `IDENTITY.md` — Agent name, role, and title
 - `SOUL.md` — Personality and operating principles
 - `AGENTS.md` — Runtime roster and delegation rules
@@ -152,31 +145,122 @@ corepack pnpm generate:openclaw-config
 
 ---
 
-## Part 3 — File a GitHub Issue
+## Part 3 — E2E Integration Test (Recommended)
 
-On a GitHub repository you control (e.g., `your-org/demo-repo`), file an issue:
+The fastest way to prove the full pipeline is the automated E2E integration test. It creates a real GitHub issue, runs every phase, opens a real PR, and reports the results — all in one command.
 
-```markdown
-This issue is a RedDwarf AI Dev Squad demo.
+### 3.1 What the E2E test does
 
-Acceptance Criteria:
-- The planning agent produces a structured plan
-- The analyst agent completes a read-only analysis
-- Evidence is archived durably in Postgres
+1. **Preflight** — verifies Postgres is reachable (runs `setup` if not), optionally verifies OpenClaw gateway and hook ingress
+2. **Creates a GitHub issue** — files a new issue with the `ai-eligible` label on the target repo
+3. **Runs intake + planning** — calls the Anthropic LLM (or Holly via OpenClaw) to produce a structured plan
+4. **Auto-approves the plan** — no manual operator API interaction needed
+5. **Runs the developer phase** — dispatches to Lister via OpenClaw (or deterministic fallback)
+6. **Runs validation** — workspace-local checks
+7. **Runs SCM** — publishes workspace commits, creates a real branch and pull request
+8. **Reports results** — prints a full summary including task ID, PR URL, evidence counts, and pass/fail
 
-Affected Paths:
-- docs/demo.md
+### 3.2 Required environment
 
-Requested Capabilities:
-- can_plan
-- can_archive_evidence
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope (contents + pull requests + issues) |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for LLM planning |
+| `E2E_TARGET_REPO` | Yes | Target repo in `owner/repo` format (e.g. `derekrivers/FirstVoyage`) |
+
+### 3.3 Optional environment
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `E2E_CLEANUP=true` | `false` | Close the created issue, PR, and branch after the test |
+| `E2E_USE_OPENCLAW=true` | `false` | Dispatch developer phase to OpenClaw instead of deterministic fallback |
+| `OPENCLAW_BASE_URL` | — | Required when `E2E_USE_OPENCLAW=true` (e.g. `http://127.0.0.1:3578`) |
+| `OPENCLAW_HOOK_TOKEN` | — | Required when `E2E_USE_OPENCLAW=true` |
+| `HOST_DATABASE_URL` | `postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf` | Postgres connection string |
+
+### 3.4 Running the E2E test
+
+**Deterministic mode** (no OpenClaw, fast, no agent tokens consumed):
+
+```bash
+E2E_TARGET_REPO=owner/repo corepack pnpm e2e
 ```
 
-Add the label **`ai-eligible`** to the issue. Note the issue number (e.g., `#1`).
+**With OpenClaw dispatch** (live agent sessions via Holly + Lister):
+
+```bash
+E2E_TARGET_REPO=owner/repo E2E_USE_OPENCLAW=true corepack pnpm e2e
+```
+
+**With auto-cleanup** (closes issue, PR, and branch after the test):
+
+```bash
+E2E_TARGET_REPO=owner/repo E2E_CLEANUP=true corepack pnpm e2e
+```
+
+### 3.5 Expected output
+
+```
+[e2e] Preflight complete: local Postgres is already reachable.
+[e2e] Step 1/7: Creating GitHub issue...
+[e2e]   Created issue #14: https://github.com/owner/repo/issues/14 (1.2s)
+[e2e] Step 2/7: Running intake and planning pipeline...
+[e2e]   Planning complete (8.3s)
+[e2e]   Task ID: owner-repo-14
+[e2e] Step 3/7: Auto-approving plan...
+[e2e] Step 4/7: Running developer phase...
+[e2e]   Developer phase complete (45.2s)
+[e2e] Step 5/7: Running validation phase...
+[e2e]   Validation complete (0.1s)
+[e2e] Step 6/7: Running SCM phase (creating real branch + PR)...
+[e2e]   Branch: reddwarf/owner-repo-14/abc123
+[e2e]   PR #15: https://github.com/owner/repo/pull/15
+[e2e] Step 7/7: Inspecting pipeline results...
+[e2e]
+[e2e] ================================================================
+[e2e]   E2E INTEGRATION TEST RESULTS
+[e2e] ================================================================
+[e2e]
+[e2e]   Result:     PASS
+[e2e]   Duration:   55.1s
+[e2e]   PR:         #15 - https://github.com/owner/repo/pull/15
+[e2e]
+[e2e] E2E integration test passed.
+```
+
+### 3.6 What it creates on GitHub
+
+- A new issue titled `[E2E Test] RedDwarf pipeline validation <timestamp>` with the `ai-eligible` label
+- A branch named `reddwarf/<task-id>/<run-id>`
+- A pull request from that branch to the repo's default branch
+
+If `E2E_CLEANUP=true`, all three are closed/deleted after the test completes (even on failure).
+
+### 3.7 Manual cleanup
+
+If you ran without `E2E_CLEANUP=true` and want to clean up afterwards:
+
+```bash
+E2E_TARGET_REPO=owner/repo corepack pnpm e2e:cleanup -- --issue 14 --pr 15 --branch reddwarf/owner-repo-14/abc123
+```
+
+Pass any combination of `--issue`, `--pr`, and `--branch`. The cleanup script closes PRs before deleting branches, and closes issues last.
+
+### 3.8 Important notes
+
+- The E2E test is **not** part of `pnpm test` — it will never run during CI or local unit testing
+- Each run creates real GitHub resources and consumes Anthropic API tokens
+- The test creates a temporary workspace under `runtime-data/workspaces/e2e-<timestamp>/` and cleans it up in the `finally` block
+- Evidence is written to a temporary directory alongside the workspace and also cleaned up
+- The Postgres database retains all evidence, phase records, and run events after the test — use the operator API to inspect them
 
 ---
 
-## Part 4 — Start the Operator API
+## Part 4 — Manual Phase-by-Phase Walkthrough
+
+If you prefer to run each phase individually (for debugging or demonstration), follow these steps.
+
+### 4.1 Start the Operator API
 
 The operator API is needed for approvals and monitoring. Start it in a separate terminal:
 
@@ -184,7 +268,7 @@ The operator API is needed for approvals and monitoring. Start it in a separate 
 corepack pnpm operator:api
 ```
 
-This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`.
+This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The server verifies Postgres connectivity before accepting requests.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -199,9 +283,31 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`.
 
 > **Note:** This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API is on port 8080; OpenClaw is on port 3578.
 
----
+### 4.2 File a GitHub Issue
 
-## Part 5 — Run the Polling Daemon
+On a GitHub repository you control (e.g., `your-org/demo-repo`), file an issue:
+
+```markdown
+This issue is a RedDwarf AI Dev Squad demo.
+
+Acceptance Criteria:
+- The planning agent produces a structured plan
+- The developer agent implements the change
+- Evidence is archived durably in Postgres
+
+Affected Paths:
+- docs/demo.md
+
+Requested Capabilities:
+- can_plan
+- can_write_code
+- can_open_pr
+- can_archive_evidence
+```
+
+Add the label **`ai-eligible`** to the issue. Note the issue number (e.g., `#1`).
+
+### 4.3 Run the Polling Daemon
 
 The polling daemon watches GitHub for new `ai-eligible` issues and automatically runs them through the planning pipeline.
 
@@ -212,7 +318,7 @@ There is no committed start script for the daemon yet. Create a one-off launcher
 import { createGitHubIssuePollingDaemon } from "./packages/control-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
 import { createRestGitHubAdapter } from "./packages/integrations/dist/index.js";
-import { createAnthropicPlanningAgent } from "./packages/execution-plane/dist/index.js";
+import { createPlanningAgent } from "./packages/execution-plane/dist/index.js";
 
 const repo = "your-org/demo-repo"; // Replace with your repo (owner/repo format)
 
@@ -220,7 +326,7 @@ const repository = createPostgresPlanningRepository(
   process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
 );
 const github = createRestGitHubAdapter();
-const planner = createAnthropicPlanningAgent();
+const planner = createPlanningAgent({ type: "anthropic" });
 
 const daemon = createGitHubIssuePollingDaemon(
   {
@@ -255,57 +361,11 @@ The daemon will:
 2. Deduplicate against existing planning specs in Postgres
 3. Run new issues through the full planning pipeline (intake → eligibility → planning → policy gate)
 4. Persist polling cursors so restarts don't reprocess old issues
+5. Apply exponential backoff if GitHub is unreachable (up to 5 minutes between retries)
 
 Watch the output — when it picks up your issue, you should see planning pipeline output including a Task ID and Approval Request ID.
 
-### Alternative: Manual single-issue run
-
-If you prefer to run a single issue without the daemon:
-
-```js
-// demo-run.mjs (not committed — one-off demo script)
-import { runPlanningPipeline } from "./packages/control-plane/dist/index.js";
-import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-import {
-  intakeGitHubIssue,
-  createRestGitHubAdapter
-} from "./packages/integrations/dist/index.js";
-import { createAnthropicPlanningAgent } from "./packages/execution-plane/dist/index.js";
-
-const repo = "your-org/demo-repo";
-const issueNumber = 1;
-
-const github = createRestGitHubAdapter();
-const planner = createAnthropicPlanningAgent();
-const repository = createPostgresPlanningRepository(
-  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
-);
-
-try {
-  console.log(`Intaking ${repo}#${issueNumber}...`);
-  const intake = await intakeGitHubIssue({ github, repo, issueNumber });
-  console.log("Issue title:", intake.candidate.title);
-
-  console.log("\nRunning planning pipeline...");
-  const result = await runPlanningPipeline(intake.planningInput, {
-    repository,
-    planner
-  });
-
-  console.log("\nTask ID:", result.manifest.taskId);
-  console.log("Approval request ID:", result.approvalRequest?.requestId ?? "(none)");
-} finally {
-  await repository.close();
-}
-```
-
-```bash
-node demo-run.mjs
-```
-
----
-
-## Part 6 — Approve the Plan
+### 4.4 Approve the Plan
 
 Check for pending approvals:
 
@@ -327,222 +387,25 @@ Invoke-RestMethod `
   -Method POST `
   -Uri "http://localhost:8080/approvals/<request-id>/resolve" `
   -ContentType "application/json" `
-  -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+  -Body '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good"}'
 ```
 
 **Bash:**
 ```bash
 curl -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
   -H "Content-Type: application/json" \
-  -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good","rationale":"Proceed to development"}'
+  -d '{"decision":"approve","decidedBy":"your-name","decisionSummary":"Looks good"}'
 ```
 
 > **Note:** The decision value is `"approve"` (not `"approved"`). The `decidedBy` and `decisionSummary` fields are required.
 
----
+### 4.5 Run Downstream Phases
 
-## Part 7 — Run the Developer Phase
-
-After approval, run the developer phase manually. This dispatches to Holly via OpenClaw (or falls back to the deterministic agent).
-
-```js
-// demo-developer.mjs (not committed — one-off demo script)
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
-import {
-  runDeveloperPhase,
-  DeterministicDeveloperAgent
-} from "./packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-import { createHttpOpenClawDispatchAdapter } from "./packages/integrations/dist/index.js";
-
-const taskId = "<task-id-from-planning>";  // Replace with your task ID
-
-const repository = new PostgresPlanningRepository({
-  connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
-});
-
-const targetRoot = resolve(
-  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
-    join(tmpdir(), "reddwarf-demo-workspace")
-);
-const evidenceRoot = resolve(
-  process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
-    join(tmpdir(), "reddwarf-demo-evidence")
-);
-
-const useOpenClaw = !!process.env.OPENCLAW_HOOK_TOKEN;
-
-const dependencies = {
-  repository,
-  developer: new DeterministicDeveloperAgent()
-};
-
-if (useOpenClaw) {
-  dependencies.openClawDispatch = createHttpOpenClawDispatchAdapter();
-  dependencies.openClawAgentId = "reddwarf-analyst"; // Holly
-}
-
-try {
-  console.log("Running developer phase...");
-  console.log("  Task ID:", taskId);
-  console.log("  Mode:", useOpenClaw ? "OpenClaw dispatch (Holly)" : "Deterministic fallback");
-
-  const result = await runDeveloperPhase(
-    { taskId, targetRoot, evidenceRoot },
-    dependencies
-  );
-
-  console.log("\nDeveloper phase result:");
-  console.log("  Run ID:", result.runId);
-  console.log("  Next action:", result.nextAction);
-  console.log("  Code write enabled:", result.workspace?.descriptor?.toolPolicy?.codeWriteEnabled);
-
-  if (result.openClawDispatchResult) {
-    console.log("\nOpenClaw dispatch:");
-    console.log("  Accepted:", result.openClawDispatchResult.accepted);
-    console.log("  Session ID:", result.openClawDispatchResult.sessionId);
-    console.log("  Agent:", result.openClawDispatchResult.agentId);
-  }
-
-  console.log("\nDeveloper phase complete. Proceed to validation.");
-} finally {
-  await repository.close();
-}
-```
-
-```bash
-node demo-developer.mjs
-```
-
-**With OpenClaw running**, you should see:
-- Holly dispatched via `POST /hooks/agent` on the gateway
-- Session transcript captured as evidence
-- `codeWriteEnabled: false` — read-only analysis only
-
-**Without OpenClaw**, you'll see the deterministic fallback produce a stub handoff. The pipeline continues identically.
+After approval, the developer, validation, and SCM phases must be triggered manually in a phase-by-phase walkthrough. The E2E integration test (Part 3) automates all of this. See the E2E script source at `scripts/e2e-integration.mjs` for the exact API calls used at each phase.
 
 ---
 
-## Part 8 — Run the Validation Phase
-
-```js
-// demo-validation.mjs (not committed — one-off demo script)
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import {
-  runValidationPhase,
-  DeterministicValidationAgent
-} from "./packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-
-const taskId = "<task-id-from-planning>";
-
-const repository = new PostgresPlanningRepository({
-  connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
-});
-
-const targetRoot = resolve(
-  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
-    join(tmpdir(), "reddwarf-demo-workspace")
-);
-const evidenceRoot = resolve(
-  process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
-    join(tmpdir(), "reddwarf-demo-evidence")
-);
-
-try {
-  console.log("Running validation phase...");
-  const result = await runValidationPhase(
-    { taskId, targetRoot, evidenceRoot },
-    { repository, validator: new DeterministicValidationAgent() }
-  );
-  console.log("  Next action:", result.nextAction);
-  console.log("Validation complete. Proceed to SCM.");
-} finally {
-  await repository.close();
-}
-```
-
-```bash
-node demo-validation.mjs
-```
-
----
-
-## Part 9 — Run the SCM Phase (Branch + PR)
-
-```js
-// demo-scm.mjs (not committed — one-off demo script)
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import {
-  runScmPhase,
-  DeterministicScmAgent
-} from "./packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-import {
-  createRestGitHubAdapter,
-  FixtureGitHubAdapter
-} from "./packages/integrations/dist/index.js";
-
-const taskId = "<task-id-from-planning>";
-const repo = "your-org/demo-repo";
-
-const repository = new PostgresPlanningRepository({
-  connectionString:
-    process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
-});
-
-const targetRoot = resolve(
-  process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
-    join(tmpdir(), "reddwarf-demo-workspace")
-);
-
-try {
-  console.log("Running SCM phase...");
-  const result = await runScmPhase(
-    { taskId, targetRoot },
-    {
-      repository,
-      scm: new DeterministicScmAgent(),
-
-      // Option A: Live GitHub (creates a real branch + PR)
-      // github: createRestGitHubAdapter(),
-
-      // Option B: Fixture (dry-run — no real GitHub calls)
-      github: new FixtureGitHubAdapter({
-        candidates: [{
-          repo, issueNumber: 1, title: "Demo", body: "Demo issue",
-          labels: ["ai-eligible"], url: `https://github.com/${repo}/issues/1`, state: "open"
-        }],
-        mutations: { allowBranchCreation: true, allowPullRequestCreation: true, pullRequestNumberStart: 1 }
-      })
-    }
-  );
-
-  console.log("  Next action:", result.nextAction);
-  if (result.pullRequest) {
-    console.log("  PR URL:", result.pullRequest.url);
-  }
-  console.log("\nPipeline complete!");
-} finally {
-  await repository.close();
-}
-```
-
-```bash
-node demo-scm.mjs
-```
-
-To create a **real PR on GitHub**, swap `FixtureGitHubAdapter` for `createRestGitHubAdapter()` and ensure your `GITHUB_TOKEN` has `contents:write` and `pull_requests:write` scopes.
-
----
-
-## Part 10 — Verify the Full Pipeline
+## Part 5 — Verify Results
 
 After all phases, confirm the end-to-end state:
 
@@ -573,7 +436,7 @@ Expected phase records:
  eligibility | passed | system
  planning    | passed | anthropic-planner
  policy_gate | passed | system
- development | passed | reddwarf-analyst
+ development | passed | reddwarf-developer
  validation  | passed | system
  scm         | passed | system
 ```
@@ -606,7 +469,7 @@ corepack pnpm query:evidence
 
 ---
 
-## Part 11 — Clean Up
+## Part 6 — Clean Up
 
 ```bash
 # Stop the Docker stack (Postgres + OpenClaw)
@@ -622,17 +485,19 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 
 | Command | Purpose |
 |---------|---------|
-| `corepack pnpm run setup` | Build + start Postgres + migrate + health check |
+| `corepack pnpm run setup` | Build + start Postgres + migrate + health check + workspace cleanup |
 | `corepack pnpm compose:up:openclaw` | Start OpenClaw alongside Postgres |
 | `corepack pnpm compose:down` | Stop Docker stack |
 | `corepack pnpm build` | TypeScript build |
+| `corepack pnpm test` | Run unit tests (does **not** run E2E) |
+| `corepack pnpm e2e` | Run full E2E integration test against a real GitHub repo |
+| `corepack pnpm e2e:cleanup` | Clean up GitHub resources from a prior E2E run |
 | `corepack pnpm operator:api` | Start operator API on :8080 |
 | `corepack pnpm query:evidence` | Query Postgres evidence |
 | `corepack pnpm cleanup:evidence` | Remove old evidence (dry-run default) |
 | `corepack pnpm generate:openclaw-config` | Generate openclaw.json from policy |
-| `corepack pnpm test` | Run unit tests |
 | `corepack pnpm typecheck` | TypeScript type check |
-| `corepack pnpm verify:all` | Run all 18 verification scripts |
+| `corepack pnpm verify:all` | Run all verification scripts |
 
 ---
 
@@ -642,6 +507,7 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 |---------|-------------|-----|
 | `RestGitHubAdapter requires a token` | `GITHUB_TOKEN` not in `.env` | Set it in `.env` |
 | `AnthropicPlanningAgent requires an API key` | `ANTHROPIC_API_KEY` not in `.env` | Set it in `.env` |
+| `E2E_TARGET_REPO is required` | Missing env var | Set `E2E_TARGET_REPO=owner/repo` |
 | GitHub API 404 | Repo not found or token lacks scope | Check repo name format (`owner/repo`) and token scopes |
 | GitHub API 401 | Invalid token | Regenerate at github.com/settings/tokens |
 | Postgres connection refused | Docker stack not running | `corepack pnpm run setup` |
@@ -653,5 +519,6 @@ node scripts/cleanup-evidence.mjs --max-age-days 0 --delete
 | Developer phase `task_blocked` | Approval not resolved | Check `/approvals` — resolve pending approval first |
 | Approval decision rejected | Wrong enum value | Use `"approve"` not `"approved"` |
 | Inline docker env overrides tokens to empty | `environment:` block overrides `env_file` | Remove explicit token entries from `environment:`, rely on `env_file: ../../.env` |
+| E2E test fails but leaves GitHub resources | Ran without `E2E_CLEANUP=true` | Use `corepack pnpm e2e:cleanup -- --issue N --pr N --branch name` |
 
 For more known issues, see [docs/agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md).
