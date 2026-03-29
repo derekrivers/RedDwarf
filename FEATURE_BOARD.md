@@ -2,7 +2,7 @@
 
 The board is ordered by implementation priority.
 
-Priority reset note: after the March 29, 2026 hardening audit, pending feature work is intentionally ordered by production blast radius rather than feature-number chronology. Concurrency correctness, transactional durability, policy enforcement, credential safety, and operator-surface hardening now take precedence over new provider and intake features.
+Priority reset note: after the March 29, 2026 hardening audit, pending feature work is intentionally ordered by production blast radius rather than feature-number chronology. Concurrency correctness, transactional durability, policy enforcement, credential safety, and operator-surface hardening now take precedence over new provider and intake features. Read [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -106,6 +106,4 @@ Priority reset note: after the March 29, 2026 hardening audit, pending feature w
 | 86       | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M14 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
 | 87       | GitHub user allowlist for issue intake - reject issues from non-whitelisted authors before processing, configurable via env or policy config, default-deny posture | M15 | pending | Integration Plane, Isolation and Security Model, Control Plane        |
 | 88       | Restore Holly to the live OpenClaw workflow - route architecture planning through reddwarf-analyst, persist Holly handoff as evidence, and pass the approved plan into Lister and downstream review | M14 | completed | Execution Plane, Control Plane, Knowledge & Policy Plane              |
-
-
 

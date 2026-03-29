@@ -217,4 +217,6 @@
 - Verification for the fail-fast loop fix: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/index.test.ts packages/execution-plane/src/index.test.ts`.
 - Completed a read-only pipeline, pooling, process-continuity, security, and observability audit on Sunday, March 29, 2026.
 - Reprioritized `FEATURE_BOARD.md` so the next actionable work is feature 90, atomic run claiming, followed by transactional state transitions, allowed-path enforcement, git credential redaction, operator API hardening, timeout and heartbeat alignment, secret-workspace cleanup, prompt-boundary hardening, Postgres-pool hardening, and structured runtime logging.
+- Full audit handoff is documented in [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) - read this before implementing features 90-99.
 - Existing pending feature work for OpenAI provider support (feature 86) and GitHub intake allowlisting (feature 87) is intentionally deferred behind the new hardening queue because the audit found production-correctness and security gaps with higher blast radius.
+
