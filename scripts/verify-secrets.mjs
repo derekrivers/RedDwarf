@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { access, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -11,19 +11,15 @@ import {
   runPlanningPipeline,
   runValidationPhase
 } from "../packages/control-plane/dist/index.js";
-import { PostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { FixtureSecretsAdapter } from "../packages/integrations/dist/index.js";
 import { connectionString } from "./lib/config.mjs";
 
-const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf";
 const baseTargetRoot = resolve(
   process.env.REDDWARF_HOST_WORKSPACE_ROOT ??
     join(tmpdir(), "reddwarf-secrets-verify")
 );
-const repository = new PostgresPlanningRepository({ connectionString });
+const repository = createPostgresPlanningRepository(connectionString);
 const issueNumber = Date.now();
 const targetRoot = resolve(baseTargetRoot, `verify-${issueNumber}`);
 const repo = `secrets-${issueNumber}/platform-${issueNumber}`;
@@ -145,11 +141,15 @@ try {
     }
   );
 
-  const secretEnvPayload = JSON.parse(
-    await readFile(
-      validation.workspace.descriptor.credentialPolicy.secretEnvFile,
-      "utf8"
-    )
+  const developmentSecretEnvPath = join(
+    development.workspace.stateDir,
+    "credentials",
+    "secret-env.json"
+  );
+  const validationSecretEnvPath = join(
+    validation.workspace.stateDir,
+    "credentials",
+    "secret-env.json"
   );
   const validationLog = await readFile(
     validation.report.commandResults[0].logPath,
@@ -165,9 +165,19 @@ try {
     "scoped_env"
   );
   assert.equal(
+    development.workspace.descriptor.credentialPolicy.secretEnvFile,
+    null
+  );
+  await assert.rejects(access(developmentSecretEnvPath));
+  assert.equal(
     validation.workspace.descriptor.credentialPolicy.mode,
     "scoped_env"
   );
+  assert.equal(
+    validation.workspace.descriptor.credentialPolicy.secretEnvFile,
+    null
+  );
+  await assert.rejects(access(validationSecretEnvPath));
   assert.deepEqual(
     validation.workspace.descriptor.credentialPolicy.allowedSecretScopes,
     ["github_readonly"]
@@ -176,7 +186,6 @@ try {
     validation.workspace.descriptor.credentialPolicy.injectedSecretKeys,
     ["GITHUB_TOKEN"]
   );
-  assert.equal(secretEnvPayload.environmentVariables.GITHUB_TOKEN, secretValue);
   assert.equal(validationLog.includes(secretValue), false);
   assert.equal(validationLog.includes("***REDACTED***"), true);
   assert.equal(runSummary?.status, "blocked");

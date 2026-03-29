@@ -268,3 +268,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Verification for feature 95: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:validation`; `corepack pnpm verify:scm`.
 - No new follow-on feature was added from feature 95; the next board item is feature 96, scrub or destroy secret-bearing workspaces on phase exit.
 
+- Completed feature 96 from `FEATURE_BOARD.md`: scrub or destroy secret-bearing workspaces on phase exit.
+- Added `scrubManagedWorkspaceSecrets(...)` in `packages/control-plane/src/workspace.ts` so workspace-local `secret-env.json` leases are deleted after use, the workspace state file is rewritten with `secretEnvFile: null`, and the descriptor records that the lease file was scrubbed after phase exit.
+- Updated `packages/control-plane/src/pipeline.ts` so developer and validation phases scrub scoped lease files before returning success and also attempt the same scrub during failure handling before persisting phase-failure state. The control plane now records `SECRET_LEASE_SCRUBBED` run events when credential files are removed.
+- Updated `packages/control-plane/src/index.test.ts` so the scoped-secret developer test now asserts the lease file is gone after phase exit, and added validation-failure coverage proving the secret file exists during execution but is scrubbed once the failing phase exits.
+- Updated `scripts/verify-secrets.mjs` to the current `createPostgresPlanningRepository(...)` factory and changed the verifier to assert post-phase scrubbing instead of reading the lease file after validation completes. Feature 100 still covers the broader legacy script sweep.
+- Verification for feature 96: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:secrets`.
+- No new follow-on feature was added from feature 96; the next board item is feature 97, fence untrusted issue content inside planner and agent prompts.
+

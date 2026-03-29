@@ -667,11 +667,10 @@ describe("control-plane", () => {
           idGenerator: () => "run-secret-dev-phase"
         }
       );
-      const secretEnv = JSON.parse(
-        await readFile(
-          development.workspace!.descriptor.credentialPolicy.secretEnvFile!,
-          "utf8"
-        )
+      const secretEnvPath = join(
+        development.workspace!.stateDir,
+        "credentials",
+        "secret-env.json"
       );
       const toolsMd = await readFile(
         development.workspace!.instructions.files.toolsMd,
@@ -690,13 +689,157 @@ describe("control-plane", () => {
       expect(
         development.workspace?.descriptor.credentialPolicy.injectedSecretKeys
       ).toEqual(["GITHUB_TOKEN"]);
-      expect(secretEnv.environmentVariables.GITHUB_TOKEN).toBe(
-        "ghs_dev_fixture"
-      );
+      expect(
+        development.workspace?.descriptor.credentialPolicy.secretEnvFile
+      ).toBeNull();
+      expect(
+        development.workspace?.descriptor.credentialPolicy.notes.some((note) =>
+          note.includes("scrubbed after phase exit")
+        )
+      ).toBe(true);
+      await expect(access(secretEnvPath)).rejects.toBeDefined();
       expect(toolsMd).toContain("github_readonly");
       expect(
         repository.runEvents.some(
           (event) => event.code === "SECRET_LEASE_ISSUED"
+        )
+      ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.code === "SECRET_LEASE_SCRUBBED" &&
+            event.phase === "development"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("scrubs scoped validation credentials after validation failures", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-secret-validation-failure-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Plan a deterministic implementation task that requires scoped credentials during validation.",
+        requestedCapabilities: ["can_write_code", "can_use_secrets"],
+        affectedPaths: ["src/integrations/github.ts"],
+        metadata: {
+          secretScopes: ["github_readonly"]
+        }
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T19:00:00.000Z"),
+        idGenerator: () => "run-secret-validation-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for scoped validation credentials.",
+        comment: "Use the least-privilege lease during validation only."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T19:05:00.000Z")
+      }
+    );
+
+    const secrets = new FixtureSecretsAdapter([
+      {
+        scope: "github_readonly",
+        environmentVariables: {
+          GITHUB_TOKEN: "ghs_validation_fixture"
+        },
+        allowedAgents: ["developer", "validation"],
+        allowedEnvironments: ["staging"]
+      }
+    ]);
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-secret-validation-failure"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          secrets,
+          environment: "staging",
+          clock: () => new Date("2026-03-25T19:10:00.000Z"),
+          idGenerator: () => "run-secret-validation-dev"
+        }
+      );
+      const secretEnvPath = join(
+        development.workspace!.stateDir,
+        "credentials",
+        "secret-env.json"
+      );
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: {
+              async createPlan() {
+                return {
+                  summary:
+                    "Fail after confirming the scoped validation credential file exists.",
+                  commands: [
+                    {
+                      id: "fail-after-secret-check",
+                      name: "Fail after secret check",
+                      executable: process.execPath,
+                      args: [
+                        "-e",
+                        [
+                          'const fs = require("node:fs");',
+                          'const path = require("node:path");',
+                          'const secretEnvFile = path.join(process.env.REDDWARF_WORKSPACE_ROOT, ".workspace", "credentials", "secret-env.json");',
+                          'const payload = JSON.parse(fs.readFileSync(secretEnvFile, "utf8"));',
+                          'if (!payload.environmentVariables.GITHUB_TOKEN) {',
+                          '  throw new Error("missing scoped secret");',
+                          '}',
+                          'process.exit(1);'
+                        ].join("\n")
+                      ]
+                    }
+                  ]
+                };
+              }
+            } as unknown as DeterministicValidationAgent,
+            secrets,
+            environment: "staging",
+            clock: () => new Date("2026-03-25T19:15:00.000Z"),
+            idGenerator: () => "run-secret-validation-failure"
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "VALIDATION_COMMAND_FAILED",
+        phase: "validation"
+      });
+
+      await expect(access(secretEnvPath)).rejects.toBeDefined();
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.code === "SECRET_LEASE_SCRUBBED" &&
+            event.phase === "validation"
         )
       ).toBe(true);
     } finally {

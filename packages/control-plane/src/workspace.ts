@@ -112,6 +112,15 @@ export interface DestroyWorkspaceResult {
   workspace: DestroyedManagedWorkspace;
 }
 
+export interface ScrubbedWorkspaceSecretsResult {
+  workspaceId: string;
+  scrubbed: boolean;
+  removed: boolean;
+  secretEnvFile: string | null;
+  scrubbedAt: string;
+  descriptor: WorkspaceDescriptor;
+}
+
 export type ArchivedArtifactClass =
   | "handoff"
   | "log"
@@ -613,6 +622,64 @@ export async function materializeManagedWorkspace(input: {
     scratchDir,
     artifactsDir,
     repoRoot: null,
+    descriptor
+  };
+}
+
+export async function scrubManagedWorkspaceSecrets(input: {
+  workspace: MaterializedManagedWorkspace;
+  scrubbedAt?: string;
+}): Promise<ScrubbedWorkspaceSecretsResult> {
+  const scrubbedAt = input.scrubbedAt ?? asIsoTimestamp();
+  const secretEnvFile = input.workspace.descriptor.credentialPolicy.secretEnvFile;
+
+  if (
+    input.workspace.descriptor.credentialPolicy.mode !== "scoped_env" ||
+    !secretEnvFile
+  ) {
+    return {
+      workspaceId: input.workspace.workspaceId,
+      scrubbed: false,
+      removed: false,
+      secretEnvFile: null,
+      scrubbedAt,
+      descriptor: input.workspace.descriptor
+    };
+  }
+
+  const resolvedSecretEnvFile = resolve(secretEnvFile);
+  assertWorkspacePathWithinRoot(input.workspace.workspaceRoot, resolvedSecretEnvFile);
+  const removed = await pathExists(resolvedSecretEnvFile);
+  await rm(resolvedSecretEnvFile, { force: true });
+
+  const scrubNote = "Workspace credential lease file was scrubbed after phase exit.";
+  const notes = input.workspace.descriptor.credentialPolicy.notes.includes(scrubNote)
+    ? input.workspace.descriptor.credentialPolicy.notes
+    : [...input.workspace.descriptor.credentialPolicy.notes, scrubNote];
+  const descriptor = workspaceDescriptorSchema.parse({
+    ...input.workspace.descriptor,
+    updatedAt: scrubbedAt,
+    credentialPolicy: {
+      ...input.workspace.descriptor.credentialPolicy,
+      secretEnvFile: null,
+      notes
+    }
+  });
+
+  input.workspace.descriptor = descriptor;
+  await writeFile(
+    input.workspace.stateFile,
+    `${JSON.stringify(descriptor, null, 2)}
+`,
+    "utf8"
+  );
+
+  return {
+    workspaceId: input.workspace.workspaceId,
+    scrubbed: true,
+    removed,
+    secretEnvFile: resolvedSecretEnvFile,
+    scrubbedAt,
     descriptor
   };
 }

@@ -102,6 +102,7 @@ import {
   materializeManagedWorkspace,
   provisionTaskWorkspace,
   destroyTaskWorkspace,
+  scrubManagedWorkspaceSecrets,
   resolveEvidenceRoot,
   formatLiteralList,
   createWorkspaceCredentialPolicy,
@@ -175,6 +176,7 @@ const EventCodes = {
   WORKSPACE_PREPARED: "WORKSPACE_PREPARED",
   CODE_WRITE_DISABLED: "CODE_WRITE_DISABLED",
   SECRET_LEASE_ISSUED: "SECRET_LEASE_ISSUED",
+  SECRET_LEASE_SCRUBBED: "SECRET_LEASE_SCRUBBED",
   BRANCH_CREATED: "BRANCH_CREATED",
   PULL_REQUEST_CREATED: "PULL_REQUEST_CREATED",
   FOLLOW_UP_ISSUE_CREATED: "FOLLOW_UP_ISSUE_CREATED",
@@ -502,6 +504,45 @@ async function issueWorkspaceSecretLease(input: {
   }
 
   return lease;
+}
+
+async function scrubWorkspaceSecretLeaseOnPhaseExit(input: {
+  repository: PlanningRepository;
+  logger: PlanningPipelineLogger;
+  taskId: string;
+  runId: string;
+  phase: Extract<TaskPhase, "development" | "validation" | "scm">;
+  workspace: MaterializedManagedWorkspace;
+  clock: () => Date;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+}): Promise<void> {
+  const scrubbed = await scrubManagedWorkspaceSecrets({
+    workspace: input.workspace,
+    scrubbedAt: asIsoTimestamp(input.clock())
+  });
+
+  if (!scrubbed.scrubbed) {
+    return;
+  }
+
+  await recordRunEvent({
+    repository: input.repository,
+    logger: input.logger,
+    eventId: input.nextEventId(input.phase, EventCodes.SECRET_LEASE_SCRUBBED),
+    taskId: input.taskId,
+    runId: input.runId,
+    phase: input.phase,
+    level: "info",
+    code: EventCodes.SECRET_LEASE_SCRUBBED,
+    message: `Scoped ${input.phase} credentials were scrubbed from the managed workspace.`,
+    data: {
+      workspaceId: input.workspace.workspaceId,
+      removedSecretEnvFile: scrubbed.removed,
+      scrubbedAt: scrubbed.scrubbedAt,
+      injectedSecretKeys: scrubbed.descriptor.credentialPolicy.injectedSecretKeys
+    },
+    createdAt: scrubbed.scrubbedAt
+  });
 }
 
 function createApprovalRequestSummary(input: {
@@ -1596,6 +1637,8 @@ export async function runDeveloperPhase(
     sourceRepo: currentManifest.source.repo,
     phase: "development"
   });
+  let workspace: MaterializedManagedWorkspace | null = null;
+  let secretLease: SecretLease | null = null;
   let eventSequence = 0;
   const nextEventId = (phase: TaskPhase, code: string): string => {
     const sequence = String(eventSequence).padStart(3, "0");
@@ -1714,7 +1757,7 @@ export async function runDeveloperPhase(
       policySnapshot: validatedPolicySnapshot
     });
     const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
-    const secretLease = await issueWorkspaceSecretLease({
+    secretLease = await issueWorkspaceSecretLease({
       bundle,
       phase: "development",
       ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
@@ -1722,7 +1765,7 @@ export async function runDeveloperPhase(
         ? { environment: dependencies.environment }
         : {})
     });
-    const workspace = await materializeManagedWorkspace({
+    workspace = await materializeManagedWorkspace({
       bundle,
       targetRoot: input.targetRoot,
       workspaceId:
@@ -1958,6 +2001,16 @@ export async function runDeveloperPhase(
       evidenceRoot: input.evidenceRoot,
       fileName: "developer-handoff.md"
     });
+    await scrubWorkspaceSecretLeaseOnPhaseExit({
+      repository,
+      logger: runLogger,
+      taskId,
+      runId,
+      phase: "development",
+      workspace,
+      clock,
+      nextEventId
+    });
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${taskId}:memory:task:development`,
@@ -2110,12 +2163,52 @@ export async function runDeveloperPhase(
       ...(dispatchResult !== null ? { openClawDispatchResult: dispatchResult } : {})
     };
   } catch (error) {
-    const pipelineFailure = normalizePipelineFailure(
+    let scrubFailure: unknown = null;
+
+    if (workspace) {
+      try {
+        await scrubWorkspaceSecretLeaseOnPhaseExit({
+          repository,
+          logger: runLogger,
+          taskId,
+          runId,
+          phase: "development",
+          workspace,
+          clock,
+          nextEventId
+        });
+      } catch (secretScrubError) {
+        scrubFailure = secretScrubError;
+        runLogger.error("Failed to scrub developer workspace credentials after phase exit.", {
+          runId,
+          taskId,
+          persistenceError: serializeError(secretScrubError)
+        });
+      }
+    }
+
+    let pipelineFailure = normalizePipelineFailure(
       error,
       "development",
       taskId,
       runId
     );
+
+    if (scrubFailure) {
+      pipelineFailure = new PlanningPipelineFailure({
+        message: pipelineFailure.message,
+        failureClass: pipelineFailure.failureClass,
+        phase: pipelineFailure.phase,
+        code: pipelineFailure.code,
+        details: {
+          ...(pipelineFailure.details ?? {}),
+          credentialScrubFailure: serializeError(scrubFailure)
+        },
+        cause: pipelineFailure.cause,
+        taskId,
+        runId
+      });
+    }
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
     currentManifest = patchManifest(currentManifest, {
@@ -2244,6 +2337,8 @@ export async function runValidationPhase(
     sourceRepo: currentManifest.source.repo,
     phase: "validation"
   });
+  let workspace: MaterializedManagedWorkspace | null = null;
+  let secretLease: SecretLease | null = null;
   let eventSequence = 0;
   const nextEventId = (phase: TaskPhase, code: string): string => {
     const sequence = String(eventSequence).padStart(3, "0");
@@ -2364,7 +2459,7 @@ export async function runValidationPhase(
       spec: validatedSpec,
       policySnapshot: validatedPolicySnapshot
     });
-    const secretLease = await issueWorkspaceSecretLease({
+    secretLease = await issueWorkspaceSecretLease({
       bundle,
       phase: "validation",
       ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
@@ -2372,7 +2467,7 @@ export async function runValidationPhase(
         ? { environment: dependencies.environment }
         : {})
     });
-    const workspace = await materializeManagedWorkspace({
+    workspace = await materializeManagedWorkspace({
       bundle,
       targetRoot: input.targetRoot,
       workspaceId,
@@ -2517,7 +2612,7 @@ export async function runValidationPhase(
             persistTrackedRun,
             clock,
             metadata: {
-              workspaceId: workspace.workspaceId,
+              workspaceId,
               lastValidationCommandId: command.id
             }
           })
@@ -2701,6 +2796,17 @@ export async function runValidationPhase(
     });
     const developerCodeWriteEnabled =
       readDevelopmentCodeWriteEnabledFromSnapshot(snapshot);
+    await scrubWorkspaceSecretLeaseOnPhaseExit({
+      repository,
+      logger: runLogger,
+      taskId,
+      runId,
+      phase: "validation",
+      workspace,
+      clock,
+      nextEventId
+    });
+
     await repository.saveMemoryRecord(
       createMemoryRecord({
         memoryId: `${taskId}:memory:task:validation`,
@@ -2895,12 +3001,52 @@ export async function runValidationPhase(
       concurrencyDecision
     };
   } catch (error) {
-    const pipelineFailure = normalizePipelineFailure(
+    let scrubFailure: unknown = null;
+
+    if (workspace) {
+      try {
+        await scrubWorkspaceSecretLeaseOnPhaseExit({
+          repository,
+          logger: runLogger,
+          taskId,
+          runId,
+          phase: "validation",
+          workspace,
+          clock,
+          nextEventId
+        });
+      } catch (secretScrubError) {
+        scrubFailure = secretScrubError;
+        runLogger.error("Failed to scrub validation workspace credentials after phase exit.", {
+          runId,
+          taskId,
+          persistenceError: serializeError(secretScrubError)
+        });
+      }
+    }
+
+    let pipelineFailure = normalizePipelineFailure(
       error,
       "validation",
       taskId,
       runId
     );
+
+    if (scrubFailure) {
+      pipelineFailure = new PlanningPipelineFailure({
+        message: pipelineFailure.message,
+        failureClass: pipelineFailure.failureClass,
+        phase: pipelineFailure.phase,
+        code: pipelineFailure.code,
+        details: {
+          ...(pipelineFailure.details ?? {}),
+          credentialScrubFailure: serializeError(scrubFailure)
+        },
+        cause: pipelineFailure.cause,
+        taskId,
+        runId
+      });
+    }
     const failedAt = clock();
     const failedAtIso = asIsoTimestamp(failedAt);
     currentManifest = patchManifest(currentManifest, {
