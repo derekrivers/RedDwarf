@@ -1466,6 +1466,7 @@ describe("control-plane", () => {
       const persistedManifest = await repository.getManifest(planningResult.manifest.taskId);
       expect(retryResult.outcome).toBe("completed");
       expect(retryResult.finalPhase).toBe("scm");
+      expect(retryResult.phasesExecuted).toEqual(["scm"]);
       expect(retryResult.pullRequestUrl).toContain("/pull/71");
       expect(persistedManifest?.prNumber).toBe(71);
       expect(persistedManifest?.branchName).toMatch(/\/scm$/);
@@ -4787,6 +4788,167 @@ describe("dispatchReadyTask", () => {
       expect(["completed", "blocked", "failed"]).toContain(result.outcome);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes validation after an approved failure retry without rerunning development", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-resume-validation-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 320,
+            issueUrl: "https://github.com/acme/platform/issues/320"
+          },
+          title: "Resume validation retry without replaying development",
+          summary:
+            "Exercise failure escalation approval and resume validation directly instead of replaying developer work.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/resume-validation.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-29T18:00:00.000Z"),
+          idGenerator: () => "run-dispatch-resume-validation-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approve initial development and validation execution."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T18:01:00.000Z")
+        }
+      );
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dispatch-resume-validation"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-29T18:02:00.000Z"),
+          idGenerator: () => "run-dispatch-resume-validation-dev"
+        }
+      );
+
+      const failingValidator = {
+        async createPlan() {
+          return {
+            summary: "Fail validation to force escalation approval.",
+            commands: [
+              {
+                id: "resume-validation-fail",
+                name: "Resume validation failing command",
+                executable: process.execPath,
+                args: ["-e", "process.exit(7)"]
+              }
+            ]
+          };
+        }
+      };
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-29T18:03:00.000Z"),
+            idGenerator: () => "run-dispatch-resume-validation-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-29T18:04:00.000Z"),
+            idGenerator: () => "run-dispatch-resume-validation-second"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const blockedSnapshot = await repository.getTaskSnapshot(
+        planningResult.manifest.taskId
+      );
+      const failureRequest = blockedSnapshot.approvalRequests.find(
+        (request) =>
+          request.phase === "validation" &&
+          request.status === "pending" &&
+          request.requestedBy === "failure-automation"
+      );
+
+      expect(blockedSnapshot.manifest?.lifecycleStatus).toBe("blocked");
+      expect(blockedSnapshot.manifest?.currentPhase).toBe("validation");
+      expect(failureRequest?.status).toBe("pending");
+
+      await resolveApprovalRequest(
+        {
+          requestId: failureRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Resume directly at validation after reviewing the failure."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-29T18:05:00.000Z")
+        }
+      );
+
+      const readyManifest = await repository.getManifest(planningResult.manifest.taskId);
+      expect(readyManifest?.lifecycleStatus).toBe("ready");
+      expect(readyManifest?.currentPhase).toBe("validation");
+
+      const retryResult = await dispatchReadyTask(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          developer: {
+            async createHandoff() {
+              throw new Error(
+                "Developer phase should not rerun during validation recovery resume."
+              );
+            }
+          } as never,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          clock: () => new Date("2026-03-29T18:06:00.000Z")
+        }
+      );
+
+      expect(retryResult.outcome).toBe("completed");
+      expect(retryResult.finalPhase).toBe("validation");
+      expect(retryResult.phasesExecuted).toEqual(["validation"]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 

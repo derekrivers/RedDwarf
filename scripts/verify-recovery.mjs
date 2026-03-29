@@ -5,8 +5,11 @@ import { join, resolve } from "node:path";
 import {
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicScmAgent,
+  DeterministicValidationAgent,
   PlanningPipelineFailure,
   destroyTaskWorkspace,
+  dispatchReadyTask,
   resolveApprovalRequest,
   runDeveloperPhase,
   runPlanningPipeline,
@@ -184,8 +187,45 @@ try {
     snapshot.runEvents.some((event) => event.code === "FOLLOW_UP_ISSUE_CREATED")
   );
 
+  await resolveApprovalRequest(
+    {
+      requestId: failureRequest.requestId,
+      decision: "approve",
+      decidedBy: "operator",
+      decisionSummary: "Resume directly at validation for recovery verification.",
+      comment: "Feature 102 verification path."
+    },
+    {
+      repository,
+      clock: () => new Date("2026-03-25T18:25:00.000Z")
+    }
+  );
+
+  const resumeResult = await dispatchReadyTask(
+    {
+      taskId: planningResult.manifest.taskId,
+      targetRoot
+    },
+    {
+      repository,
+      developer: new DeterministicDeveloperAgent(),
+      validator: new DeterministicValidationAgent(),
+      scm: new DeterministicScmAgent(),
+      github: new FixtureGitHubAdapter({ candidates: [] }),
+      clock: () => new Date("2026-03-25T18:30:00.000Z")
+    }
+  );
+
+  const resumedSnapshot = await repository.getTaskSnapshot(planningResult.manifest.taskId);
+
+  assert.equal(resumeResult.outcome, "completed");
+  assert.equal(resumeResult.finalPhase, "validation");
+  assert.deepEqual(resumeResult.phasesExecuted, ["validation"]);
+  assert.equal(resumedSnapshot.manifest?.currentPhase, "validation");
+  assert.equal(resumedSnapshot.manifest?.lifecycleStatus, "blocked");
+
   await destroyTaskWorkspace({
-    manifest: snapshot.manifest,
+    manifest: resumedSnapshot.manifest,
     repository,
     targetRoot
   });
@@ -196,11 +236,12 @@ try {
         taskId: planningResult.manifest.taskId,
         planningRunId: planningResult.runId,
         validationRunId: `recovery-validation-second-${issueNumber}`,
-        manifest: snapshot.manifest,
+        manifest: resumedSnapshot.manifest,
         failureRequest,
         followUpIssue: followUpIssue?.value ?? null,
         recoveryMemory: recoveryMemory?.value ?? null,
-        runSummary
+        runSummary,
+        resumeResult
       },
       null,
       2

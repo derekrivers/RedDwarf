@@ -2269,12 +2269,19 @@ export async function runValidationPhase(
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "validation");
   requireNoFailureEscalation(snapshot, taskId, "validation");
+  const approvedFailureRetry = findApprovedFailureEscalationRequest(
+    snapshot,
+    "validation"
+  );
 
   const lifecycleAllowsValidation =
     (validatedManifest.lifecycleStatus === "blocked" &&
       ["development", "validation"].includes(validatedManifest.currentPhase)) ||
     (validatedManifest.lifecycleStatus === "active" &&
-      validatedManifest.currentPhase === "validation");
+      validatedManifest.currentPhase === "validation") ||
+    (validatedManifest.lifecycleStatus === "ready" &&
+      validatedManifest.currentPhase === "validation" &&
+      approvedFailureRetry !== null);
 
   if (!lifecycleAllowsValidation) {
     throw new Error(
@@ -4441,12 +4448,19 @@ export async function runScmPhase(
 
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "scm");
   requireNoFailureEscalation(snapshot, taskId, "scm");
+  const approvedFailureRetry = findApprovedFailureEscalationRequest(
+    snapshot,
+    "scm"
+  );
 
   const lifecycleAllowsScm =
     (validatedManifest.lifecycleStatus === "blocked" &&
       ["validation", "scm"].includes(validatedManifest.currentPhase)) ||
     (validatedManifest.lifecycleStatus === "active" &&
-      validatedManifest.currentPhase === "scm");
+      validatedManifest.currentPhase === "scm") ||
+    (validatedManifest.lifecycleStatus === "ready" &&
+      validatedManifest.currentPhase === "scm" &&
+      approvedFailureRetry !== null);
 
   if (!lifecycleAllowsScm) {
     throw new Error(
@@ -5170,6 +5184,23 @@ function findPendingFailureEscalationRequest(
         request.status === "pending" &&
         request.requestedBy === failureAutomationRequestedBy
     ) ?? null
+  );
+}
+
+function findApprovedFailureEscalationRequest(
+  snapshot: PersistedTaskSnapshot,
+  phase: RecoverablePhase
+): ApprovalRequest | null {
+  return (
+    snapshot.approvalRequests
+      .slice()
+      .reverse()
+      .find(
+        (request) =>
+          request.phase === phase &&
+          request.status === "approved" &&
+          request.requestedBy === failureAutomationRequestedBy
+      ) ?? null
   );
 }
 
@@ -6127,43 +6158,58 @@ export async function dispatchReadyTask(
   const logger = dependencies.logger ?? defaultLogger;
   const taskId = input.taskId.trim();
 
-  const manifest = await repository.getManifest(taskId);
-  if (!manifest) {
-    throw new Error(`Task ${taskId} not found.`);
-  }
+  const rawSnapshot = await repository.getTaskSnapshot(taskId);
+  const { snapshot, manifest } = requirePhaseSnapshot(rawSnapshot, taskId);
 
   if (manifest.lifecycleStatus !== "ready") {
     throw new Error(
-      `Task ${taskId} has lifecycleStatus "${manifest.lifecycleStatus}" — expected "ready".`
+      `Task ${taskId} has lifecycleStatus "${manifest.lifecycleStatus}" and cannot be dispatched; expected "ready".`
     );
   }
 
+  const approvedFailureRecoveryRequest =
+    isRecoverablePhase(manifest.currentPhase)
+      ? findApprovedFailureEscalationRequest(snapshot, manifest.currentPhase)
+      : null;
+  let startPhase: RecoverablePhase = "development";
+  if (
+    approvedFailureRecoveryRequest !== null &&
+    isRecoverablePhase(manifest.currentPhase)
+  ) {
+    startPhase = manifest.currentPhase;
+  }
+  const isFailureRecoveryResume = approvedFailureRecoveryRequest !== null;
+
   const dispatchLogger = bindPlanningLogger(logger, {
     taskId,
-    sourceRepo: manifest.source.repo
+    sourceRepo: manifest.source.repo,
+    ...(approvedFailureRecoveryRequest
+      ? { approvalRequestId: approvedFailureRecoveryRequest.requestId }
+      : {})
   });
 
   dispatchLogger.info("Starting post-approval dispatch.", {
     taskId,
     currentPhase: manifest.currentPhase,
-    requestedCapabilities: manifest.requestedCapabilities
+    requestedCapabilities: manifest.requestedCapabilities,
+    startPhase,
+    dispatchMode: isFailureRecoveryResume ? "resume_failure_recovery" : "fresh"
   });
 
   const phasesExecuted: string[] = [];
 
-  // ── Retrieve Holly's architect handoff from memory ──────────────────
   let hollyHandoffMarkdown: string | undefined;
   try {
-    const memories = await repository.listMemoryRecords({
-      taskId,
-      scope: "task",
-      limit: 100
-    });
-    const architectMemory = memories.find((m) => m.key === "architect.handoff");
-    if (architectMemory && typeof architectMemory.value === "object" && architectMemory.value !== null) {
+    const architectMemory = snapshot.memoryRecords.find(
+      (memory) => memory.key === "architect.handoff"
+    );
+    if (
+      architectMemory &&
+      typeof architectMemory.value === "object" &&
+      architectMemory.value !== null
+    ) {
       const val = architectMemory.value as Record<string, unknown>;
       if (typeof val["summary"] === "string") {
-        // Reconstruct a basic markdown from the structured memory
         const parts: string[] = [];
         parts.push(`# Architecture Plan\n\n${val["summary"]}`);
         if (Array.isArray(val["affectedAreas"]) && val["affectedAreas"].length > 0) {
@@ -6189,124 +6235,144 @@ export async function dispatchReadyTask(
     dispatchLogger.warn("Failed to retrieve Holly architect handoff from memory.", { taskId });
   }
 
-  // ── Phase 1: Developer ──────────────────────────────────────────────
-  try {
-    dispatchLogger.info("Dispatching developer phase.", { taskId });
+  if (startPhase === "development") {
+    try {
+      dispatchLogger.info("Dispatching developer phase.", { taskId });
 
-    const devResult = await runDeveloperPhase(
-      {
+      const devResult = await runDeveloperPhase(
+        {
+          taskId,
+          targetRoot: input.targetRoot,
+          evidenceRoot: input.evidenceRoot
+        },
+        {
+          repository,
+          developer: dependencies.developer,
+          github: dependencies.github,
+          ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
+          openClawAgentId: "reddwarf-developer",
+          ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+          ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
+          ...(dependencies.openClawCompletionAwaiter ? { openClawCompletionAwaiter: dependencies.openClawCompletionAwaiter } : {}),
+          ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
+          ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+          ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+          ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {}),
+          ...(dependencies.timing ? { timing: dependencies.timing } : {})
+        }
+      );
+
+      phasesExecuted.push("development");
+      dispatchLogger.info("Developer phase completed.", {
         taskId,
-        targetRoot: input.targetRoot,
-        evidenceRoot: input.evidenceRoot
-      },
-      {
-        repository,
-        developer: dependencies.developer,
-        github: dependencies.github,
-        ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
-        openClawAgentId: "reddwarf-developer",
-        ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
-        ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
-        ...(dependencies.openClawCompletionAwaiter ? { openClawCompletionAwaiter: dependencies.openClawCompletionAwaiter } : {}),
-        ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
-        ...(dependencies.logger ? { logger: dependencies.logger } : {}),
-        ...(dependencies.clock ? { clock: dependencies.clock } : {}),
-        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+        nextAction: devResult.nextAction,
+        runId: devResult.runId
+      });
+
+      if (devResult.nextAction === "task_blocked") {
+        return {
+          taskId,
+          outcome: "blocked",
+          phasesExecuted,
+          finalPhase: "development"
+        };
       }
-    );
-
-    phasesExecuted.push("development");
-    dispatchLogger.info("Developer phase completed.", {
-      taskId,
-      nextAction: devResult.nextAction,
-      runId: devResult.runId
-    });
-
-    if (devResult.nextAction === "task_blocked") {
+    } catch (error) {
+      dispatchLogger.error("Developer phase failed.", {
+        taskId,
+        error: formatDispatchError(error)
+      });
       return {
         taskId,
-        outcome: "blocked",
-        phasesExecuted,
-        finalPhase: "development"
+        outcome: "failed",
+        phasesExecuted: [...phasesExecuted, "development"],
+        finalPhase: "development",
+        error: formatDispatchError(error)
       };
     }
-  } catch (error) {
-    dispatchLogger.error("Developer phase failed.", {
+  } else {
+    dispatchLogger.info("Skipping developer phase for approved failure recovery resume.", {
       taskId,
-      error: formatDispatchError(error)
+      startPhase,
+      approvalRequestId: approvedFailureRecoveryRequest?.requestId ?? null
     });
-    return {
-      taskId,
-      outcome: "failed",
-      phasesExecuted: [...phasesExecuted, "development"],
-      finalPhase: "development",
-      error: formatDispatchError(error)
-    };
   }
 
-  // ── Phase 2: Validation ─────────────────────────────────────────────
-  try {
-    dispatchLogger.info("Dispatching validation phase.", { taskId });
-
-    const valResult = await runValidationPhase(
-      {
+  if (startPhase !== "scm") {
+    try {
+      dispatchLogger.info("Dispatching validation phase.", {
         taskId,
-        targetRoot: input.targetRoot,
-        evidenceRoot: input.evidenceRoot
-      },
-      {
-        repository,
-        validator: dependencies.validator,
-        ...(dependencies.github ? { github: dependencies.github } : {}),
-        ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
-        ...(dependencies.logger ? { logger: dependencies.logger } : {}),
-        ...(dependencies.clock ? { clock: dependencies.clock } : {}),
-        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+        resumed: startPhase === "validation"
+      });
+
+      const valResult = await runValidationPhase(
+        {
+          taskId,
+          targetRoot: input.targetRoot,
+          evidenceRoot: input.evidenceRoot
+        },
+        {
+          repository,
+          validator: dependencies.validator,
+          ...(dependencies.github ? { github: dependencies.github } : {}),
+          ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
+          ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+          ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+          ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {}),
+          ...(dependencies.timing ? { timing: dependencies.timing } : {})
+        }
+      );
+
+      phasesExecuted.push("validation");
+      dispatchLogger.info("Validation phase completed.", {
+        taskId,
+        nextAction: valResult.nextAction,
+        runId: valResult.runId
+      });
+
+      if (valResult.nextAction === "task_blocked") {
+        return {
+          taskId,
+          outcome: "blocked",
+          phasesExecuted,
+          finalPhase: "validation"
+        };
       }
-    );
 
-    phasesExecuted.push("validation");
-    dispatchLogger.info("Validation phase completed.", {
-      taskId,
-      nextAction: valResult.nextAction,
-      runId: valResult.runId
-    });
-
-    if (valResult.nextAction === "task_blocked") {
+      if (valResult.nextAction === "await_review") {
+        dispatchLogger.info("Validation returned await_review - skipping SCM (review is v1-disabled).", { taskId });
+        return {
+          taskId,
+          outcome: "completed",
+          phasesExecuted,
+          finalPhase: "validation"
+        };
+      }
+    } catch (error) {
+      dispatchLogger.error("Validation phase failed.", {
+        taskId,
+        error: formatDispatchError(error)
+      });
       return {
         taskId,
-        outcome: "blocked",
-        phasesExecuted,
-        finalPhase: "validation"
+        outcome: "failed",
+        phasesExecuted: [...phasesExecuted, "validation"],
+        finalPhase: "validation",
+        error: formatDispatchError(error)
       };
     }
-
-    if (valResult.nextAction === "await_review") {
-      dispatchLogger.info("Validation returned await_review — skipping SCM (review is v1-disabled).", { taskId });
-      return {
-        taskId,
-        outcome: "completed",
-        phasesExecuted,
-        finalPhase: "validation"
-      };
-    }
-  } catch (error) {
-    dispatchLogger.error("Validation phase failed.", {
+  } else {
+    dispatchLogger.info("Skipping validation phase for approved SCM recovery resume.", {
       taskId,
-      error: formatDispatchError(error)
+      approvalRequestId: approvedFailureRecoveryRequest?.requestId ?? null
     });
-    return {
-      taskId,
-      outcome: "failed",
-      phasesExecuted: [...phasesExecuted, "validation"],
-      finalPhase: "validation",
-      error: formatDispatchError(error)
-    };
   }
 
-  // ── Phase 3: SCM ────────────────────────────────────────────────────
   try {
-    dispatchLogger.info("Dispatching SCM phase.", { taskId });
+    dispatchLogger.info("Dispatching SCM phase.", {
+      taskId,
+      resumed: startPhase === "scm"
+    });
 
     const scmResult = await runScmPhase(
       {
@@ -6322,7 +6388,8 @@ export async function dispatchReadyTask(
         ...(dependencies.workspaceCommitPublisher ? { workspaceCommitPublisher: dependencies.workspaceCommitPublisher } : {}),
         ...(dependencies.logger ? { logger: dependencies.logger } : {}),
         ...(dependencies.clock ? { clock: dependencies.clock } : {}),
-        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {})
+        ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {}),
+        ...(dependencies.timing ? { timing: dependencies.timing } : {})
       }
     );
 
