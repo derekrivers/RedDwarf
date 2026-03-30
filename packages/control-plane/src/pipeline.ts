@@ -3369,10 +3369,11 @@ function resolvePhaseDependencies(
   };
 }
 
-async function waitWithHeartbeat<T>(input: {
+export async function waitWithHeartbeat<T>(input: {
   work: Promise<T>;
   heartbeatIntervalMs?: number;
   onHeartbeat?: () => Promise<void>;
+  onHeartbeatError?: (error: unknown) => void;
 }): Promise<T> {
   if (!input.onHeartbeat) {
     return await input.work;
@@ -3400,7 +3401,11 @@ async function waitWithHeartbeat<T>(input: {
       throw outcome.error;
     }
 
-    await input.onHeartbeat();
+    try {
+      await input.onHeartbeat();
+    } catch (heartbeatError) {
+      input.onHeartbeatError?.(heartbeatError);
+    }
   }
 }
 
