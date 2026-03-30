@@ -18,6 +18,7 @@ import {
   type GitHubCreatedIssueSummary
 } from "@reddwarf/integrations";
 import {
+  AllowedPathViolationError,
   ExternalCommandTimeoutError,
   OpenClawCompletionTimeoutError
 } from "../live-workflow.js";
@@ -44,6 +45,99 @@ import {
 
 import { sanitizeSecretBearingText } from "../live-workflow.js";
 
+// ── Error mapper registry ─────────────────────────────────────────────────────
+
+interface PipelineErrorMapper {
+  test(error: unknown): boolean;
+  map(
+    error: unknown,
+    phase: TaskPhase,
+    taskId: string,
+    runId: string
+  ): PlanningPipelineFailure;
+}
+
+const pipelineErrorMappers: PipelineErrorMapper[] = [
+  {
+    test: (e): e is PlanningPipelineFailure => e instanceof PlanningPipelineFailure,
+    map: (e, _phase, taskId, runId) => {
+      const err = e as PlanningPipelineFailure;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingTextLocal(err.message),
+        failureClass: err.failureClass,
+        phase: err.phase,
+        code: err.code,
+        details: sanitizeSerializedErrorDetails(err.details),
+        cause: err,
+        taskId: err.taskId ?? taskId,
+        runId: err.runId ?? runId
+      });
+    }
+  },
+  {
+    test: (e): e is OpenClawCompletionTimeoutError => e instanceof OpenClawCompletionTimeoutError,
+    map: (e, phase, taskId, runId) => {
+      const err = e as OpenClawCompletionTimeoutError;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingTextLocal(err.message),
+        failureClass: phaseRegistry[phase].failureClass,
+        phase,
+        code: EventCodes.OPENCLAW_COMPLETION_TIMED_OUT,
+        details: {
+          sessionKey: err.sessionKey,
+          timeoutMs: err.timeoutMs
+        },
+        cause: err,
+        taskId,
+        runId
+      });
+    }
+  },
+  {
+    test: (e): e is ExternalCommandTimeoutError => e instanceof ExternalCommandTimeoutError,
+    map: (e, phase, taskId, runId) => {
+      const err = e as ExternalCommandTimeoutError;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingTextLocal(err.message),
+        failureClass: phaseRegistry[phase].failureClass,
+        phase,
+        code: EventCodes.GIT_COMMAND_TIMED_OUT,
+        details: {
+          executable: err.executable,
+          args: err.args,
+          cwd: err.cwd,
+          timeoutMs: err.timeoutMs,
+          stdout: sanitizeSecretBearingTextLocal(err.stdout),
+          stderr: sanitizeSecretBearingTextLocal(err.stderr)
+        },
+        cause: err,
+        taskId,
+        runId
+      });
+    }
+  },
+  {
+    test: (e): e is AllowedPathViolationError => e instanceof AllowedPathViolationError,
+    map: (e, phase, taskId, runId) => {
+      const err = e as AllowedPathViolationError;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingTextLocal(err.message),
+        failureClass: "policy_violation",
+        phase,
+        code: EventCodes.ALLOWED_PATHS_VIOLATED,
+        details: {
+          allowedPaths: err.allowedPaths,
+          changedFiles: err.changedFiles,
+          violatingFiles: err.violatingFiles
+        },
+        cause: err,
+        taskId,
+        runId
+      });
+    }
+  }
+];
+
 // ── Normalization ─────────────────────────────────────────────────────────────
 
 export function normalizePipelineFailure(
@@ -52,53 +146,9 @@ export function normalizePipelineFailure(
   taskId: string,
   runId: string
 ): PlanningPipelineFailure {
-  if (error instanceof PlanningPipelineFailure) {
-    return new PlanningPipelineFailure({
-      message: sanitizeSecretBearingTextLocal(error.message),
-      failureClass: error.failureClass,
-      phase: error.phase,
-      code: error.code,
-      details: sanitizeSerializedErrorDetails(error.details),
-      cause: error,
-      taskId: error.taskId ?? taskId,
-      runId: error.runId ?? runId
-    });
-  }
-
-  if (error instanceof OpenClawCompletionTimeoutError) {
-    return new PlanningPipelineFailure({
-      message: sanitizeSecretBearingTextLocal(error.message),
-      failureClass: phaseRegistry[phase].failureClass,
-      phase,
-      code: EventCodes.OPENCLAW_COMPLETION_TIMED_OUT,
-      details: {
-        sessionKey: error.sessionKey,
-        timeoutMs: error.timeoutMs
-      },
-      cause: error,
-      taskId,
-      runId
-    });
-  }
-
-  if (error instanceof ExternalCommandTimeoutError) {
-    return new PlanningPipelineFailure({
-      message: sanitizeSecretBearingTextLocal(error.message),
-      failureClass: phaseRegistry[phase].failureClass,
-      phase,
-      code: EventCodes.GIT_COMMAND_TIMED_OUT,
-      details: {
-        executable: error.executable,
-        args: error.args,
-        cwd: error.cwd,
-        timeoutMs: error.timeoutMs,
-        stdout: sanitizeSecretBearingTextLocal(error.stdout),
-        stderr: sanitizeSecretBearingTextLocal(error.stderr)
-      },
-      cause: error,
-      taskId,
-      runId
-    });
+  const mapper = pipelineErrorMappers.find((m) => m.test(error));
+  if (mapper) {
+    return mapper.map(error, phase, taskId, runId);
   }
 
   return new PlanningPipelineFailure({
