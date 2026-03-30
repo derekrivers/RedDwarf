@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  architectureReviewReportSchema,
   asIsoTimestamp,
   type MaterializedManagedWorkspace,
   type TaskManifest
@@ -33,6 +34,11 @@ export interface OpenClawCompletionResult {
   repoRoot: string | null;
 }
 
+export interface ArchitectureReviewCompletionResult {
+  reportPath: string;
+  repoRoot: string | null;
+}
+
 export interface OpenClawCompletionAwaiter {
   waitForCompletion(input: {
     manifest: TaskManifest;
@@ -43,6 +49,18 @@ export interface OpenClawCompletionAwaiter {
     onHeartbeat: (() => Promise<void>) | undefined;
     heartbeatIntervalMs?: number;
   }): Promise<OpenClawCompletionResult>;
+}
+
+export interface ArchitectureReviewCompletionAwaiter {
+  waitForCompletion(input: {
+    manifest: TaskManifest;
+    workspace: MaterializedManagedWorkspace;
+    sessionKey: string;
+    dispatchResult: OpenClawDispatchResult;
+    logger?: PlanningPipelineLogger;
+    onHeartbeat: (() => Promise<void>) | undefined;
+    heartbeatIntervalMs?: number;
+  }): Promise<ArchitectureReviewCompletionResult>;
 }
 
 export interface WorkspaceCommitPublicationResult {
@@ -74,7 +92,7 @@ export class OpenClawCompletionTimeoutError extends Error {
   readonly sessionKey: string;
   readonly timeoutMs: number;
 
-  constructor(input: { sessionKey: string; timeoutMs: number; phase: "architect" | "developer" }) {
+  constructor(input: { sessionKey: string; timeoutMs: number; phase: "architect" | "developer" | "reviewer" }) {
     super(
       `Timed out waiting for OpenClaw ${input.phase} completion for session ${input.sessionKey} after ${input.timeoutMs}ms.`
     );
@@ -347,6 +365,57 @@ export function createDeveloperHandoffAwaiter(
         sessionKey: input.sessionKey,
         timeoutMs,
         phase: "developer"
+      });
+    }
+  };
+}
+
+export interface ArchitectureReviewAwaiterOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
+export function createArchitectureReviewAwaiter(
+  options: ArchitectureReviewAwaiterOptions = {}
+): ArchitectureReviewCompletionAwaiter {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? 2000;
+  const defaultHeartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
+
+  return {
+    async waitForCompletion(input) {
+      const reportPath = join(input.workspace.artifactsDir, "architecture-review.json");
+      const repoRoot = readWorkspaceRepoRoot(input.workspace);
+      const deadline = Date.now() + timeoutMs;
+      let lastHeartbeatAt = Date.now();
+      const heartbeatIntervalMs =
+        input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
+
+      while (Date.now() < deadline) {
+        if (await pathExists(reportPath)) {
+          try {
+            const report = JSON.parse(await readFile(reportPath, "utf8"));
+            architectureReviewReportSchema.parse(report);
+            return { reportPath, repoRoot };
+          } catch {
+            // keep polling until the agent writes a valid structured verdict
+          }
+        }
+
+        lastHeartbeatAt = await emitHeartbeatIfDue({
+          lastHeartbeatAt,
+          heartbeatIntervalMs,
+          onHeartbeat: input.onHeartbeat
+        });
+        await sleep(pollIntervalMs);
+      }
+
+      throw new OpenClawCompletionTimeoutError({
+        sessionKey: input.sessionKey,
+        timeoutMs,
+        phase: "reviewer"
       });
     }
   };

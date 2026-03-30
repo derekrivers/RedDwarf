@@ -1,4 +1,4 @@
-import { v1DisabledPhases } from "@reddwarf/contracts";
+﻿import { v1DisabledPhases } from "@reddwarf/contracts";
 import type {
   ApprovalMode,
   Capability,
@@ -24,6 +24,10 @@ export const planningCapabilities: Capability[] = ["can_plan", "can_archive_evid
 export const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
   "can_use_secrets"
+];
+export const architectureReviewCapabilities: Capability[] = [
+  "can_review",
+  "can_archive_evidence"
 ];
 export const validationCapabilities: Capability[] = [
   "can_run_tests",
@@ -98,9 +102,13 @@ export function resolveApprovalMode(
   input: ApprovalResolutionInput
 ): ApprovalMode {
   if (
-    ["intake", "eligibility", "planning", "policy_gate", "archive"].includes(
-      input.phase
-    ) &&
+    [
+      "intake",
+      "eligibility",
+      "planning",
+      "policy_gate",
+      "archive"
+    ].includes(input.phase) &&
     input.requestedCapabilities.every((capability) =>
       planningCapabilities.includes(capability)
     )
@@ -135,6 +143,7 @@ export function resolveApprovalMode(
 const phaseCapabilityMap: Partial<Record<TaskPhase, Capability[]>> = {
   planning: planningCapabilities,
   development: developmentCapabilities,
+  architecture_review: architectureReviewCapabilities,
   validation: validationCapabilities,
   scm: scmCapabilities
 };
@@ -189,7 +198,7 @@ export function buildPolicySnapshot(
     approvalMode === "auto"
       ? ["Planning phase is approved for autonomous execution in v1."]
       : [
-          "Developer orchestration may continue after human intervention, validation can run read-only checks, SCM can open an approved branch and pull request after validation, and review remains blocked in v1."
+          "Developer orchestration may continue after human intervention, architecture review now runs before validation, SCM can open an approved branch and pull request after validation, and only the final post-validation review remains blocked in v1."
         ];
 
   if (

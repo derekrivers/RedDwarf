@@ -6,16 +6,14 @@ import {
   isRecoverablePhase,
   requirePhaseSnapshot
 } from "./shared.js";
+import { formatDispatchError } from "./failure.js";
 import {
-  formatDispatchError
-} from "./failure.js";
-import {
-  type DispatchPhaseOutcome,
   type DispatchReadyTaskDependencies,
   type DispatchReadyTaskInput,
   type DispatchReadyTaskResult,
   type RecoverablePhase
 } from "./types.js";
+import { runArchitectureReviewPhase } from "./architecture-review.js";
 import { runDeveloperPhase } from "./development.js";
 import { runValidationPhase } from "./validation.js";
 import { runScmPhase } from "./scm.js";
@@ -181,6 +179,69 @@ export async function dispatchReadyTask(
       startPhase,
       approvalRequestId: approvedFailureRecoveryRequest?.requestId ?? null
     });
+  }
+
+  if (startPhase === "development") {
+    try {
+      dispatchLogger.info("Dispatching architecture review phase.", { taskId });
+
+      const reviewResult = await runArchitectureReviewPhase(
+        {
+          taskId,
+          targetRoot: input.targetRoot,
+          evidenceRoot: input.evidenceRoot
+        },
+        {
+          repository,
+          reviewer: dependencies.reviewer,
+          ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
+          ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
+          ...(dependencies.architectureReviewAwaiter ? { architectureReviewAwaiter: dependencies.architectureReviewAwaiter } : {}),
+          ...(dependencies.openClawReviewAgentId ? { openClawReviewAgentId: dependencies.openClawReviewAgentId } : {}),
+          ...(dependencies.logger ? { logger: dependencies.logger } : {}),
+          ...(dependencies.clock ? { clock: dependencies.clock } : {}),
+          ...(dependencies.concurrency ? { concurrency: dependencies.concurrency } : {}),
+          ...(dependencies.timing ? { timing: dependencies.timing } : {})
+        }
+      );
+
+      phasesExecuted.push("architecture_review");
+      dispatchLogger.info("Architecture review phase completed.", {
+        taskId,
+        nextAction: reviewResult.nextAction,
+        runId: reviewResult.runId
+      });
+
+      if (reviewResult.nextAction === "task_blocked") {
+        return {
+          taskId,
+          outcome: "blocked",
+          phasesExecuted,
+          finalPhase: "architecture_review"
+        };
+      }
+
+      if (reviewResult.nextAction === "await_human_review") {
+        return {
+          taskId,
+          outcome: "blocked",
+          phasesExecuted,
+          finalPhase: "architecture_review"
+        };
+      }
+    } catch (error) {
+      dispatchLogger.error("Architecture review phase failed.", {
+        taskId,
+        error: formatDispatchError(error)
+      });
+      return {
+        taskId,
+        outcome: "failed",
+        phasesExecuted: [...phasesExecuted, "architecture_review"],
+        finalPhase: "architecture_review",
+        error: formatDispatchError(error)
+      };
+    }
   }
 
   if (startPhase !== "scm") {

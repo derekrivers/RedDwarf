@@ -1,5 +1,6 @@
 // Re-export deterministic agents from execution-plane
 export {
+  DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   DeterministicScmAgent,
@@ -14,12 +15,15 @@ export type {
   PlanningPipelineDependencies,
   PlanningPipelineResult,
   RunDeveloperPhaseInput,
+  RunArchitectureReviewPhaseInput,
   RunValidationPhaseInput,
   RunScmPhaseInput,
   DevelopmentPhaseDependencies,
+  ArchitectureReviewPhaseDependencies,
   ValidationPhaseDependencies,
   ScmPhaseDependencies,
   DevelopmentPhaseResult,
+  ArchitectureReviewPhaseResult,
   ValidationPhaseResult,
   ScmPhaseResult,
   ResolveApprovalRequestInput,
@@ -42,10 +46,7 @@ export type {
 export type { PhaseRunContext } from "./shared.js";
 
 // Value exports from types
-export {
-  phaseRegistry,
-  PlanningPipelineFailure
-} from "./types.js";
+export { phaseRegistry, PlanningPipelineFailure } from "./types.js";
 
 // Context helpers
 export { createPhaseRunContext } from "./context.js";
@@ -59,6 +60,7 @@ export { buildRuntimeWorkspacePath } from "./workspace-path.js";
 // Pipeline phase functions
 export { runPlanningPipeline } from "./planning.js";
 export { runDeveloperPhase } from "./development.js";
+export { runArchitectureReviewPhase } from "./architecture-review.js";
 export { runValidationPhase } from "./validation.js";
 export { runScmPhase } from "./scm.js";
 export { resolveApprovalRequest } from "./approval.js";

@@ -54,7 +54,7 @@ import {
 // Workspace interfaces
 // ============================================================
 
-const [TOOL_MODE_PLANNING, TOOL_MODE_DEVELOPMENT, TOOL_MODE_VALIDATION, TOOL_MODE_SCM] = workspaceToolModes;
+const [TOOL_MODE_PLANNING, TOOL_MODE_DEVELOPMENT, TOOL_MODE_ARCHITECTURE_REVIEW, TOOL_MODE_VALIDATION, TOOL_MODE_SCM] = workspaceToolModes;
 
 export interface WorkspaceContextArtifacts {
   taskJson: string;
@@ -174,6 +174,7 @@ const agentInstructionPathByType: Partial<
 > = {
   architect: "agents/architect.md",
   developer: "agents/developer.md",
+  reviewer: "agents/reviewer.md",
   validation: "agents/validation.md"
 };
 
@@ -206,6 +207,11 @@ const planningWorkspaceToolPolicyNotes = [
 const developmentWorkspaceToolPolicyNotes = [
   "Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default.",
   "Use the isolated workspace for inspection, handoff artifacts, and evidence capture before validation checks run."
+] as const;
+
+const architectureReviewWorkspaceToolPolicyNotes = [
+  "Architecture review runs after developer handoff and before validation to compare the implementation against the approved plan.",
+  "Review output must stay evidence-friendly, keep product code writes disabled, and stop validation when structural drift is detected."
 ] as const;
 
 const validationWorkspaceToolPolicyNotes = [
@@ -930,6 +936,19 @@ export function createWorkspaceToolPolicy(
     bundle.policySnapshot.allowedSecretScopes.length > 0
       ? (["can_use_secrets"] as Capability[])
       : [];
+
+  if (
+    bundle.manifest.currentPhase === "architecture_review" ||
+    bundle.manifest.assignedAgentType === "reviewer"
+  ) {
+    return {
+      mode: TOOL_MODE_ARCHITECTURE_REVIEW,
+      codeWriteEnabled: false,
+      allowedCapabilities: ["can_review", "can_archive_evidence"],
+      blockedPhases: bundle.policySnapshot.blockedPhases,
+      notes: [...architectureReviewWorkspaceToolPolicyNotes]
+    };
+  }
 
   if (
     bundle.manifest.currentPhase === "validation" ||

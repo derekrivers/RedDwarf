@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   DeterministicScmAgent,
@@ -31,6 +32,7 @@ import {
   resolveApprovalRequest,
   runDeveloperPhase,
   runPlanningPipeline,
+  runArchitectureReviewPhase,
   runScmPhase,
   runValidationPhase,
   sweepOrphanedDispatcherState,
@@ -908,6 +910,226 @@ describe("control-plane", () => {
     }
   });
 
+  it("runs the architecture review phase and archives a passing verdict before validation", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-architecture-review-workspace-")
+    );
+    const evidenceRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-architecture-review-evidence-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-architecture-review-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for architecture review orchestration.",
+        comment: "Developer handoff must pass architecture review before validation."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-architecture-review",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-architecture-review-dev"
+        }
+      );
+      const review = await runArchitectureReviewPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          reviewer: new DeterministicArchitectureReviewAgent(),
+          clock: () => new Date("2026-03-25T18:12:00.000Z"),
+          idGenerator: () => "run-architecture-review-phase"
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const reportMarkdown = await readFile(
+        join(review.workspace!.artifactsDir, "architecture-review.md"),
+        "utf8"
+      );
+      const taskMemory = await repository.listMemoryRecords({
+        taskId: planningResult.manifest.taskId,
+        scope: "task"
+      });
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(review.nextAction).toBe("await_validation");
+      expect(review.report?.verdict).toBe("pass");
+      expect(review.manifest.currentPhase).toBe("architecture_review");
+      expect(review.manifest.lifecycleStatus).toBe("blocked");
+      expect(review.workspace?.descriptor.toolPolicy.mode).toBe(
+        "architecture_review_only"
+      );
+      expect(reportMarkdown).toContain("Architecture Review Report");
+      expect(
+        repository.phaseRecords.some(
+          (record) =>
+            record.phase === "architecture_review" && record.status === "passed"
+        )
+      ).toBe(true);
+      expect(
+        repository.evidenceRecords.some((record) =>
+          record.recordId.includes(":architecture-review:")
+        )
+      ).toBe(true);
+      expect(
+        taskMemory.some((record) => record.key === "architecture_review.verdict")
+      ).toBe(true);
+      expect(persistedManifest?.assignedAgentType).toBe("reviewer");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks validation when architecture review returns a failing verdict", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-architecture-review-fail-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:20:00.000Z"),
+        idGenerator: () => "run-architecture-review-fail-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for failing architecture review coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:21:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-architecture-review-fail"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:22:00.000Z"),
+          idGenerator: () => "run-architecture-review-fail-dev"
+        }
+      );
+
+      const review = await runArchitectureReviewPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          reviewer: {
+            async reviewImplementation() {
+              return {
+                verdict: "fail",
+                summary: "Architecture review found structural drift.",
+                structuralDrift: [
+                  "Validation would run before the required architecture correction is made."
+                ],
+                checks: [
+                  {
+                    name: "layer_boundaries",
+                    status: "fail",
+                    detail: "The implementation drifted outside the approved boundaries."
+                  }
+                ],
+                findings: [
+                  {
+                    severity: "error",
+                    summary: "Structural drift detected",
+                    detail: "The implementation no longer matches the approved plan.",
+                    affectedPaths: ["src/app.ts"]
+                  }
+                ],
+                recommendedNextActions: [
+                  "Fix the implementation and rerun architecture review before validation."
+                ]
+              };
+            }
+          } as unknown as DeterministicArchitectureReviewAgent,
+          clock: () => new Date("2026-03-25T18:23:00.000Z"),
+          idGenerator: () => "run-architecture-review-fail-phase"
+        }
+      );
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+
+      expect(review.nextAction).toBe("await_human_review");
+      expect(review.report?.verdict).toBe("fail");
+      expect(review.manifest.currentPhase).toBe("architecture_review");
+      expect(review.manifest.lifecycleStatus).toBe("blocked");
+      expect(
+        repository.phaseRecords.some(
+          (record) =>
+            record.phase === "architecture_review" && record.status === "failed"
+        )
+      ).toBe(true);
+      expect(persistedManifest?.currentPhase).toBe("architecture_review");
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.phase === "architecture_review" &&
+            event.code === "PHASE_BLOCKED"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
   it("runs validation commands in the managed workspace and blocks pending review", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(
@@ -1452,6 +1674,7 @@ describe("control-plane", () => {
         {
           repository,
           developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: flakyGithub,
@@ -3485,7 +3708,7 @@ describe("sweepOrphanedDispatcherState", () => {
     await repository.saveManifest(manifest);
     await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
     await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
-    // No approval row saved — simulates deleted approval
+    // No approval row saved â€” simulates deleted approval
 
     const result = await sweepOrphanedDispatcherState(repository, {
       clock: () => new Date(orphanTs),
@@ -3540,7 +3763,7 @@ describe("sweepOrphanedDispatcherState", () => {
         updatedAt: orphanTs
       })
     );
-    // No pending failure-escalation approval row — simulates deleted approval
+    // No pending failure-escalation approval row â€” simulates deleted approval
 
     const result = await sweepOrphanedDispatcherState(repository, {
       clock: () => new Date(orphanTs),
@@ -3668,6 +3891,7 @@ describe("dispatchReadyTask", () => {
           {
             repository,
             developer: new DeterministicDeveloperAgent(),
+            reviewer: new DeterministicArchitectureReviewAgent(),
             validator: new DeterministicValidationAgent(),
             scm: new DeterministicScmAgent(),
             github: new FixtureGitHubAdapter({ candidates: [] }),
@@ -3723,6 +3947,7 @@ describe("dispatchReadyTask", () => {
         {
           repository,
           developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: new FixtureGitHubAdapter({ candidates: [] })
@@ -3730,8 +3955,13 @@ describe("dispatchReadyTask", () => {
       );
 
       expect(result.taskId).toBe(planResult.manifest.taskId);
-      expect(result.phasesExecuted).toContain("development");
-      expect(["completed", "blocked", "failed"]).toContain(result.outcome);
+      expect(result.phasesExecuted).toEqual([
+        "development",
+        "architecture_review",
+        "validation"
+      ]);
+      expect(result.outcome).toBe("completed");
+      expect(result.finalPhase).toBe("validation");
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
@@ -3839,6 +4069,7 @@ describe("dispatchReadyTask", () => {
               );
             }
           } as never,
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: fixtureGithub,
@@ -4000,6 +4231,7 @@ describe("dispatchReadyTask", () => {
               );
             }
           } as never,
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: fixtureGithub,
@@ -4060,6 +4292,7 @@ describe("dispatchReadyTask", () => {
         {
           repository,
           developer: developer as unknown as DeterministicDeveloperAgent,
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: new FixtureGitHubAdapter({ candidates: [] })
@@ -4148,6 +4381,7 @@ describe("createReadyTaskDispatcher", () => {
         {
           repository: new InMemoryPlanningRepository(),
           developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: new FixtureGitHubAdapter({ candidates: [] }),
@@ -4252,6 +4486,7 @@ describe("createReadyTaskDispatcher", () => {
               );
             }
           } as never,
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: fixtureGithub,
@@ -4399,6 +4634,7 @@ describe("createReadyTaskDispatcher", () => {
               );
             }
           } as never,
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: fixtureGithub,
@@ -4426,6 +4662,7 @@ describe("createReadyTaskDispatcher", () => {
       {
         repository,
         developer: new DeterministicDeveloperAgent(),
+        reviewer: new DeterministicArchitectureReviewAgent(),
         validator: new DeterministicValidationAgent(),
         scm: new DeterministicScmAgent(),
         github: fixtureGithub,
@@ -4453,6 +4690,7 @@ describe("createReadyTaskDispatcher", () => {
       {
         repository,
         developer: new DeterministicDeveloperAgent(),
+        reviewer: new DeterministicArchitectureReviewAgent(),
         validator: new DeterministicValidationAgent(),
         scm: new DeterministicScmAgent(),
         github: new FixtureGitHubAdapter({ candidates: [] }),
@@ -4490,6 +4728,7 @@ describe("createReadyTaskDispatcher", () => {
       {
         repository,
         developer: new DeterministicDeveloperAgent(),
+        reviewer: new DeterministicArchitectureReviewAgent(),
         validator: new DeterministicValidationAgent(),
         scm: new DeterministicScmAgent(),
         github: fixtureGithub,
@@ -4527,6 +4766,7 @@ describe("createReadyTaskDispatcher", () => {
         {
           repository,
           developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: new FixtureGitHubAdapter({ candidates: [] }),
@@ -4566,6 +4806,7 @@ describe("createReadyTaskDispatcher", () => {
       {
         repository,
         developer: new DeterministicDeveloperAgent(),
+        reviewer: new DeterministicArchitectureReviewAgent(),
         validator: new DeterministicValidationAgent(),
         scm: new DeterministicScmAgent(),
         github: new FixtureGitHubAdapter({ candidates: [] }),
@@ -4576,11 +4817,11 @@ describe("createReadyTaskDispatcher", () => {
 
     const result = await dispatcher.dispatchOnce();
 
-    // Dispatcher should skip the orphaned manifest — no dispatch occurred
+    // Dispatcher should skip the orphaned manifest â€” no dispatch occurred
     expect(result.dispatchedCount).toBe(0);
     expect(result.results).toHaveLength(0);
 
-    // Manifest should still be "ready" (not failed — that's the sweep's job)
+    // Manifest should still be "ready" (not failed â€” that's the sweep's job)
     const after = await repository.getManifest(manifest.taskId);
     expect(after?.lifecycleStatus).toBe("ready");
 

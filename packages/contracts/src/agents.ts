@@ -1,21 +1,22 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import {
   agentTypeSchema,
+  architectureReviewCheckStatusSchema,
+  architectureReviewVerdictSchema,
   capabilitySchema,
-  taskPhaseSchema,
+  eventLevelSchema,
   openClawAgentRoleSchema,
   openClawBootstrapFileKindSchema,
-  openClawToolProfileSchema,
   openClawSandboxModeSchema,
-  OPENCLAW_BOOTSTRAP_FILE_COUNT
+  openClawToolProfileSchema,
+  OPENCLAW_BOOTSTRAP_FILE_COUNT,
+  taskPhaseSchema
 } from "./enums.js";
 import type {
   WorkspaceContextBundle,
   MaterializedManagedWorkspace
 } from "./workspace.js";
 import type { PlanningTaskInput, TaskManifest } from "./planning.js";
-
-// ── Agent definitions ───────────────────────────────────────────────────────
 
 export const agentDefinitionSchema = z.object({
   id: z.string().min(1),
@@ -26,8 +27,6 @@ export const agentDefinitionSchema = z.object({
   enabled: z.boolean(),
   description: z.string().min(1)
 });
-
-// ── OpenClaw role definitions ───────────────────────────────────────────────
 
 export const openClawBootstrapFileSchema = z.object({
   kind: openClawBootstrapFileKindSchema,
@@ -54,17 +53,53 @@ export const openClawAgentRoleDefinitionSchema = z.object({
   displayName: z.string().min(1),
   purpose: z.string().min(1),
   runtimePolicy: openClawAgentRuntimePolicySchema,
-  bootstrapFiles: z.array(openClawBootstrapFileSchema).length(OPENCLAW_BOOTSTRAP_FILE_COUNT),
+  bootstrapFiles: z
+    .array(openClawBootstrapFileSchema)
+    .length(OPENCLAW_BOOTSTRAP_FILE_COUNT),
   canonicalSources: z.array(z.string().min(1)).min(1)
 });
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 export type OpenClawBootstrapFile = z.infer<typeof openClawBootstrapFileSchema>;
 export type OpenClawModelBinding = z.infer<typeof openClawModelBindingSchema>;
-export type OpenClawAgentRuntimePolicy = z.infer<typeof openClawAgentRuntimePolicySchema>;
-export type OpenClawAgentRoleDefinition = z.infer<typeof openClawAgentRoleDefinitionSchema>;
+export type OpenClawAgentRuntimePolicy = z.infer<
+  typeof openClawAgentRuntimePolicySchema
+>;
+export type OpenClawAgentRoleDefinition = z.infer<
+  typeof openClawAgentRoleDefinitionSchema
+>;
 
-// ── Agent draft types ───────────────────────────────────────────────────────
+export const architectureReviewCheckSchema = z.object({
+  name: z.string().min(1),
+  status: architectureReviewCheckStatusSchema,
+  detail: z.string().min(1)
+});
+
+export const architectureReviewFindingSchema = z.object({
+  severity: eventLevelSchema,
+  summary: z.string().min(1),
+  detail: z.string().min(1),
+  affectedPaths: z.array(z.string().min(1))
+});
+
+export const architectureReviewReportSchema = z.object({
+  verdict: architectureReviewVerdictSchema,
+  summary: z.string().min(1),
+  structuralDrift: z.array(z.string().min(1)),
+  checks: z.array(architectureReviewCheckSchema).min(1),
+  findings: z.array(architectureReviewFindingSchema),
+  recommendedNextActions: z.array(z.string().min(1))
+});
+
+export type ArchitectureReviewCheck = z.infer<
+  typeof architectureReviewCheckSchema
+>;
+export type ArchitectureReviewFinding = z.infer<
+  typeof architectureReviewFindingSchema
+>;
+export type ArchitectureReviewReport = z.infer<
+  typeof architectureReviewReportSchema
+>;
 
 export interface PlanningDraft {
   summary: string;
@@ -119,8 +154,6 @@ export interface ScmDraft {
   labels: string[];
 }
 
-// ── Agent interfaces ────────────────────────────────────────────────────────
-
 export interface PlanningAgent {
   createSpec(
     input: PlanningTaskInput,
@@ -138,6 +171,19 @@ export interface DevelopmentAgent {
       codeWriteEnabled: boolean;
     }
   ): Promise<DevelopmentDraft>;
+}
+
+export interface ArchitectureReviewAgent {
+  reviewImplementation(
+    bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      architectHandoffMarkdown?: string | null;
+      developerHandoffMarkdown?: string | null;
+    }
+  ): Promise<ArchitectureReviewReport>;
 }
 
 export interface ValidationAgent {

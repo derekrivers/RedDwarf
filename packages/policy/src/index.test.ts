@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assessEligibility,
   buildPolicySnapshot,
+  capabilitiesAllowedForPhase,
   classifyRisk,
-  resolveApprovalMode,
-  capabilitiesAllowedForPhase
+  resolveApprovalMode
 } from "@reddwarf/policy";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
@@ -53,6 +53,21 @@ describe("policy", () => {
     ).toBe(true);
   });
 
+  it("allows review-only capabilities during the architecture review phase", () => {
+    expect(
+      capabilitiesAllowedForPhase("architecture_review", [
+        "can_review",
+        "can_archive_evidence"
+      ])
+    ).toBe(true);
+    expect(
+      capabilitiesAllowedForPhase("architecture_review", ["can_run_tests"])
+    ).toBe(false);
+    expect(
+      capabilitiesAllowedForPhase("architecture_review", ["can_write_code"])
+    ).toBe(false);
+  });
+
   it("allows read-only validation capabilities during the validation phase", () => {
     expect(
       capabilitiesAllowedForPhase("validation", [
@@ -78,9 +93,23 @@ describe("policy", () => {
     );
   });
 
-  it("builds a policy snapshot with review as the remaining blocked future phase", () => {
+  it("builds a policy snapshot with only the post-validation review phase still blocked", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
     expect(snapshot.blockedPhases).toEqual(["review"]);
+  });
+
+  it("describes architecture review in the human-approval policy reason", () => {
+    const snapshot = buildPolicySnapshot(
+      {
+        ...baseInput,
+        affectedPaths: ["src/feature.ts"],
+        requestedCapabilities: ["can_write_code"]
+      },
+      "medium",
+      "human_signoff_required"
+    );
+
+    expect(snapshot.reasons[0]).toContain("architecture review now runs before validation");
   });
 
   it("grants scoped secrets only to non-high-risk tasks with explicit scopes", () => {

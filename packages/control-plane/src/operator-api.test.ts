@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   DeterministicScmAgent,
@@ -572,6 +573,7 @@ describe("operator API server", () => {
         repository,
         dispatchDependencies: {
           developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
           validator: new DeterministicValidationAgent(),
           scm: new DeterministicScmAgent(),
           github: new FixtureGitHubAdapter({ candidates: [] })

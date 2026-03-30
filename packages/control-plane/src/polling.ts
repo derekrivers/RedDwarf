@@ -1,5 +1,6 @@
 import {
   asIsoTimestamp,
+  type ArchitectureReviewAgent,
   type DevelopmentAgent,
   type PlanningAgent,
   type ScmAgent,
@@ -21,6 +22,7 @@ import type {
 } from "@reddwarf/integrations";
 import { bindPlanningLogger, type PlanningPipelineLogger } from "./logger.js";
 import type {
+  ArchitectureReviewCompletionAwaiter,
   OpenClawCompletionAwaiter,
   WorkspaceCommitPublisher,
   WorkspaceRepoBootstrapper
@@ -551,9 +553,9 @@ function selectUnseenCandidates(
  * Returns `true` when the candidate's author is permitted given the configured
  * allowlist, `false` when it should be rejected.
  *
- * - `undefined` allowlist  → no filtering; all authors pass.
- * - empty array            → full default-deny; all authors rejected.
- * - non-empty array        → only listed usernames pass (case-insensitive).
+ * - `undefined` allowlist  â†’ no filtering; all authors pass.
+ * - empty array            â†’ full default-deny; all authors rejected.
+ * - non-empty array        â†’ only listed usernames pass (case-insensitive).
  */
 function isAuthorAllowed(
   candidate: GitHubIssueCandidate,
@@ -640,6 +642,7 @@ export interface ReadyTaskDispatcherConfig {
 export interface ReadyTaskDispatcherDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  reviewer: ArchitectureReviewAgent;
   validator: ValidationAgent;
   scm: ScmAgent;
   github: GitHubAdapter;
@@ -647,6 +650,8 @@ export interface ReadyTaskDispatcherDependencies {
   secrets?: SecretsAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
+  architectureReviewAwaiter?: ArchitectureReviewCompletionAwaiter;
+  openClawReviewAgentId?: string;
   workspaceCommitPublisher?: WorkspaceCommitPublisher;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
@@ -879,6 +884,7 @@ export function createReadyTaskDispatcher(
                   {
                     repository: deps.repository,
                     developer: deps.developer,
+                    reviewer: deps.reviewer,
                     validator: deps.validator,
                     scm: deps.scm,
                     github: deps.github,
@@ -889,6 +895,12 @@ export function createReadyTaskDispatcher(
                       : {}),
                     ...(deps.openClawCompletionAwaiter
                       ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter }
+                      : {}),
+                    ...(deps.architectureReviewAwaiter
+                      ? { architectureReviewAwaiter: deps.architectureReviewAwaiter }
+                      : {}),
+                    ...(deps.openClawReviewAgentId
+                      ? { openClawReviewAgentId: deps.openClawReviewAgentId }
                       : {}),
                     ...(deps.workspaceCommitPublisher
                       ? { workspaceCommitPublisher: deps.workspaceCommitPublisher }

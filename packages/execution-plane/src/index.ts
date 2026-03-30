@@ -2,6 +2,8 @@ import { relative } from "node:path";
 import { v1DisabledPhases } from "@reddwarf/contracts";
 import type {
   AgentDefinition,
+  ArchitectureReviewAgent,
+  ArchitectureReviewReport,
   DevelopmentAgent,
   DevelopmentDraft,
   MaterializedManagedWorkspace,
@@ -51,13 +53,14 @@ export const agentDefinitions: AgentDefinition[] = [
       "Runs deterministic lint and test commands inside the managed workspace before review or SCM."
   },
   {
-    id: "reviewer-placeholder",
-    displayName: "Reviewer Agent",
+    id: "architecture-reviewer-default",
+    displayName: "Architecture Reviewer Agent",
     type: "reviewer",
-    capabilities: ["can_review"],
-    activePhases: ["review"],
-    enabled: false,
-    description: "Declared for future review gates, disabled in v1."
+    capabilities: ["can_review", "can_archive_evidence"],
+    activePhases: ["architecture_review"],
+    enabled: true,
+    description:
+      "Compares the implementation against the approved plan and emits a structured conformance verdict before validation."
   },
   {
     id: "scm-default",
@@ -167,6 +170,54 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       ...sharedOpenClawCanonicalSources,
       "agents/architect.md",
       "agents/developer.md"
+    ]
+  },
+  {
+    agentId: "reddwarf-arch-reviewer",
+    role: "reviewer",
+    displayName: "RedDwarf Architecture Reviewer",
+    purpose:
+      "Checks implementation against the approved planning spec, flags structural drift, and emits a structured conformance verdict without rewriting code.",
+    runtimePolicy: {
+      toolProfile: "full",
+      allow: ["group:fs", "group:runtime", "group:openclaw"],
+      deny: ["group:automation", "group:messaging"],
+      sandboxMode: "workspace_write",
+      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+    },
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/kryten/IDENTITY.md",
+        description: "Kryten identity and architecture-review persona."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/kryten/SOUL.md",
+        description: "Operating posture for architecture conformance review."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/kryten/AGENTS.md",
+        description: "Runtime roster and reviewer handoff rules."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/kryten/TOOLS.md",
+        description: "Tool-usage guardrails for bounded architecture review."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/kryten/skills/review_implementation_against_plan/SKILL.md",
+        description:
+          "Primary review skill for plan-vs-implementation conformance verification."
+      }
+    ],
+    canonicalSources: [
+      ...sharedOpenClawCanonicalSources,
+      "agents/reviewer.md",
+      "agents/developer.md",
+      "agents/validation.md"
     ]
   },
   {
@@ -337,6 +388,56 @@ export class DeterministicDeveloperAgent implements DevelopmentAgent {
       nextActions: [
         "Run the validation phase against the managed workspace before asking for review or SCM handoff.",
         "Escalate if the task truly requires code-write access before downstream phases land."
+      ]
+    };
+  }
+}
+
+export class DeterministicArchitectureReviewAgent implements ArchitectureReviewAgent {
+  async reviewImplementation(
+    _bundle: WorkspaceContextBundle,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      workspace: MaterializedManagedWorkspace;
+      architectHandoffMarkdown?: string | null;
+      developerHandoffMarkdown?: string | null;
+    }
+  ): Promise<ArchitectureReviewReport> {
+    return {
+      verdict: "pass",
+      summary: `Architecture review passed for workspace ${context.workspace.workspaceId} before validation.`,
+      structuralDrift: [],
+      checks: [
+        {
+          name: "layer_boundaries",
+          status: "pass",
+          detail: "Deterministic fallback found no explicit layer-boundary drift markers."
+        },
+        {
+          name: "integration_plane_usage",
+          status: "pass",
+          detail: "No integration-plane bypass is asserted in the deterministic fallback."
+        },
+        {
+          name: "evidence_archival",
+          status: "pass",
+          detail: "The workflow continues to archive developer evidence before validation."
+        },
+        {
+          name: "guardrail_preservation",
+          status: "pass",
+          detail: "No V1 guardrail regressions are reported in the deterministic fallback."
+        },
+        {
+          name: "secret_hygiene",
+          status: "not_applicable",
+          detail: "Secret hygiene is not evaluated in the deterministic fallback unless scoped secrets are in play."
+        }
+      ],
+      findings: [],
+      recommendedNextActions: [
+        "Proceed to validation using the current managed workspace."
       ]
     };
   }

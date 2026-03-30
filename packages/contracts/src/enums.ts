@@ -1,4 +1,4 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 
 export const taskPhases = [
   "intake",
@@ -6,6 +6,7 @@ export const taskPhases = [
   "planning",
   "policy_gate",
   "development",
+  "architecture_review",
   "validation",
   "review",
   "scm",
@@ -111,6 +112,7 @@ export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
 export const workspaceToolModes = [
   "planning_only",
   "development_readonly",
+  "architecture_review_only",
   "validation_only",
   "scm_only"
 ] as const;
@@ -124,7 +126,13 @@ export const approvalRequestStatuses = [
 export const approvalDecisions = ["approve", "reject"] as const;
 export const githubIssuePollingCursorStatuses = ["succeeded", "failed"] as const;
 
-export const openClawAgentRoles = ["coordinator", "analyst", "validator", "developer"] as const;
+export const openClawAgentRoles = [
+  "coordinator",
+  "analyst",
+  "reviewer",
+  "validator",
+  "developer"
+] as const;
 export const openClawBootstrapFileKinds = [
   "identity",
   "soul",
@@ -134,8 +142,14 @@ export const openClawBootstrapFileKinds = [
 ] as const;
 export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
 export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
+export const architectureReviewVerdicts = ["pass", "fail", "escalate"] as const;
+export const architectureReviewCheckStatuses = [
+  "pass",
+  "fail",
+  "not_applicable"
+] as const;
 
-// ── Schema validation constants ─────────────────────────────────────────────
+// Schema validation constants
 
 export const TITLE_MIN_LENGTH = 5;
 export const SUMMARY_MIN_LENGTH = 20;
@@ -145,7 +159,7 @@ export const QUERY_LIMIT_MAX = 100;
 export const QUERY_LIMIT_DEFAULT = 50;
 export const OPENCLAW_BOOTSTRAP_FILE_COUNT = 5;
 
-// ── Shared utility schemas ──────────────────────────────────────────────────
+// Shared utility schemas
 
 export const isoDateTimeSchema = z.string().datetime({ offset: true });
 
@@ -160,7 +174,7 @@ export const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   ])
 );
 
-// ── Enum schemas ────────────────────────────────────────────────────────────
+// Enum schemas
 
 export const taskPhaseSchema = z.enum(taskPhases);
 export const taskLifecycleStatusSchema = z.enum(taskLifecycleStatuses);
@@ -193,8 +207,14 @@ export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
 export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
 export const openClawToolProfileSchema = z.enum(openClawToolProfiles);
 export const openClawSandboxModeSchema = z.enum(openClawSandboxModes);
+export const architectureReviewVerdictSchema = z.enum(
+  architectureReviewVerdicts
+);
+export const architectureReviewCheckStatusSchema = z.enum(
+  architectureReviewCheckStatuses
+);
 
-// ── Enum type exports ───────────────────────────────────────────────────────
+// Enum type exports
 
 export type TaskPhase = z.infer<typeof taskPhaseSchema>;
 export type TaskLifecycleStatus = z.infer<typeof taskLifecycleStatusSchema>;
@@ -219,8 +239,14 @@ export type OpenClawAgentRole = z.infer<typeof openClawAgentRoleSchema>;
 export type OpenClawBootstrapFileKind = z.infer<typeof openClawBootstrapFileKindSchema>;
 export type OpenClawToolProfile = z.infer<typeof openClawToolProfileSchema>;
 export type OpenClawSandboxMode = z.infer<typeof openClawSandboxModeSchema>;
+export type ArchitectureReviewVerdict = z.infer<
+  typeof architectureReviewVerdictSchema
+>;
+export type ArchitectureReviewCheckStatus = z.infer<
+  typeof architectureReviewCheckStatusSchema
+>;
 
-// ── Utility ─────────────────────────────────────────────────────────────────
+// Utility
 
 export function asIsoTimestamp(date: Date = new Date()): string {
   return date.toISOString();

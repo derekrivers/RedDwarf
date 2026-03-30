@@ -1,6 +1,8 @@
 import {
   type ApprovalDecision,
   type ApprovalRequest,
+  type ArchitectureReviewAgent,
+  type ArchitectureReviewReport,
   type Capability,
   type ConcurrencyDecision,
   type ConcurrencyStrategy,
@@ -32,6 +34,7 @@ import {
 import {
   DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
   DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  type ArchitectureReviewCompletionAwaiter,
   type OpenClawCompletionAwaiter,
   type WorkspaceCommitPublisher,
   type WorkspaceRepoBootstrapper
@@ -58,6 +61,7 @@ export const phaseRegistry: Record<TaskPhase, PhaseDefinition> = {
   planning: { failureClass: "planning_failure", failureCode: "PLANNING_FAILED", recovery: defaultRecovery },
   policy_gate: { failureClass: "policy_violation", failureCode: "POLICY_GATE_FAILED", recovery: defaultRecovery },
   development: { failureClass: "integration_failure", failureCode: "DEVELOPMENT_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["integration_failure"] } },
+  architecture_review: { failureClass: "review_failure", failureCode: "ARCHITECTURE_REVIEW_FAILED", recovery: defaultRecovery },
   validation: { failureClass: "validation_failure", failureCode: "VALIDATION_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["validation_failure", "integration_failure"] } },
   review: { failureClass: "review_failure", failureCode: "REVIEW_FAILED", recovery: defaultRecovery },
   scm: { failureClass: "merge_failure", failureCode: "SCM_FAILED", recovery: defaultRecovery },
@@ -116,6 +120,7 @@ export const DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS = 10 * 60_000;
 export const phaseTimeoutBudgetsMs: Partial<Record<TaskPhase, number>> = {
   planning: DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
   development: DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
+  architecture_review: DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
   validation: DEFAULT_VALIDATION_COMMAND_TIMEOUT_MS,
   scm: DEFAULT_GIT_COMMAND_TIMEOUT_MS
 };
@@ -167,6 +172,13 @@ export interface RunDeveloperPhaseInput {
   evidenceRoot?: string | undefined;
 }
 
+export interface RunArchitectureReviewPhaseInput {
+  taskId: string;
+  targetRoot: string;
+  workspaceId?: string;
+  evidenceRoot?: string | undefined;
+}
+
 export interface RunValidationPhaseInput {
   taskId: string;
   targetRoot: string;
@@ -193,6 +205,21 @@ export interface DevelopmentPhaseDependencies {
   openClawAgentId?: string;
   hollyHandoffMarkdown?: string;
   environment?: string;
+  logger?: PlanningPipelineLogger;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  concurrency?: PlanningConcurrencyOptions;
+  timing?: PhaseTimingOptions;
+}
+
+export interface ArchitectureReviewPhaseDependencies {
+  repository: PlanningRepository;
+  reviewer: ArchitectureReviewAgent;
+  runtimeConfig?: WorkspaceRuntimeConfig;
+  openClawDispatch?: OpenClawDispatchAdapter;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
+  architectureReviewAwaiter?: ArchitectureReviewCompletionAwaiter;
+  openClawReviewAgentId?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -235,6 +262,17 @@ export interface DevelopmentPhaseResult {
   handoff?: import("@reddwarf/contracts").DevelopmentDraft;
   handoffPath?: string;
   nextAction: "await_validation" | "task_blocked";
+  concurrencyDecision: ConcurrencyDecision;
+  openClawDispatchResult?: OpenClawDispatchResult;
+}
+
+export interface ArchitectureReviewPhaseResult {
+  runId: string;
+  manifest: TaskManifest;
+  workspace?: MaterializedManagedWorkspace;
+  report?: ArchitectureReviewReport;
+  reportPath?: string;
+  nextAction: "await_validation" | "await_human_review" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
   openClawDispatchResult?: OpenClawDispatchResult;
 }
@@ -324,6 +362,7 @@ export interface DispatchReadyTaskInput {
 export interface DispatchReadyTaskDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  reviewer: ArchitectureReviewAgent;
   validator: ValidationAgent;
   scm: ScmAgent;
   github: GitHubAdapter;
@@ -331,6 +370,8 @@ export interface DispatchReadyTaskDependencies {
   secrets?: SecretsAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
+  architectureReviewAwaiter?: ArchitectureReviewCompletionAwaiter;
+  openClawReviewAgentId?: string;
   workspaceCommitPublisher?: WorkspaceCommitPublisher;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;

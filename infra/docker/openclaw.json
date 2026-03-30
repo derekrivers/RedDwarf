@@ -20,6 +20,7 @@
     "allowedAgentIds": [
       "reddwarf-coordinator",
       "reddwarf-analyst",
+      "reddwarf-arch-reviewer",
       "reddwarf-validator",
       "reddwarf-developer"
     ],
@@ -69,6 +70,28 @@
           "allow": [
             "group:fs",
             "group:web",
+            "group:openclaw"
+          ],
+          "deny": [
+            "group:automation",
+            "group:messaging"
+          ]
+        },
+        "sandbox": {
+          "mode": "off"
+        }
+      },
+      {
+        "id": "reddwarf-arch-reviewer",
+        "name": "RedDwarf Architecture Reviewer",
+        "workspace": "/var/lib/reddwarf/workspaces",
+        "agentDir": "/home/node/.openclaw/agents/reddwarf-arch-reviewer/agent",
+        "model": "anthropic/claude-sonnet-4-6",
+        "tools": {
+          "profile": "full",
+          "allow": [
+            "group:fs",
+            "group:runtime",
             "group:openclaw"
           ],
           "deny": [

@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
   DeterministicScmAgent,
@@ -368,17 +369,17 @@ describe("agentDefinitions", () => {
     expect(ids).toContain("developer-default");
     expect(ids).toContain("validation-default");
     expect(ids).toContain("scm-default");
-    expect(ids).toContain("reviewer-placeholder");
+    expect(ids).toContain("architecture-reviewer-default");
   });
 
-  it("marks the reviewer as disabled in v1", () => {
-    const reviewer = agentDefinitions.find((a) => a.id === "reviewer-placeholder");
-    expect(reviewer?.enabled).toBe(false);
+  it("marks the reviewer as enabled for the dedicated architecture review phase", () => {
+    const reviewer = agentDefinitions.find((a) => a.id === "architecture-reviewer-default");
+    expect(reviewer?.enabled).toBe(true);
+    expect(reviewer?.activePhases).toEqual(["architecture_review"]);
   });
 
-  it("marks all other agents as enabled", () => {
-    const enabled = agentDefinitions.filter((a) => a.id !== "reviewer-placeholder");
-    for (const agent of enabled) {
+  it("marks all agents as enabled", () => {
+    for (const agent of agentDefinitions) {
       expect(agent.enabled).toBe(true);
     }
   });
@@ -389,12 +390,12 @@ describe("agentDefinitions", () => {
 // ============================================================
 
 describe("openClawAgentRoleDefinitions", () => {
-  it("declares coordinator, analyst, validator, and developer roles", () => {
+  it("declares coordinator, analyst, reviewer, validator, and developer roles", () => {
     const roles = openClawAgentRoleDefinitions.map((definition) =>
       openClawAgentRoleDefinitionSchema.parse(definition).role
     );
 
-    expect(roles).toEqual(["coordinator", "analyst", "validator", "developer"]);
+    expect(roles).toEqual(["coordinator", "analyst", "reviewer", "validator", "developer"]);
   });
 
   it("looks up a single role definition by role", () => {
@@ -458,9 +459,10 @@ describe("openClawAgentRoleDefinitions", () => {
 // ============================================================
 
 describe("phaseIsExecutable", () => {
-  it("returns true for planning, development, validation, and scm", () => {
+  it("returns true for planning, development, architecture_review, validation, and scm", () => {
     expect(phaseIsExecutable("planning")).toBe(true);
     expect(phaseIsExecutable("development")).toBe(true);
+    expect(phaseIsExecutable("architecture_review")).toBe(true);
     expect(phaseIsExecutable("validation")).toBe(true);
     expect(phaseIsExecutable("scm")).toBe(true);
   });
@@ -640,7 +642,7 @@ describe("bootstrap alignment", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.totalViolations).toBe(0);
-    expect(result.agents).toHaveLength(4);
+    expect(result.agents).toHaveLength(5);
     for (const agent of result.agents) {
       expect(agent.valid).toBe(true);
       expect(agent.filesChecked).toBe(5);
@@ -666,8 +668,4 @@ describe("bootstrap alignment", () => {
     expect(result.agents[0]!.violations.some((v) => v.message.includes("not found"))).toBe(true);
   });
 });
-
-
-
-
 

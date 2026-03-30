@@ -100,7 +100,7 @@ export async function runValidationPhase(
 
   const lifecycleAllowsValidation =
     (validatedManifest.lifecycleStatus === "blocked" &&
-      ["development", "validation"].includes(validatedManifest.currentPhase)) ||
+      ["development", "architecture_review", "validation"].includes(validatedManifest.currentPhase)) ||
     (validatedManifest.lifecycleStatus === "active" &&
       validatedManifest.currentPhase === "validation") ||
     (validatedManifest.lifecycleStatus === "ready" &&
