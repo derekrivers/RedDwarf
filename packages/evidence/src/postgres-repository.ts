@@ -164,44 +164,6 @@ export function createPostgresPlanningRepository(
 
 type QueryExecutor = pg.Pool | pg.PoolClient;
 
-class PostgresTransactionRepository implements PlanningTransactionRepository {
-  constructor(
-    private readonly owner: PostgresPlanningRepository,
-    private readonly executor: QueryExecutor
-  ) {}
-
-  async saveManifest(manifest: TaskManifest): Promise<void> {
-    await this.owner.saveManifestWithExecutor(this.executor, manifest);
-  }
-
-  async updateManifest(manifest: TaskManifest): Promise<void> {
-    await this.owner.saveManifestWithExecutor(this.executor, manifest);
-  }
-
-  async savePhaseRecord(record: PhaseRecord): Promise<void> {
-    await this.owner.savePhaseRecordWithExecutor(this.executor, record);
-  }
-
-  async saveEvidenceRecord(record: EvidenceRecord): Promise<void> {
-    await this.owner.saveEvidenceRecordWithExecutor(this.executor, record);
-  }
-
-  async saveRunEvent(event: RunEvent): Promise<void> {
-    await this.owner.saveRunEventWithExecutor(this.executor, event);
-  }
-
-  async saveMemoryRecord(record: MemoryRecord): Promise<void> {
-    await this.owner.saveMemoryRecordWithExecutor(this.executor, record);
-  }
-
-  async savePipelineRun(run: PipelineRun): Promise<void> {
-    await this.owner.savePipelineRunWithExecutor(this.executor, run);
-  }
-
-  async saveApprovalRequest(request: ApprovalRequest): Promise<void> {
-    await this.owner.saveApprovalRequestWithExecutor(this.executor, request);
-  }
-}
 
 export class PostgresPlanningRepository implements PlanningRepository {
   private readonly pool: pg.Pool;
@@ -269,7 +231,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.pool.end();
   }
 
-  async savePipelineRunWithExecutor(
+  private async savePipelineRunWithExecutor(
     executor: QueryExecutor,
     run: PipelineRun
   ): Promise<void> {
@@ -319,7 +281,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveManifestWithExecutor(
+  private async saveManifestWithExecutor(
     executor: QueryExecutor,
     manifest: TaskManifest
   ): Promise<void> {
@@ -401,7 +363,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveManifestWithExecutor(this.pool, manifest);
   }
 
-  async savePhaseRecordWithExecutor(
+  private async savePhaseRecordWithExecutor(
     executor: QueryExecutor,
     record: PhaseRecord
   ): Promise<void> {
@@ -506,7 +468,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveEvidenceRecordWithExecutor(
+  private async saveEvidenceRecordWithExecutor(
     executor: QueryExecutor,
     record: EvidenceRecord
   ): Promise<void> {
@@ -545,7 +507,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveEvidenceRecordWithExecutor(this.pool, record);
   }
 
-  async saveRunEventWithExecutor(
+  private async saveRunEventWithExecutor(
     executor: QueryExecutor,
     event: RunEvent
   ): Promise<void> {
@@ -596,7 +558,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveRunEventWithExecutor(this.pool, event);
   }
 
-  async saveMemoryRecordWithExecutor(
+  private async saveMemoryRecordWithExecutor(
     executor: QueryExecutor,
     record: MemoryRecord
   ): Promise<void> {
@@ -734,7 +696,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     }
   }
 
-  async saveApprovalRequestWithExecutor(
+  private async saveApprovalRequestWithExecutor(
     executor: QueryExecutor,
     request: ApprovalRequest
   ): Promise<void> {
@@ -815,7 +777,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveApprovalRequestWithExecutor(this.pool, request);
   }
 
-  async saveGitHubIssuePollingCursorWithExecutor(
+  private async saveGitHubIssuePollingCursorWithExecutor(
     executor: QueryExecutor,
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
@@ -863,7 +825,16 @@ export class PostgresPlanningRepository implements PlanningRepository {
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T> {
     const client = await this.pool.connect();
-    const repository = new PostgresTransactionRepository(this, client);
+    const repository: PlanningTransactionRepository = {
+      saveManifest: (manifest) => this.saveManifestWithExecutor(client, manifest),
+      updateManifest: (manifest) => this.saveManifestWithExecutor(client, manifest),
+      savePhaseRecord: (record) => this.savePhaseRecordWithExecutor(client, record),
+      saveEvidenceRecord: (record) => this.saveEvidenceRecordWithExecutor(client, record),
+      saveRunEvent: (event) => this.saveRunEventWithExecutor(client, event),
+      saveMemoryRecord: (record) => this.saveMemoryRecordWithExecutor(client, record),
+      savePipelineRun: (run) => this.savePipelineRunWithExecutor(client, run),
+      saveApprovalRequest: (request) => this.saveApprovalRequestWithExecutor(client, request)
+    };
 
     try {
       await client.query("BEGIN");
