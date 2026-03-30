@@ -637,31 +637,15 @@ export async function runPlanningPipeline(
     updatedAt: runStartedAtIso
   });
 
-  const runLogger = bindPlanningLogger(logger, {
+  const { runLogger, nextEventId, persistTrackedRun } = createPhaseRunContext({
     runId,
     taskId,
-    sourceRepo: input.source.repo
+    sourceRepo: input.source.repo,
+    getTrackedRun: () => trackedRun,
+    setTrackedRun: (run) => { trackedRun = run; },
+    repository,
+    logger
   });
-  let eventSequence = 0;
-  const nextEventId = (phase: TaskPhase, code: string): string => {
-    const sequence = String(eventSequence).padStart(3, "0");
-    eventSequence += 1;
-    return `${runId}:${sequence}:${phase}:${code}`;
-  };
-  const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
-    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
-  ): Promise<void> => {
-    trackedRun = createPipelineRun({
-      ...trackedRun,
-      ...patch,
-      metadata: {
-        ...trackedRun.metadata,
-        ...(patch.metadata ?? {})
-      }
-    });
-    await runRepository.savePipelineRun(trackedRun);
-  };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
     run: trackedRun,
@@ -1639,34 +1623,18 @@ export async function runDeveloperPhase(
         : {})
     }
   });
-  const runLogger = bindPlanningLogger(logger, {
+  const { runLogger, nextEventId, persistTrackedRun } = createPhaseRunContext({
     runId,
     taskId,
     sourceRepo: currentManifest.source.repo,
-    phase: "development"
+    phase: "development",
+    getTrackedRun: () => trackedRun,
+    setTrackedRun: (run) => { trackedRun = run; },
+    repository,
+    logger
   });
   let workspace: MaterializedManagedWorkspace | null = null;
   let secretLease: SecretLease | null = null;
-  let eventSequence = 0;
-  const nextEventId = (phase: TaskPhase, code: string): string => {
-    const sequence = String(eventSequence).padStart(3, "0");
-    eventSequence += 1;
-    return `${runId}:${sequence}:${phase}:${code}`;
-  };
-  const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
-    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
-  ): Promise<void> => {
-    trackedRun = createPipelineRun({
-      ...trackedRun,
-      ...patch,
-      metadata: {
-        ...trackedRun.metadata,
-        ...(patch.metadata ?? {})
-      }
-    });
-    await runRepository.savePipelineRun(trackedRun);
-  };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
     run: trackedRun,
@@ -2346,34 +2314,18 @@ export async function runValidationPhase(
         : {})
     }
   });
-  const runLogger = bindPlanningLogger(logger, {
+  const { runLogger, nextEventId, persistTrackedRun } = createPhaseRunContext({
     runId,
     taskId,
     sourceRepo: currentManifest.source.repo,
-    phase: "validation"
+    phase: "validation",
+    getTrackedRun: () => trackedRun,
+    setTrackedRun: (run) => { trackedRun = run; },
+    repository,
+    logger
   });
   let workspace: MaterializedManagedWorkspace | null = null;
   let secretLease: SecretLease | null = null;
-  let eventSequence = 0;
-  const nextEventId = (phase: TaskPhase, code: string): string => {
-    const sequence = String(eventSequence).padStart(3, "0");
-    eventSequence += 1;
-    return `${runId}:${sequence}:${phase}:${code}`;
-  };
-  const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
-    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
-  ): Promise<void> => {
-    trackedRun = createPipelineRun({
-      ...trackedRun,
-      ...patch,
-      metadata: {
-        ...trackedRun.metadata,
-        ...(patch.metadata ?? {})
-      }
-    });
-    await runRepository.savePipelineRun(trackedRun);
-  };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
     run: trackedRun,
@@ -3433,6 +3385,62 @@ async function heartbeatTrackedRun(input: {
       ...(input.metadata ?? {})
     }
   });
+}
+
+// ============================================================
+// Phase run context — shared across all four phase functions
+// ============================================================
+
+export interface PhaseRunContext {
+  runLogger: PlanningPipelineLogger;
+  nextEventId: (phase: TaskPhase, code: string) => string;
+  persistTrackedRun: (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
+  ) => Promise<void>;
+}
+
+export function createPhaseRunContext(input: {
+  runId: string;
+  taskId: string;
+  sourceRepo: string;
+  phase?: string;
+  getTrackedRun: () => PipelineRun;
+  setTrackedRun: (run: PipelineRun) => void;
+  repository: { savePipelineRun(run: PipelineRun): Promise<void> };
+  logger: PlanningPipelineLogger;
+}): PhaseRunContext {
+  const runLogger = bindPlanningLogger(input.logger, {
+    runId: input.runId,
+    taskId: input.taskId,
+    sourceRepo: input.sourceRepo,
+    ...(input.phase !== undefined ? { phase: input.phase } : {})
+  });
+
+  let eventSequence = 0;
+  const nextEventId = (phase: TaskPhase, code: string): string => {
+    const sequence = String(eventSequence).padStart(3, "0");
+    eventSequence += 1;
+    return `${input.runId}:${sequence}:${phase}:${code}`;
+  };
+
+  const persistTrackedRun = async (
+    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
+    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = input.repository
+  ): Promise<void> => {
+    const updated = createPipelineRun({
+      ...input.getTrackedRun(),
+      ...patch,
+      metadata: {
+        ...input.getTrackedRun().metadata,
+        ...(patch.metadata ?? {})
+      }
+    });
+    input.setTrackedRun(updated);
+    await runRepository.savePipelineRun(updated);
+  };
+
+  return { runLogger, nextEventId, persistTrackedRun };
 }
 
 function createSourceConcurrencyKey(
@@ -4559,32 +4567,16 @@ export async function runScmPhase(
         : {})
     }
   });
-  const runLogger = bindPlanningLogger(logger, {
+  const { runLogger, nextEventId, persistTrackedRun } = createPhaseRunContext({
     runId,
     taskId,
     sourceRepo: currentManifest.source.repo,
-    phase: "scm"
+    phase: "scm",
+    getTrackedRun: () => trackedRun,
+    setTrackedRun: (run) => { trackedRun = run; },
+    repository,
+    logger
   });
-  let eventSequence = 0;
-  const nextEventId = (phase: TaskPhase, code: string): string => {
-    const sequence = String(eventSequence).padStart(3, "0");
-    eventSequence += 1;
-    return `${runId}:${sequence}:${phase}:${code}`;
-  };
-  const persistTrackedRun = async (
-    patch: Partial<PipelineRun> & { metadata?: Record<string, unknown> },
-    runRepository: { savePipelineRun(run: PipelineRun): Promise<void> } = repository
-  ): Promise<void> => {
-    trackedRun = createPipelineRun({
-      ...trackedRun,
-      ...patch,
-      metadata: {
-        ...trackedRun.metadata,
-        ...(patch.metadata ?? {})
-      }
-    });
-    await runRepository.savePipelineRun(trackedRun);
-  };
 
   const { staleRunIds, blockedByRun } = await repository.claimPipelineRun({
     run: trackedRun,
