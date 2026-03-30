@@ -17,7 +17,9 @@ import {
 import {
   dispatchReadyTask,
   resolveApprovalRequest,
-  type DispatchReadyTaskDependencies
+  sweepOrphanedDispatcherState,
+  type DispatchReadyTaskDependencies,
+  type SweepOrphanedStateResult
 } from "./pipeline.js";
 import type {
   GitHubIssuePollingDaemon,
@@ -561,6 +563,20 @@ async function handleOperatorRequest(
       { repository, ...dispatchDependencies }
     );
 
+    writeOperatorJsonResponse(res, 200, result);
+    return;
+  }
+
+  // POST /maintenance/reconcile-orphaned-state
+  if (method === "POST" && path === "/maintenance/reconcile-orphaned-state") {
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null;
+    const scanLimit =
+      body && typeof body["scanLimit"] === "number" ? (body["scanLimit"] as number) : undefined;
+
+    const result: SweepOrphanedStateResult = await sweepOrphanedDispatcherState(
+      repository,
+      scanLimit !== undefined ? { scanLimit } : undefined
+    );
     writeOperatorJsonResponse(res, 200, result);
     return;
   }

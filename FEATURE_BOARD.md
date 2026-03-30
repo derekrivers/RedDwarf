@@ -9,6 +9,5 @@ Priority reset note: after the March 29, 2026 hardening audit, pending feature w
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
-| 104      | Reconcile orphaned dispatcher state after approval resets - add a maintenance path that detects blocked retry tasks and ready manifests whose approval rows were deleted, then marks or repairs them so the dispatcher cannot loop on missing approvals | M16 | pending | Control Plane, Failure Recovery Model, Operator Surface            |
 | 86       | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M14 | pending | Contracts, Integration Plane, Knowledge & Policy Plane                |
 | 87       | GitHub user allowlist for issue intake - reject issues from non-whitelisted authors before processing, configurable via env or policy config, default-deny posture | M15 | pending | Integration Plane, Isolation and Security Model, Control Plane        |

@@ -593,6 +593,7 @@ function hasAutomatedRetryRecovery(
 
 async function findNextDispatchableManifest(
   repository: PlanningRepository,
+  logger: import("./logger.js").PlanningPipelineLogger | undefined,
   blockedScanLimit = 25
 ): Promise<{ manifest: TaskManifest; selection: "ready" | "blocked_retry" } | null> {
   const blockedManifests = await repository.listManifestsByLifecycleStatus(
@@ -617,8 +618,35 @@ async function findNextDispatchableManifest(
   const readyManifests = await repository.listManifestsByLifecycleStatus("ready", 1);
 
   if (readyManifests.length > 0) {
+    const manifest = readyManifests[0]!;
+
+    // Guard against orphaned ready manifests whose approved planning approval
+    // row was deleted.  If we dispatched these they would fail inside
+    // requireApprovedRequest and the manifest would stay ready, causing the
+    // dispatcher to loop on it indefinitely.  Skip and log; the operator
+    // should run the orphan sweep to mark these as failed.
+    if (manifest.approvalMode !== "auto") {
+      const snapshot = await repository.getTaskSnapshot(manifest.taskId);
+      const hasApprovedRequest = snapshot.approvalRequests.some(
+        (r) => r.status === "approved"
+      );
+
+      if (!hasApprovedRequest) {
+        logger?.warn(
+          "Skipping orphaned ready manifest: no approved planning approval row found. " +
+          "Run POST /maintenance/reconcile-orphaned-state to repair.",
+          {
+            code: "DISPATCH_ORPHAN_SKIPPED",
+            taskId: manifest.taskId,
+            approvalMode: manifest.approvalMode
+          }
+        );
+        return null;
+      }
+    }
+
     return {
-      manifest: readyManifests[0]!,
+      manifest,
       selection: "ready"
     };
   }
@@ -691,7 +719,8 @@ export function createReadyTaskDispatcher(
         async () => {
           const cycleResults: DispatchReadyTaskResult[] = [];
           const selectedManifest = await findNextDispatchableManifest(
-            deps.repository
+            deps.repository,
+            logger
           );
 
           if (selectedManifest) {

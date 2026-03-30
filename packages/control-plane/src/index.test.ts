@@ -33,6 +33,7 @@ import {
   runPlanningPipeline,
   runScmPhase,
   runValidationPhase,
+  sweepOrphanedDispatcherState,
   sweepStaleRuns
 } from "@reddwarf/control-plane";
 import {
@@ -40,12 +41,19 @@ import {
 } from "@reddwarf/integrations";
 import {
   InMemoryPlanningRepository,
+  createApprovalRequest,
+  createMemoryRecord,
   createPipelineRun
 } from "@reddwarf/evidence";
 import {
   FixtureGitHubAdapter,
   FixtureSecretsAdapter
 } from "@reddwarf/integrations";
+import {
+  taskManifestSchema,
+  planningSpecSchema,
+  policySnapshotSchema
+} from "@reddwarf/contracts";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
 const eligibleInput: PlanningTaskInput = {
@@ -3344,7 +3352,282 @@ describe("sweepStaleRuns", () => {
   });
 });
 
+// ============================================================================
+// sweepOrphanedDispatcherState tests
+// ============================================================================
 
+const orphanTs = "2026-03-30T10:00:00.000Z";
+
+function makeOrphanManifest(overrides: Partial<ReturnType<typeof taskManifestSchema.parse>> = {}) {
+  return taskManifestSchema.parse({
+    taskId: "acme-platform-99",
+    source: { provider: "github", repo: "acme/platform", issueNumber: 99 },
+    title: "Orphan sweep test task",
+    summary: "A task whose approval row was deleted to test orphan detection.",
+    priority: 1,
+    riskClass: "low",
+    approvalMode: "human_signoff_required",
+    currentPhase: "planning",
+    lifecycleStatus: "ready",
+    assignedAgentType: "developer",
+    requestedCapabilities: ["can_plan"],
+    retryCount: 0,
+    evidenceLinks: [],
+    workspaceId: null,
+    branchName: null,
+    prNumber: null,
+    policyVersion: "v1",
+    createdAt: orphanTs,
+    updatedAt: orphanTs,
+    ...overrides
+  });
+}
+
+function makeOrphanSpec(taskId: string) {
+  return planningSpecSchema.parse({
+    specId: `${taskId}:spec`,
+    taskId,
+    summary: "Test spec",
+    assumptions: [],
+    affectedAreas: ["docs/"],
+    constraints: [],
+    acceptanceCriteria: ["Test passes"],
+    testExpectations: [],
+    recommendedAgentType: "developer",
+    riskClass: "low",
+    createdAt: orphanTs
+  });
+}
+
+function makeOrphanPolicySnapshot(_taskId: string) {
+  return policySnapshotSchema.parse({
+    policyVersion: "v1",
+    approvalMode: "human_signoff_required",
+    allowedCapabilities: ["can_plan"],
+    allowedPaths: ["docs/**"],
+    allowedSecretScopes: [],
+    blockedPhases: [],
+    reasons: ["Test policy snapshot"]
+  });
+}
+
+describe("sweepOrphanedDispatcherState", () => {
+  it("returns empty result when there are no ready or blocked manifests", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs)
+    });
+
+    expect(result.scannedReadyCount).toBe(0);
+    expect(result.scannedBlockedCount).toBe(0);
+    expect(result.repairs).toEqual([]);
+  });
+
+  it("does not touch a ready manifest that has an approved approval row", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({ taskId: "acme-platform-100" });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+
+    // Save an approved approval row (not orphaned)
+    await repository.saveApprovalRequest(
+      createApprovalRequest({
+        requestId: `${manifest.taskId}:approval:1`,
+        taskId: manifest.taskId,
+        runId: "run-1",
+        phase: "planning",
+        approvalMode: "human_signoff_required",
+        status: "approved",
+        riskClass: "low",
+        summary: "Approved",
+        requestedCapabilities: [],
+        allowedPaths: [],
+        blockedPhases: [],
+        policyReasons: [],
+        requestedBy: "system",
+        createdAt: orphanTs,
+        updatedAt: orphanTs
+      })
+    );
+
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs)
+    });
+
+    expect(result.repairs).toEqual([]);
+    const after = await repository.getManifest(manifest.taskId);
+    expect(after?.lifecycleStatus).toBe("ready");
+  });
+
+  it("does not touch a ready manifest with approvalMode auto", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-101",
+      approvalMode: "auto"
+    });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs)
+    });
+
+    expect(result.repairs).toEqual([]);
+    const after = await repository.getManifest(manifest.taskId);
+    expect(after?.lifecycleStatus).toBe("ready");
+  });
+
+  it("marks an orphaned ready manifest as failed when its approval row is missing", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({ taskId: "acme-platform-102" });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+    // No approval row saved — simulates deleted approval
+
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs),
+      idGenerator: () => "fixed-id"
+    });
+
+    expect(result.repairs).toHaveLength(1);
+    expect(result.repairs[0]).toMatchObject({
+      taskId: manifest.taskId,
+      lifecycleStatus: "ready",
+      orphanType: "missing_planning_approval",
+      action: "marked_failed"
+    });
+
+    const after = await repository.getManifest(manifest.taskId);
+    expect(after?.lifecycleStatus).toBe("failed");
+
+    const events = await repository.listRunEvents(manifest.taskId);
+    expect(events.some((e) => e.code === "ORPHAN_MISSING_APPROVAL")).toBe(true);
+  });
+
+  it("re-queues a pending escalation approval for a blocked manifest with missing escalation approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-103",
+      lifecycleStatus: "blocked",
+      currentPhase: "development"
+    });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+
+    // Save failure.recovery memory record with action "escalate"
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${manifest.taskId}:failure.recovery`,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "failure.recovery",
+        title: "Failure recovery",
+        value: {
+          phase: "development",
+          action: "escalate",
+          runId: "run-failed-1",
+          failureCode: "DEVELOPMENT_FAILED",
+          failureClass: "integration_failure",
+          retryCount: 1,
+          retryLimit: 1
+        },
+        taskId: manifest.taskId,
+        createdAt: orphanTs,
+        updatedAt: orphanTs
+      })
+    );
+    // No pending failure-escalation approval row — simulates deleted approval
+
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs),
+      idGenerator: () => "fixed-id"
+    });
+
+    expect(result.repairs).toHaveLength(1);
+    expect(result.repairs[0]).toMatchObject({
+      taskId: manifest.taskId,
+      lifecycleStatus: "blocked",
+      orphanType: "missing_escalation_approval",
+      action: "escalation_requeued"
+    });
+
+    const approvals = await repository.listApprovalRequests({ taskId: manifest.taskId });
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]?.status).toBe("pending");
+    expect(approvals[0]?.requestedBy).toBe("failure-automation");
+    expect(approvals[0]?.phase).toBe("development");
+
+    const events = await repository.listRunEvents(manifest.taskId);
+    expect(events.some((e) => e.code === "ORPHAN_ESCALATION_REQUEUED")).toBe(true);
+  });
+
+  it("does not touch a blocked manifest that still has its pending escalation approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-104",
+      lifecycleStatus: "blocked",
+      currentPhase: "validation"
+    });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${manifest.taskId}:failure.recovery`,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "failure.recovery",
+        title: "Failure recovery",
+        value: {
+          phase: "validation",
+          action: "escalate",
+          runId: "run-failed-2",
+          failureCode: "VALIDATION_FAILED",
+          failureClass: "validation_failure",
+          retryCount: 1,
+          retryLimit: 1
+        },
+        taskId: manifest.taskId,
+        createdAt: orphanTs,
+        updatedAt: orphanTs
+      })
+    );
+
+    // Save the pending escalation approval (not orphaned)
+    await repository.saveApprovalRequest(
+      createApprovalRequest({
+        requestId: `${manifest.taskId}:approval:validation:failure:run-failed-2`,
+        taskId: manifest.taskId,
+        runId: "run-failed-2",
+        phase: "validation",
+        approvalMode: "human_signoff_required",
+        status: "pending",
+        riskClass: "low",
+        summary: "Validation failure escalated",
+        requestedCapabilities: [],
+        allowedPaths: [],
+        blockedPhases: ["validation"],
+        policyReasons: [],
+        requestedBy: "failure-automation",
+        createdAt: orphanTs,
+        updatedAt: orphanTs
+      })
+    );
+
+    const result = await sweepOrphanedDispatcherState(repository, {
+      clock: () => new Date(orphanTs)
+    });
+
+    expect(result.repairs).toEqual([]);
+    const approvals = await repository.listApprovalRequests({ taskId: manifest.taskId });
+    expect(approvals).toHaveLength(1);
+  });
+});
 
 // ============================================================================
 // Post-approval dispatcher tests
@@ -4261,5 +4544,51 @@ describe("createReadyTaskDispatcher", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("skips an orphaned ready manifest with no approved approval row and dispatches nothing", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    // Set up an orphaned ready manifest (no approval row)
+    const manifest = makeOrphanManifest({ taskId: "acme-platform-orphan-dispatch" });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+
+    const buffered = createBufferedPlanningLogger();
+
+    const dispatcher = createReadyTaskDispatcher(
+      {
+        intervalMs: 5_000,
+        targetRoot: "/tmp",
+        runOnStart: false
+      },
+      {
+        repository,
+        developer: new DeterministicDeveloperAgent(),
+        validator: new DeterministicValidationAgent(),
+        scm: new DeterministicScmAgent(),
+        github: new FixtureGitHubAdapter({ candidates: [] }),
+        openClawDispatch: new FixtureOpenClawDispatchAdapter(),
+        logger: buffered.logger
+      }
+    );
+
+    const result = await dispatcher.dispatchOnce();
+
+    // Dispatcher should skip the orphaned manifest — no dispatch occurred
+    expect(result.dispatchedCount).toBe(0);
+    expect(result.results).toHaveLength(0);
+
+    // Manifest should still be "ready" (not failed — that's the sweep's job)
+    const after = await repository.getManifest(manifest.taskId);
+    expect(after?.lifecycleStatus).toBe("ready");
+
+    // A warning should have been logged about the orphan
+    const warnRecord = buffered.records.find(
+      (r) => r.bindings["code"] === "DISPATCH_ORPHAN_SKIPPED"
+    );
+    expect(warnRecord).toBeDefined();
+    expect(warnRecord?.bindings["taskId"]).toBe(manifest.taskId);
   });
 });

@@ -82,6 +82,8 @@ export const EventCodes = {
   RUN_BLOCKED_BY_OVERLAP: "RUN_BLOCKED_BY_OVERLAP",
   STALE_RUNS_DETECTED: "STALE_RUNS_DETECTED",
   APPROVAL_REQUESTED: "APPROVAL_REQUESTED",
+  ORPHAN_MISSING_APPROVAL: "ORPHAN_MISSING_APPROVAL",
+  ORPHAN_ESCALATION_REQUEUED: "ORPHAN_ESCALATION_REQUEUED",
   WORKSPACE_PROVISIONED: "WORKSPACE_PROVISIONED",
   WORKSPACE_PREPARED: "WORKSPACE_PREPARED",
   CODE_WRITE_DISABLED: "CODE_WRITE_DISABLED",
@@ -285,6 +287,30 @@ export interface SweepStaleRunsOptions {
 
 export interface SweepStaleRunsResult {
   sweptRunIds: string[];
+  sweptAt: string;
+}
+
+export type OrphanType = "missing_planning_approval" | "missing_escalation_approval";
+export type OrphanRepairAction = "marked_failed" | "escalation_requeued";
+
+export interface SweepOrphanedStateRepair {
+  taskId: string;
+  lifecycleStatus: "ready" | "blocked";
+  orphanType: OrphanType;
+  action: OrphanRepairAction;
+}
+
+export interface SweepOrphanedStateOptions {
+  scanLimit?: number;
+  clock?: () => Date;
+  idGenerator?: () => string;
+  logger?: PlanningPipelineLogger;
+}
+
+export interface SweepOrphanedStateResult {
+  scannedReadyCount: number;
+  scannedBlockedCount: number;
+  repairs: SweepOrphanedStateRepair[];
   sweptAt: string;
 }
 

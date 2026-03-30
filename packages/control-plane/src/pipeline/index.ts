@@ -27,6 +27,11 @@ export type {
   ResolveApprovalRequestResult,
   SweepStaleRunsOptions,
   SweepStaleRunsResult,
+  SweepOrphanedStateOptions,
+  SweepOrphanedStateRepair,
+  SweepOrphanedStateResult,
+  OrphanType,
+  OrphanRepairAction,
   DispatchReadyTaskInput,
   DispatchReadyTaskDependencies,
   DispatchPhaseOutcome,
@@ -57,5 +62,5 @@ export { runDeveloperPhase } from "./development.js";
 export { runValidationPhase } from "./validation.js";
 export { runScmPhase } from "./scm.js";
 export { resolveApprovalRequest } from "./approval.js";
-export { sweepStaleRuns } from "./sweep.js";
+export { sweepStaleRuns, sweepOrphanedDispatcherState } from "./sweep.js";
 export { dispatchReadyTask } from "./dispatch.js";
