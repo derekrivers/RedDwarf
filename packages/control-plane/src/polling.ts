@@ -38,6 +38,13 @@ export interface GitHubPollingRepoConfig {
   limit?: number;
   states?: GitHubIssueState[];
   maxBatchSize?: number;
+  /**
+   * Per-repository author allowlist.  When present, overrides the daemon-level
+   * `authorAllowlist` for this repository.  An empty array means default-deny
+   * (all authors rejected).  Omit the field entirely to inherit the daemon
+   * setting.
+   */
+  authorAllowlist?: string[];
 }
 
 export interface GitHubIssuePollingDaemonConfig {
@@ -45,13 +52,27 @@ export interface GitHubIssuePollingDaemonConfig {
   repositories: GitHubPollingRepoConfig[];
   runOnStart?: boolean;
   cycleTimeoutMs?: number;
+  /**
+   * Global author allowlist applied to every polled repository unless
+   * overridden by a per-repository `authorAllowlist`.
+   *
+   * When set to a non-empty array only issues authored by a listed GitHub
+   * username are accepted; all others are silently skipped.  When set to an
+   * empty array every issue is rejected (full default-deny).  When omitted
+   * (or `undefined`) no author filtering is performed and all authors pass
+   * through (backward-compatible default).
+   *
+   * May also be sourced from the `GITHUB_ISSUE_AUTHOR_ALLOWLIST` environment
+   * variable (comma-separated usernames) via `parseAuthorAllowlistFromEnv`.
+   */
+  authorAllowlist?: string[];
 }
 
 export interface GitHubIssuePollingDecision {
   repo: string;
   issueNumber: number;
-  action: "planned" | "skipped";
-  reason?: "existing_planning_spec";
+  action: "planned" | "skipped" | "rejected";
+  reason?: "existing_planning_spec" | "author_not_allowlisted";
   taskId?: string;
   runId?: string;
 }
@@ -62,6 +83,7 @@ export interface GitHubIssuePollingCycleResult {
   polledIssueCount: number;
   plannedIssueCount: number;
   skippedIssueCount: number;
+  rejectedIssueCount: number;
   decisions: GitHubIssuePollingDecision[];
 }
 
@@ -237,7 +259,25 @@ export function createGitHubIssuePollingDaemon(
           batchSize
         });
 
+        const effectiveAllowlist = resolveEffectiveAllowlist(repoConfig, config);
+
         for (const candidate of unseenCandidates) {
+          if (!isAuthorAllowed(candidate, effectiveAllowlist)) {
+            repoLogger?.info("GitHub issue rejected: author not in allowlist.", {
+              code: "INTAKE_AUTHOR_REJECTED",
+              repo: candidate.repo,
+              issueNumber: candidate.issueNumber,
+              author: candidate.author ?? null
+            });
+            decisions.push({
+              repo: candidate.repo,
+              issueNumber: candidate.issueNumber,
+              action: "rejected",
+              reason: "author_not_allowlisted"
+            });
+            continue;
+          }
+
           const source: TaskManifest["source"] = {
             provider: "github",
             repo: candidate.repo,
@@ -373,6 +413,7 @@ export function createGitHubIssuePollingDaemon(
         polledIssueCount: decisions.length,
         plannedIssueCount: decisions.filter((decision) => decision.action === "planned").length,
         skippedIssueCount: decisions.filter((decision) => decision.action === "skipped").length,
+        rejectedIssueCount: decisions.filter((decision) => decision.action === "rejected").length,
         decisions
       } satisfies GitHubIssuePollingCycleResult;
 
@@ -383,7 +424,8 @@ export function createGitHubIssuePollingDaemon(
         durationMs,
         polledIssueCount: result.polledIssueCount,
         plannedIssueCount: result.plannedIssueCount,
-        skippedIssueCount: result.skippedIssueCount
+        skippedIssueCount: result.skippedIssueCount,
+        rejectedIssueCount: result.rejectedIssueCount
       });
 
       return result;
@@ -503,6 +545,84 @@ function selectUnseenCandidates(
         : candidate.issueNumber > lastSeenIssueNumber
     )
     .sort((left, right) => left.issueNumber - right.issueNumber);
+}
+
+/**
+ * Returns `true` when the candidate's author is permitted given the configured
+ * allowlist, `false` when it should be rejected.
+ *
+ * - `undefined` allowlist  → no filtering; all authors pass.
+ * - empty array            → full default-deny; all authors rejected.
+ * - non-empty array        → only listed usernames pass (case-insensitive).
+ */
+function isAuthorAllowed(
+  candidate: GitHubIssueCandidate,
+  allowlist: string[] | undefined
+): boolean {
+  if (allowlist === undefined) {
+    return true;
+  }
+
+  if (allowlist.length === 0) {
+    return false;
+  }
+
+  const author = candidate.author;
+  if (!author) {
+    // No author metadata available; treat as disallowed when a list is set.
+    return false;
+  }
+
+  const lowerAuthor = author.toLowerCase();
+  return allowlist.some((entry) => entry.toLowerCase() === lowerAuthor);
+}
+
+/**
+ * Resolves the effective author allowlist for a repository by merging the
+ * per-repo override (if present) with the daemon-level default.
+ *
+ * Per-repo `authorAllowlist` always wins over the daemon-level setting,
+ * including when the per-repo value is an empty array.
+ */
+function resolveEffectiveAllowlist(
+  repoConfig: GitHubPollingRepoConfig,
+  daemonConfig: GitHubIssuePollingDaemonConfig
+): string[] | undefined {
+  if (repoConfig.authorAllowlist !== undefined) {
+    return repoConfig.authorAllowlist;
+  }
+
+  return daemonConfig.authorAllowlist;
+}
+
+/**
+ * Parse the `GITHUB_ISSUE_AUTHOR_ALLOWLIST` environment variable into an
+ * author allowlist array suitable for `GitHubIssuePollingDaemonConfig.authorAllowlist`.
+ *
+ * The variable is expected to be a comma-separated list of GitHub usernames.
+ * Leading/trailing whitespace around each entry is stripped.  Empty entries
+ * after stripping are discarded.
+ *
+ * Returns `undefined` when the variable is absent or blank so callers can
+ * distinguish "not configured" from "configured as empty".
+ *
+ * @param envValue - Optionally provide the raw env string directly (useful for
+ *   testing without mutating `process.env`).  Defaults to
+ *   `process.env.GITHUB_ISSUE_AUTHOR_ALLOWLIST`.
+ */
+export function parseAuthorAllowlistFromEnv(envValue?: string): string[] | undefined {
+  const raw = envValue ?? process.env.GITHUB_ISSUE_AUTHOR_ALLOWLIST;
+
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
+  }
+
+  const entries = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return entries;
 }
 
 function serializePollingError(error: unknown): string {

@@ -341,3 +341,13 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added two new event codes (`ORPHAN_MISSING_APPROVAL`, `ORPHAN_ESCALATION_REQUEUED`) and five new types (`SweepOrphanedStateOptions`, `SweepOrphanedStateResult`, `SweepOrphanedStateRepair`, `OrphanType`, `OrphanRepairAction`) to the pipeline types.
 - Added 7 unit tests covering: empty repository, non-orphaned ready manifest, auto-approval mode bypass, orphaned ready manifest marked failed, orphaned blocked escalation re-queued, non-orphaned blocked escalation untouched, and dispatcher orphan-skip behavior.
 - Verification for feature 104: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:operator-api`.
+
+- Completed feature 87 from `FEATURE_BOARD.md`: GitHub user allowlist for issue intake.
+- Added `authorAllowlist?: string[]` to `GitHubIssuePollingDaemonConfig` (daemon-level default) and `GitHubPollingRepoConfig` (per-repo override that wins over the daemon setting) in `packages/control-plane/src/polling.ts`.
+- Added `parseAuthorAllowlistFromEnv(envValue?)` helper that parses the `GITHUB_ISSUE_AUTHOR_ALLOWLIST` environment variable (comma-separated usernames, whitespace-trimmed) and returns `undefined` when absent so callers can distinguish unconfigured from configured-as-empty.
+- Added `"rejected"` action and `"author_not_allowlisted"` reason to `GitHubIssuePollingDecision`, `rejectedIssueCount` to `GitHubIssuePollingCycleResult`, and `INTAKE_AUTHOR_REJECTED` to the `EventCodes` registry in `packages/control-plane/src/pipeline/types.ts`.
+- Author filtering is applied per-candidate after the unseen-candidate selection and before the existing-spec check, with a structured `INTAKE_AUTHOR_REJECTED` log record for every rejected issue.
+- Allowlist semantics: `undefined` → no filtering (backward compat); empty array → full default-deny; non-empty array → case-insensitive match; author field absent → rejected when list is configured.
+- Added 11 new tests in `packages/control-plane/src/polling-daemon.test.ts` covering: listed-author accepted, non-listed-author rejected (with log assertion), no-allowlist backward compat, empty-array default-deny, per-repo override, absent-author rejection, and all five `parseAuthorAllowlistFromEnv` edge cases.
+- Verification: `corepack pnpm typecheck` (clean); `corepack pnpm test` (264 tests pass).
+- Likely next board item: feature 88, Architecture Reviewer Agent phase.
