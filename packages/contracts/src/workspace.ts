@@ -113,3 +113,14 @@ export interface MaterializedManagedWorkspace {
   repoRoot: string | null;
   descriptor: WorkspaceDescriptor;
 }
+
+
+/** Injectable runtime environment configuration for workspace path resolution. */
+export interface WorkspaceRuntimeConfig {
+  /** Container-visible workspace root (default: REDDWARF_WORKSPACE_ROOT env, "/var/lib/reddwarf/workspaces"). */
+  workspaceRoot?: string;
+  /** Host-side workspace root used to compute the relative path into the container mount (default: REDDWARF_HOST_WORKSPACE_ROOT env). */
+  hostWorkspaceRoot?: string;
+  /** Host-side evidence root for artifact archival (default: REDDWARF_HOST_EVIDENCE_ROOT env). */
+  hostEvidenceRoot?: string;
+}

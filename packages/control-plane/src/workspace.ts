@@ -31,7 +31,8 @@ import {
   type RuntimeInstructionLayer,
   type TaskManifest,
   type WorkspaceContextBundle,
-  type WorkspaceDescriptor
+  type WorkspaceDescriptor,
+  type WorkspaceRuntimeConfig
 } from "@reddwarf/contracts";
 
 export type { MaterializedManagedWorkspace };
@@ -833,10 +834,12 @@ export async function destroyTaskWorkspace(input: {
 
 export function resolveEvidenceRoot(
   targetRoot: string,
-  evidenceRoot?: string
+  evidenceRoot?: string,
+  runtimeConfig?: WorkspaceRuntimeConfig
 ): string {
   return resolve(
     evidenceRoot ??
+      runtimeConfig?.hostEvidenceRoot ??
       process.env.REDDWARF_HOST_EVIDENCE_ROOT ??
       join(targetRoot, "..", defaultEvidenceDirName)
   );

@@ -36,7 +36,8 @@ import {
   type ValidationCommandResult,
   type ValidationDraft,
   type ValidationReport,
-  type WorkspaceContextBundle
+  type WorkspaceContextBundle,
+  type WorkspaceRuntimeConfig
 } from "@reddwarf/contracts";
 import {
   createApprovalRequest,
@@ -221,6 +222,7 @@ export interface PhaseTimingOptions {
 export interface PlanningPipelineDependencies {
   repository: PlanningRepository;
   planner: PlanningAgent;
+  runtimeConfig?: WorkspaceRuntimeConfig;
   /**
    * Optional OpenClaw dispatch adapter. When provided, the planning phase
    * dispatches to the OpenClaw architect agent (Holly) instead of using the
@@ -285,6 +287,7 @@ export interface RunScmPhaseInput {
 export interface DevelopmentPhaseDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
   secrets?: SecretsAdapter;
   /**
@@ -316,6 +319,7 @@ export interface DevelopmentPhaseDependencies {
 export interface ValidationPhaseDependencies {
   repository: PlanningRepository;
   validator: ValidationAgent;
+  runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
   secrets?: SecretsAdapter;
   environment?: string;
@@ -329,6 +333,7 @@ export interface ValidationPhaseDependencies {
 export interface ScmPhaseDependencies {
   repository: PlanningRepository;
   scm: ScmAgent;
+  runtimeConfig?: WorkspaceRuntimeConfig;
   github: GitHubAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   workspaceCommitPublisher?: WorkspaceCommitPublisher;
@@ -1023,7 +1028,10 @@ export async function runPlanningPipeline(
               }
             }),
           heartbeatIntervalMs:
-            dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS
+            dependencies.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS,
+          ...(dependencies.runtimeConfig !== undefined
+            ? { runtimeConfig: dependencies.runtimeConfig }
+            : {})
         });
         draft = architectResult.draft;
         hollyHandoffMarkdown = architectResult.hollyHandoffMarkdown;
@@ -1887,7 +1895,7 @@ export async function runDeveloperPhase(
       assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
-      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown);
+      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown, dependencies.runtimeConfig);
 
       dispatchResult = await dependencies.openClawDispatch.dispatch({
         sessionKey,
@@ -3645,11 +3653,26 @@ function sanitizeBranchSegment(value: string): string {
   return sanitized.length > 0 ? sanitized : "task";
 }
 
+function resolveWorkspaceRootConfig(runtimeConfig?: WorkspaceRuntimeConfig): {
+  runtimeWorkspaceRoot: string;
+  hostWorkspaceRoot: string | undefined;
+} {
+  return {
+    runtimeWorkspaceRoot: (
+      runtimeConfig?.workspaceRoot ??
+      process.env.REDDWARF_WORKSPACE_ROOT ??
+      "/var/lib/reddwarf/workspaces"
+    ).replace(/\\/g, "/"),
+    hostWorkspaceRoot:
+      runtimeConfig?.hostWorkspaceRoot ?? process.env.REDDWARF_HOST_WORKSPACE_ROOT
+  };
+}
+
 export function buildRuntimeWorkspacePath(
-  workspace: MaterializedManagedWorkspace
+  workspace: MaterializedManagedWorkspace,
+  runtimeConfig?: WorkspaceRuntimeConfig
 ): string {
-  const runtimeWorkspaceRoot = (process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces").replace(/\\/g, "/");
-  const hostWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+  const { runtimeWorkspaceRoot, hostWorkspaceRoot } = resolveWorkspaceRootConfig(runtimeConfig);
 
   if (hostWorkspaceRoot) {
     const normalizedHost = hostWorkspaceRoot.replace(/\\/g, "/");
@@ -3689,6 +3712,7 @@ interface DispatchHollyArchitectPhaseInput {
   nextEventId: (phase: TaskPhase, code: string) => string;
   onHeartbeat?: () => Promise<void>;
   heartbeatIntervalMs?: number;
+  runtimeConfig?: WorkspaceRuntimeConfig;
 }
 
 interface DispatchHollyArchitectPhaseResult {
@@ -3704,8 +3728,7 @@ async function dispatchHollyArchitectPhase(
   const artifactsDir = join(workspaceRoot, "artifacts");
   await mkdir(artifactsDir, { recursive: true });
 
-  const runtimeWorkspaceRoot = (process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces").replace(/\\/g, "/");
-  const hostWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+  const { runtimeWorkspaceRoot, hostWorkspaceRoot } = resolveWorkspaceRootConfig(ctx.runtimeConfig);
   let runtimeWorkspacePath: string;
   if (hostWorkspaceRoot) {
     const rel = relative(hostWorkspaceRoot, workspaceRoot).replace(/\\/g, "/");
@@ -3918,9 +3941,10 @@ function buildOpenClawDeveloperPrompt(
   bundle: WorkspaceContextBundle,
   manifest: TaskManifest,
   workspace: MaterializedManagedWorkspace,
-  hollyHandoffMarkdown?: string | null
+  hollyHandoffMarkdown?: string | null,
+  runtimeConfig?: WorkspaceRuntimeConfig
 ): string {
-  const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace);
+  const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace, runtimeConfig);
   const runtimeRepoPath = join(runtimeWorkspacePath, "repo").replace(/\\/g, "/");
   const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "developer-handoff.md").replace(/\\/g, "/");
 
