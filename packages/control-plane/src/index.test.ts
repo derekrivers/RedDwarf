@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
@@ -267,6 +267,112 @@ describe("control-plane", () => {
           record.level === "info"
       )
     ).toBe(true);
+  });
+
+  describe("role-scoped context materialization", () => {
+    let baseManifest: ReturnType<typeof taskManifestSchema.parse>;
+    let baseSpec: ReturnType<typeof planningSpecSchema.parse>;
+    let basePolicySnapshot: ReturnType<typeof policySnapshotSchema.parse>;
+
+    beforeAll(async () => {
+      const repository = new InMemoryPlanningRepository();
+      const result = await runPlanningPipeline(eligibleInput, {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-role-scope"
+      });
+      baseManifest = result.manifest;
+      baseSpec = result.spec!;
+      basePolicySnapshot = result.policySnapshot!;
+    });
+
+    it("includes planning-system prompt for architect role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "architect" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      expect(layer.canonicalSources).toContain("prompts/planning-system.md");
+      expect(layer.canonicalSources).toContain("openclaw_ai_dev_team_v_2_architecture.md");
+      expect(layer.canonicalSources).toContain("docs/implementation-map.md");
+      expect(layer.canonicalSources).toContain("standards/engineering.md");
+    });
+
+    it("includes planning-system prompt for reviewer role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "reviewer" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      expect(layer.canonicalSources).toContain("prompts/planning-system.md");
+      expect(layer.canonicalSources).toContain("openclaw_ai_dev_team_v_2_architecture.md");
+    });
+
+    it("excludes planning-system prompt for developer role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "developer" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      expect(layer.canonicalSources).not.toContain("prompts/planning-system.md");
+      expect(layer.canonicalSources).toContain("openclaw_ai_dev_team_v_2_architecture.md");
+      expect(layer.canonicalSources).toContain("standards/engineering.md");
+    });
+
+    it("excludes architecture and planning sources for validation role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "validation" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      expect(layer.canonicalSources).not.toContain("prompts/planning-system.md");
+      expect(layer.canonicalSources).not.toContain("openclaw_ai_dev_team_v_2_architecture.md");
+      expect(layer.canonicalSources).not.toContain("docs/implementation-map.md");
+      expect(layer.canonicalSources).toContain("standards/engineering.md");
+    });
+
+    it("excludes architecture and planning sources for scm role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "scm" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      expect(layer.canonicalSources).not.toContain("prompts/planning-system.md");
+      expect(layer.canonicalSources).not.toContain("openclaw_ai_dev_team_v_2_architecture.md");
+      expect(layer.canonicalSources).toContain("standards/engineering.md");
+    });
+
+    it("scopes SKILL.md reading instruction to spec and acceptance criteria for validation role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "validation" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      const artifacts = createRuntimeInstructionArtifacts(layer);
+      expect(artifacts.taskSkillMd).toContain(".context/spec.md");
+      expect(artifacts.taskSkillMd).toContain(".context/acceptance_criteria.json");
+      expect(artifacts.taskSkillMd).not.toContain(".context/policy_snapshot.json");
+    });
+
+    it("scopes SKILL.md reading instruction to spec and task context for developer role", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "developer" }),
+        spec: baseSpec,
+        policySnapshot: basePolicySnapshot
+      });
+      const layer = createRuntimeInstructionLayer(bundle);
+      const artifacts = createRuntimeInstructionArtifacts(layer);
+      expect(artifacts.taskSkillMd).toContain(".context/spec.md");
+      expect(artifacts.taskSkillMd).toContain(".context/task.json");
+      expect(artifacts.taskSkillMd).not.toContain(".context/policy_snapshot.json");
+    });
   });
 
   it("provisions and destroys a managed workspace with manifest and evidence updates", async () => {

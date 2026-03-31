@@ -1097,14 +1097,26 @@ function toolPolicyRequiresScmEscalation(
 }
 
 function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
-  const canonicalSources = new Set<string>([
-    "openclaw_ai_dev_team_v_2_architecture.md",
-    "docs/implementation-map.md",
-    "standards/engineering.md",
-    "prompts/planning-system.md"
-  ]);
+  const agentType = bundle.manifest.assignedAgentType;
+  const canonicalSources = new Set<string>();
+
+  // Architecture overview and implementation map: relevant to agents that
+  // create or review code, not needed by execution-only phases (validation, scm).
+  if (agentType === "architect" || agentType === "developer" || agentType === "reviewer") {
+    canonicalSources.add("openclaw_ai_dev_team_v_2_architecture.md");
+    canonicalSources.add("docs/implementation-map.md");
+  }
+
+  // Engineering standards: all code-touching phases need this.
+  canonicalSources.add("standards/engineering.md");
+
+  // Planning prompt: only relevant to agents that produce or review specs.
+  if (agentType === "architect" || agentType === "reviewer") {
+    canonicalSources.add("prompts/planning-system.md");
+  }
+
   const assignedAgentSource =
-    agentInstructionPathByType[bundle.manifest.assignedAgentType];
+    agentInstructionPathByType[agentType];
   const recommendedAgentSource =
     agentInstructionPathByType[bundle.spec.recommendedAgentType];
 
@@ -1279,6 +1291,19 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
   ].join("\n");
 }
 
+function roleContextReadingInstruction(bundle: WorkspaceContextBundle): string {
+  switch (bundle.manifest.assignedAgentType) {
+    case "developer":
+      return "1. Read `.context/spec.md`, `.context/task.json`, and `.context/acceptance_criteria.json` before writing code.";
+    case "validation":
+      return "1. Read `.context/spec.md` and `.context/acceptance_criteria.json` before running validation.";
+    case "scm":
+      return "1. Read `.context/task.json` and `.context/spec.md` before creating branches or PRs.";
+    default:
+      return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/policy_snapshot.json` before proposing or executing work.";
+  }
+}
+
 function renderRuntimeTaskSkillMarkdown(
   bundle: WorkspaceContextBundle,
   canonicalSources: string[]
@@ -1290,7 +1315,7 @@ function renderRuntimeTaskSkillMarkdown(
     "",
     "## Workflow",
     "",
-    "1. Read `.context/task.json`, `.context/spec.md`, and `.context/policy_snapshot.json` before proposing or executing work.",
+    roleContextReadingInstruction(bundle),
     "2. Confirm that the requested action stays within the current tool-policy capabilities and allowed paths.",
     `3. Use the assigned role instructions first: \`${agentInstructionPathByType[bundle.manifest.assignedAgentType] ?? "AGENTS.md"}\`.`,
     `4. Use the recommended role instructions from planning: \`${agentInstructionPathByType[bundle.spec.recommendedAgentType] ?? "AGENTS.md"}\`.`,

@@ -119,3 +119,5 @@ Archived from the live board on 2026-03-30. Completed feature count: 113.
 | 114      | [QUAL-010] Guard waitWithHeartbeat against heartbeat errors masking work errors â€” onHeartbeat() wrapped in try/catch with warn logging so transient Postgres failures don't surface as phase errors | M17 | completed | Control Plane |
 | 115      | [QUAL-011] Split control-plane/src/index.test.ts (5602 lines) â€” operator API, polling daemon, knowledge ingestion, and OpenClaw config test groups moved into co-located files | M17 | completed | Control Plane |
 | 88       | Architecture Reviewer Agent phase - add a post-Developer pre-Validator OpenClaw phase that checks implementation against the planning spec, flags structural drift, and emits a structured conformance verdict before the Validator runs | M15 | completed | Integration Plane, Control Plane, Contracts |
+
+| 89       | Deterministic eligibility gate - cheap pre-check before context materialization that confirms task eligibility (required label, acceptance criteria, minimum summary) and short-circuits ineligible tasks without an LLM call | M15 | completed | Control Plane, Knowledge & Policy Plane |
