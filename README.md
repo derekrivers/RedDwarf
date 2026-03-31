@@ -118,6 +118,7 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
 | `REDDWARF_API_URL` | `http://127.0.0.1:8080` | Optional full base URL override for the operator API; mainly used by `reddwarf submit` when the API is not on the default local port |
 | `REDDWARF_OPENCLAW_DISCORD_ENABLED` | `false` | Emit a native `channels.discord` block into the generated OpenClaw runtime config |
+| `REDDWARF_OPENCLAW_BROWSER_ENABLED` | `true` | Enable OpenClaw's built-in browser so Holly can inspect live library docs and API references |
 | `REDDWARF_OPENCLAW_DISCORD_DM_POLICY` | `pairing` | Direct-message policy for the native OpenClaw Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY` | `allowlist` | Server policy for the native OpenClaw Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_GUILD_IDS` | _(empty)_ | Comma-separated Discord server ids to allow when Discord mode is enabled |
@@ -185,6 +186,15 @@ corepack pnpm generate:openclaw-config
 ```
 
 That emits Discord streaming/history settings, OpenClaw auto-presence, component accent color, and native Discord approval prompts into the runtime config without adding a custom RedDwarf notification service.
+
+### OpenClaw browser for Holly
+
+Feature 101 turns on OpenClaw's built-in browser by default in the generated config so Holly can consult live framework docs and API references during architecture planning when repository context alone is not enough.
+
+```bash
+export REDDWARF_OPENCLAW_BROWSER_ENABLED=true
+corepack pnpm generate:openclaw-config
+```
 
 ### Approving plans
 

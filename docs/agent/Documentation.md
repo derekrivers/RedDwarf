@@ -456,3 +456,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `infra/docker/openclaw.json`, `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md` so the checked-in template, documented defaults, and operator workflows all mention the OpenClaw-native Discord status/approval path; added focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
 - Verification for feature 100: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts`.
 - Likely next board item: feature 101, browser / web search for Architect agent.
+
+- Completed feature 101 from `FEATURE_BOARD.md`: browser / web search for the Architect agent.
+- Extended `packages/control-plane/src/openclaw-config.ts`, `scripts/generate-openclaw-config.mjs`, `scripts/lib/config.mjs`, `infra/docker/openclaw.json`, and `.env.example` so generated OpenClaw configs now carry an explicit `browser.enabled` block, enabled by default for Holly's research workflow.
+- Updated `agents/openclaw/holly/TOOLS.md` and `packages/control-plane/src/pipeline/prompts.ts` so Holly is explicitly told to use the managed OpenClaw browser for current framework docs and API references only when repository evidence is insufficient, keeping the browser as a targeted planning aid instead of a default crutch.
+- Added focused coverage in `packages/control-plane/src/openclaw-config.test.ts` for browser enablement and extended the existing architect/developer prompt-boundary regression in `packages/control-plane/src/index.test.ts` to assert the browser guidance is present in Holly's trusted prompt.
+- Verification for feature 101: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts packages/control-plane/src/index.test.ts`.
+- Likely next board item: feature 104, Telegram channel integration.

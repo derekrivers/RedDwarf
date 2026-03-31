@@ -169,6 +169,9 @@ export async function resolveOpenClawConfig(options) {
       repoRoot,
       process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces"
     ),
+    browser: {
+      enabled: readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true)
+    },
     ...(process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER
       ? { modelProvider: process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER }
       : {}),

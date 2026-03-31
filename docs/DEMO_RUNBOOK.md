@@ -167,6 +167,13 @@ export REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS=<discord-user-id>
 corepack pnpm generate:openclaw-config
 ```
 
+Feature 101 enables the built-in OpenClaw browser for Holly by default. If you need to toggle it explicitly:
+
+```bash
+export REDDWARF_OPENCLAW_BROWSER_ENABLED=true
+corepack pnpm generate:openclaw-config
+```
+
 ---
 
 ## Part 3 — E2E Integration Test (Recommended)

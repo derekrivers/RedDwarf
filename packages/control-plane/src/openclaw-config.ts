@@ -88,6 +88,10 @@ export interface OpenClawChannelsConfig {
   discord?: OpenClawDiscordChannelConfig;
 }
 
+export interface OpenClawBrowserConfig {
+  enabled: boolean;
+}
+
 export interface OpenClawAgentConfig {
   id: string;
   name: string;
@@ -107,6 +111,7 @@ export interface OpenClawConfig {
   gateway: OpenClawGatewayConfig;
   hooks: OpenClawHooksConfig;
   channels?: OpenClawChannelsConfig;
+  browser?: OpenClawBrowserConfig;
   agents: {
     defaults: {
       skipBootstrap: boolean;
@@ -143,6 +148,12 @@ export interface GenerateOpenClawConfigOptions {
    * to hand-edit the runtime config.
    */
   discord?: OpenClawDiscordChannelConfig;
+
+  /**
+   * Optional browser control surface. Feature 101 enables this for Holly so
+   * the architect phase can consult live docs and API references.
+   */
+  browser?: OpenClawBrowserConfig;
 }
 
 /**
@@ -361,6 +372,7 @@ export function generateOpenClawConfig(
           }
         }
       : {}),
+    ...(options.browser ? { browser: { enabled: options.browser.enabled } } : {}),
     agents: {
       defaults: { skipBootstrap },
       list: []

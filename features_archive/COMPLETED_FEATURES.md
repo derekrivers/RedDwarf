@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Archived from the live board on 2026-03-31. Completed feature count: 125.
+Archived from the live board on 2026-03-31. Completed feature count: 126.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -132,3 +132,4 @@ Archived from the live board on 2026-03-31. Completed feature count: 125.
 | 103      | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M17 | completed | Contracts, Integration Plane, Knowledge & Policy Plane |
 | 99       | Discord approval bot - surface pending approval requests as interactive Discord messages with approve/reject buttons and respond to status queries | Fast-track | completed | Integration Plane, Operator Surface |
 | 100      | Discord notifications for agents - push status updates and approval requests to a Discord channel mid-run for async human oversight | Fast-track | completed | Integration Plane, Operator Surface |
+| 101      | Browser / web search for Architect agent - allow the Architect phase to pull current library docs and API references when formulating the planning spec | Fast-track | completed | Integration Plane, Knowledge & Policy Plane |

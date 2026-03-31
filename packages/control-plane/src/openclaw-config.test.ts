@@ -191,6 +191,19 @@ describe("generateOpenClawConfig", () => {
     });
   });
 
+  it("can enable the OpenClaw browser for architect web research", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      browser: {
+        enabled: true
+      }
+    });
+
+    expect(config.browser).toEqual({
+      enabled: true
+    });
+  });
+
   it("allows a subset of roles", () => {
     const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
     const reviewerOnly = roles.filter((r: { role: string }) => r.role === "reviewer");

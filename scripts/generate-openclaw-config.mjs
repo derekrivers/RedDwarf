@@ -38,6 +38,7 @@ const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const workspaceRoot = args[0] ?? process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces";
 const outputPath = args[1] ?? process.env.REDDWARF_OPENCLAW_CONFIG_PATH ?? "runtime-data/openclaw.json";
 const modelProvider = args[2] ?? process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER;
+const browserEnabled = readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true);
 const discordEnabled = readBooleanEnv("REDDWARF_OPENCLAW_DISCORD_ENABLED");
 const discordGuildIds = readListEnv("REDDWARF_OPENCLAW_DISCORD_GUILD_IDS");
 const discordRequireMention = readBooleanEnv(
@@ -60,6 +61,9 @@ const resolvedOutputPath = resolve(outputPath);
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
   ...(modelProvider ? { modelProvider } : {}),
+  browser: {
+    enabled: browserEnabled
+  },
   ...(discordEnabled
     ? {
         discord: {
@@ -174,5 +178,8 @@ if (config.channels?.discord) {
   if (config.channels.discord.execApprovals?.enabled) {
     console.log("  Discord exec approvals: enabled");
   }
+}
+if (config.browser?.enabled) {
+  console.log("  Browser: enabled");
 }
 console.log(`  Agents: ${config.agents.list.map((agent) => agent.id).join(", ")}`);
