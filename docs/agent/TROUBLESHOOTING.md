@@ -91,9 +91,12 @@
 ## OpenClaw agent turns fail with `Sandbox mode requires Docker, but the "docker" command was not found in PATH`
 
 - Symptom: live dispatch reaches OpenClaw, then agent lanes fail immediately with errors such as `Sandbox mode requires Docker, but the "docker" command was not found in PATH`.
-- Root cause: the Docker-hosted OpenClaw deployment was still asking OpenClaw to launch its own nested Docker sandbox (`sandbox.mode=all`), but the OpenClaw container image does not include an inner `docker` CLI.
-- Failing approach: preserving per-agent `sandbox.mode=all` in `openclaw.json` and expecting Docker-in-Docker sandboxing to work inside the existing OpenClaw container.
-- Working workaround: for this deployment, generate or seed agent configs with `sandbox: { mode: "off" }` and rely on the outer container boundary plus explicit tool allowlists. The current generator in [packages/control-plane/src/openclaw-config.ts](/c:/Dev/RedDwarf/packages/control-plane/src/openclaw-config.ts) and Docker template in [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) now do this.
+- Root cause: RedDwarf's current Docker-hosted OpenClaw topology is not wired for the Docker sandbox backend. The seeded gateway container does not have usable Docker backend access, so enabling OpenClaw sandbox modes that expect Docker-backed session isolation fails at runtime.
+- Failing approach: preserving per-agent `sandbox.mode=all` or `sandbox.mode=non-main` in `openclaw.json` and expecting the current Docker-hosted gateway container to launch Docker-backed sandboxes without additional backend wiring.
+- Working workaround: for the current deployment, generate or seed agent configs with `sandbox: { mode: "off" }` and rely on the outer container boundary plus explicit tool allowlists. The current generator in [packages/control-plane/src/openclaw-config.ts](/c:/Dev/RedDwarf/packages/control-plane/src/openclaw-config.ts) and Docker template in [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) now do this.
+- Unblocking paths:
+  - preferred: run OpenClaw directly on a Linux host or VPS and let the gateway use host Docker for sandboxed sessions
+  - alternative: rebuild the Docker deployment around OpenClaw's upstream sandbox-enabled container flow so the gateway container has supported Docker backend access
 - Verification: recreate OpenClaw, dispatch a developer session, and confirm the logs no longer contain the missing-`docker` sandbox error.
 
 ## OpenClaw warns that agent allowlists contain unknown entries like `group:memory`
