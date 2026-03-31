@@ -136,6 +136,61 @@ describe("generateOpenClawConfig", () => {
     });
   });
 
+  it("can include Discord notifications and approval prompts", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      discord: {
+        enabled: true,
+        token: "${OPENCLAW_DISCORD_BOT_TOKEN}",
+        dmPolicy: "pairing",
+        groupPolicy: "allowlist",
+        streaming: "partial",
+        historyLimit: 24,
+        autoPresence: {
+          enabled: true,
+          intervalMs: 60_000,
+          minUpdateIntervalMs: 15_000,
+          healthyText: "RedDwarf healthy",
+          degradedText: "RedDwarf degraded",
+          exhaustedText: "RedDwarf approvals waiting"
+        },
+        execApprovals: {
+          enabled: true,
+          approvers: ["111", "222"],
+          target: "channel"
+        },
+        ui: {
+          components: {
+            accentColor: "#d7263d"
+          }
+        }
+      }
+    });
+
+    expect(config.channels?.discord).toMatchObject({
+      streaming: "partial",
+      historyLimit: 24,
+      autoPresence: {
+        enabled: true,
+        intervalMs: 60_000,
+        minUpdateIntervalMs: 15_000,
+        healthyText: "RedDwarf healthy",
+        degradedText: "RedDwarf degraded",
+        exhaustedText: "RedDwarf approvals waiting"
+      },
+      execApprovals: {
+        enabled: true,
+        approvers: ["111", "222"],
+        target: "channel"
+      },
+      ui: {
+        components: {
+          accentColor: "#d7263d"
+        }
+      }
+    });
+  });
+
   it("allows a subset of roles", () => {
     const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
     const reviewerOnly = roles.filter((r: { role: string }) => r.role === "reviewer");

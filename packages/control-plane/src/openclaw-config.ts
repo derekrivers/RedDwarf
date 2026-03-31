@@ -58,9 +58,29 @@ export interface OpenClawDiscordChannelConfig {
   dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
   groupPolicy?: "allowlist" | "open";
   allowFrom?: string[];
+  streaming?: "partial" | "block";
+  historyLimit?: number;
+  autoPresence?: {
+    enabled: boolean;
+    intervalMs?: number;
+    minUpdateIntervalMs?: number;
+    healthyText?: string;
+    degradedText?: string;
+    exhaustedText?: string;
+  };
+  execApprovals?: {
+    enabled: boolean;
+    approvers: string[];
+    target?: "dm" | "channel" | "both";
+  };
   guilds?: Record<string, OpenClawDiscordGuildConfig>;
   commands?: {
     native?: boolean;
+  };
+  ui?: {
+    components?: {
+      accentColor?: string;
+    };
   };
 }
 
@@ -220,6 +240,60 @@ export function generateOpenClawConfig(
               ...(options.discord.allowFrom
                 ? { allowFrom: [...options.discord.allowFrom] }
                 : {}),
+              ...(options.discord.streaming
+                ? { streaming: options.discord.streaming }
+                : {}),
+              ...(options.discord.historyLimit !== undefined
+                ? { historyLimit: options.discord.historyLimit }
+                : {}),
+              ...(options.discord.autoPresence
+                ? {
+                    autoPresence: {
+                      enabled: options.discord.autoPresence.enabled,
+                      ...(options.discord.autoPresence.intervalMs !== undefined
+                        ? {
+                            intervalMs: options.discord.autoPresence.intervalMs
+                          }
+                        : {}),
+                      ...(options.discord.autoPresence.minUpdateIntervalMs !==
+                      undefined
+                        ? {
+                            minUpdateIntervalMs:
+                              options.discord.autoPresence.minUpdateIntervalMs
+                          }
+                        : {}),
+                      ...(options.discord.autoPresence.healthyText
+                        ? {
+                            healthyText:
+                              options.discord.autoPresence.healthyText
+                          }
+                        : {}),
+                      ...(options.discord.autoPresence.degradedText
+                        ? {
+                            degradedText:
+                              options.discord.autoPresence.degradedText
+                          }
+                        : {}),
+                      ...(options.discord.autoPresence.exhaustedText
+                        ? {
+                            exhaustedText:
+                              options.discord.autoPresence.exhaustedText
+                          }
+                        : {})
+                    }
+                  }
+                : {}),
+              ...(options.discord.execApprovals
+                ? {
+                    execApprovals: {
+                      enabled: options.discord.execApprovals.enabled,
+                      approvers: [...options.discord.execApprovals.approvers],
+                      ...(options.discord.execApprovals.target
+                        ? { target: options.discord.execApprovals.target }
+                        : {})
+                    }
+                  }
+                : {}),
               ...(options.discord.guilds
                 ? {
                     guilds: Object.fromEntries(
@@ -261,6 +335,24 @@ export function generateOpenClawConfig(
                     commands: {
                       ...(options.discord.commands.native !== undefined
                         ? { native: options.discord.commands.native }
+                        : {})
+                    }
+                  }
+                : {}),
+              ...(options.discord.ui
+                ? {
+                    ui: {
+                      ...(options.discord.ui.components
+                        ? {
+                            components: {
+                              ...(options.discord.ui.components.accentColor
+                                ? {
+                                    accentColor:
+                                      options.discord.ui.components.accentColor
+                                  }
+                                : {})
+                            }
+                          }
                         : {})
                     }
                   }

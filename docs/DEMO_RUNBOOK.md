@@ -158,6 +158,15 @@ export REDDWARF_OPENCLAW_DISCORD_GUILD_IDS=<guild-id>
 corepack pnpm generate:openclaw-config
 ```
 
+To also surface native Discord status updates and approval prompts:
+
+```bash
+export REDDWARF_OPENCLAW_DISCORD_NOTIFICATIONS_ENABLED=true
+export REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED=true
+export REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS=<discord-user-id>
+corepack pnpm generate:openclaw-config
+```
+
 ---
 
 ## Part 3 — E2E Integration Test (Recommended)

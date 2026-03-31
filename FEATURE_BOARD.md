@@ -25,7 +25,6 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Status | Notes |
 | - | ------- | ------ | ----- |
-| 100 | Discord notifications for agents - push status updates and approval requests to a Discord channel mid-run for async human oversight | pending | OpenClaw native Discord channels; configure, don't build |
 | 104 | Telegram channel integration - wire OpenClaw's native Telegram channel support for operators who prefer Telegram for approval and status notifications | pending | OpenClaw native Telegram support; config-only, mirrors 99–100 |
 | 101 | Browser / web search for Architect agent - allow the Architect phase to pull current library docs and API references when formulating the planning spec | pending | OpenClaw built-in browser control (CDP-backed Chrome); enable via `browser.enabled: true` in openclaw.json |
 | 105 | **[BLOCKED FOR CURRENT TOPOLOGY]** Docker sandboxing for developer phase - run the Developer phase in a per-session Docker sandbox for execution isolation | blocked | Blocked in RedDwarf's current Docker-hosted OpenClaw topology because the seeded gateway container does not have Docker backend access, so sandboxed sessions fail and all agents currently use `sandbox: { mode: "off" }`. This is not a platform-wide OpenClaw limitation. Unblocks if deployment moves to a Linux host-installed OpenClaw gateway that can reach host Docker, or if the Docker deployment is rebuilt around OpenClaw's upstream sandbox-enabled container flow. See TROUBLESHOOTING.md. |

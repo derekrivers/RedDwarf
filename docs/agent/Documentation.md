@@ -449,3 +449,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added a conservative disabled Discord baseline to `infra/docker/openclaw.json`, documented the new env surface in `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md`, and added focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
 - Verification for feature 99: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts`.
 - Likely next board item: feature 100, Discord notifications for agents.
+
+- Completed feature 100 from `FEATURE_BOARD.md`: Discord notifications for agents via native OpenClaw Discord runtime options.
+- Extended the typed `channels.discord` surface in `packages/control-plane/src/openclaw-config.ts` so RedDwarf can emit OpenClaw-native streaming, history retention, auto-presence, exec-approval prompts, and component styling without introducing a custom notification adapter.
+- Updated `scripts/generate-openclaw-config.mjs` and `scripts/lib/config.mjs` to accept the notification-focused env surface (`REDDWARF_OPENCLAW_DISCORD_NOTIFICATIONS_ENABLED`, `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED`, approver ids, auto-presence timings, accent color, and streaming mode) and carry those settings into the host-mounted runtime config.
+- Updated `infra/docker/openclaw.json`, `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md` so the checked-in template, documented defaults, and operator workflows all mention the OpenClaw-native Discord status/approval path; added focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
+- Verification for feature 100: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts`.
+- Likely next board item: feature 101, browser / web search for Architect agent.

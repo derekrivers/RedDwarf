@@ -36,8 +36,23 @@
       "token": "${OPENCLAW_DISCORD_BOT_TOKEN}",
       "dmPolicy": "pairing",
       "groupPolicy": "allowlist",
+      "streaming": "partial",
+      "historyLimit": 24,
+      "autoPresence": {
+        "enabled": false
+      },
+      "execApprovals": {
+        "enabled": false,
+        "approvers": [],
+        "target": "channel"
+      },
       "commands": {
         "native": true
+      },
+      "ui": {
+        "components": {
+          "accentColor": "#d7263d"
+        }
       }
     }
   },

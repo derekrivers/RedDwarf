@@ -122,6 +122,14 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY` | `allowlist` | Server policy for the native OpenClaw Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_GUILD_IDS` | _(empty)_ | Comma-separated Discord server ids to allow when Discord mode is enabled |
 | `REDDWARF_OPENCLAW_DISCORD_REQUIRE_MENTION` | `true` | Require mentions inside allowed Discord servers by default |
+| `REDDWARF_OPENCLAW_DISCORD_NOTIFICATIONS_ENABLED` | `false` | Enable Discord streaming history, component styling, and presence updates in the generated OpenClaw config |
+| `REDDWARF_OPENCLAW_DISCORD_STREAMING` | `partial` | Discord streaming mode for native OpenClaw replies |
+| `REDDWARF_OPENCLAW_DISCORD_HISTORY_LIMIT` | `24` | Recent message history count to retain in the Discord bridge |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_ENABLED` | `true` | Turn on OpenClaw's native Discord presence updates when notifications are enabled |
+| `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED` | `false` | Enable native OpenClaw approval prompts in Discord |
+| `REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS` | _(empty)_ | Comma-separated Discord user ids allowed to resolve native OpenClaw approval prompts |
+| `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVAL_TARGET` | `channel` | Where OpenClaw posts approval prompts: `dm`, `channel`, or `both` |
+| `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` | `#d7263d` | Accent color for native Discord button components and cards |
 | `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
 | `REDDWARF_DB_POOL_MAX` | `10` | Max Postgres connections in the shared `pg.Pool` |
 | `REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Fail DB connection attempts after this many milliseconds |
@@ -166,6 +174,17 @@ corepack pnpm generate:openclaw-config
 ```
 
 The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the seeded JSON. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
+
+For feature 100, OpenClaw can also drive native Discord status visibility and approval prompts:
+
+```bash
+export REDDWARF_OPENCLAW_DISCORD_NOTIFICATIONS_ENABLED=true
+export REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED=true
+export REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS=<discord-user-id>
+corepack pnpm generate:openclaw-config
+```
+
+That emits Discord streaming/history settings, OpenClaw auto-presence, component accent color, and native Discord approval prompts into the runtime config without adding a custom RedDwarf notification service.
 
 ### Approving plans
 
