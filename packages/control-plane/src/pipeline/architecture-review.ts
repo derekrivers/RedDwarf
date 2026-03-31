@@ -36,6 +36,7 @@ import {
   requireApprovedRequest,
   requirePhaseSnapshot,
   resolvePhaseDependencies,
+  resolveTaskMemoryContext,
   serializeError,
   taskManifestSchema,
   waitWithHeartbeat
@@ -292,10 +293,18 @@ export async function runArchitectureReviewPhase(
       }
     });
 
+    const memoryContext = await resolveTaskMemoryContext({
+      repository,
+      manifest: currentManifest,
+      ...(dependencies.memoryContext !== undefined
+        ? { providedMemoryContext: dependencies.memoryContext }
+        : {})
+    });
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
       spec: validatedSpec,
-      policySnapshot: validatedPolicySnapshot
+      policySnapshot: validatedPolicySnapshot,
+      memoryContext
     });
     workspace = await materializeManagedWorkspace({
       bundle,

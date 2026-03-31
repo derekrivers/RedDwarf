@@ -297,6 +297,7 @@ describe("control-plane", () => {
       expect(layer.contextFiles).toEqual([
         ".context/task.json",
         ".context/spec.md",
+        ".context/project_memory.json",
         ".context/policy_snapshot.json",
         ".context/allowed_paths.json",
         ".context/acceptance_criteria.json"
@@ -317,6 +318,7 @@ describe("control-plane", () => {
       expect(layer.contextFiles).toEqual([
         ".context/task.json",
         ".context/spec.md",
+        ".context/project_memory.json",
         ".context/policy_snapshot.json",
         ".context/allowed_paths.json",
         ".context/acceptance_criteria.json"
@@ -335,6 +337,7 @@ describe("control-plane", () => {
       expect(layer.contextFiles).toEqual([
         ".context/task.json",
         ".context/spec.md",
+        ".context/project_memory.json",
         ".context/acceptance_criteria.json"
       ]);
       expect(layer.canonicalSources).not.toContain("prompts/planning-system.md");
@@ -401,6 +404,7 @@ describe("control-plane", () => {
       const artifacts = createRuntimeInstructionArtifacts(layer);
       expect(artifacts.taskSkillMd).toContain(".context/spec.md");
       expect(artifacts.taskSkillMd).toContain(".context/task.json");
+      expect(artifacts.taskSkillMd).toContain(".context/project_memory.json");
       expect(artifacts.taskSkillMd).not.toContain(".context/policy_snapshot.json");
     });
 
@@ -4138,6 +4142,64 @@ describe("dispatchReadyTask", () => {
       ]);
       expect(result.outcome).toBe("completed");
       expect(result.finalPhase).toBe("validation");
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves memory context once per downstream dispatch run and reuses it across phases", async () => {
+    const repository = new InMemoryPlanningRepository();
+    let memoryContextCalls = 0;
+    const originalGetMemoryContext = repository.getMemoryContext.bind(repository);
+    repository.getMemoryContext = async (input) => {
+      memoryContextCalls += 1;
+      return originalGetMemoryContext(input);
+    };
+
+    const planningInput: PlanningTaskInput = {
+      source: { provider: "github", repo: "acme/platform", issueNumber: 1011 },
+      title: "Dispatch memory cache test",
+      summary: "Reuse one resolved project memory snapshot across downstream phases.",
+      priority: 1,
+      labels: ["ai-eligible"],
+      acceptanceCriteria: ["Planning spec exists"],
+      affectedPaths: ["docs/guide.md"],
+      requestedCapabilities: ["can_plan", "can_write_code", "can_archive_evidence"],
+      metadata: {}
+    };
+
+    const planResult = await runPlanningPipeline(planningInput, {
+      repository,
+      planner: new DeterministicPlanningAgent()
+    });
+
+    await resolveApprovalRequest(
+      {
+        requestId: planResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "test",
+        decisionSummary: "Auto-approve for dispatch memory cache test"
+      },
+      { repository }
+    );
+
+    const tmpDir = await mkdtemp(join(tmpdir(), "dispatch-memory-cache-"));
+    try {
+      const result = await dispatchReadyTask(
+        { taskId: planResult.manifest.taskId, targetRoot: tmpDir },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: new FixtureGitHubAdapter({ candidates: [] })
+        }
+      );
+
+      expect(result.outcome).toBe("completed");
+      expect(result.finalPhase).toBe("validation");
+      expect(memoryContextCalls).toBe(1);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }

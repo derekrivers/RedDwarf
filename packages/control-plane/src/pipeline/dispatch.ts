@@ -1,3 +1,4 @@
+import { deriveOrganizationId } from "@reddwarf/evidence";
 import { bindPlanningLogger } from "../logger.js";
 import { defaultLogger } from "../logger.js";
 import {
@@ -80,6 +81,11 @@ export async function dispatchReadyTask(
   });
 
   const phasesExecuted: string[] = [];
+  const memoryContext = await repository.getMemoryContext({
+    taskId,
+    repo: manifest.source.repo,
+    organizationId: deriveOrganizationId(manifest.source.repo)
+  });
 
   let hollyHandoffMarkdown: string | undefined;
   try {
@@ -131,6 +137,7 @@ export async function dispatchReadyTask(
         {
           repository,
           developer: dependencies.developer,
+          memoryContext,
           github: dependencies.github,
           ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
           openClawAgentId: "reddwarf-developer",
@@ -194,6 +201,7 @@ export async function dispatchReadyTask(
         {
           repository,
           reviewer: dependencies.reviewer,
+          memoryContext,
           ...(dependencies.openClawDispatch ? { openClawDispatch: dependencies.openClawDispatch } : {}),
           ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
           ...(dependencies.architectureReviewAwaiter ? { architectureReviewAwaiter: dependencies.architectureReviewAwaiter } : {}),
@@ -260,6 +268,7 @@ export async function dispatchReadyTask(
         {
           repository,
           validator: dependencies.validator,
+          memoryContext,
           ...(dependencies.github ? { github: dependencies.github } : {}),
           ...(dependencies.secrets ? { secrets: dependencies.secrets } : {}),
           ...(dependencies.logger ? { logger: dependencies.logger } : {}),
@@ -326,10 +335,11 @@ export async function dispatchReadyTask(
         targetRoot: input.targetRoot,
         evidenceRoot: input.evidenceRoot
       },
-      {
-        repository,
-        scm: dependencies.scm,
-        github: dependencies.github,
+        {
+          repository,
+          scm: dependencies.scm,
+          memoryContext,
+          github: dependencies.github,
         ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
         ...(dependencies.workspaceCommitPublisher ? { workspaceCommitPublisher: dependencies.workspaceCommitPublisher } : {}),
         ...(dependencies.logger ? { logger: dependencies.logger } : {}),

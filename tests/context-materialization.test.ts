@@ -14,6 +14,7 @@ import {
 } from "@reddwarf/control-plane";
 import {
   asIsoTimestamp,
+  type MemoryContext,
   type PersistedTaskSnapshot,
   type PlanningSpec,
   type PolicySnapshot,
@@ -71,6 +72,32 @@ const policySnapshot: PolicySnapshot = {
   allowedSecretScopes: [],
   blockedPhases: ["review"],
   reasons: ["Planning phase is approved for autonomous execution in v1."]
+};
+
+const memoryContext: MemoryContext = {
+  taskId: manifest.taskId,
+  repo: "acme/platform",
+  organizationId: "acme",
+  taskMemory: [],
+  projectMemory: [
+    {
+      memoryId: "project-memory-1",
+      taskId: null,
+      scope: "project",
+      provenance: "human_curated",
+      key: "repo.testing-command",
+      title: "Primary test command",
+      value: { command: "corepack pnpm test" },
+      repo: "acme/platform",
+      organizationId: "acme",
+      sourceUri: null,
+      tags: ["testing"],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+  ],
+  organizationMemory: [],
+  externalMemory: []
 };
 
 describe("workspace context materialization", () => {
@@ -175,7 +202,8 @@ describe("workspace context materialization", () => {
         assignedAgentType: "developer"
       },
       spec,
-      policySnapshot
+      policySnapshot,
+      memoryContext
     });
     const tempRoot = await mkdtemp(
       join(tmpdir(), "reddwarf-development-context-")
@@ -196,6 +224,9 @@ describe("workspace context materialization", () => {
       expect(materialized.descriptor.taskContractFiles.length).toBeGreaterThan(
         0
       );
+      await expect(
+        access(materialized.files.projectMemoryJson)
+      ).resolves.toBeUndefined();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

@@ -55,6 +55,7 @@ try {
       contextFiles: [
         ".context/task.json",
         ".context/spec.md",
+        ".context/project_memory.json",
         ".context/policy_snapshot.json",
         ".context/allowed_paths.json",
         ".context/acceptance_criteria.json"
@@ -65,6 +66,7 @@ try {
       contextFiles: [
         ".context/task.json",
         ".context/spec.md",
+        ".context/project_memory.json",
         ".context/acceptance_criteria.json"
       ],
       absentFiles: [

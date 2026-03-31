@@ -9,6 +9,7 @@ import {
   type Capability,
   type ConcurrencyDecision,
   type FailureClass,
+  type MemoryContext,
   type PhaseLifecycleStatus,
   type PhaseRecord,
   type PipelineRun,
@@ -22,6 +23,7 @@ import {
 import {
   createPipelineRun,
   createRunEvent,
+  deriveOrganizationId,
   type PersistedTaskSnapshot,
   type PlanningRepository
 } from "@reddwarf/evidence";
@@ -387,6 +389,26 @@ export function readPlanningDefaultBranchFromSnapshot(
   }
 
   return "main";
+}
+
+export async function resolveTaskMemoryContext(input: {
+  repository: PlanningRepository;
+  manifest: TaskManifest;
+  providedMemoryContext?: MemoryContext | null;
+  limitPerScope?: number;
+}): Promise<MemoryContext> {
+  if (input.providedMemoryContext) {
+    return input.providedMemoryContext;
+  }
+
+  return input.repository.getMemoryContext({
+    taskId: input.manifest.taskId,
+    repo: input.manifest.source.repo,
+    organizationId: deriveOrganizationId(input.manifest.source.repo),
+    ...(input.limitPerScope !== undefined
+      ? { limitPerScope: input.limitPerScope }
+      : {})
+  });
 }
 
 export function readValidationSummaryFromSnapshot(

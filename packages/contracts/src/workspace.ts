@@ -9,12 +9,14 @@ import {
   workspaceToolModeSchema,
   workspaceCredentialModeSchema
 } from "./enums.js";
+import { memoryContextSchema } from "./evidence.js";
 import { taskManifestSchema, planningSpecSchema } from "./planning.js";
 import { policySnapshotSchema } from "./policy.js";
 export const workspaceContextBundleSchema = z.object({
   manifest: z.lazy(() => taskManifestSchema),
   spec: planningSpecSchema,
   policySnapshot: policySnapshotSchema,
+  memoryContext: memoryContextSchema.nullable().optional(),
   acceptanceCriteria: z.array(z.string().min(1)),
   allowedPaths: z.array(z.string().min(1))
 });

@@ -38,6 +38,7 @@ import {
   requireNoFailureEscalation,
   requirePhaseSnapshot,
   resolvePhaseDependencies,
+  resolveTaskMemoryContext,
   scrubWorkspaceSecretLeaseOnPhaseExit,
   serializeError,
   taskManifestSchema,
@@ -269,10 +270,18 @@ export async function runValidationPhase(
       }
     });
 
+    const memoryContext = await resolveTaskMemoryContext({
+      repository,
+      manifest: currentManifest,
+      ...(dependencies.memoryContext !== undefined
+        ? { providedMemoryContext: dependencies.memoryContext }
+        : {})
+    });
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
       spec: validatedSpec,
-      policySnapshot: validatedPolicySnapshot
+      policySnapshot: validatedPolicySnapshot,
+      memoryContext
     });
     secretLease = await issueWorkspaceSecretLease({
       bundle,

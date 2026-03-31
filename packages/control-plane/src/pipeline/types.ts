@@ -9,6 +9,7 @@ import {
   type DevelopmentAgent,
   type FailureClass,
   type MaterializedManagedWorkspace,
+  type MemoryContext,
   type PipelineRun,
   type PlanningAgent,
   type PlanningSpec,
@@ -196,6 +197,7 @@ export interface RunScmPhaseInput {
 export interface DevelopmentPhaseDependencies {
   repository: PlanningRepository;
   developer: DevelopmentAgent;
+  memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
   secrets?: SecretsAdapter;
@@ -215,6 +217,7 @@ export interface DevelopmentPhaseDependencies {
 export interface ArchitectureReviewPhaseDependencies {
   repository: PlanningRepository;
   reviewer: ArchitectureReviewAgent;
+  memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   openClawDispatch?: OpenClawDispatchAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
@@ -230,6 +233,7 @@ export interface ArchitectureReviewPhaseDependencies {
 export interface ValidationPhaseDependencies {
   repository: PlanningRepository;
   validator: ValidationAgent;
+  memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
   secrets?: SecretsAdapter;
@@ -244,6 +248,7 @@ export interface ValidationPhaseDependencies {
 export interface ScmPhaseDependencies {
   repository: PlanningRepository;
   scm: ScmAgent;
+  memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   github: GitHubAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;

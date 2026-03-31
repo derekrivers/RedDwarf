@@ -20,6 +20,7 @@ import {
 import {
   asIsoTimestamp,
   capabilities,
+  memoryContextSchema,
   runtimeInstructionLayerSchema,
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
@@ -59,6 +60,7 @@ const [TOOL_MODE_PLANNING, TOOL_MODE_DEVELOPMENT, TOOL_MODE_ARCHITECTURE_REVIEW,
 export interface WorkspaceContextArtifacts {
   taskJson: string;
   specMarkdown: string;
+  projectMemoryJson: string;
   policySnapshotJson: string;
   allowedPathsJson: string;
   acceptanceCriteriaJson: string;
@@ -85,6 +87,7 @@ export interface MaterializedWorkspaceContext {
   files: {
     taskJson: string;
     specMarkdown: string;
+    projectMemoryJson: string;
     policySnapshotJson: string;
     allowedPathsJson: string;
     acceptanceCriteriaJson: string;
@@ -160,6 +163,9 @@ const taskContractFileMetadata = {
   },
   specMarkdown: {
     relativePath: ".context/spec.md"
+  },
+  projectMemoryJson: {
+    relativePath: ".context/project_memory.json"
   },
   policySnapshotJson: {
     relativePath: ".context/policy_snapshot.json"
@@ -249,11 +255,15 @@ export function createWorkspaceContextBundle(input: {
   manifest: TaskManifest;
   spec: PlanningSpec;
   policySnapshot: PolicySnapshot;
+  memoryContext?: import("@reddwarf/contracts").MemoryContext | null;
 }): WorkspaceContextBundle {
   return workspaceContextBundleSchema.parse({
     manifest: input.manifest,
     spec: input.spec,
     policySnapshot: input.policySnapshot,
+    ...(input.memoryContext !== undefined
+      ? { memoryContext: input.memoryContext }
+      : {}),
     acceptanceCriteria: input.spec.acceptanceCriteria,
     allowedPaths: input.policySnapshot.allowedPaths
   });
@@ -332,9 +342,16 @@ export function renderPlanningSpecMarkdown(
 export function createWorkspaceContextArtifacts(
   bundle: WorkspaceContextBundle
 ): WorkspaceContextArtifacts {
+  const cachedProjectMemory = bundle.memoryContext
+    ? memoryContextSchema.parse({
+        ...bundle.memoryContext,
+        taskMemory: []
+      })
+    : null;
   return {
     taskJson: `${JSON.stringify(bundle.manifest, null, 2)}\n`,
     specMarkdown: renderPlanningSpecMarkdown(bundle),
+    projectMemoryJson: `${JSON.stringify(cachedProjectMemory, null, 2)}\n`,
     policySnapshotJson: `${JSON.stringify(bundle.policySnapshot, null, 2)}\n`,
     allowedPathsJson: `${JSON.stringify(bundle.allowedPaths, null, 2)}\n`,
     acceptanceCriteriaJson: `${JSON.stringify(bundle.acceptanceCriteria, null, 2)}\n`
@@ -420,6 +437,7 @@ export async function materializeWorkspaceContext(input: {
   const files = {
     taskJson: join(contextDir, "task.json"),
     specMarkdown: join(contextDir, "spec.md"),
+    projectMemoryJson: join(contextDir, "project_memory.json"),
     policySnapshotJson: join(contextDir, "policy_snapshot.json"),
     allowedPathsJson: join(contextDir, "allowed_paths.json"),
     acceptanceCriteriaJson: join(contextDir, "acceptance_criteria.json")
@@ -1144,7 +1162,7 @@ function getRoleScopedContextArtifactKeys(
 ): WorkspaceContextArtifactKey[] {
   switch (bundle.manifest.assignedAgentType) {
     case "developer":
-      return ["taskJson", "specMarkdown", "acceptanceCriteriaJson"];
+      return ["taskJson", "specMarkdown", "projectMemoryJson", "acceptanceCriteriaJson"];
     case "validation":
       return ["taskJson", "specMarkdown", "acceptanceCriteriaJson"];
     case "scm":
@@ -1153,6 +1171,7 @@ function getRoleScopedContextArtifactKeys(
       return [
         "taskJson",
         "specMarkdown",
+        "projectMemoryJson",
         "policySnapshotJson",
         "allowedPathsJson",
         "acceptanceCriteriaJson"
@@ -1330,13 +1349,13 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
 function roleContextReadingInstruction(bundle: WorkspaceContextBundle): string {
   switch (bundle.manifest.assignedAgentType) {
     case "developer":
-      return "1. Read `.context/spec.md`, `.context/task.json`, and `.context/acceptance_criteria.json` before writing code.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, `.context/project_memory.json`, and `.context/acceptance_criteria.json` before writing code.";
     case "validation":
       return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/acceptance_criteria.json` before running validation.";
     case "scm":
       return "1. Read `.context/task.json` and `.context/spec.md` before creating branches or PRs.";
     default:
-      return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/policy_snapshot.json` before proposing or executing work.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, `.context/project_memory.json`, and `.context/policy_snapshot.json` before proposing or executing work.";
   }
 }
 

@@ -44,6 +44,7 @@ import {
   requireNoFailureEscalation,
   requirePhaseSnapshot,
   resolvePhaseDependencies,
+  resolveTaskMemoryContext,
   serializeError,
   taskManifestSchema,
   taskRequestsPullRequest,
@@ -298,10 +299,18 @@ export async function runScmPhase(
       }
     });
 
+    const memoryContext = await resolveTaskMemoryContext({
+      repository,
+      manifest: currentManifest,
+      ...(dependencies.memoryContext !== undefined
+        ? { providedMemoryContext: dependencies.memoryContext }
+        : {})
+    });
     const bundle = createWorkspaceContextBundle({
       manifest: currentManifest,
       spec: validatedSpec,
-      policySnapshot: validatedPolicySnapshot
+      policySnapshot: validatedPolicySnapshot,
+      memoryContext
     });
     const workspace = await materializeManagedWorkspace({
       bundle,

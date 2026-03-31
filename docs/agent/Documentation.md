@@ -381,3 +381,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `scripts/verify-openclaw-context.mjs` so `corepack pnpm verify:context` now verifies real file presence and absence for architect, developer, and validation role slices instead of assuming every workspace contains the full `.context` bundle.
 - Verification for features 89-90: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:context`.
 - Likely next board item: feature 93, per-run project memory cache.
+
+- Completed feature 93 from `FEATURE_BOARD.md`: per-run project memory cache.
+- Updated `packages/control-plane/src/pipeline/dispatch.ts` so downstream post-approval dispatch resolves task/project/organization/external memory context once per task run and passes the same snapshot through development, architecture review, validation, and SCM instead of re-querying repository memory per phase.
+- Updated `packages/control-plane/src/pipeline/development.ts`, `packages/control-plane/src/pipeline/architecture-review.ts`, `packages/control-plane/src/pipeline/validation.ts`, and `packages/control-plane/src/pipeline/scm.ts` so standalone phase runs still resolve memory context when needed, while dispatch-driven runs reuse the cached snapshot.
+- Extended `packages/contracts/src/workspace.ts` and `packages/control-plane/src/workspace.ts` so workspace bundles can carry memory context and architect/developer workspaces now materialize `.context/project_memory.json` as part of the scoped task contract.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` proving downstream dispatch resolves memory context only once, updated `tests/context-materialization.test.ts` to assert project-memory materialization for developer workspaces, and updated `scripts/verify-openclaw-context.mjs` so the live context verifier checks the new scoped memory file.
+- Verification for feature 93: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts tests/context-materialization.test.ts`; `corepack pnpm verify:context`; `corepack pnpm verify:memory`.
+- Likely next board item: feature 95, structured GitHub issue template.
