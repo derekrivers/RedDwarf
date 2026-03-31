@@ -3,6 +3,7 @@ export {
   DeterministicArchitectureReviewAgent,
   DeterministicDeveloperAgent,
   DeterministicPlanningAgent,
+  DeterministicPreScreeningAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent
 } from "@reddwarf/execution-plane";

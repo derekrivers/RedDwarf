@@ -16,7 +16,11 @@ import type {
   WorkspaceContextBundle,
   MaterializedManagedWorkspace
 } from "./workspace.js";
-import type { PlanningTaskInput, TaskManifest } from "./planning.js";
+import type {
+  PlanningTaskInput,
+  PreScreenAssessment,
+  TaskManifest
+} from "./planning.js";
 
 export const agentDefinitionSchema = z.object({
   id: z.string().min(1),
@@ -159,6 +163,17 @@ export interface PlanningAgent {
     input: PlanningTaskInput,
     context: { manifest: TaskManifest; runId: string }
   ): Promise<PlanningDraft>;
+}
+
+export interface PreScreeningAgent {
+  assessTask(
+    input: PlanningTaskInput,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      hasExistingPlanningSpec: boolean;
+    }
+  ): Promise<PreScreenAssessment>;
 }
 
 export interface DevelopmentAgent {

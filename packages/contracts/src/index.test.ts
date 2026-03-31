@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   asIsoTimestamp,
   concurrencyDecisionSchema,
+  preScreenAssessmentSchema,
   memoryContextSchema,
   memoryRecordSchema,
   pipelineRunSchema,
@@ -55,6 +56,24 @@ describe("contracts", () => {
     expect(parsed.repo).toBe("acme/platform");
     expect(parsed.labels).toEqual(["ai-eligible"]);
     expect(parsed.priority).toBe(3);
+  });
+
+  it("parses a structured pre-screen rejection assessment", () => {
+    const parsed = preScreenAssessmentSchema.parse({
+      accepted: false,
+      summary: "Pre-screen rejected the task.",
+      findings: [
+        {
+          kind: "under_specified",
+          summary: "Missing implementation boundary.",
+          detail: "The task needs concrete affected paths."
+        }
+      ],
+      recommendedActions: ["Add affected paths and retry."]
+    });
+
+    expect(parsed.findings[0]?.kind).toBe("under_specified");
+    expect(parsed.recommendedActions).toEqual(["Add affected paths and retry."]);
   });
 
   it("parses a workspace context bundle", () => {
@@ -601,4 +620,3 @@ describe("contracts", () => {
     expect(decision.action).toBe("block");
   });
 });
-

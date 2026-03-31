@@ -15,6 +15,7 @@ import {
 import {
   assertPhaseExecutable
 } from "@reddwarf/execution-plane";
+import { DeterministicPreScreeningAgent } from "@reddwarf/execution-plane";
 import {
   assessEligibility,
   buildPolicySnapshot,
@@ -69,6 +70,8 @@ export async function runPlanningPipeline(
   const input = planningTaskInputSchema.parse(rawInput);
   const repository = dependencies.repository;
   const planner = dependencies.planner;
+  const prescreener =
+    dependencies.prescreener ?? new DeterministicPreScreeningAgent();
   const logger = dependencies.logger ?? defaultLogger;
   const clock = dependencies.clock ?? (() => new Date());
   const idGenerator = dependencies.idGenerator ?? (() => randomUUID());
@@ -470,6 +473,121 @@ export async function runPlanningPipeline(
     activePhase = "planning";
     const planningStartedAt = clock();
     assertPhaseExecutable("planning");
+    const hasExistingPlanningSpec = await repository.hasPlanningSpecForSource(
+      input.source
+    );
+    const preScreenAssessment = await prescreener.assessTask(input, {
+      manifest: currentManifest,
+      runId,
+      hasExistingPlanningSpec
+    });
+
+    if (!preScreenAssessment.accepted) {
+      const blockedAt = clock();
+      const blockedAtIso = asIsoTimestamp(blockedAt);
+      const blockedManifest = patchManifest(currentManifest, {
+        currentPhase: "planning",
+        lifecycleStatus: "blocked",
+        updatedAt: blockedAtIso
+      });
+
+      await repository.savePhaseRecord(
+        createPhaseRecord({
+          id: `${taskId}:phase:planning`,
+          taskId,
+          phase: "planning",
+          status: "failed",
+          actor: "pre-screener",
+          summary: preScreenAssessment.summary,
+          details: {
+            findings: preScreenAssessment.findings,
+            recommendedActions: preScreenAssessment.recommendedActions
+          },
+          createdAt: blockedAtIso
+        })
+      );
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:gate:pre-screen`,
+          taskId,
+          kind: "gate_decision",
+          title: "Pre-screen rejection",
+          metadata: preScreenAssessment,
+          createdAt: blockedAtIso
+        })
+      );
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${taskId}:memory:task:pre-screen`,
+          taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "planning.pre_screen",
+          title: "Pre-screen decision",
+          value: preScreenAssessment,
+          repo: input.source.repo,
+          organizationId: deriveOrganizationId(input.source.repo),
+          tags: ["planning", "pre-screen", "task"],
+          createdAt: blockedAtIso,
+          updatedAt: blockedAtIso
+        })
+      );
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("planning", EventCodes.PHASE_BLOCKED),
+        taskId,
+        runId,
+        phase: "planning",
+        level: "warn",
+        code: EventCodes.PHASE_BLOCKED,
+        message: "Task rejected by the pre-screening gate before planning.",
+        failureClass: "planning_failure",
+        durationMs: getDurationMs(planningStartedAt, blockedAt),
+        data: {
+          actor: "pre-screener",
+          findings: preScreenAssessment.findings,
+          recommendedActions: preScreenAssessment.recommendedActions
+        },
+        createdAt: blockedAtIso
+      });
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("planning", EventCodes.PIPELINE_BLOCKED),
+        taskId,
+        runId,
+        phase: "planning",
+        level: "warn",
+        code: EventCodes.PIPELINE_BLOCKED,
+        message: "Planning pipeline blocked by pre-screen findings.",
+        failureClass: "planning_failure",
+        durationMs: getDurationMs(runStartedAt, blockedAt),
+        data: {
+          findings: preScreenAssessment.findings
+        },
+        createdAt: blockedAtIso
+      });
+      await repository.updateManifest(blockedManifest);
+      await persistTrackedRun({
+        status: "blocked",
+        lastHeartbeatAt: blockedAtIso,
+        completedAt: blockedAtIso,
+        metadata: {
+          currentPhase: "planning",
+          preScreenFindings: preScreenAssessment.findings
+        }
+      });
+      currentManifest = blockedManifest;
+
+      return {
+        runId,
+        manifest: blockedManifest,
+        preScreenAssessment,
+        nextAction: "task_blocked",
+        concurrencyDecision
+      };
+    }
 
     let draft: import("@reddwarf/contracts").PlanningDraft;
     let hollyHandoffMarkdown: string | null = null;

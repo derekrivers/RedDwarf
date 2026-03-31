@@ -12,6 +12,8 @@ import type {
   PlanningAgent,
   PlanningDraft,
   PlanningTaskInput,
+  PreScreenAssessment,
+  PreScreeningAgent,
   ScmAgent,
   ScmDraft,
   TaskManifest,
@@ -360,6 +362,90 @@ export class DeterministicPlanningAgent implements PlanningAgent {
         "Validate schemas for manifest, spec, and workspace context bundle.",
         "Verify policy gate output and lifecycle records for the task."
       ]
+    };
+  }
+}
+
+const DEFAULT_FALLBACK_ACCEPTANCE_CRITERION =
+  "Task satisfies the issue acceptance criteria.";
+const outOfScopeTerms = [
+  "refund",
+  "billing",
+  "invoice",
+  "password reset",
+  "account access",
+  "customer support",
+  "sales call"
+] as const;
+
+export class DeterministicPreScreeningAgent implements PreScreeningAgent {
+  async assessTask(
+    input: PlanningTaskInput,
+    context: {
+      manifest: TaskManifest;
+      runId: string;
+      hasExistingPlanningSpec: boolean;
+    }
+  ): Promise<PreScreenAssessment> {
+    const findings: PreScreenAssessment["findings"] = [];
+    const normalizedSummary = `${input.title}\n${input.summary}`.toLowerCase();
+    const acceptanceCriteria = input.acceptanceCriteria.map((entry) =>
+      entry.trim()
+    );
+
+    if (context.hasExistingPlanningSpec) {
+      findings.push({
+        kind: "duplicate",
+        summary: "A planning spec already exists for this source task.",
+        detail:
+          "This task source already has a persisted planning spec, so intake should reuse the existing task instead of creating another planning run."
+      });
+    }
+
+    const fallbackAcceptanceOnly =
+      acceptanceCriteria.length === 1 &&
+      acceptanceCriteria[0] === DEFAULT_FALLBACK_ACCEPTANCE_CRITERION;
+    if (input.affectedPaths.length === 0 && fallbackAcceptanceOnly) {
+      findings.push({
+        kind: "under_specified",
+        summary: "The task does not identify a concrete implementation boundary.",
+        detail:
+          "The intake payload falls back to generic acceptance criteria and does not name any affected paths, so the Architect would have to infer too much missing scope."
+      });
+    }
+
+    if (outOfScopeTerms.some((term) => normalizedSummary.includes(term))) {
+      findings.push({
+        kind: "out_of_scope",
+        summary: "The task looks more like operational or support work than product engineering.",
+        detail:
+          "The intake content matches terms associated with support or account operations rather than repository-scoped software delivery."
+      });
+    }
+
+    if (findings.length === 0) {
+      return {
+        accepted: true,
+        summary: `Pre-screen accepted task ${context.manifest.taskId} for planning.`,
+        findings: [],
+        recommendedActions: []
+      };
+    }
+
+    return {
+      accepted: false,
+      summary: `Pre-screen rejected task ${context.manifest.taskId} before the planning agent ran.`,
+      findings,
+      recommendedActions: findings.map((finding) => {
+        switch (finding.kind) {
+          case "duplicate":
+            return "Reuse the existing planning task or update the current task instead of creating a duplicate.";
+          case "under_specified":
+            return "Add explicit acceptance criteria and at least one affected path before retrying intake.";
+          case "out_of_scope":
+            return "Route the work through the appropriate operational channel instead of the software-delivery pipeline.";
+        }
+      })
     };
   }
 }
@@ -930,5 +1016,4 @@ export type {
   BootstrapAlignmentResult,
   FullBootstrapAlignmentResult
 } from "./bootstrap-alignment.js";
-
 

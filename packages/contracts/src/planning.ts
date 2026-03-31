@@ -54,6 +54,25 @@ export const directTaskInjectionRequestSchema = z.object({
   metadata: z.record(jsonValueSchema).default({})
 });
 
+export const preScreenFindingKindSchema = z.enum([
+  "under_specified",
+  "duplicate",
+  "out_of_scope"
+]);
+
+export const preScreenFindingSchema = z.object({
+  kind: preScreenFindingKindSchema,
+  summary: z.string().min(1),
+  detail: z.string().min(1)
+});
+
+export const preScreenAssessmentSchema = z.object({
+  accepted: z.boolean(),
+  summary: z.string().min(1),
+  findings: z.array(preScreenFindingSchema),
+  recommendedActions: z.array(z.string().min(1)).default([])
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -92,5 +111,7 @@ export const taskManifestSchema = z.object({
 
 export type PlanningTaskInput = z.infer<typeof planningTaskInputSchema>;
 export type DirectTaskInjectionRequest = z.infer<typeof directTaskInjectionRequestSchema>;
+export type PreScreenFinding = z.infer<typeof preScreenFindingSchema>;
+export type PreScreenAssessment = z.infer<typeof preScreenAssessmentSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;

@@ -411,4 +411,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added `scripts/verify-submit-cli.mjs`, registered it in `package.json`, and included it in `scripts/verify-all.mjs` so the CLI wrapper is now covered by an automated local verification path that inspects the emitted request payload.
 - Updated `README.md` with a local CLI intake example so developers can submit work directly from the terminal without going through GitHub issue creation.
 - Verification for feature 97: `corepack pnpm typecheck`; `corepack pnpm verify:submit-cli`.
+- Likely next board item: feature 94, pre-screener agent phase.
+
+- Completed feature 94 from `FEATURE_BOARD.md`: pre-screener agent phase.
+- Added a structured pre-screen assessment contract in `packages/contracts/src/planning.ts` and a `PreScreeningAgent` interface in `packages/contracts/src/agents.ts` so the planning pipeline can return explicit under-specified, duplicate, or out-of-scope findings before the Architect consumes a planning pass.
+- Added `DeterministicPreScreeningAgent` in `packages/execution-plane/src/index.ts` and wired it into `runPlanningPipeline(...)` so duplicate-source tasks and fallback-only, boundary-free intake payloads are now blocked ahead of planning with durable phase records, gate evidence, and task memory instead of generating a second planning spec.
+- Extended `packages/control-plane/src/index.test.ts` with regression coverage for duplicate-task and under-specified-task rejection, and added schema coverage for the new pre-screen assessment in `packages/contracts/src/index.test.ts`.
+- Verification for feature 94: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/polling-daemon.test.ts`.
 - Likely next board item: feature 98, task grouping and batch intake.

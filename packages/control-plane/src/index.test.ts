@@ -542,6 +542,68 @@ describe("control-plane", () => {
     expect(pipelineRuns[0]?.status).toBe("blocked");
   });
 
+  it("blocks duplicate tasks in the pre-screening gate before creating a second planning spec", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-25T18:00:00.000Z"),
+      idGenerator: () => "run-prescreen-seed"
+    });
+
+    const result = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-25T18:05:00.000Z"),
+      idGenerator: () => "run-prescreen-duplicate"
+    });
+
+    expect(result.nextAction).toBe("task_blocked");
+    expect(result.manifest.currentPhase).toBe("planning");
+    expect(result.preScreenAssessment?.accepted).toBe(false);
+    expect(result.preScreenAssessment?.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "duplicate" })])
+    );
+    expect(repository.planningSpecs.size).toBe(1);
+    const latestPlanningRecord = repository.phaseRecords
+      .filter(
+        (record) =>
+          record.taskId === result.manifest.taskId && record.phase === "planning"
+      )
+      .at(-1);
+    expect(latestPlanningRecord?.actor).toBe("pre-screener");
+  });
+
+  it("blocks under-specified tasks in the pre-screening gate before the architect runs", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        title: "Investigate a vague issue",
+        summary:
+          "Investigate the platform and figure out what might need changing without a concrete boundary yet.",
+        acceptanceCriteria: ["Task satisfies the issue acceptance criteria."],
+        affectedPaths: []
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:10:00.000Z"),
+        idGenerator: () => "run-prescreen-under-specified"
+      }
+    );
+
+    expect(result.nextAction).toBe("task_blocked");
+    expect(result.preScreenAssessment?.accepted).toBe(false);
+    expect(result.preScreenAssessment?.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "under_specified" })
+      ])
+    );
+    expect(repository.planningSpecs.size).toBe(0);
+  });
+
   it("archives planning output but queues a human approval request for code-writing tasks", async () => {
     const repository = new InMemoryPlanningRepository();
     const result = await runPlanningPipeline(

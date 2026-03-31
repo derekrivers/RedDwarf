@@ -12,6 +12,8 @@ import {
   type MemoryContext,
   type PipelineRun,
   type PlanningAgent,
+  type PreScreenAssessment,
+  type PreScreeningAgent,
   type PlanningSpec,
   type PolicySnapshot,
   type ScmAgent,
@@ -143,6 +145,7 @@ export interface PhaseTimingOptions {
 export interface PlanningPipelineDependencies {
   repository: PlanningRepository;
   planner: PlanningAgent;
+  prescreener?: PreScreeningAgent;
   runtimeConfig?: WorkspaceRuntimeConfig;
   openClawDispatch?: OpenClawDispatchAdapter;
   openClawArchitectAgentId?: string;
@@ -159,6 +162,7 @@ export interface PlanningPipelineResult {
   runId: string;
   manifest: TaskManifest;
   spec?: PlanningSpec;
+  preScreenAssessment?: PreScreenAssessment;
   policySnapshot?: PolicySnapshot;
   approvalRequest?: ApprovalRequest;
   hollyHandoffMarkdown?: string;

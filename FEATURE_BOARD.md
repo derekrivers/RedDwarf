@@ -41,7 +41,7 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 94 | Pre-screener agent phase - add a lightweight pre-pipeline step that runs before the Architect and rejects tasks that are under-specified, duplicate, or out of scope, returning structured rejection reasons rather than consuming a full planning pass | M16 | pending | Integration Plane, Control Plane, Contracts |
+| 94 | Pre-screener agent phase - add a lightweight pre-pipeline step that runs before the Architect and rejects tasks that are under-specified, duplicate, or out of scope, returning structured rejection reasons rather than consuming a full planning pass | M16 | complete | Integration Plane, Control Plane, Contracts |
 | 95 | Structured GitHub issue template - add a repo issue template that collects the fields required for direct pipeline intake (title, acceptance criteria, affected areas, priority signal), reducing freeform-to-spec translation burden on the Architect | M16 | complete | Integration Plane |
 | 96 | Direct task injection endpoint - add POST /tasks/inject operator API endpoint that accepts a structured task payload and enqueues it directly into the pipeline, bypassing the GitHub polling path for programmatic intake | M16 | complete | Control Plane, Integration Plane, Contracts |
 | 97 | Local CLI task submission - add a reddwarf submit CLI command that wraps the direct injection endpoint, allowing a developer to push a task from the terminal without opening GitHub | M16 | complete | Control Plane |
