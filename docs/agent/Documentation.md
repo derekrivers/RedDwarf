@@ -442,3 +442,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
 - Verification for feature 103: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/openclaw-config.test.ts`.
 - Likely next board item: feature 99, Discord approval bot.
+
+- Completed feature 99 from `FEATURE_BOARD.md`: Discord approval bot via native OpenClaw channel config.
+- Extended `packages/control-plane/src/openclaw-config.ts` so RedDwarf can emit a typed `channels.discord` block with conservative DM pairing, server allowlisting, and native command support instead of requiring hand-edited OpenClaw JSON.
+- Updated `scripts/generate-openclaw-config.mjs` and `scripts/lib/config.mjs` so the standard `generate`, `setup`, and `start` flows now build the host-mounted OpenClaw runtime config from typed env-driven options, including `REDDWARF_OPENCLAW_DISCORD_ENABLED`, guild allowlists, and `OPENCLAW_DISCORD_BOT_TOKEN`.
+- Added a conservative disabled Discord baseline to `infra/docker/openclaw.json`, documented the new env surface in `.env.example`, `README.md`, and `docs/DEMO_RUNBOOK.md`, and added focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
+- Verification for feature 99: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts`.
+- Likely next board item: feature 100, Discord notifications for agents.

@@ -116,6 +116,12 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_POLL_REPOS` | _(disabled)_ | Comma-separated `owner/repo` list to poll (e.g. `acme/platform,acme/api`) |
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
+| `REDDWARF_API_URL` | `http://127.0.0.1:8080` | Optional full base URL override for the operator API; mainly used by `reddwarf submit` when the API is not on the default local port |
+| `REDDWARF_OPENCLAW_DISCORD_ENABLED` | `false` | Emit a native `channels.discord` block into the generated OpenClaw runtime config |
+| `REDDWARF_OPENCLAW_DISCORD_DM_POLICY` | `pairing` | Direct-message policy for the native OpenClaw Discord bridge |
+| `REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY` | `allowlist` | Server policy for the native OpenClaw Discord bridge |
+| `REDDWARF_OPENCLAW_DISCORD_GUILD_IDS` | _(empty)_ | Comma-separated Discord server ids to allow when Discord mode is enabled |
+| `REDDWARF_OPENCLAW_DISCORD_REQUIRE_MENTION` | `true` | Require mentions inside allowed Discord servers by default |
 | `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
 | `REDDWARF_DB_POOL_MAX` | `10` | Max Postgres connections in the shared `pg.Pool` |
 | `REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Fail DB connection attempts after this many milliseconds |
@@ -147,6 +153,19 @@ corepack pnpm run setup                    # infrastructure + migrations + healt
 corepack pnpm compose:up:openclaw          # OpenClaw gateway (if not already started)
 corepack pnpm operator:api                 # operator API on :8080
 ```
+
+### OpenClaw Discord channel
+
+Feature 99 uses OpenClaw's native Discord channel support instead of a custom RedDwarf bot. To turn it on for the generated runtime config:
+
+```bash
+export REDDWARF_OPENCLAW_DISCORD_ENABLED=true
+export OPENCLAW_DISCORD_BOT_TOKEN=<discord-bot-token>
+export REDDWARF_OPENCLAW_DISCORD_GUILD_IDS=<guild-id>
+corepack pnpm generate:openclaw-config
+```
+
+The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the seeded JSON. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
 
 ### Approving plans
 

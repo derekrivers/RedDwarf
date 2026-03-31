@@ -149,6 +149,15 @@ The agent roster is defined in [infra/docker/openclaw.json](../infra/docker/open
 corepack pnpm generate:openclaw-config
 ```
 
+To enable the native Discord operator surface in the generated config, set:
+
+```bash
+export REDDWARF_OPENCLAW_DISCORD_ENABLED=true
+export OPENCLAW_DISCORD_BOT_TOKEN=<discord-bot-token>
+export REDDWARF_OPENCLAW_DISCORD_GUILD_IDS=<guild-id>
+corepack pnpm generate:openclaw-config
+```
+
 ---
 
 ## Part 3 — E2E Integration Test (Recommended)

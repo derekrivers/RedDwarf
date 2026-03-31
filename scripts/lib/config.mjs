@@ -105,18 +105,87 @@ export const openClawConfigTemplatePath = resolve(repoRoot, "infra", "docker", "
 /** Path to the resolved OpenClaw runtime config (host-mounted into the container). */
 export const openClawConfigRuntimePath = resolve(repoRoot, "runtime-data", "openclaw-home", "openclaw.json");
 
+function readBooleanEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function readListEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) {
+    return [];
+  }
+
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 /**
- * Resolve ${VAR} placeholders in the OpenClaw config template using
- * process.env and write the result to the runtime config path.
+ * Generate the OpenClaw runtime config from the shared control-plane
+ * generator so env-driven features stay typed instead of relying on
+ * string-only template substitution.
  *
  * @param {{ log?: (msg: string) => void }} [options]
  */
 export async function resolveOpenClawConfig(options) {
-  const { readFile, writeFile, mkdir } = await import("node:fs/promises");
-  const template = await readFile(openClawConfigTemplatePath, "utf8");
-  const resolved = template.replace(/\$\{(\w+)\}/g, (_match, name) => {
-    return process.env[name] ?? "";
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const { generateOpenClawConfig, serializeOpenClawConfig } = await import(
+    "../../packages/control-plane/dist/index.js"
+  );
+  const discordEnabled = readBooleanEnv("REDDWARF_OPENCLAW_DISCORD_ENABLED");
+  const discordGuildIds = readListEnv("REDDWARF_OPENCLAW_DISCORD_GUILD_IDS");
+  const discordRequireMention = readBooleanEnv(
+    "REDDWARF_OPENCLAW_DISCORD_REQUIRE_MENTION",
+    true
+  );
+  const config = generateOpenClawConfig({
+    workspaceRoot: resolve(
+      repoRoot,
+      process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces"
+    ),
+    ...(process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER
+      ? { modelProvider: process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER }
+      : {}),
+    ...(discordEnabled
+      ? {
+          discord: {
+            enabled: true,
+            token:
+              process.env.OPENCLAW_DISCORD_BOT_TOKEN ??
+              process.env.DISCORD_BOT_TOKEN ??
+              "",
+            dmPolicy:
+              process.env.REDDWARF_OPENCLAW_DISCORD_DM_POLICY ?? "pairing",
+            groupPolicy:
+              process.env.REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY ?? "allowlist",
+            ...(discordGuildIds.length > 0
+              ? {
+                  guilds: Object.fromEntries(
+                    discordGuildIds.map((guildId) => [
+                      guildId,
+                      {
+                        enabled: true,
+                        requireMention: discordRequireMention
+                      }
+                    ])
+                  )
+                }
+              : {}),
+            commands: {
+              native: true
+            }
+          }
+        }
+      : {})
   });
+  const resolved = serializeOpenClawConfig(config);
   await mkdir(resolve(repoRoot, "runtime-data", "openclaw-home"), { recursive: true });
   await writeFile(openClawConfigRuntimePath, resolved, "utf8");
   options?.log?.("OpenClaw config resolved and written to runtime-data/openclaw-home/openclaw.json");

@@ -41,6 +41,33 @@ export interface OpenClawHooksConfig {
   allowedSessionKeyPrefixes: string[];
 }
 
+export interface OpenClawDiscordGuildConfig {
+  enabled?: boolean;
+  requireMention?: boolean;
+  channels?: Record<
+    string,
+    {
+      requireMention?: boolean;
+    }
+  >;
+}
+
+export interface OpenClawDiscordChannelConfig {
+  enabled: boolean;
+  token: string;
+  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+  groupPolicy?: "allowlist" | "open";
+  allowFrom?: string[];
+  guilds?: Record<string, OpenClawDiscordGuildConfig>;
+  commands?: {
+    native?: boolean;
+  };
+}
+
+export interface OpenClawChannelsConfig {
+  discord?: OpenClawDiscordChannelConfig;
+}
+
 export interface OpenClawAgentConfig {
   id: string;
   name: string;
@@ -59,6 +86,7 @@ export interface OpenClawAgentConfig {
 export interface OpenClawConfig {
   gateway: OpenClawGatewayConfig;
   hooks: OpenClawHooksConfig;
+  channels?: OpenClawChannelsConfig;
   agents: {
     defaults: {
       skipBootstrap: boolean;
@@ -88,6 +116,13 @@ export interface GenerateOpenClawConfigOptions {
    * Existing callers can omit this to preserve Anthropic-backed defaults.
    */
   modelProvider?: OpenClawModelProvider;
+
+  /**
+   * Optional Discord channel surface. When provided, RedDwarf emits the
+   * native OpenClaw `channels.discord` block instead of requiring operators
+   * to hand-edit the runtime config.
+   */
+  discord?: OpenClawDiscordChannelConfig;
 }
 
 /**
@@ -170,6 +205,70 @@ export function generateOpenClawConfig(
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
     },
+    ...(options.discord
+      ? {
+          channels: {
+            discord: {
+              enabled: options.discord.enabled,
+              token: options.discord.token,
+              ...(options.discord.dmPolicy
+                ? { dmPolicy: options.discord.dmPolicy }
+                : {}),
+              ...(options.discord.groupPolicy
+                ? { groupPolicy: options.discord.groupPolicy }
+                : {}),
+              ...(options.discord.allowFrom
+                ? { allowFrom: [...options.discord.allowFrom] }
+                : {}),
+              ...(options.discord.guilds
+                ? {
+                    guilds: Object.fromEntries(
+                      Object.entries(options.discord.guilds).map(([guildId, guild]) => [
+                        guildId,
+                        {
+                          ...(guild.enabled !== undefined
+                            ? { enabled: guild.enabled }
+                            : {}),
+                          ...(guild.requireMention !== undefined
+                            ? { requireMention: guild.requireMention }
+                            : {}),
+                          ...(guild.channels
+                            ? {
+                                channels: Object.fromEntries(
+                                  Object.entries(guild.channels).map(
+                                    ([channelId, channel]) => [
+                                      channelId,
+                                      {
+                                        ...(channel.requireMention !== undefined
+                                          ? {
+                                              requireMention:
+                                                channel.requireMention
+                                            }
+                                          : {})
+                                      }
+                                    ]
+                                  )
+                                )
+                              }
+                            : {})
+                        }
+                      ])
+                    )
+                  }
+                : {}),
+              ...(options.discord.commands
+                ? {
+                    commands: {
+                      ...(options.discord.commands.native !== undefined
+                        ? { native: options.discord.commands.native }
+                        : {})
+                    }
+                  }
+                : {})
+            }
+          }
+        }
+      : {}),
     agents: {
       defaults: { skipBootstrap },
       list: []

@@ -30,6 +30,17 @@
       "github:issue:"
     ]
   },
+  "channels": {
+    "discord": {
+      "enabled": false,
+      "token": "${OPENCLAW_DISCORD_BOT_TOKEN}",
+      "dmPolicy": "pairing",
+      "groupPolicy": "allowlist",
+      "commands": {
+        "native": true
+      }
+    }
+  },
   "agents": {
     "defaults": {
       "skipBootstrap": true

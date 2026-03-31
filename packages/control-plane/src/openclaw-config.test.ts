@@ -99,6 +99,43 @@ describe("generateOpenClawConfig", () => {
     expect(developer?.model).toBe("openai/gpt-5");
   });
 
+  it("can include a Discord channel config for operator approvals", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      discord: {
+        enabled: true,
+        token: "${OPENCLAW_DISCORD_BOT_TOKEN}",
+        dmPolicy: "pairing",
+        groupPolicy: "allowlist",
+        guilds: {
+          "1234567890": {
+            enabled: true,
+            requireMention: true
+          }
+        },
+        commands: {
+          native: true
+        }
+      }
+    });
+
+    expect(config.channels?.discord).toEqual({
+      enabled: true,
+      token: "${OPENCLAW_DISCORD_BOT_TOKEN}",
+      dmPolicy: "pairing",
+      groupPolicy: "allowlist",
+      guilds: {
+        "1234567890": {
+          enabled: true,
+          requireMention: true
+        }
+      },
+      commands: {
+        native: true
+      }
+    });
+  });
+
   it("allows a subset of roles", () => {
     const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
     const reviewerOnly = roles.filter((r: { role: string }) => r.role === "reviewer");

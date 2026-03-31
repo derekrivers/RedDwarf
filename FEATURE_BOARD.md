@@ -25,7 +25,6 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Status | Notes |
 | - | ------- | ------ | ----- |
-| 99 | Discord approval bot - surface pending approval requests as interactive Discord messages with approve/reject buttons and respond to status queries | pending | OpenClaw native Discord channel integration (`channels.discord.token`); configure, don't build |
 | 100 | Discord notifications for agents - push status updates and approval requests to a Discord channel mid-run for async human oversight | pending | OpenClaw native Discord channels; configure, don't build |
 | 104 | Telegram channel integration - wire OpenClaw's native Telegram channel support for operators who prefer Telegram for approval and status notifications | pending | OpenClaw native Telegram support; config-only, mirrors 99–100 |
 | 101 | Browser / web search for Architect agent - allow the Architect phase to pull current library docs and API references when formulating the planning spec | pending | OpenClaw built-in browser control (CDP-backed Chrome); enable via `browser.enabled: true` in openclaw.json |
