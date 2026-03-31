@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Archived from the live board on 2026-03-30. Completed feature count: 113.
+Archived from the live board on 2026-03-31. Completed feature count: 123.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -121,3 +121,12 @@ Archived from the live board on 2026-03-30. Completed feature count: 113.
 | 88       | Architecture Reviewer Agent phase - add a post-Developer pre-Validator OpenClaw phase that checks implementation against the planning spec, flags structural drift, and emits a structured conformance verdict before the Validator runs | M15 | completed | Integration Plane, Control Plane, Contracts |
 
 | 89       | Deterministic eligibility gate - cheap pre-check before context materialization that confirms task eligibility (required label, acceptance criteria, minimum summary) and short-circuits ineligible tasks without an LLM call | M15 | completed | Control Plane, Knowledge & Policy Plane |
+| 90       | Role-scoped context materialization - restrict the context window handed to each agent phase to only the slice relevant to that role; Architect gets policy and domain docs, Developer gets spec and code, Validator gets spec and diff | M15 | completed | Integration Plane, Knowledge & Policy Plane |
+| 93       | Per-run project memory cache - cache the resolved project memory snapshot once per pipeline run so it is tokenized once and reused across all phases rather than reloaded per phase | M15 | completed | Knowledge & Policy Plane, Control Plane |
+| 94       | Pre-screener agent phase - add a lightweight pre-pipeline step that runs before the Architect and rejects tasks that are under-specified, duplicate, or out of scope, returning structured rejection reasons rather than consuming a full planning pass | M16 | completed | Integration Plane, Control Plane, Contracts |
+| 95       | Structured GitHub issue template - add a repo issue template that collects the fields required for direct pipeline intake (title, acceptance criteria, affected areas, priority signal), reducing freeform-to-spec translation burden on the Architect | M16 | completed | Integration Plane |
+| 96       | Direct task injection endpoint - add POST /tasks/inject operator API endpoint that accepts a structured task payload and enqueues it directly into the pipeline, bypassing the GitHub polling path for programmatic intake | M16 | completed | Control Plane, Integration Plane, Contracts |
+| 97       | Local CLI task submission - add a reddwarf submit CLI command that wraps the direct injection endpoint, allowing a developer to push a task from the terminal without opening GitHub | M16 | completed | Control Plane |
+| 98       | Task grouping and batch intake - allow multiple related tasks to be submitted as a named group with a declared dependency order, with the pipeline serializing or parallelizing them accordingly | M16 | completed | Control Plane, Contracts |
+| 102      | CI adapter tool for agents - add a tool that lets Developer and Validator phases trigger and query CI runs so they can confirm build and test health as part of their phase execution | M16 | completed | Integration Plane |
+| 103      | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M17 | completed | Contracts, Integration Plane, Knowledge & Policy Plane |

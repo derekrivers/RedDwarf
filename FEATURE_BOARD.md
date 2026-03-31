@@ -14,11 +14,8 @@ Priority reset note: after the March 29, 2026 hardening audit, pending feature w
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 89 | Deterministic eligibility gate - before materializing any context for an agent phase, run a cheap pre-check (no LLM call) that confirms the task is eligible to proceed and short-circuits ineligible tasks to avoid wasting tokens | M15 | complete | Control Plane, Knowledge & Policy Plane |
-| 90 | Role-scoped context materialization - restrict the context window handed to each agent phase to only the slice relevant to that role; Architect gets policy and domain docs, Developer gets spec and code, Validator gets spec and diff | M15 | complete | Integration Plane, Knowledge & Policy Plane |
 | 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — |
 | 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — |
-| 93 | Per-run project memory cache - cache the resolved project memory snapshot once per pipeline run so it is tokenized once and reused across all phases rather than reloaded per phase | M15 | complete | Knowledge & Policy Plane, Control Plane |
 
 ---
 
@@ -41,12 +38,6 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 94 | Pre-screener agent phase - add a lightweight pre-pipeline step that runs before the Architect and rejects tasks that are under-specified, duplicate, or out of scope, returning structured rejection reasons rather than consuming a full planning pass | M16 | complete | Integration Plane, Control Plane, Contracts |
-| 95 | Structured GitHub issue template - add a repo issue template that collects the fields required for direct pipeline intake (title, acceptance criteria, affected areas, priority signal), reducing freeform-to-spec translation burden on the Architect | M16 | complete | Integration Plane |
-| 96 | Direct task injection endpoint - add POST /tasks/inject operator API endpoint that accepts a structured task payload and enqueues it directly into the pipeline, bypassing the GitHub polling path for programmatic intake | M16 | complete | Control Plane, Integration Plane, Contracts |
-| 97 | Local CLI task submission - add a reddwarf submit CLI command that wraps the direct injection endpoint, allowing a developer to push a task from the terminal without opening GitHub | M16 | complete | Control Plane |
-| 98 | Task grouping and batch intake - allow multiple related tasks to be submitted as a named group with a declared dependency order, with the pipeline serializing or parallelizing them accordingly | M16 | complete | Control Plane, Contracts |
-| 102 | CI adapter tool for agents - add a tool that lets Developer and Validator phases trigger and query CI runs so they can confirm build and test health as part of their phase execution | M16 | complete | Integration Plane |
 
 ---
 
@@ -54,7 +45,6 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 103 | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M17 | complete | Contracts, Integration Plane, Knowledge & Policy Plane |
 
 ---
 
