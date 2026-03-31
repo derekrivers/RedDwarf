@@ -6,6 +6,7 @@ import {
   memoryRecordSchema,
   pipelineRunSchema,
   planningTaskInputSchema,
+  directTaskInjectionRequestSchema,
   policyPackManifestSchema,
   runEventSchema,
   runSummarySchema,
@@ -40,6 +41,20 @@ describe("contracts", () => {
     });
 
     expect(parsed.source.repo).toBe("acme/platform");
+  });
+
+  it("parses a direct task injection request", () => {
+    const parsed = directTaskInjectionRequestSchema.parse({
+      repo: "acme/platform",
+      title: "Inject a structured task",
+      summary: "Push a structured task directly into the planning pipeline.",
+      acceptanceCriteria: ["Planning runs immediately."],
+      affectedPaths: ["packages/control-plane/src/operator-api.ts"]
+    });
+
+    expect(parsed.repo).toBe("acme/platform");
+    expect(parsed.labels).toEqual(["ai-eligible"]);
+    expect(parsed.priority).toBe(3);
   });
 
   it("parses a workspace context bundle", () => {
@@ -586,5 +601,4 @@ describe("contracts", () => {
     expect(decision.action).toBe("block");
   });
 });
-
 

@@ -604,6 +604,81 @@ describe("operator API server", () => {
     }
   });
 
+  it("injects a structured task directly into the planning pipeline", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-31T10:00:00.000Z")
+      }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const injected = await operatorPost(port, "/tasks/inject", {
+        repo: "acme/platform",
+        title: "Inject a structured planning task",
+        summary: "Push a local structured task directly into the planning pipeline.",
+        priority: 2,
+        acceptanceCriteria: [
+          "A planning spec is generated",
+          "The task can require human approval when code writing is requested"
+        ],
+        affectedPaths: ["packages/control-plane/src/operator-api.ts"],
+        constraints: ["Keep the operator API contract stable."],
+        requestedCapabilities: ["can_write_code"],
+        riskClassHint: "medium"
+      });
+
+      expect(injected.status).toBe(201);
+      expect((injected.body as Record<string, unknown>)["runId"]).toBeDefined();
+      expect((injected.body as Record<string, unknown>)["nextAction"]).toBe("await_human");
+
+      const manifest = (injected.body as Record<string, unknown>)["manifest"] as Record<string, unknown>;
+      expect(manifest["lifecycleStatus"]).toBe("blocked");
+      expect(manifest["source"]).toMatchObject({
+        provider: "github",
+        repo: "acme/platform"
+      });
+
+      const snapshot = await repository.getTaskSnapshot(String(manifest["taskId"]));
+      expect(snapshot.manifest?.title).toBe("Inject a structured planning task");
+      expect(snapshot.approvalRequests).toHaveLength(1);
+      expect(snapshot.memoryRecords.some((record) => record.key === "planning.brief")).toBe(true);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns service_unavailable for /tasks/inject when no planner is configured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/tasks/inject", {
+        repo: "acme/platform",
+        title: "Injected without planner",
+        summary: "This should fail cleanly.",
+        acceptanceCriteria: ["The server returns 503."]
+      });
+
+      expect(response.status).toBe(503);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("service_unavailable");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("serves task evidence and snapshot endpoints", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(eligibleInput, {

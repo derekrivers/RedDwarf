@@ -74,7 +74,11 @@ function apiPost(port, path, body, authToken = operatorApiToken) {
 
 const apiServer = createOperatorApiServer(
   { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
-  { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+  {
+    repository,
+    planner: new DeterministicPlanningAgent(),
+    clock: () => new Date("2026-03-26T12:00:00.000Z")
+  }
 );
 
 try {
@@ -194,6 +198,24 @@ try {
     )
   );
 
+  // POST /tasks/inject
+  const injected = await apiPost(port, "/tasks/inject", {
+    repo,
+    title: "Inject a task via the operator API",
+    summary: "Verify that structured local tasks can enter the planning pipeline without GitHub polling.",
+    priority: 2,
+    acceptanceCriteria: [
+      "The injected task produces a planning result",
+      "The response includes a manifest and nextAction"
+    ],
+    affectedPaths: ["packages/control-plane/src/operator-api.ts"],
+    constraints: ["Keep the operator contract stable."],
+    requestedCapabilities: ["can_plan", "can_archive_evidence"]
+  });
+  assert.equal(injected.status, 201);
+  assert.equal(injected.body.nextAction, "await_human");
+  assert.equal(injected.body.manifest.source.repo, repo);
+
   // GET /tasks/:taskId/evidence
   const evidence = await apiGet(port, `/tasks/${taskId}/evidence`);
   assert.equal(evidence.status, 200);
@@ -265,6 +287,7 @@ try {
         port,
         runsTotal: runsForTask.body.total,
         evidenceTotal: evidence.body.total,
+        injectedTaskId: injected.body.manifest.taskId,
         pollingRepositories: health.body.polling.totalRepositories,
         resolvedApprovalStatus: resolved.body.approval.status,
         manifestLifecycleAfterResolve: resolved.body.manifest.lifecycleStatus
@@ -277,4 +300,3 @@ try {
   await apiServer.stop().catch(() => {});
   await repository.close();
 }
-

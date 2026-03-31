@@ -5,9 +5,12 @@ import {
 } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  directTaskInjectionRequestSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type GitHubIssuePollingCursor,
+  type PlanningAgent,
+  type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
 import {
@@ -17,6 +20,7 @@ import {
 import {
   dispatchReadyTask,
   resolveApprovalRequest,
+  runPlanningPipeline,
   sweepOrphanedDispatcherState,
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
@@ -42,6 +46,7 @@ export interface OperatorApiConfig {
 
 export interface OperatorApiDependencies {
   repository: PlanningRepository;
+  planner?: PlanningAgent;
   clock?: () => Date;
   /** When provided, enables POST /tasks/:taskId/dispatch and dispatcher health reporting. */
   dispatcher?: ReadyTaskDispatcher;
@@ -131,6 +136,7 @@ export function createOperatorApiServer(
       : undefined;
   const {
     repository,
+    planner,
     clock = () => new Date(),
     dispatcher,
     pollingDaemon,
@@ -166,6 +172,7 @@ export function createOperatorApiServer(
           maxRequestBodyBytes,
           dispatcher,
           pollingDaemon,
+          planner,
           dispatchDependencies,
           managedTargetRoot,
           managedEvidenceRoot
@@ -352,6 +359,7 @@ async function handleOperatorRequest(
   maxRequestBodyBytes: number,
   dispatcher?: ReadyTaskDispatcher,
   pollingDaemon?: GitHubIssuePollingDaemon,
+  planner?: PlanningAgent,
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
   managedTargetRoot?: string,
   managedEvidenceRoot?: string
@@ -490,6 +498,51 @@ async function handleOperatorRequest(
   }
 
   // GET /tasks/:taskId/evidence
+  if (method === "POST" && path === "/tasks/inject") {
+    if (!planner) {
+      writeOperatorJsonResponse(res, 503, {
+        error: "service_unavailable",
+        message: "Planner is not configured on this server."
+      });
+      return;
+    }
+
+    const rawBody = (await readOperatorJsonBody(
+      req,
+      maxRequestBodyBytes
+    )) as Record<string, unknown> | null;
+    let injected;
+    try {
+      injected = directTaskInjectionRequestSchema.parse(rawBody ?? {});
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid injection payload.";
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message
+      });
+      return;
+    }
+
+    const planningInput = buildPlanningTaskInputFromInjection(injected);
+    const result = await runPlanningPipeline(planningInput, {
+      repository,
+      planner,
+      clock
+    });
+
+    writeOperatorJsonResponse(res, 201, {
+      runId: result.runId,
+      nextAction: result.nextAction,
+      manifest: result.manifest,
+      ...(result.spec ? { spec: result.spec } : {}),
+      ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
+      ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
+    });
+    return;
+  }
+
+  // GET /tasks/:taskId/evidence
   const evidenceMatch = /^\/tasks\/([^/]+)\/evidence$/.exec(path);
   if (method === "GET" && evidenceMatch) {
     const taskId = evidenceMatch[1]!;
@@ -601,6 +654,36 @@ async function handleOperatorRequest(
     error: "not_found",
     message: "Route not found."
   });
+}
+
+function buildPlanningTaskInputFromInjection(
+  input: import("@reddwarf/contracts").DirectTaskInjectionRequest
+): PlanningTaskInput {
+  const intakeMetadata = {
+    mode: "direct_injection",
+    ...(input.constraints.length > 0 ? { constraints: input.constraints } : {}),
+    ...(input.riskClassHint ? { riskClassHint: input.riskClassHint } : {})
+  };
+
+  return {
+    source: {
+      provider: "github",
+      repo: input.repo,
+      ...(input.issueNumber !== undefined ? { issueNumber: input.issueNumber } : {}),
+      ...(input.issueUrl ? { issueUrl: input.issueUrl } : {})
+    },
+    title: input.title,
+    summary: input.summary,
+    priority: input.priority,
+    labels: [...new Set(["ai-eligible", ...input.labels])],
+    acceptanceCriteria: input.acceptanceCriteria,
+    affectedPaths: input.affectedPaths,
+    requestedCapabilities: input.requestedCapabilities,
+    metadata: {
+      ...input.metadata,
+      intake: intakeMetadata
+    }
+  };
 }
 
 function summarizePollingHealth(

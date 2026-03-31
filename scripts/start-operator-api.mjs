@@ -8,6 +8,7 @@
 // Required env: REDDWARF_OPERATOR_TOKEN
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
+import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
@@ -23,6 +24,9 @@ const repository = createPostgresPlanningRepository(
   connectionString,
   postgresPoolConfig
 );
+const planner = createPlanningAgent({
+  type: process.env.ANTHROPIC_API_KEY ? "anthropic" : "deterministic"
+});
 
 console.log("Checking Postgres readiness...");
 try {
@@ -35,7 +39,10 @@ try {
   process.exit(1);
 }
 
-const server = createOperatorApiServer({ port, authToken: operatorApiToken }, { repository });
+const server = createOperatorApiServer(
+  { port, authToken: operatorApiToken },
+  { repository, planner }
+);
 
 await server.start();
 console.log(`Operator API listening on http://127.0.0.1:${server.port}`);
@@ -43,6 +50,7 @@ console.log("  Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 console.log(`  GET  http://127.0.0.1:${server.port}/approvals`);
 console.log(`  GET  http://127.0.0.1:${server.port}/blocked`);
 console.log(`  GET  http://127.0.0.1:${server.port}/runs`);
+console.log(`  POST http://127.0.0.1:${server.port}/tasks/inject`);
 console.log("Press Ctrl+C to stop.");
 
 process.on("SIGINT", async () => {

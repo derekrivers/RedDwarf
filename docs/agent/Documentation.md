@@ -396,3 +396,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `README.md` with a short GitHub intake section so the structured remote path is documented alongside the existing local operator flow.
 - Verification for feature 95: reviewed the checked-in issue-template YAML and config via repository diff plus field-level grep against the expected intake surface.
 - Likely next board item: feature 96, direct task injection endpoint.
+
+- Completed feature 96 from `FEATURE_BOARD.md`: direct task injection endpoint.
+- Added `directTaskInjectionRequestSchema` to `packages/contracts/src/planning.ts` so programmatic intake has a typed, reusable contract for repo, summary, acceptance criteria, affected paths, constraints, requested capabilities, and optional source issue metadata.
+- Updated `packages/control-plane/src/operator-api.ts` to expose `POST /tasks/inject`, translate structured intake payloads into `PlanningTaskInput`, run them through `runPlanningPipeline(...)`, and return the resulting manifest, spec, policy snapshot, and next action without depending on the GitHub polling path.
+- Updated `scripts/start-operator-api.mjs` and `scripts/start-stack.mjs` so local operator environments wire in a planner and advertise the new injection route, while `scripts/verify-operator-api.mjs` now exercises the injected planning flow as part of the live operator API verification.
+- Added coverage in `packages/contracts/src/index.test.ts` for the new request schema and in `packages/control-plane/src/operator-api.test.ts` for both the successful injected-planning path and the `service_unavailable` response when no planner is configured.
+- Verification for feature 96: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/operator-api.test.ts packages/contracts/src/index.test.ts`; `corepack pnpm verify:operator-api`.
+- Likely next board item: feature 97, local CLI task submission.

@@ -350,9 +350,10 @@ if (openClawAvailable) {
 // Phase 3c: Polling daemon (optional)
 
 let daemon = null;
+let planner = null;
 
 if (pollRepos.length > 0) {
-  const planner = createPlanningAgent({ type: "anthropic" });
+  planner = createPlanningAgent({ type: "anthropic" });
 
   daemon = createGitHubIssuePollingDaemon(
     {
@@ -373,11 +374,12 @@ const server = createOperatorApiServer(
     managedTargetRoot: workspaceTargetRoot,
     managedEvidenceRoot: evidenceRoot
   },
-  {
-    repository,
-    ...(dispatcher ? { dispatcher } : {}),
-    ...(daemon ? { pollingDaemon: daemon } : {}),
-    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+    {
+      repository,
+      ...(planner ? { planner } : {}),
+      ...(dispatcher ? { dispatcher } : {}),
+      ...(daemon ? { pollingDaemon: daemon } : {}),
+      ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
   }
 );
 await server.start();

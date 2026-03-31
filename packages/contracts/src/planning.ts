@@ -36,6 +36,24 @@ export const planningTaskInputSchema = z.object({
   metadata: z.record(jsonValueSchema).default({})
 });
 
+export const directTaskInjectionRequestSchema = z.object({
+  repo: z.string().min(1),
+  title: z.string().min(TITLE_MIN_LENGTH),
+  summary: z.string().min(SUMMARY_MIN_LENGTH),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX).default(3),
+  labels: z.array(z.string().min(1)).default(["ai-eligible"]),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  affectedPaths: z.array(z.string().min(1)).default([]),
+  constraints: z.array(z.string().min(1)).default([]),
+  requestedCapabilities: z
+    .array(capabilitySchema)
+    .default(["can_plan", "can_archive_evidence"]),
+  riskClassHint: riskClassSchema.optional(),
+  issueNumber: z.number().int().positive().optional(),
+  issueUrl: z.string().url().optional(),
+  metadata: z.record(jsonValueSchema).default({})
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -73,5 +91,6 @@ export const taskManifestSchema = z.object({
 });
 
 export type PlanningTaskInput = z.infer<typeof planningTaskInputSchema>;
+export type DirectTaskInjectionRequest = z.infer<typeof directTaskInjectionRequestSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
