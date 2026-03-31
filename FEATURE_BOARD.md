@@ -46,7 +46,7 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 | 96 | Direct task injection endpoint - add POST /tasks/inject operator API endpoint that accepts a structured task payload and enqueues it directly into the pipeline, bypassing the GitHub polling path for programmatic intake | M16 | complete | Control Plane, Integration Plane, Contracts |
 | 97 | Local CLI task submission - add a reddwarf submit CLI command that wraps the direct injection endpoint, allowing a developer to push a task from the terminal without opening GitHub | M16 | complete | Control Plane |
 | 98 | Task grouping and batch intake - allow multiple related tasks to be submitted as a named group with a declared dependency order, with the pipeline serializing or parallelizing them accordingly | M16 | complete | Control Plane, Contracts |
-| 102 | CI adapter tool for agents - add a tool that lets Developer and Validator phases trigger and query CI runs so they can confirm build and test health as part of their phase execution | M16 | pending | Integration Plane |
+| 102 | CI adapter tool for agents - add a tool that lets Developer and Validator phases trigger and query CI runs so they can confirm build and test health as part of their phase execution | M16 | complete | Integration Plane |
 
 ---
 

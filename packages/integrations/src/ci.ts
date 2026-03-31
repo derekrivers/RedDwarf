@@ -27,9 +27,21 @@ export interface BuildArtifactReference {
   contentType?: string;
 }
 
+export interface CiWorkflowTriggerResult {
+  repo: string;
+  workflow: string;
+  ref: string;
+  triggeredAt: string;
+  statusUrl: string | null;
+}
+
 export interface CiAdapter {
   getLatestChecks(repo: string, ref: string): Promise<CiCheckSuiteSnapshot>;
-  triggerWorkflow(repo: string, workflow: string, ref: string): Promise<never>;
+  triggerWorkflow(
+    repo: string,
+    workflow: string,
+    ref: string
+  ): Promise<CiWorkflowTriggerResult>;
   attachBuildOutput(taskId: string, artifact: BuildArtifactReference): Promise<never>;
 }
 
@@ -61,7 +73,11 @@ export class FixtureCiAdapter implements CiAdapter {
     };
   }
 
-  async triggerWorkflow(repo: string, workflow: string, ref: string): Promise<never> {
+  async triggerWorkflow(
+    repo: string,
+    workflow: string,
+    ref: string
+  ): Promise<CiWorkflowTriggerResult> {
     throw new V1MutationDisabledError(`Triggering workflow ${workflow} for ${repo}@${ref}`);
   }
 

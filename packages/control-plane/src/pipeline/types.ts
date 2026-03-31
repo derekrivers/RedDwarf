@@ -26,6 +26,7 @@ import {
   type PlanningRepository
 } from "@reddwarf/evidence";
 import {
+  type CiAdapter,
   type GitHubAdapter,
   type GitHubBranchSummary,
   type GitHubCreatedIssueSummary,
@@ -204,6 +205,7 @@ export interface DevelopmentPhaseDependencies {
   memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
+  ci?: CiAdapter;
   secrets?: SecretsAdapter;
   openClawDispatch?: OpenClawDispatchAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
@@ -240,6 +242,7 @@ export interface ValidationPhaseDependencies {
   memoryContext?: MemoryContext | null;
   runtimeConfig?: WorkspaceRuntimeConfig;
   github?: GitHubAdapter;
+  ci?: CiAdapter;
   secrets?: SecretsAdapter;
   environment?: string;
   logger?: PlanningPipelineLogger;
@@ -375,6 +378,7 @@ export interface DispatchReadyTaskDependencies {
   validator: ValidationAgent;
   scm: ScmAgent;
   github: GitHubAdapter;
+  ci?: CiAdapter;
   openClawDispatch?: OpenClawDispatchAdapter;
   secrets?: SecretsAdapter;
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;

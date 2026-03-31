@@ -1483,6 +1483,152 @@ describe("control-plane", () => {
     }
   });
 
+  it("materializes CI tooling for validation and processes queued workflow requests", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-validation-ci-"));
+    const triggerCalls: Array<{ repo: string; workflow: string; ref: string }> = [];
+    const ci = {
+      async getLatestChecks(repo: string, ref: string) {
+        return {
+          repo,
+          ref,
+          overallStatus: "success" as const,
+          checks: [
+            {
+              name: "ci / typecheck",
+              status: "success" as const,
+              conclusion: "success",
+              url: "https://ci.example/typecheck",
+              completedAt: "2026-03-30T08:00:00.000Z"
+            }
+          ],
+          observedAt: "2026-03-30T08:00:00.000Z"
+        };
+      },
+      async triggerWorkflow(repo: string, workflow: string, ref: string) {
+        triggerCalls.push({ repo, workflow, ref });
+        return {
+          repo,
+          workflow,
+          ref,
+          triggeredAt: "2026-03-30T08:05:00.000Z",
+          statusUrl: "https://ci.example/runs/1"
+        };
+      },
+      async attachBuildOutput() {
+        throw new Error("not used in this test");
+      }
+    };
+
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        source: {
+          provider: "github",
+          repo: "acme/platform",
+          issueNumber: 700,
+          issueUrl: "https://github.com/acme/platform/issues/700"
+        },
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/validation-ci.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-30T08:00:00.000Z"),
+        idGenerator: () => "run-validation-ci-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for validation CI tooling coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-30T08:01:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-validation-ci"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-30T08:02:00.000Z"),
+          idGenerator: () => "run-validation-ci-dev"
+        }
+      );
+
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          ci,
+          validator: {
+            async createPlan() {
+              return {
+                summary: "Use the workspace CI helper during validation.",
+                commands: [
+                  {
+                    id: "ci-trigger",
+                    name: "Queue CI workflow trigger",
+                    executable: process.execPath,
+                    args: [
+                      join(".workspace", "tools", "reddwarf-ci.mjs"),
+                      "trigger",
+                      "--workflow",
+                      "ci.yml",
+                      "--ref",
+                      "main"
+                    ]
+                  }
+                ]
+              };
+            }
+          },
+          clock: () => new Date("2026-03-30T08:03:00.000Z"),
+          idGenerator: () => "run-validation-ci-phase"
+        }
+      );
+
+      expect(validation.nextAction).toBe("await_review");
+      expect(triggerCalls).toEqual([
+        {
+          repo: "acme/platform",
+          workflow: "ci.yml",
+          ref: "main"
+        }
+      ]);
+      await expect(
+        access(join(validation.workspace!.stateDir, "tools", "reddwarf-ci.mjs"))
+      ).resolves.toBeUndefined();
+      const ciMemory = await repository.listMemoryRecords({
+        taskId: planningResult.manifest.taskId,
+        keyPrefix: "ci.validation.requests"
+      });
+      expect(ciMemory).toHaveLength(1);
+      expect(ciMemory[0]?.value).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ workflow: "ci.yml", status: "triggered" })
+        ])
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps approved PR tasks pending review when the developer phase stays read-only", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-readonly-pr-workspace-"));
@@ -3418,6 +3564,171 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(
         repository.runEvents.some((e) => e.code === "OPENCLAW_DISPATCH")
       ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes CI tooling for OpenClaw developer workspaces and processes queued workflow requests", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-ci-"));
+    const triggerCalls: Array<{ repo: string; workflow: string; ref: string }> = [];
+    const ci = {
+      async getLatestChecks(repo: string, ref: string) {
+        return {
+          repo,
+          ref,
+          overallStatus: "pending" as const,
+          checks: [],
+          observedAt: "2026-03-30T09:00:00.000Z"
+        };
+      },
+      async triggerWorkflow(repo: string, workflow: string, ref: string) {
+        triggerCalls.push({ repo, workflow, ref });
+        return {
+          repo,
+          workflow,
+          ref,
+          triggeredAt: "2026-03-30T09:01:00.000Z",
+          statusUrl: "https://ci.example/runs/2"
+        };
+      },
+      async attachBuildOutput() {
+        throw new Error("not used in this test");
+      }
+    };
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/dispatch-ci-target.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-30T09:00:00.000Z")
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for developer CI tooling test."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-30T09:02:00.000Z")
+        }
+      );
+
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-dispatch-ci"
+      });
+
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dispatch-ci"
+        },
+        {
+          repository,
+          ci,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: {
+            async waitForCompletion(input: {
+              workspace: { stateDir: string; artifactsDir: string; workspaceRoot: string };
+              manifest: { taskId: string };
+            }) {
+              const requestPath = join(
+                input.workspace.stateDir,
+                "ci",
+                "requests",
+                "ci-trigger.json"
+              );
+              await mkdir(join(input.workspace.stateDir, "ci", "requests"), {
+                recursive: true
+              });
+              await writeFile(
+                requestPath,
+                `${JSON.stringify(
+                  {
+                    workflow: "ci.yml",
+                    ref: "main",
+                    requestedAt: "2026-03-30T09:03:00.000Z"
+                  },
+                  null,
+                  2
+                )}\n`,
+                "utf8"
+              );
+              const repoRoot = join(input.workspace.workspaceRoot, "repo");
+              await mkdir(repoRoot, { recursive: true });
+              const handoffPath = join(
+                input.workspace.artifactsDir,
+                "developer-handoff.md"
+              );
+              await writeFile(
+                handoffPath,
+                [
+                  "# Development Handoff",
+                  "",
+                  `- Task ID: ${input.manifest.taskId}`,
+                  "- Run ID: fixture-openclaw-ci",
+                  "",
+                  "## Summary",
+                  "",
+                  "Queued a CI workflow trigger from the workspace helper.",
+                  "",
+                  "## Implementation Notes",
+                  "",
+                  "- Requested ci.yml on main",
+                  "",
+                  "## Blocked Actions",
+                  "",
+                  "- none",
+                  "",
+                  "## Next Actions",
+                  "",
+                  "- Continue to validation."
+                ].join("\n"),
+                "utf8"
+              );
+              return { handoffPath, repoRoot };
+            }
+          },
+          clock: () => new Date("2026-03-30T09:04:00.000Z"),
+          idGenerator: () => "run-dispatch-ci"
+        }
+      );
+
+      expect(triggerCalls).toEqual([
+        {
+          repo: "acme/platform",
+          workflow: "ci.yml",
+          ref: "main"
+        }
+      ]);
+      await expect(
+        access(join(development.workspace!.stateDir, "tools", "reddwarf-ci.mjs"))
+      ).resolves.toBeUndefined();
+      const ciMemory = await repository.listMemoryRecords({
+        taskId: planningResult.manifest.taskId,
+        keyPrefix: "ci.development.requests"
+      });
+      expect(ciMemory).toHaveLength(1);
+      expect(ciMemory[0]?.value).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ workflow: "ci.yml", status: "triggered" })
+        ])
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

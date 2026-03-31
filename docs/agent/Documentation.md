@@ -427,3 +427,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Extended `packages/control-plane/src/operator-api.test.ts`, `packages/control-plane/src/index.test.ts`, and `scripts/verify-operator-api.mjs` to cover grouped intake plus dispatcher dependency ordering.
 - Verification for feature 98: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/operator-api.test.ts packages/control-plane/src/index.test.ts packages/contracts/src/index.test.ts`; `corepack pnpm verify:operator-api`.
 - Likely next board item: feature 102, CI adapter tool for agents.
+
+- Completed feature 102 from `FEATURE_BOARD.md`: CI adapter tool for agents.
+- Added workspace-local CI tooling in `packages/control-plane/src/ci-tool.ts`, including a generated `.workspace/tools/reddwarf-ci.mjs` helper, cached latest-check snapshots, and request/result files under `.workspace/ci/` so developer and validation workspaces can query CI state and queue workflow-trigger requests without exposing broad host credentials directly inside the workspace.
+- Extended `packages/control-plane/src/pipeline/development.ts`, `packages/control-plane/src/pipeline/validation.ts`, `packages/control-plane/src/pipeline/dispatch.ts`, and `packages/control-plane/src/pipeline/types.ts` so optional `CiAdapter` dependencies are threaded through phase execution, workspace CI helpers are provisioned when available, and queued workflow-trigger requests are processed after the phase run and persisted as task memory.
+- Updated `packages/control-plane/src/workspace.ts` runtime tool notes so developer and validation agents are told where the CI helper lives, and widened `packages/integrations/src/ci.ts` so successful CI workflow triggers now have a concrete result shape instead of a hardcoded `never` return type.
+- Extended `packages/control-plane/src/index.test.ts` with coverage for validation-command and OpenClaw-developer use of the workspace CI helper, while `packages/integrations/src/ci.test.ts` and the broader focused control-plane tests continue covering the adapter contract.
+- Verification for feature 102: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/ci.test.ts packages/control-plane/src/operator-api.test.ts`.
+- Likely next board item: feature 103, OpenAI provider support.

@@ -71,6 +71,10 @@ import {
   parseDevelopmentHandoffMarkdown,
   renderDevelopmentHandoffMarkdown
 } from "./prompts.js";
+import {
+  materializeWorkspaceCiTool,
+  processWorkspaceCiRequests
+} from "../ci-tool.js";
 
 export async function runDeveloperPhase(
   input: RunDeveloperPhaseInput,
@@ -287,6 +291,14 @@ export async function runDeveloperPhase(
       createdAt: developmentStartedAtIso,
       secretLease
     });
+    if (dependencies.ci) {
+      await materializeWorkspaceCiTool({
+        workspace,
+        repo: currentManifest.source.repo,
+        ref: baseBranch,
+        ci: dependencies.ci
+      });
+    }
     currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: developmentStartedAtIso,
@@ -498,6 +510,32 @@ export async function runDeveloperPhase(
           codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
         }),
         "utf8"
+      );
+    }
+
+    if (dependencies.ci) {
+      const ciRequests = await processWorkspaceCiRequests({
+        workspace,
+        repo: currentManifest.source.repo,
+        defaultRef: baseBranch,
+        ci: dependencies.ci
+      });
+      const ciRequestsRecordedAt = asIsoTimestamp(clock());
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${taskId}:memory:task:ci:development`,
+          taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "ci.development.requests",
+          title: "Developer CI tool requests",
+          value: ciRequests,
+          repo: currentManifest.source.repo,
+          organizationId: deriveOrganizationId(currentManifest.source.repo),
+          tags: ["ci", "development", "task"],
+          createdAt: ciRequestsRecordedAt,
+          updatedAt: ciRequestsRecordedAt
+        })
       );
     }
 

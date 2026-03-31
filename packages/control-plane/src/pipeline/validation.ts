@@ -33,6 +33,7 @@ import {
   issueWorkspaceSecretLease,
   patchManifest,
   readDevelopmentCodeWriteEnabledFromSnapshot,
+  readPlanningDefaultBranchFromSnapshot,
   recordRunEvent,
   requireApprovedRequest,
   requireNoFailureEscalation,
@@ -71,6 +72,10 @@ import {
 import {
   findApprovedFailureEscalationRequest
 } from "./shared.js";
+import {
+  materializeWorkspaceCiTool,
+  processWorkspaceCiRequests
+} from "../ci-tool.js";
 
 export async function runValidationPhase(
   input: RunValidationPhaseInput,
@@ -298,6 +303,15 @@ export async function runValidationPhase(
       createdAt: validationStartedAtIso,
       secretLease
     });
+    const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
+    if (dependencies.ci) {
+      await materializeWorkspaceCiTool({
+        workspace,
+        repo: currentManifest.source.repo,
+        ref: baseBranch,
+        ci: dependencies.ci
+      });
+    }
     currentManifest = patchManifest(currentManifest, {
       workspaceId: workspace.workspaceId,
       updatedAt: validationStartedAtIso,
@@ -641,6 +655,30 @@ export async function runValidationPhase(
       clock,
       nextEventId
     });
+    if (dependencies.ci) {
+      const ciRequests = await processWorkspaceCiRequests({
+        workspace,
+        repo: currentManifest.source.repo,
+        defaultRef: baseBranch,
+        ci: dependencies.ci
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${taskId}:memory:task:ci:validation`,
+          taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "ci.validation.requests",
+          title: "Validation CI tool requests",
+          value: ciRequests,
+          repo: currentManifest.source.repo,
+          organizationId: deriveOrganizationId(currentManifest.source.repo),
+          tags: ["ci", "validation", "task"],
+          createdAt: validationCompletedAtIso,
+          updatedAt: validationCompletedAtIso
+        })
+      );
+    }
 
     await repository.saveMemoryRecord(
       createMemoryRecord({

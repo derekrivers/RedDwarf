@@ -224,7 +224,8 @@ const planningWorkspaceToolPolicyNotes = [
 
 const developmentWorkspaceToolPolicyNotes = [
   "Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default.",
-  "Use the isolated workspace for inspection, handoff artifacts, and evidence capture before validation checks run."
+  "Use the isolated workspace for inspection, handoff artifacts, and evidence capture before validation checks run.",
+  "When provisioned, inspect CI state with `.workspace/tools/reddwarf-ci.mjs latest` and queue workflow triggers with `.workspace/tools/reddwarf-ci.mjs trigger --workflow <name>`."
 ] as const;
 
 const architectureReviewWorkspaceToolPolicyNotes = [
@@ -234,7 +235,8 @@ const architectureReviewWorkspaceToolPolicyNotes = [
 
 const validationWorkspaceToolPolicyNotes = [
   "Validation orchestration is enabled in RedDwarf v1 for deterministic workspace-local checks.",
-  "Run lint, test, and contract validation commands inside the isolated workspace while product code writes remain disabled."
+  "Run lint, test, and contract validation commands inside the isolated workspace while product code writes remain disabled.",
+  "When provisioned, inspect CI state with `.workspace/tools/reddwarf-ci.mjs latest` and queue workflow triggers with `.workspace/tools/reddwarf-ci.mjs trigger --workflow <name>`."
 ] as const;
 
 const scmWorkspaceToolPolicyNotes = [
