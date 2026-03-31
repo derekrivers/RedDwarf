@@ -404,3 +404,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added coverage in `packages/contracts/src/index.test.ts` for the new request schema and in `packages/control-plane/src/operator-api.test.ts` for both the successful injected-planning path and the `service_unavailable` response when no planner is configured.
 - Verification for feature 96: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/operator-api.test.ts packages/contracts/src/index.test.ts`; `corepack pnpm verify:operator-api`.
 - Likely next board item: feature 97, local CLI task submission.
+
+- Completed feature 97 from `FEATURE_BOARD.md`: local CLI task submission.
+- Added a repo-root `reddwarf` bin in `scripts/reddwarf.mjs` with a `submit` command that loads the local `.env`, targets the operator API, and POSTs the same structured payload accepted by `POST /tasks/inject`.
+- The CLI supports repeatable acceptance criteria, affected paths, constraints, labels, and requested capabilities; reads `REDDWARF_OPERATOR_TOKEN` and `REDDWARF_API_URL` by default; and can print either a concise human summary or the raw JSON response via `--json`.
+- Added `scripts/verify-submit-cli.mjs`, registered it in `package.json`, and included it in `scripts/verify-all.mjs` so the CLI wrapper is now covered by an automated local verification path that inspects the emitted request payload.
+- Updated `README.md` with a local CLI intake example so developers can submit work directly from the terminal without going through GitHub issue creation.
+- Verification for feature 97: `corepack pnpm typecheck`; `corepack pnpm verify:submit-cli`.
+- Likely next board item: feature 98, task grouping and batch intake.

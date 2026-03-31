@@ -172,6 +172,22 @@ The template:
 - captures the structured fields RedDwarf already uses well: summary, priority signal, acceptance criteria, affected areas, constraints, and risk class
 - reduces freeform issue cleanup before planning starts
 
+### Local CLI task intake
+
+For local intake, use the repo CLI to submit directly to the operator API without opening GitHub:
+
+```bash
+export REDDWARF_OPERATOR_TOKEN=<your-operator-token>
+corepack pnpm exec reddwarf submit \
+  --repo owner/repo \
+  --title "Tighten operator retries" \
+  --summary "Surface poll failures faster in the operator dashboard." \
+  --acceptance "Polling failures appear in /health within one cycle." \
+  --path packages/control-plane/src/polling.ts
+```
+
+The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1:${REDDWARF_API_PORT:-8080}`. Add `--json` if you want the raw planning response back for scripting.
+
 ### Service health checks
 
 | Service | Endpoint | Expected |
