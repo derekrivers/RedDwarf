@@ -679,6 +679,64 @@ describe("operator API server", () => {
     }
   });
 
+  it("injects a grouped task batch and persists dependency metadata for each task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-31T10:10:00.000Z")
+      }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const injected = await operatorPost(port, "/task-groups/inject", {
+        groupId: "docs-rollout",
+        groupName: "Docs rollout",
+        executionMode: "sequential",
+        tasks: [
+          {
+            taskKey: "draft-plan",
+            repo: "acme/platform",
+            title: "Draft the rollout plan",
+            summary: "Create the first planning task for the grouped rollout.",
+            acceptanceCriteria: ["The first planning task is queued."],
+            affectedPaths: ["docs/plan.md"]
+          },
+          {
+            taskKey: "publish-follow-up",
+            repo: "acme/platform",
+            title: "Publish the follow-up plan",
+            summary: "Create the second planning task after the first one finishes.",
+            acceptanceCriteria: ["The second planning task is queued."],
+            affectedPaths: ["docs/follow-up.md"]
+          }
+        ]
+      });
+
+      expect(injected.status).toBe(201);
+      expect((injected.body as Record<string, unknown>)["groupId"]).toBe("docs-rollout");
+      const tasks = (injected.body as Record<string, unknown>)["tasks"] as Array<Record<string, unknown>>;
+      expect(tasks).toHaveLength(2);
+      expect(tasks[1]?.["dependsOn"]).toEqual(["draft-plan"]);
+
+      const memberships = await repository.listMemoryRecords({
+        repo: "acme/platform",
+        keyPrefix: "task.group.membership"
+      });
+      expect(memberships).toHaveLength(2);
+      expect(
+        memberships.map((record) => (record.value as Record<string, unknown>)["taskKey"])
+      ).toEqual(expect.arrayContaining(["draft-plan", "publish-follow-up"]));
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("serves task evidence and snapshot endpoints", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(eligibleInput, {

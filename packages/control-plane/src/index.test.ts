@@ -54,7 +54,8 @@ import {
 import {
   taskManifestSchema,
   planningSpecSchema,
-  policySnapshotSchema
+  policySnapshotSchema,
+  taskGroupMembershipSchema
 } from "@reddwarf/contracts";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
 
@@ -4973,6 +4974,153 @@ describe("createReadyTaskDispatcher", () => {
     const result = await dispatcher.dispatchOnce();
     expect(result.dispatchedCount).toBe(0);
     expect(result.results).toHaveLength(0);
+  });
+
+  it("dispatches a prerequisite grouped task before an older ready dependent task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatcher-task-group-"));
+
+    try {
+      const dependentPlan = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 500,
+            issueUrl: "https://github.com/acme/platform/issues/500"
+          },
+          title: "Dependent grouped task",
+          summary: "Queue the dependent grouped task before its prerequisite to verify dispatcher ordering.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/dependent.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-30T09:00:00.000Z"),
+          idGenerator: () => "run-group-dependent"
+        }
+      );
+      await resolveApprovalRequest(
+        {
+          requestId: dependentPlan.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Leave this ready but dependency-blocked."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-30T09:01:00.000Z")
+        }
+      );
+
+      const prerequisitePlan = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 501,
+            issueUrl: "https://github.com/acme/platform/issues/501"
+          },
+          title: "Prerequisite grouped task",
+          summary: "Queue the prerequisite grouped task after the dependent to verify the dispatcher skips unmet dependencies.",
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/prerequisite.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-30T09:02:00.000Z"),
+          idGenerator: () => "run-group-prerequisite"
+        }
+      );
+      await resolveApprovalRequest(
+        {
+          requestId: prerequisitePlan.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Ready for grouped dispatch ordering."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-30T09:03:00.000Z")
+        }
+      );
+
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${dependentPlan.manifest.taskId}:memory:task-group:docs-rollout`,
+          taskId: dependentPlan.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "task.group.membership",
+          title: "Task group membership",
+          value: taskGroupMembershipSchema.parse({
+            groupId: "docs-rollout",
+            groupName: "Docs rollout",
+            executionMode: "sequential",
+            taskKey: "publish-follow-up",
+            sequence: 1,
+            dependsOnTaskKeys: ["draft-plan"],
+            dependsOnTaskIds: [prerequisitePlan.manifest.taskId]
+          }),
+          repo: "acme/platform",
+          organizationId: "acme",
+          tags: ["task-group", "group:docs-rollout"],
+          createdAt: "2026-03-30T09:04:00.000Z",
+          updatedAt: "2026-03-30T09:04:00.000Z"
+        })
+      );
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${prerequisitePlan.manifest.taskId}:memory:task-group:docs-rollout`,
+          taskId: prerequisitePlan.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "task.group.membership",
+          title: "Task group membership",
+          value: taskGroupMembershipSchema.parse({
+            groupId: "docs-rollout",
+            groupName: "Docs rollout",
+            executionMode: "sequential",
+            taskKey: "draft-plan",
+            sequence: 0,
+            dependsOnTaskKeys: [],
+            dependsOnTaskIds: []
+          }),
+          repo: "acme/platform",
+          organizationId: "acme",
+          tags: ["task-group", "group:docs-rollout"],
+          createdAt: "2026-03-30T09:04:00.000Z",
+          updatedAt: "2026-03-30T09:04:00.000Z"
+        })
+      );
+
+      const dispatcher = createReadyTaskDispatcher(
+        { intervalMs: 5_000, targetRoot: tempRoot, runOnStart: false },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          reviewer: new DeterministicArchitectureReviewAgent(),
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: fixtureGithub,
+          openClawDispatch: new FixtureOpenClawDispatchAdapter()
+        }
+      );
+
+      const result = await dispatcher.dispatchOnce();
+      const dependentManifest = await repository.getManifest(dependentPlan.manifest.taskId);
+
+      expect(result.dispatchedCount).toBe(1);
+      expect(result.results[0]?.taskId).toBe(prerequisitePlan.manifest.taskId);
+      expect(dependentManifest?.lifecycleStatus).toBe("ready");
+      expect(result.results[0]?.taskId).not.toBe(dependentPlan.manifest.taskId);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the dispatcher running after a startup-cycle failure and records degraded health", async () => {

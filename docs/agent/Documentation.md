@@ -419,3 +419,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Extended `packages/control-plane/src/index.test.ts` with regression coverage for duplicate-task and under-specified-task rejection, and added schema coverage for the new pre-screen assessment in `packages/contracts/src/index.test.ts`.
 - Verification for feature 94: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/polling-daemon.test.ts`.
 - Likely next board item: feature 98, task grouping and batch intake.
+
+- Completed feature 98 from `FEATURE_BOARD.md`: task grouping and batch intake.
+- Added grouped intake contracts in `packages/contracts/src/planning.ts` for named task groups, per-task dependency keys, execution modes, and persisted task-group membership metadata.
+- Added `POST /task-groups/inject` to `packages/control-plane/src/operator-api.ts`, which plans a batch of related tasks, auto-chains sequential groups when explicit dependencies are omitted, and persists dependency metadata to task memory for later execution ordering.
+- Added `packages/control-plane/src/task-groups.ts` plus dispatch/polling integration so both manual dispatch and the ready-task dispatcher now hold dependent tasks until their prerequisite task ids are completed, while still allowing unrelated ready work to proceed.
+- Extended `packages/control-plane/src/operator-api.test.ts`, `packages/control-plane/src/index.test.ts`, and `scripts/verify-operator-api.mjs` to cover grouped intake plus dispatcher dependency ordering.
+- Verification for feature 98: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/operator-api.test.ts packages/control-plane/src/index.test.ts packages/contracts/src/index.test.ts`; `corepack pnpm verify:operator-api`.
+- Likely next board item: feature 102, CI adapter tool for agents.

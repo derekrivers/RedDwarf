@@ -73,6 +73,31 @@ export const preScreenAssessmentSchema = z.object({
   recommendedActions: z.array(z.string().min(1)).default([])
 });
 
+export const taskGroupExecutionModeSchema = z.enum(["sequential", "parallel"]);
+
+export const groupedTaskInjectionRequestSchema =
+  directTaskInjectionRequestSchema.extend({
+    taskKey: z.string().min(1),
+    dependsOn: z.array(z.string().min(1)).default([])
+  });
+
+export const taskGroupInjectionRequestSchema = z.object({
+  groupId: z.string().min(1).optional(),
+  groupName: z.string().min(1).optional(),
+  executionMode: taskGroupExecutionModeSchema.default("sequential"),
+  tasks: z.array(groupedTaskInjectionRequestSchema).min(1)
+});
+
+export const taskGroupMembershipSchema = z.object({
+  groupId: z.string().min(1),
+  groupName: z.string().min(1).nullable(),
+  executionMode: taskGroupExecutionModeSchema,
+  taskKey: z.string().min(1),
+  sequence: z.number().int().min(0),
+  dependsOnTaskKeys: z.array(z.string().min(1)),
+  dependsOnTaskIds: z.array(z.string().min(1))
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -113,5 +138,13 @@ export type PlanningTaskInput = z.infer<typeof planningTaskInputSchema>;
 export type DirectTaskInjectionRequest = z.infer<typeof directTaskInjectionRequestSchema>;
 export type PreScreenFinding = z.infer<typeof preScreenFindingSchema>;
 export type PreScreenAssessment = z.infer<typeof preScreenAssessmentSchema>;
+export type GroupedTaskInjectionRequest = z.infer<
+  typeof groupedTaskInjectionRequestSchema
+>;
+export type TaskGroupExecutionMode = z.infer<typeof taskGroupExecutionModeSchema>;
+export type TaskGroupInjectionRequest = z.infer<
+  typeof taskGroupInjectionRequestSchema
+>;
+export type TaskGroupMembership = z.infer<typeof taskGroupMembershipSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;

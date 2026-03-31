@@ -33,6 +33,7 @@ import {
   type DispatchReadyTaskResult,
   type PlanningConcurrencyOptions
 } from "./pipeline.js";
+import { resolveUnmetTaskGroupDependencies } from "./task-groups.js";
 
 export interface GitHubPollingRepoConfig {
   repo: string;
@@ -740,10 +741,12 @@ async function findNextDispatchableManifest(
     }
   }
 
-  const readyManifests = await repository.listManifestsByLifecycleStatus("ready", 1);
+  const readyManifests = await repository.listManifestsByLifecycleStatus(
+    "ready",
+    blockedScanLimit
+  );
 
-  if (readyManifests.length > 0) {
-    const manifest = readyManifests[0]!;
+  for (const manifest of readyManifests) {
 
     // Guard against orphaned ready manifests whose approved planning approval
     // row was deleted.  If we dispatched these they would fail inside
@@ -766,8 +769,22 @@ async function findNextDispatchableManifest(
             approvalMode: manifest.approvalMode
           }
         );
-        return null;
+        continue;
       }
+    }
+
+    const dependencyState = await resolveUnmetTaskGroupDependencies(
+      repository,
+      manifest
+    );
+    if (dependencyState.unmetDependencies.length > 0) {
+      logger?.info("Skipping ready grouped task until dependencies complete.", {
+        code: "DISPATCH_GROUP_WAITING",
+        taskId: manifest.taskId,
+        groupId: dependencyState.membership?.groupId ?? null,
+        unmetDependencies: dependencyState.unmetDependencies
+      });
+      continue;
     }
 
     return {

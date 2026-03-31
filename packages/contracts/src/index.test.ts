@@ -3,6 +3,7 @@ import {
   asIsoTimestamp,
   concurrencyDecisionSchema,
   preScreenAssessmentSchema,
+  taskGroupInjectionRequestSchema,
   memoryContextSchema,
   memoryRecordSchema,
   pipelineRunSchema,
@@ -74,6 +75,33 @@ describe("contracts", () => {
 
     expect(parsed.findings[0]?.kind).toBe("under_specified");
     expect(parsed.recommendedActions).toEqual(["Add affected paths and retry."]);
+  });
+
+  it("parses a grouped task injection request", () => {
+    const parsed = taskGroupInjectionRequestSchema.parse({
+      groupId: "docs-rollout",
+      executionMode: "sequential",
+      tasks: [
+        {
+          taskKey: "draft-plan",
+          repo: "acme/platform",
+          title: "Draft the rollout plan",
+          summary: "Produce the first part of the grouped rollout plan.",
+          acceptanceCriteria: ["A first planning task exists."]
+        },
+        {
+          taskKey: "publish-follow-up",
+          dependsOn: ["draft-plan"],
+          repo: "acme/platform",
+          title: "Publish the follow-up task",
+          summary: "Queue the second grouped task after the first completes.",
+          acceptanceCriteria: ["The second planning task exists."]
+        }
+      ]
+    });
+
+    expect(parsed.executionMode).toBe("sequential");
+    expect(parsed.tasks[1]?.dependsOn).toEqual(["draft-plan"]);
   });
 
   it("parses a workspace context bundle", () => {

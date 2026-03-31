@@ -5,6 +5,8 @@ import {
 } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  groupedTaskInjectionRequestSchema,
+  taskGroupInjectionRequestSchema,
   directTaskInjectionRequestSchema,
   type ApprovalDecision,
   type ApprovalRequest,
@@ -25,6 +27,7 @@ import {
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
 } from "./pipeline.js";
+import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
   GitHubIssuePollingDaemon,
   PollingLoopHealthSnapshot,
@@ -542,6 +545,85 @@ async function handleOperatorRequest(
     return;
   }
 
+  if (method === "POST" && path === "/task-groups/inject") {
+    if (!planner) {
+      writeOperatorJsonResponse(res, 503, {
+        error: "service_unavailable",
+        message: "Planning dependencies are not configured on this server."
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    let injectedGroup;
+    try {
+      injectedGroup = taskGroupInjectionRequestSchema.parse(rawBody ?? {});
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid task-group payload.";
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message
+      });
+      return;
+    }
+
+    assertValidTaskGroupRequest(injectedGroup);
+
+    const groupId =
+      injectedGroup.groupId ?? `task-group-${clock().getTime().toString(36)}`;
+    const groupTasks = resolveGroupedTaskDependencies(injectedGroup.tasks, injectedGroup.executionMode);
+    const results = [];
+    const taskIdByKey = new Map<string, string>();
+
+    for (const task of groupTasks) {
+      const planningInput = buildPlanningTaskInputFromInjection(task);
+      const result = await runPlanningPipeline(planningInput, {
+        repository,
+        planner,
+        clock
+      });
+      taskIdByKey.set(task.taskKey, result.manifest.taskId);
+      results.push({
+        taskKey: task.taskKey,
+        dependsOn: task.dependsOn,
+        runId: result.runId,
+        nextAction: result.nextAction,
+        manifest: result.manifest,
+        ...(result.spec ? { spec: result.spec } : {}),
+        ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
+        ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
+      });
+    }
+
+    await saveTaskGroupMemberships({
+      repository,
+      repo: groupTasks[0]!.repo,
+      groupId,
+      executionMode: injectedGroup.executionMode,
+      memberships: groupTasks.map((task, index) => ({
+        taskId: taskIdByKey.get(task.taskKey)!,
+        taskKey: task.taskKey,
+        sequence: index,
+        dependsOnTaskKeys: task.dependsOn,
+        dependsOnTaskIds: task.dependsOn.map((key) => taskIdByKey.get(key)!)
+      })),
+      createdAt: clock().toISOString(),
+      ...(injectedGroup.groupName !== undefined
+        ? { groupName: injectedGroup.groupName }
+        : {})
+    });
+
+    writeOperatorJsonResponse(res, 201, {
+      groupId,
+      executionMode: injectedGroup.executionMode,
+      groupName: injectedGroup.groupName ?? null,
+      totalTasks: results.length,
+      tasks: results
+    });
+    return;
+  }
+
   // GET /tasks/:taskId/evidence
   const evidenceMatch = /^\/tasks\/([^/]+)\/evidence$/.exec(path);
   if (method === "GET" && evidenceMatch) {
@@ -657,7 +739,9 @@ async function handleOperatorRequest(
 }
 
 function buildPlanningTaskInputFromInjection(
-  input: import("@reddwarf/contracts").DirectTaskInjectionRequest
+  input:
+    | import("@reddwarf/contracts").DirectTaskInjectionRequest
+    | import("@reddwarf/contracts").GroupedTaskInjectionRequest
 ): PlanningTaskInput {
   const intakeMetadata = {
     mode: "direct_injection",
@@ -684,6 +768,69 @@ function buildPlanningTaskInputFromInjection(
       intake: intakeMetadata
     }
   };
+}
+
+function assertValidTaskGroupRequest(
+  input: import("@reddwarf/contracts").TaskGroupInjectionRequest
+): void {
+  const seenTaskKeys = new Set<string>();
+  const expectedRepo = input.tasks[0]?.repo;
+
+  for (const task of input.tasks) {
+    if (expectedRepo && task.repo !== expectedRepo) {
+      throw new OperatorApiRequestError(
+        400,
+        "bad_request",
+        "Grouped task intake currently requires every task to target the same repository."
+      );
+    }
+    if (seenTaskKeys.has(task.taskKey)) {
+      throw new OperatorApiRequestError(
+        400,
+        "bad_request",
+        `Task group contains duplicate taskKey "${task.taskKey}".`
+      );
+    }
+    seenTaskKeys.add(task.taskKey);
+  }
+
+  for (const task of input.tasks) {
+    for (const dependencyKey of task.dependsOn) {
+      if (!seenTaskKeys.has(dependencyKey)) {
+        throw new OperatorApiRequestError(
+          400,
+          "bad_request",
+          `Task "${task.taskKey}" depends on unknown taskKey "${dependencyKey}".`
+        );
+      }
+      if (dependencyKey === task.taskKey) {
+        throw new OperatorApiRequestError(
+          400,
+          "bad_request",
+          `Task "${task.taskKey}" cannot depend on itself.`
+        );
+      }
+    }
+  }
+}
+
+function resolveGroupedTaskDependencies(
+  tasks: import("@reddwarf/contracts").GroupedTaskInjectionRequest[],
+  executionMode: import("@reddwarf/contracts").TaskGroupExecutionMode
+): import("@reddwarf/contracts").GroupedTaskInjectionRequest[] {
+  if (executionMode !== "sequential") {
+    return tasks;
+  }
+
+  return tasks.map((task, index) => ({
+    ...task,
+    dependsOn:
+      task.dependsOn.length > 0
+        ? task.dependsOn
+        : index === 0
+          ? []
+          : [tasks[index - 1]!.taskKey]
+  }));
 }
 
 function summarizePollingHealth(

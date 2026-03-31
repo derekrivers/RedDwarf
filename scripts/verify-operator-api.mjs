@@ -204,17 +204,47 @@ try {
     title: "Inject a task via the operator API",
     summary: "Verify that structured local tasks can enter the planning pipeline without GitHub polling.",
     priority: 2,
+    issueNumber: issueNumber + 1,
+    issueUrl: `https://github.com/${repo}/issues/${issueNumber + 1}`,
     acceptanceCriteria: [
       "The injected task produces a planning result",
       "The response includes a manifest and nextAction"
     ],
     affectedPaths: ["packages/control-plane/src/operator-api.ts"],
     constraints: ["Keep the operator contract stable."],
-    requestedCapabilities: ["can_plan", "can_archive_evidence"]
+    requestedCapabilities: ["can_write_code"]
   });
   assert.equal(injected.status, 201);
   assert.equal(injected.body.nextAction, "await_human");
   assert.equal(injected.body.manifest.source.repo, repo);
+
+  // POST /task-groups/inject
+  const grouped = await apiPost(port, "/task-groups/inject", {
+    groupId: "operator-docs-rollout",
+    executionMode: "sequential",
+    tasks: [
+      {
+        taskKey: "draft-plan",
+        repo,
+        title: "Draft the grouped rollout plan",
+        summary: "Verify grouped task intake through the operator API.",
+        acceptanceCriteria: ["The first grouped task produces a planning result."],
+        affectedPaths: ["docs/rollout-plan.md"]
+      },
+      {
+        taskKey: "publish-follow-up",
+        repo,
+        title: "Publish the grouped follow-up plan",
+        summary: "Verify grouped task dependency metadata is persisted for later dispatch.",
+        acceptanceCriteria: ["The second grouped task produces a planning result."],
+        affectedPaths: ["docs/rollout-follow-up.md"]
+      }
+    ]
+  });
+  assert.equal(grouped.status, 201);
+  assert.equal(grouped.body.groupId, "operator-docs-rollout");
+  assert.equal(grouped.body.totalTasks, 2);
+  assert.deepEqual(grouped.body.tasks[1].dependsOn, ["draft-plan"]);
 
   // GET /tasks/:taskId/evidence
   const evidence = await apiGet(port, `/tasks/${taskId}/evidence`);
@@ -288,6 +318,7 @@ try {
         runsTotal: runsForTask.body.total,
         evidenceTotal: evidence.body.total,
         injectedTaskId: injected.body.manifest.taskId,
+        groupedTaskIds: grouped.body.tasks.map((task) => task.manifest.taskId),
         pollingRepositories: health.body.polling.totalRepositories,
         resolvedApprovalStatus: resolved.body.approval.status,
         manifestLifecycleAfterResolve: resolved.body.manifest.lifecycleStatus

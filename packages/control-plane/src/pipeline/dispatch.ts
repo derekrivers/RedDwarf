@@ -18,6 +18,7 @@ import { runArchitectureReviewPhase } from "./architecture-review.js";
 import { runDeveloperPhase } from "./development.js";
 import { runValidationPhase } from "./validation.js";
 import { runScmPhase } from "./scm.js";
+import { resolveUnmetTaskGroupDependencies } from "../task-groups.js";
 
 export async function dispatchReadyTask(
   input: DispatchReadyTaskInput,
@@ -70,6 +71,27 @@ export async function dispatchReadyTask(
       ? { approvalRequestId: approvedFailureRecoveryRequest.requestId }
       : {})
   });
+
+  const groupDependencies = await resolveUnmetTaskGroupDependencies(
+    repository,
+    manifest
+  );
+  if (groupDependencies.unmetDependencies.length > 0) {
+    dispatchLogger.info("Task is waiting for grouped dependencies to complete.", {
+      taskId,
+      groupId: groupDependencies.membership?.groupId ?? null,
+      unmetDependencies: groupDependencies.unmetDependencies
+    });
+    return {
+      taskId,
+      outcome: "blocked",
+      phasesExecuted: [],
+      finalPhase: manifest.currentPhase,
+      error: `Waiting on grouped task dependencies: ${groupDependencies.unmetDependencies
+        .map((dependency) => `${dependency.taskId} (${dependency.lifecycleStatus})`)
+        .join(", ")}`
+    };
+  }
 
   dispatchLogger.info("Starting post-approval dispatch.", {
     taskId,
