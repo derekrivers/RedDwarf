@@ -3,6 +3,7 @@ dist/
 coverage/
 .env
 .corepack/
+.codex
 .docker-config/
 .pnpm-store/
 .turbo/
