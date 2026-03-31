@@ -86,6 +86,19 @@ describe("generateOpenClawConfig", () => {
     expect(reviewer?.model).toBe("anthropic/claude-sonnet-4-6");
   });
 
+  it("can generate the default agent roster with OpenAI model bindings", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai"
+    });
+
+    const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
+    const developer = config.agents.list.find((agent) => agent.id === "reddwarf-developer");
+
+    expect(analyst?.model).toBe("openai/gpt-5");
+    expect(developer?.model).toBe("openai/gpt-5");
+  });
+
   it("allows a subset of roles", () => {
     const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
     const reviewerOnly = roles.filter((r: { role: string }) => r.role === "reviewer");

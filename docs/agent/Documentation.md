@@ -435,3 +435,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Extended `packages/control-plane/src/index.test.ts` with coverage for validation-command and OpenClaw-developer use of the workspace CI helper, while `packages/integrations/src/ci.test.ts` and the broader focused control-plane tests continue covering the adapter contract.
 - Verification for feature 102: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/ci.test.ts packages/control-plane/src/operator-api.test.ts`.
 - Likely next board item: feature 103, OpenAI provider support.
+
+- Completed feature 103 from `FEATURE_BOARD.md`: OpenAI provider support for OpenClaw model bindings.
+- Extended `packages/contracts/src/agents.ts` so `openClawModelBindingSchema.provider` is now an enum-backed contract shared by Anthropic and OpenAI role definitions, and added schema coverage in `packages/contracts/src/index.test.ts` for `openai/gpt-5` bindings.
+- Updated `packages/execution-plane/src/index.ts` so the default OpenClaw role roster is generated from provider-aware model maps, preserving Anthropic defaults while allowing a full OpenAI-backed roster through `createOpenClawAgentRoleDefinitions("openai")`; added regression coverage in `packages/execution-plane/src/index.test.ts`.
+- Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
+- Verification for feature 103: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/openclaw-config.test.ts`.
+- Likely next board item: feature 99, Discord approval bot.

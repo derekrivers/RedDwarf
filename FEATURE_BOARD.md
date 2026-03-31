@@ -54,7 +54,7 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 103 | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M17 | pending | Contracts, Integration Plane, Knowledge & Policy Plane |
+| 103 | OpenAI provider support - extend openClawModelBindingSchema provider to enum, update openclaw.json generation, add gpt model mapping alongside Anthropic equivalents | M17 | complete | Contracts, Integration Plane, Knowledge & Policy Plane |
 
 ---
 

@@ -8,6 +8,7 @@ import {
   DeterministicScmAgent,
   DeterministicValidationAgent,
   agentDefinitions,
+  createOpenClawAgentRoleDefinitions,
   createPlanningAgent,
   fetchWithRetry,
   expectedBootstrapFileNames,
@@ -443,6 +444,21 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(developer.runtimePolicy.deny).toContain("group:messaging");
   });
 
+  it("can build the default OpenClaw role roster with OpenAI models", () => {
+    const roles = createOpenClawAgentRoleDefinitions("openai");
+    const analyst = roles.find((role) => role.role === "analyst");
+    const developer = roles.find((role) => role.role === "developer");
+
+    expect(analyst?.runtimePolicy.model).toEqual({
+      provider: "openai",
+      model: "openai/gpt-5"
+    });
+    expect(developer?.runtimePolicy.model).toEqual({
+      provider: "openai",
+      model: "openai/gpt-5"
+    });
+  });
+
   it("points at bootstrap files that exist in the repo", async () => {
     for (const definition of openClawAgentRoleDefinitions) {
       for (const file of definition.bootstrapFiles) {
@@ -668,4 +684,3 @@ describe("bootstrap alignment", () => {
     expect(result.agents[0]!.violations.some((v) => v.message.includes("not found"))).toBe(true);
   });
 });
-

@@ -9,6 +9,7 @@ import type {
   MaterializedManagedWorkspace,
   OpenClawAgentRole,
   OpenClawAgentRoleDefinition,
+  OpenClawModelProvider,
   PlanningAgent,
   PlanningDraft,
   PlanningTaskInput,
@@ -82,7 +83,46 @@ const sharedOpenClawCanonicalSources = [
   "standards/engineering.md"
 ] as const;
 
-export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
+const openClawRoleModelMap: Record<
+  OpenClawAgentRole,
+  Record<OpenClawModelProvider, string>
+> = {
+  coordinator: {
+    anthropic: "anthropic/claude-sonnet-4-6",
+    openai: "openai/gpt-5"
+  },
+  analyst: {
+    anthropic: "anthropic/claude-opus-4-6",
+    openai: "openai/gpt-5"
+  },
+  reviewer: {
+    anthropic: "anthropic/claude-sonnet-4-6",
+    openai: "openai/gpt-5"
+  },
+  validator: {
+    anthropic: "anthropic/claude-sonnet-4-6",
+    openai: "openai/gpt-5"
+  },
+  developer: {
+    anthropic: "anthropic/claude-sonnet-4-6",
+    openai: "openai/gpt-5"
+  }
+};
+
+function createOpenClawModelBinding(
+  role: OpenClawAgentRole,
+  provider: OpenClawModelProvider
+) {
+  return {
+    provider,
+    model: openClawRoleModelMap[role][provider]
+  };
+}
+
+export function createOpenClawAgentRoleDefinitions(
+  provider: OpenClawModelProvider = "anthropic"
+): OpenClawAgentRoleDefinition[] {
+  return [
   {
     agentId: "reddwarf-coordinator",
     role: "coordinator",
@@ -94,7 +134,7 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:nodes"],
       sandboxMode: "read_only",
-      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      model: createOpenClawModelBinding("coordinator", provider)
     },
     bootstrapFiles: [
       {
@@ -137,7 +177,7 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:web", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
-      model: { provider: "anthropic", model: "anthropic/claude-opus-4-6" }
+      model: createOpenClawModelBinding("analyst", provider)
     },
     bootstrapFiles: [
       {
@@ -185,7 +225,7 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      model: createOpenClawModelBinding("reviewer", provider)
     },
     bootstrapFiles: [
       {
@@ -233,7 +273,7 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:messaging"],
       sandboxMode: "workspace_write",
-      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      model: createOpenClawModelBinding("validator", provider)
     },
     bootstrapFiles: [
       {
@@ -276,7 +316,7 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: { provider: "anthropic", model: "anthropic/claude-sonnet-4-6" }
+      model: createOpenClawModelBinding("developer", provider)
     },
     bootstrapFiles: [
       {
@@ -309,6 +349,10 @@ export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] = [
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/developer.md"]
   }
 ];
+}
+
+export const openClawAgentRoleDefinitions: OpenClawAgentRoleDefinition[] =
+  createOpenClawAgentRoleDefinitions();
 export function getOpenClawAgentRoleDefinition(
   role: OpenClawAgentRole
 ): OpenClawAgentRoleDefinition {
@@ -1016,4 +1060,3 @@ export type {
   BootstrapAlignmentResult,
   FullBootstrapAlignmentResult
 } from "./bootstrap-alignment.js";
-

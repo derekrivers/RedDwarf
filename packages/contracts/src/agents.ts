@@ -38,8 +38,10 @@ export const openClawBootstrapFileSchema = z.object({
   description: z.string().min(1)
 });
 
+export const openClawModelProviderSchema = z.enum(["anthropic", "openai"]);
+
 export const openClawModelBindingSchema = z.object({
-  provider: z.literal("anthropic"),
+  provider: openClawModelProviderSchema,
   model: z.string().min(1)
 });
 
@@ -65,6 +67,7 @@ export const openClawAgentRoleDefinitionSchema = z.object({
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 export type OpenClawBootstrapFile = z.infer<typeof openClawBootstrapFileSchema>;
+export type OpenClawModelProvider = z.infer<typeof openClawModelProviderSchema>;
 export type OpenClawModelBinding = z.infer<typeof openClawModelBindingSchema>;
 export type OpenClawAgentRuntimePolicy = z.infer<
   typeof openClawAgentRuntimePolicySchema

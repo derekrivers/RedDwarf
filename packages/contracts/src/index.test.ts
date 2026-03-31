@@ -647,4 +647,51 @@ describe("contracts", () => {
     expect(run.status).toBe("active");
     expect(decision.action).toBe("block");
   });
+
+  it("accepts an OpenAI OpenClaw model binding", () => {
+    const parsed = openClawAgentRoleDefinitionSchema.parse({
+      agentId: "reddwarf-developer",
+      role: "developer",
+      displayName: "RedDwarf Developer",
+      purpose: "Implements approved plans.",
+      runtimePolicy: {
+        toolProfile: "full",
+        allow: ["group:fs"],
+        deny: ["group:messaging"],
+        sandboxMode: "workspace_write",
+        model: { provider: "openai", model: "openai/gpt-5" }
+      },
+      bootstrapFiles: [
+        {
+          kind: "identity",
+          relativePath: "agents/openclaw/lister/IDENTITY.md",
+          description: "identity"
+        },
+        {
+          kind: "soul",
+          relativePath: "agents/openclaw/lister/SOUL.md",
+          description: "soul"
+        },
+        {
+          kind: "agents",
+          relativePath: "agents/openclaw/lister/AGENTS.md",
+          description: "agents"
+        },
+        {
+          kind: "tools",
+          relativePath: "agents/openclaw/lister/TOOLS.md",
+          description: "tools"
+        },
+        {
+          kind: "skill",
+          relativePath:
+            "agents/openclaw/lister/skills/implement_architecture_plan/SKILL.md",
+          description: "skill"
+        }
+      ],
+      canonicalSources: ["agents/developer.md"]
+    });
+
+    expect(parsed.runtimePolicy.model.provider).toBe("openai");
+  });
 });

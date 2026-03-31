@@ -1,6 +1,12 @@
 import { join } from "node:path";
-import type { OpenClawAgentRoleDefinition } from "@reddwarf/contracts";
-import { openClawAgentRoleDefinitions } from "@reddwarf/execution-plane";
+import type {
+  OpenClawAgentRoleDefinition,
+  OpenClawModelProvider
+} from "@reddwarf/contracts";
+import {
+  createOpenClawAgentRoleDefinitions,
+  openClawAgentRoleDefinitions
+} from "@reddwarf/execution-plane";
 
 // -- OpenClaw config output types ---------------------------------------------
 
@@ -76,6 +82,12 @@ export interface GenerateOpenClawConfigOptions {
    * RedDwarf owns bootstrap content, so this defaults to true.
    */
   skipBootstrap?: boolean;
+
+  /**
+   * Default model provider to use when role definitions are not supplied.
+   * Existing callers can omit this to preserve Anthropic-backed defaults.
+   */
+  modelProvider?: OpenClawModelProvider;
 }
 
 /**
@@ -128,7 +140,11 @@ export function buildAgentConfig(
 export function generateOpenClawConfig(
   options: GenerateOpenClawConfigOptions
 ): OpenClawConfig {
-  const roles = options.roles ?? openClawAgentRoleDefinitions;
+  const roles =
+    options.roles ??
+    (options.modelProvider
+      ? createOpenClawAgentRoleDefinitions(options.modelProvider)
+      : openClawAgentRoleDefinitions);
   const skipBootstrap = options.skipBootstrap ?? true;
 
   const config: OpenClawConfig = {
