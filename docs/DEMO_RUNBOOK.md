@@ -94,7 +94,7 @@ corepack pnpm compose:up:openclaw
 
 This starts the OpenClaw gateway alongside Postgres. The compose stack:
 - Reads tokens from your `.env` file via `env_file: ../../.env`
-- Seeds [infra/docker/openclaw.json](../infra/docker/openclaw.json) into writable state at `runtime-data/openclaw-home/openclaw.json`
+- Generates the live runtime config at `runtime-data/openclaw-home/openclaw.json` from RedDwarf's typed OpenClaw config surface, using [infra/docker/openclaw.json](../infra/docker/openclaw.json) as the checked-in template baseline
 - Binds the gateway to LAN (`gateway.bind: "lan"`) so the host can reach port 3578
 - Mounts the policy-pack root read-only at `/opt/reddwarf`
 
@@ -127,23 +127,24 @@ corepack pnpm build
 
 ## Part 2 — Agent Roster
 
-RedDwarf's OpenClaw dev team uses four agent personas:
+RedDwarf's OpenClaw dev team currently uses five agent personas:
 
 | Agent | Character | Role | ID | Tool Policy | Model | Sandbox |
 |-------|-----------|------|----|-------------|-------|---------|
-| **Holly** | Ship's Computer | Architect / Analyst | `reddwarf-analyst` | `coding` (read-only) | claude-opus-4-6 | ro |
-| **Rimmer** | Session Coordinator | Coordinator | `reddwarf-coordinator` | `minimal` (read-only) | claude-sonnet-4-6 | ro |
-| **Lister** | Last Human Alive | Developer | `reddwarf-developer` | `coding` (workspace-write) | claude-sonnet-4-6 | rw |
-| **Kryten** | Mechanoid | Validator / Reviewer | `reddwarf-validator` | `coding` (workspace-write) | claude-sonnet-4-6 | rw |
+| **Holly** | Ship's Computer | Architect / Analyst | `reddwarf-analyst` | `full` + allow/deny groups | claude-opus-4-6 | `off` in current Docker topology |
+| **Rimmer** | Session Coordinator | Coordinator | `reddwarf-coordinator` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
+| **Kryten** | Mechanoid | Architecture Reviewer | `reddwarf-arch-reviewer` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
+| **Kryten** | Mechanoid | Validator | `reddwarf-validator` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
+| **Lister** | Last Human Alive | Developer | `reddwarf-developer` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
 
-Agent bootstrap files are in `agents/openclaw/{holly,rimmer,lister,kryten}/`:
+Agent bootstrap files are in `agents/openclaw/{holly,rimmer,lister,kryten}/` and are mounted per generated role definition:
 - `IDENTITY.md` — Agent name, role, and title
 - `SOUL.md` — Personality and operating principles
 - `AGENTS.md` — Runtime roster and delegation rules
 - `TOOLS.md` — Tool profile, allow/deny lists, sandbox mode, model binding
 - `SKILL.md` files — Task-specific skills
 
-The agent roster is defined in [infra/docker/openclaw.json](../infra/docker/openclaw.json) using the `agents.list[]` array format. RedDwarf can also generate this from policy config:
+The checked-in Docker template lives at [infra/docker/openclaw.json](../infra/docker/openclaw.json), but the standard `setup` and `start` flows now generate the live host-mounted runtime config at `runtime-data/openclaw-home/openclaw.json` from RedDwarf's typed policy/config surface. You can also generate the current config on demand:
 
 ```bash
 corepack pnpm generate:openclaw-config

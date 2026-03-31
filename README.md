@@ -41,7 +41,7 @@ Contact the openclaw organisation if you do not have access.
 
 ### OpenClaw Control UI access
 
-If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in the repo-root `.env` before starting the `openclaw` profile. The compose stack explicitly references that file with `env_file: ../../.env`, then seeds [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) into the writable host-backed state directory at `runtime-data/openclaw-home`, which forces `gateway.bind` to `lan` while still letting OpenClaw persist its own runtime state.
+If you want to open the OpenClaw Control UI from the host browser, set `OPENCLAW_GATEWAY_TOKEN` in the repo-root `.env` before starting the `openclaw` profile. The compose stack explicitly references that file with `env_file: ../../.env`, and the standard `setup` / `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from RedDwarf's typed OpenClaw config before the container starts. That keeps `gateway.bind` on `lan` while letting the live runtime config carry the current browser, Discord, and agent-roster settings.
 
 ```bash
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>
@@ -174,7 +174,7 @@ export REDDWARF_OPENCLAW_DISCORD_GUILD_IDS=<guild-id>
 corepack pnpm generate:openclaw-config
 ```
 
-The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the seeded JSON. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
+The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the checked-in template. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
 
 For feature 100, OpenClaw can also drive native Discord status visibility and approval prompts:
 
