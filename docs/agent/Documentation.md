@@ -389,3 +389,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added regression coverage in `packages/control-plane/src/index.test.ts` proving downstream dispatch resolves memory context only once, updated `tests/context-materialization.test.ts` to assert project-memory materialization for developer workspaces, and updated `scripts/verify-openclaw-context.mjs` so the live context verifier checks the new scoped memory file.
 - Verification for feature 93: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts tests/context-materialization.test.ts`; `corepack pnpm verify:context`; `corepack pnpm verify:memory`.
 - Likely next board item: feature 95, structured GitHub issue template.
+
+- Completed feature 95 from `FEATURE_BOARD.md`: structured GitHub issue template.
+- Added `.github/ISSUE_TEMPLATE/ai-task.yml` with the intake fields RedDwarf can use directly today: summary, priority signal, acceptance criteria, affected areas, constraints, and risk class. The template applies the `ai-eligible` label automatically so remote GitHub intake stays aligned with the polling path.
+- Added `.github/ISSUE_TEMPLATE/config.yml` to disable blank issues and point operators at the demo/runbook path instead of encouraging unstructured intake.
+- Updated `README.md` with a short GitHub intake section so the structured remote path is documented alongside the existing local operator flow.
+- Verification for feature 95: reviewed the checked-in issue-template YAML and config via repository diff plus field-level grep against the expected intake surface.
+- Likely next board item: feature 96, direct task injection endpoint.

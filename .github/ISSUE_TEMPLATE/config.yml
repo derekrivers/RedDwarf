@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: RedDwarf Demo Runbook
+    url: https://github.com/derekrivers/RedDwarf/blob/master/docs/DEMO_RUNBOOK.md
+    about: Use the runbook for local setup, approvals, and end-to-end demo steps.

@@ -163,6 +163,15 @@ curl -X POST http://localhost:8080/approvals/<id>/resolve \
   -d '{"decision":"approve","decidedBy":"you","decisionSummary":"Looks good"}'
 ```
 
+### GitHub issue intake
+
+For remote intake, open a new GitHub issue with the `AI Task` template under `.github/ISSUE_TEMPLATE/ai-task.yml`.
+
+The template:
+- applies the `ai-eligible` label automatically
+- captures the structured fields RedDwarf already uses well: summary, priority signal, acceptance criteria, affected areas, constraints, and risk class
+- reduces freeform issue cleanup before planning starts
+
 ### Service health checks
 
 | Service | Endpoint | Expected |

@@ -1,0 +1,77 @@
+name: AI Task
+description: Structured intake for RedDwarf planning and execution.
+title: "[AI Task] "
+labels:
+  - ai-eligible
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when you want RedDwarf to ingest a task directly from GitHub.
+
+        Keep the summary short, make acceptance criteria concrete, and list only the paths you actually expect the pipeline to touch.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One short paragraph describing the requested outcome.
+      placeholder: Add rate limiting to the operator API so burst traffic is rejected cleanly.
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Signal
+      description: Relative urgency for queue ordering.
+      options:
+        - P1 - urgent
+        - P2 - high
+        - P3 - normal
+        - P4 - low
+      default: 2
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: One requirement per line.
+      placeholder: |
+        requests above 100/min return 429
+        authenticated routes keep existing behavior
+        evidence clearly records the applied limit
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: affected-areas
+    attributes:
+      label: Affected Areas
+      description: Files, directories, or surfaces likely to change. One per line.
+      placeholder: |
+        packages/control-plane/src/operator-api.ts
+        packages/control-plane/src/index.test.ts
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Optional constraints, non-goals, or guardrails the Architect should preserve.
+      placeholder: |
+        Do not change the auth model.
+        Keep backward compatibility for existing tokens.
+      render: text
+  - type: dropdown
+    id: risk-class
+    attributes:
+      label: Risk Class
+      description: Best-effort signal for how sensitive the work is.
+      options:
+        - low
+        - medium
+        - high
+      default: 1
+    validations:
+      required: true
