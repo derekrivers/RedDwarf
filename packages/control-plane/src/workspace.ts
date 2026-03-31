@@ -154,13 +154,25 @@ export const evidenceLocationPrefix = "evidence://";
 const defaultEvidenceDirName = "evidence";
 const evidenceTasksDirName = "tasks";
 
-const taskContractRelativePaths = [
-  ".context/task.json",
-  ".context/spec.md",
-  ".context/policy_snapshot.json",
-  ".context/allowed_paths.json",
-  ".context/acceptance_criteria.json"
-] as const;
+const taskContractFileMetadata = {
+  taskJson: {
+    relativePath: ".context/task.json"
+  },
+  specMarkdown: {
+    relativePath: ".context/spec.md"
+  },
+  policySnapshotJson: {
+    relativePath: ".context/policy_snapshot.json"
+  },
+  allowedPathsJson: {
+    relativePath: ".context/allowed_paths.json"
+  },
+  acceptanceCriteriaJson: {
+    relativePath: ".context/acceptance_criteria.json"
+  }
+} as const;
+
+type WorkspaceContextArtifactKey = keyof typeof taskContractFileMetadata;
 
 const runtimeInstructionRelativePaths = {
   soulMd: "SOUL.md",
@@ -334,6 +346,7 @@ export function createRuntimeInstructionLayer(
 ): RuntimeInstructionLayer {
   const canonicalSources = buildCanonicalSources(bundle);
   const toolPolicy = createWorkspaceToolPolicy(bundle);
+  const contextFiles = getRoleScopedContextFiles(bundle);
 
   return runtimeInstructionLayerSchema.parse({
     taskId: bundle.manifest.taskId,
@@ -343,12 +356,12 @@ export function createRuntimeInstructionLayer(
     allowedCapabilities: toolPolicy.allowedCapabilities,
     blockedPhases: toolPolicy.blockedPhases,
     canonicalSources,
-    contextFiles: [...taskContractRelativePaths],
+    contextFiles,
     files: [
       {
         relativePath: runtimeInstructionRelativePaths.soulMd,
         description: "Workspace operating posture and source hierarchy.",
-        content: renderRuntimeSoulMarkdown(bundle, canonicalSources)
+        content: renderRuntimeSoulMarkdown(bundle, canonicalSources, contextFiles)
       },
       {
         relativePath: runtimeInstructionRelativePaths.agentsMd,
@@ -365,7 +378,7 @@ export function createRuntimeInstructionLayer(
         relativePath: runtimeInstructionRelativePaths.taskSkillMd,
         description:
           "Task-scoped skill that tells agents how to use the context bundle and policy pack.",
-        content: renderRuntimeTaskSkillMarkdown(bundle, canonicalSources)
+        content: renderRuntimeTaskSkillMarkdown(bundle, canonicalSources, contextFiles)
       }
     ]
   });
@@ -424,6 +437,7 @@ export async function materializeWorkspaceContext(input: {
   const runtimeInstructionArtifacts = createRuntimeInstructionArtifacts(
     runtimeInstructionLayer
   );
+  const scopedArtifactKeys = getRoleScopedContextArtifactKeys(materializedBundle);
   const instructionFiles = {
     soulMd: join(workspaceRoot, runtimeInstructionRelativePaths.soulMd),
     agentsMd: join(workspaceRoot, runtimeInstructionRelativePaths.agentsMd),
@@ -439,14 +453,8 @@ export async function materializeWorkspaceContext(input: {
     recursive: true
   });
   await Promise.all([
-    writeFile(files.taskJson, artifacts.taskJson, "utf8"),
-    writeFile(files.specMarkdown, artifacts.specMarkdown, "utf8"),
-    writeFile(files.policySnapshotJson, artifacts.policySnapshotJson, "utf8"),
-    writeFile(files.allowedPathsJson, artifacts.allowedPathsJson, "utf8"),
-    writeFile(
-      files.acceptanceCriteriaJson,
-      artifacts.acceptanceCriteriaJson,
-      "utf8"
+    ...scopedArtifactKeys.map((key) =>
+      writeFile(files[key], artifacts[key], "utf8")
     ),
     writeFile(
       instructionFiles.soulMd,
@@ -477,7 +485,7 @@ export async function materializeWorkspaceContext(input: {
     files,
     instructions: {
       canonicalSources: runtimeInstructionLayer.canonicalSources,
-      taskContractFiles: Object.values(files),
+      taskContractFiles: scopedArtifactKeys.map((key) => files[key]),
       files: instructionFiles
     }
   };
@@ -1131,6 +1139,33 @@ function buildCanonicalSources(bundle: WorkspaceContextBundle): string[] {
   return [...canonicalSources];
 }
 
+function getRoleScopedContextArtifactKeys(
+  bundle: WorkspaceContextBundle
+): WorkspaceContextArtifactKey[] {
+  switch (bundle.manifest.assignedAgentType) {
+    case "developer":
+      return ["taskJson", "specMarkdown", "acceptanceCriteriaJson"];
+    case "validation":
+      return ["taskJson", "specMarkdown", "acceptanceCriteriaJson"];
+    case "scm":
+      return ["taskJson", "specMarkdown"];
+    default:
+      return [
+        "taskJson",
+        "specMarkdown",
+        "policySnapshotJson",
+        "allowedPathsJson",
+        "acceptanceCriteriaJson"
+      ];
+  }
+}
+
+function getRoleScopedContextFiles(bundle: WorkspaceContextBundle): string[] {
+  return getRoleScopedContextArtifactKeys(bundle).map(
+    (key) => taskContractFileMetadata[key].relativePath
+  );
+}
+
 function getRuntimeInstructionContent(
   layer: RuntimeInstructionLayer,
   relativePath: string
@@ -1154,7 +1189,8 @@ export function formatLiteralList(items: readonly string[]): string {
 
 function renderRuntimeSoulMarkdown(
   bundle: WorkspaceContextBundle,
-  canonicalSources: string[]
+  canonicalSources: string[],
+  contextFiles: string[]
 ): string {
   const toolPolicy = createWorkspaceToolPolicy(bundle);
 
@@ -1174,7 +1210,7 @@ function renderRuntimeSoulMarkdown(
     "",
     "## First Reads",
     "",
-    ...taskContractRelativePaths.map((path) => `- \`${path}\``),
+    ...contextFiles.map((path) => `- \`${path}\``),
     "",
     "## Canonical Sources",
     "",
@@ -1296,7 +1332,7 @@ function roleContextReadingInstruction(bundle: WorkspaceContextBundle): string {
     case "developer":
       return "1. Read `.context/spec.md`, `.context/task.json`, and `.context/acceptance_criteria.json` before writing code.";
     case "validation":
-      return "1. Read `.context/spec.md` and `.context/acceptance_criteria.json` before running validation.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/acceptance_criteria.json` before running validation.";
     case "scm":
       return "1. Read `.context/task.json` and `.context/spec.md` before creating branches or PRs.";
     default:
@@ -1306,7 +1342,8 @@ function roleContextReadingInstruction(bundle: WorkspaceContextBundle): string {
 
 function renderRuntimeTaskSkillMarkdown(
   bundle: WorkspaceContextBundle,
-  canonicalSources: string[]
+  canonicalSources: string[],
+  contextFiles: string[]
 ): string {
   return [
     "# RedDwarf Task Runtime Skill",
@@ -1323,6 +1360,10 @@ function renderRuntimeTaskSkillMarkdown(
     toolPolicyRequiresScmEscalation(bundle)
       ? "6. Escalate whenever the task would require code-writing, secrets, PR creation, or a blocked phase in v1."
       : "6. Escalate whenever the task would require code-writing, secrets outside approved scopes, or a blocked phase in v1.",
+    "",
+    "## Role-Scoped Context Files",
+    "",
+    ...contextFiles.map((path) => `- \`${path}\``),
     "",
     "## Canonical Sources",
     "",

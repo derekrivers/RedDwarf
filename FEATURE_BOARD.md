@@ -14,8 +14,8 @@ Priority reset note: after the March 29, 2026 hardening audit, pending feature w
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 89 | Deterministic eligibility gate - before materializing any context for an agent phase, run a cheap pre-check (no LLM call) that confirms the task is eligible to proceed and short-circuits ineligible tasks to avoid wasting tokens | M15 | pending | Control Plane, Knowledge & Policy Plane |
-| 90 | Role-scoped context materialization - restrict the context window handed to each agent phase to only the slice relevant to that role; Architect gets policy and domain docs, Developer gets spec and code, Validator gets spec and diff | M15 | pending | Integration Plane, Knowledge & Policy Plane |
+| 89 | Deterministic eligibility gate - before materializing any context for an agent phase, run a cheap pre-check (no LLM call) that confirms the task is eligible to proceed and short-circuits ineligible tasks to avoid wasting tokens | M15 | complete | Control Plane, Knowledge & Policy Plane |
+| 90 | Role-scoped context materialization - restrict the context window handed to each agent phase to only the slice relevant to that role; Architect gets policy and domain docs, Developer gets spec and code, Validator gets spec and diff | M15 | complete | Integration Plane, Knowledge & Policy Plane |
 | 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — |
 | 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — |
 | 93 | Per-run project memory cache - cache the resolved project memory snapshot once per pipeline run so it is tokenized once and reused across all phases rather than reloaded per phase | M15 | pending | Knowledge & Policy Plane, Control Plane |

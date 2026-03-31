@@ -367,3 +367,17 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Verification for feature 88: `node scripts/apply-sql-migrations.mjs`; `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/openclaw-config.test.ts packages/policy/src/index.test.ts packages/control-plane/src/operator-api.test.ts` (rerun outside the sandbox after the documented Vitest `spawn EPERM` failure); `corepack pnpm verify:context`; `corepack pnpm verify:bootstrap-alignment`.
 - Follow-up note: `corepack pnpm verify:validation` and direct `node scripts/verify-validation.mjs` both timed out in this environment without producing verifier output, so feature 88 verification relies on the passing phase tests plus context/bootstrap checks rather than that Postgres-backed validation verifier.
 - Likely next board item: feature 89, Deterministic eligibility gate.
+
+## 2026-03-31
+
+- Completed feature 89 from `FEATURE_BOARD.md`: deterministic eligibility gate.
+- Confirmed `runPlanningPipeline(...)` already performs a no-LLM `assessEligibility(...)` pre-check before planning or workspace/context materialization, short-circuiting ineligible tasks into the `eligibility` phase with blocked run summaries, gate evidence, and no persisted planning spec.
+- Updated the active feature board to reflect feature 89 as complete so future passes do not re-triage it as pending work.
+
+- Completed feature 90 from `FEATURE_BOARD.md`: role-scoped context materialization.
+- Updated `packages/control-plane/src/workspace.ts` so runtime instruction layers now expose role-specific `.context` files per agent type, only materialize those scoped files into the workspace, and align `SOUL.md` plus the task `SKILL.md` with the actual per-role context slice.
+- Updated `packages/control-plane/src/pipeline/prompts.ts` so the OpenClaw developer prompt now points the agent at the role-scoped workspace contract files (`task.json`, `spec.md`, `acceptance_criteria.json`) and uses `TOOLS.md` as the guardrail source of truth instead of inlining the broader planning payload.
+- Updated `packages/control-plane/src/index.test.ts` with assertions for per-role `contextFiles` plus a workspace-level check that validation materialization omits developer- and architect-only files.
+- Updated `scripts/verify-openclaw-context.mjs` so `corepack pnpm verify:context` now verifies real file presence and absence for architect, developer, and validation role slices instead of assuming every workspace contains the full `.context` bundle.
+- Verification for features 89-90: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`; `corepack pnpm verify:context`.
+- Likely next board item: feature 93, per-run project memory cache.

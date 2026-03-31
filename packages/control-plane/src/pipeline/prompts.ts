@@ -284,6 +284,9 @@ export function buildOpenClawDeveloperPrompt(
 ): string {
   const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace, runtimeConfig);
   const runtimeRepoPath = join(runtimeWorkspacePath, "repo").replace(/\\/g, "/");
+  const runtimeTaskPath = join(runtimeWorkspacePath, ".context", "task.json").replace(/\\/g, "/");
+  const runtimeSpecPath = join(runtimeWorkspacePath, ".context", "spec.md").replace(/\\/g, "/");
+  const runtimeAcceptanceCriteriaPath = join(runtimeWorkspacePath, ".context", "acceptance_criteria.json").replace(/\\/g, "/");
   const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "developer-handoff.md").replace(/\\/g, "/");
 
   return [
@@ -296,15 +299,15 @@ export function buildOpenClawDeveloperPrompt(
     `Workspace: ${workspace.workspaceId}`,
     `Workspace root: ${runtimeWorkspacePath}`,
     `Repository checkout: ${runtimeRepoPath}`,
+    `Task contract path: ${runtimeTaskPath}`,
+    `Planning spec path: ${runtimeSpecPath}`,
+    `Acceptance criteria path: ${runtimeAcceptanceCriteriaPath}`,
     `Handoff path: ${runtimeHandoffPath}`,
     "",
-    "## Trusted Planning Context",
+    "## Trusted Workspace Context",
     "",
-    bundle.spec.summary,
-    "",
-    "## Allowed Paths",
-    "",
-    ...bundle.allowedPaths.map((item) => `- ${item}`),
+    "Read the task contract and planning spec from the workspace paths above.",
+    "Use `TOOLS.md` in the workspace root as the source of truth for allowed paths and capability guardrails.",
     "",
     ...(hollyHandoffMarkdown
       ? [
