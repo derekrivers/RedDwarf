@@ -218,6 +218,12 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added regression coverage in `packages/control-plane/src/index.test.ts`, `packages/integrations/src/index.test.ts`, and `packages/execution-plane/src/index.test.ts` for hung poll cycles, hung dispatch cycles, and hung outbound HTTP requests.
 - Verification for the fail-fast loop fix: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/index.test.ts packages/execution-plane/src/index.test.ts`.
 - Completed a read-only pipeline, pooling, process-continuity, security, and observability audit on Sunday, March 29, 2026.
+
+## 2026-03-31
+
+- Fixed the packaged policy-pack verifier after the architecture reviewer role expanded the OpenClaw runtime roster from four roles to five.
+- Updated `scripts/verify-packaged-policy-pack.mjs` to assert the current five-role roster (`coordinator`, `analyst`, `reviewer`, `validator`, `developer`) so CI matches the shipped execution-plane definitions again.
+- Verification note: this workspace's WSL shell cannot execute the Windows-installed `corepack` shim or `node.exe` (`/mnt/c/Program Files/nodejs/...`), so local verification from this session is blocked until a Linux Node toolchain is available or the command is rerun from the Windows host.
 - Reprioritized `FEATURE_BOARD.md` so the next actionable work is feature 90, atomic run claiming, followed by transactional state transitions, allowed-path enforcement, git credential redaction, operator API hardening, timeout and heartbeat alignment, secret-workspace cleanup, prompt-boundary hardening, Postgres-pool hardening, and structured runtime logging.
 - Full audit handoff is documented in [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) - read this before implementing features 90-99.
 - Existing pending feature work for OpenAI provider support (feature 86) and GitHub intake allowlisting (feature 87) is intentionally deferred behind the new hardening queue because the audit found production-correctness and security gaps with higher blast radius.

@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## `corepack pnpm ...` fails immediately in WSL with a Windows Node path
+
+- Symptom: repo scripts such as `corepack pnpm verify:package` fail before running project code with errors like `/mnt/c/Program Files/nodejs/corepack: cannot execute: required file not found`, and direct calls to `"/mnt/c/Program Files/nodejs/node.exe"` fail with `WSL ... UtilBindVsockAnyPort ... socket failed 1`.
+- Root cause: this shell session has no usable Linux `node` or `pnpm` on `PATH`, and the fallback Windows-installed Node/Corepack binaries under `/mnt/c/Program Files/nodejs` are not executable from the current WSL environment.
+- Failing approach: retrying repo `corepack pnpm ...` scripts from the same WSL shell without first providing a Linux Node toolchain or switching to a host shell that can run the Windows Node installation.
+- Working workaround: run the verification from a shell with native Linux `node`/`pnpm` available on `PATH`, or rerun it from the Windows host shell where the installed `corepack` and `node.exe` work normally.
+- Verification: `which node`, `which pnpm`, `node --version`, and then the target repo command such as `corepack pnpm verify:package` should all succeed before relying on the result.
+
 ## `apply_patch` fails in the Windows sandbox
 
 - Symptom: `functions.apply_patch` returns `windows sandbox: setup refresh failed with status exit code: 1`.

@@ -125,7 +125,7 @@ try {
   assert.equal(destroyed.descriptor?.status, "destroyed");
   assert.equal(destroyed.removed, true);
   await assert.rejects(access(managedWorkspace.workspaceRoot));
-  assert.equal(openClawDefinitions.length, 4);
+  assert.equal(openClawDefinitions.length, 5);
 
   for (const definition of openClawDefinitions) {
     for (const file of definition.bootstrapFiles) {
@@ -150,5 +150,4 @@ try {
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }
-
 
