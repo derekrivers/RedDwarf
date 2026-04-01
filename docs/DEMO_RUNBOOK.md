@@ -307,6 +307,9 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The serve
 |--------|------|-------------|
 | GET | `/health` | Server health check (includes repository, polling runtime, cursor, and dispatcher state) |
 | GET | `/runs` | List pipeline runs (filter: `taskId`, `statuses`, `limit`) |
+| GET | `/config` | List runtime-configurable operator settings with current value, default, description, and source |
+| GET | `/config/schema` | Return JSON-schema-style metadata for runtime-configurable operator settings |
+| PUT | `/config` | Persist one or more runtime-configurable operator settings to `operator_config` |
 | GET | `/approvals` | List approval requests (filter: `taskId`, `runId`, `statuses`, `limit`) |
 | POST | `/approvals/:id/resolve` | Resolve an approval request |
 | GET | `/approvals/:id` | Get specific approval request |

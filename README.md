@@ -233,6 +233,12 @@ corepack pnpm compose:up:openclaw          # OpenClaw gateway (if not already st
 corepack pnpm operator:api                 # operator API on :8080
 ```
 
+The operator API now exposes configuration endpoints alongside the existing approvals and runs surface:
+
+- `GET /config` returns runtime-configurable settings with current value, default, description, and source.
+- `GET /config/schema` returns JSON-schema-style metadata for those settings.
+- `PUT /config` persists one or more runtime-configurable settings to the Postgres-backed `operator_config` table.
+
 ### OpenClaw Discord channel
 
 Feature 99 uses OpenClaw's native Discord channel support instead of a custom RedDwarf bot. To turn it on for the generated runtime config:

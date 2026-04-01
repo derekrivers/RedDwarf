@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+- Completed feature 116 from `FEATURE_BOARD.md`: added `GET /config`, `PUT /config`, and `GET /config/schema` to the operator API.
+- Extended the operator-config contracts with defaults, descriptions, env parsing helpers, update request and response schemas, and a JSON-schema-style schema response builder so the future UI can validate against the same typed source of truth.
+- Updated the operator API to return effective runtime config entries with value, default, description, source, and persisted timestamp; `PUT /config` now validates updates with Zod, persists them to `operator_config`, and applies the serialized value to `process.env` for the current process.
+- Expanded focused coverage in `packages/contracts/src/index.test.ts`, `packages/control-plane/src/operator-api.test.ts`, and `scripts/verify-operator-api.mjs` to cover config response metadata, schema exposure, bad-update rejection, and persisted update behavior.
+- Updated `README.md` and `docs/DEMO_RUNBOOK.md` so the new configuration endpoints are documented alongside the existing operator routes.
+- Verification status for feature 116: coverage was added, but local execution remains blocked in this WSL session because Docker is unavailable, Linux `node`/`pnpm` are absent, and the documented Windows host fallback still cannot resolve the repo path from this environment.
+- Updated the feature board so feature 116 is marked complete and feature 117 is now the next actionable M14 item.
 - Completed feature 115 from `FEATURE_BOARD.md`: added DB-backed runtime config persistence and startup merge logic.
 - Added typed operator-config contracts for runtime-configurable env keys, plus serialization helpers so persisted values can round-trip cleanly between JSONB storage and `process.env`.
 - Added `operator_config` persistence to the evidence layer with a new SQL migration (`packages/evidence/drizzle/0012_operator_config.sql`), in-memory and Postgres repository support, row mapping, and focused repository coverage.
@@ -17,7 +24,7 @@
 - Added a new top-priority `M14 — Operator UX` milestone covering `.env` classification, DB-backed runtime config, Operator API config and repo-management endpoints, richer runs/tasks observability, write-only secret rotation, a single-file `/ui` operator panel, OpenClaw WebChat commands, and an MCP bridge over the Operator API.
 - Added a new `M18 — VPS Expansion` milestone covering VPS-specific compose topology, webhook intake, Tailscale Funnel exposure, CI webhook reception, and multi-provider failover after config-schema validation.
 - Extended the active board format with explicit `Depends On` and `Deployment` columns so upcoming work is easier to sequence and reason about.
-- Current likely next board item: feature 116, add `GET /config`, `PUT /config`, and `GET /config/schema` with Zod-backed contracts.
+- Current likely next board item: feature 117, add repo-management endpoints and move poll repo control off the comma-string env surface.
 - Completed feature 112 from `FEATURE_BOARD.md`: phase retry budget.
 - Added explicit per-phase retry-budget configuration via `REDDWARF_MAX_RETRIES_*` env vars, including alias names that match the proposal document (`ARCHITECT`, `DEVELOPER`, `VALIDATOR`, `REVIEWER`) plus repo-native phase names.
 - Added durable retry-budget state under `failure.retry_budget.<phase>` so repeated failures now persist attempts, last error, retry limit, and exhausted state independently per phase instead of relying only on the legacy manifest-wide `retryCount`.

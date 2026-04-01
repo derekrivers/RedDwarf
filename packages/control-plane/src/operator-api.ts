@@ -5,13 +5,24 @@ import {
 } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  buildOperatorConfigJsonSchema,
   groupedTaskInjectionRequestSchema,
   eligibilityRejectionReasonCodeSchema,
+  operatorConfigDefaults,
+  operatorConfigDescriptions,
+  operatorConfigKeys,
+  operatorConfigResponseSchema,
+  operatorConfigSchemaResponseSchema,
+  operatorConfigUpdateRequestSchema,
+  parseOperatorConfigEnvValue,
+  serializeOperatorConfigValue,
   taskGroupInjectionRequestSchema,
   directTaskInjectionRequestSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type GitHubIssuePollingCursor,
+  type OperatorConfigEntry,
+  type OperatorConfigField,
   type PlanningAgent,
   type PlanningTaskInput,
   type PipelineRun
@@ -395,6 +406,32 @@ function resolveManagedDispatchRoot(
   return resolvedRoot;
 }
 
+function buildOperatorConfigResponse(
+  persistedEntries: OperatorConfigEntry[]
+): import("@reddwarf/contracts").OperatorConfigResponse {
+  const persistedByKey = new Map(persistedEntries.map((entry) => [entry.key, entry]));
+  const config: OperatorConfigField[] = operatorConfigKeys.map((key) => {
+    const persisted = persistedByKey.get(key);
+    const defaultValue = operatorConfigDefaults[key];
+    const value =
+      persisted?.value ?? parseOperatorConfigEnvValue(key, process.env[key]);
+
+    return {
+      key,
+      value,
+      defaultValue,
+      description: operatorConfigDescriptions[key],
+      updatedAt: persisted?.updatedAt ?? null,
+      source: persisted ? "database" : process.env[key] !== undefined ? "env" : "default"
+    };
+  });
+
+  return operatorConfigResponseSchema.parse({
+    config,
+    total: config.length
+  });
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -447,6 +484,62 @@ async function handleOperatorRequest(
   }
 
   assertOperatorAuthorized(req, authToken);
+
+  if (method === "GET" && path === "/config") {
+    writeOperatorJsonResponse(
+      res,
+      200,
+      buildOperatorConfigResponse(await repository.listOperatorConfigEntries())
+    );
+    return;
+  }
+
+  if (method === "GET" && path === "/config/schema") {
+    writeOperatorJsonResponse(
+      res,
+      200,
+      operatorConfigSchemaResponseSchema.parse({
+        schema: buildOperatorConfigJsonSchema()
+      })
+    );
+    return;
+  }
+
+  if (method === "PUT" && path === "/config") {
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    let updateRequest: import("@reddwarf/contracts").OperatorConfigUpdateRequest;
+
+    try {
+      updateRequest = operatorConfigUpdateRequestSchema.parse(rawBody ?? {});
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid operator config payload.";
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message
+      });
+      return;
+    }
+
+    const updatedAt = clock().toISOString();
+    for (const entry of updateRequest.entries) {
+      const persistedEntry = {
+        key: entry.key,
+        value: entry.value,
+        updatedAt
+      } as OperatorConfigEntry;
+
+      await repository.saveOperatorConfigEntry(persistedEntry);
+      process.env[entry.key] = serializeOperatorConfigValue(entry.key, entry.value);
+    }
+
+    writeOperatorJsonResponse(
+      res,
+      200,
+      buildOperatorConfigResponse(await repository.listOperatorConfigEntries())
+    );
+    return;
+  }
 
   // GET /runs
   if (method === "GET" && path === "/runs") {

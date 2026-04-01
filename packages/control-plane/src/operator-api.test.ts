@@ -158,6 +158,44 @@ function operatorPost(
   });
 }
 
+function operatorPut(
+  port: number,
+  path: string,
+  body: unknown,
+  authToken: string | null = operatorApiToken
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "PUT",
+        headers: {
+          ...buildOperatorHeaders(authToken),
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload)
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 describe("operator API server", () => {
   it("serves health, runs, and blocked endpoints with an empty repository", async () => {
     const repository = new InMemoryPlanningRepository();
@@ -258,6 +296,96 @@ describe("operator API server", () => {
       expect(repositoryHealth["status"]).toBe("healthy");
       expect(repositoryHealth["postgresPool"]).toBeNull();
     } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("serves operator config values, schema metadata, and persists updates", async () => {
+    const previousPollInterval = process.env.REDDWARF_POLL_INTERVAL_MS;
+    const previousSkipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW;
+    delete process.env.REDDWARF_POLL_INTERVAL_MS;
+    delete process.env.REDDWARF_SKIP_OPENCLAW;
+
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-01T09:30:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const configResponse = await operatorGet(port, "/config");
+      expect(configResponse.status).toBe(200);
+      expect((configResponse.body as Record<string, unknown>)["total"]).toBeGreaterThan(0);
+      const configItems = (configResponse.body as Record<string, unknown>)["config"] as Array<Record<string, unknown>>;
+      const pollInterval = configItems.find(
+        (entry) => entry["key"] === "REDDWARF_POLL_INTERVAL_MS"
+      );
+      expect(pollInterval).toMatchObject({
+        value: 30000,
+        defaultValue: 30000,
+        source: "default"
+      });
+
+      const schemaResponse = await operatorGet(port, "/config/schema");
+      expect(schemaResponse.status).toBe(200);
+      const schema = (schemaResponse.body as Record<string, unknown>)["schema"] as Record<string, unknown>;
+      const properties = schema["properties"] as Record<string, unknown>;
+      expect((properties["REDDWARF_POLL_INTERVAL_MS"] as Record<string, unknown>)["type"]).toBe(
+        "integer"
+      );
+
+      const badUpdate = await operatorPut(port, "/config", {
+        entries: [{ key: "REDDWARF_POLL_INTERVAL_MS", value: "not-a-number" }]
+      });
+      expect(badUpdate.status).toBe(400);
+
+      const updated = await operatorPut(port, "/config", {
+        entries: [
+          { key: "REDDWARF_POLL_INTERVAL_MS", value: 45000 },
+          { key: "REDDWARF_SKIP_OPENCLAW", value: true }
+        ]
+      });
+      expect(updated.status).toBe(200);
+
+      const updatedItems = (updated.body as Record<string, unknown>)["config"] as Array<Record<string, unknown>>;
+      expect(
+        updatedItems.find((entry) => entry["key"] === "REDDWARF_POLL_INTERVAL_MS")
+      ).toMatchObject({
+        value: 45000,
+        source: "database",
+        updatedAt: "2026-04-01T09:30:00.000Z"
+      });
+      expect(
+        updatedItems.find((entry) => entry["key"] === "REDDWARF_SKIP_OPENCLAW")
+      ).toMatchObject({
+        value: true,
+        source: "database"
+      });
+
+      await expect(
+        repository.getOperatorConfigEntry("REDDWARF_POLL_INTERVAL_MS")
+      ).resolves.toMatchObject({
+        value: 45000,
+        updatedAt: "2026-04-01T09:30:00.000Z"
+      });
+      expect(process.env.REDDWARF_POLL_INTERVAL_MS).toBe("45000");
+      expect(process.env.REDDWARF_SKIP_OPENCLAW).toBe("true");
+    } finally {
+      if (previousPollInterval === undefined) {
+        delete process.env.REDDWARF_POLL_INTERVAL_MS;
+      } else {
+        process.env.REDDWARF_POLL_INTERVAL_MS = previousPollInterval;
+      }
+
+      if (previousSkipOpenClaw === undefined) {
+        delete process.env.REDDWARF_SKIP_OPENCLAW;
+      } else {
+        process.env.REDDWARF_SKIP_OPENCLAW = previousSkipOpenClaw;
+      }
+
       await apiServer.stop();
     }
   });

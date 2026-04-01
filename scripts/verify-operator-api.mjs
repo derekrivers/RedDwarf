@@ -72,6 +72,39 @@ function apiPost(port, path, body, authToken = operatorApiToken) {
   });
 }
 
+function apiPut(port, path, body, authToken = operatorApiToken) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "PUT",
+        headers: {
+          ...buildAuthHeaders(authToken),
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload)
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 const apiServer = createOperatorApiServer(
   { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
   {
@@ -195,6 +228,43 @@ try {
   assert.ok(
     blocked.body.pendingApprovals.some(
       (req) => req.requestId === requestId
+    )
+  );
+
+  // GET /config and /config/schema
+  const config = await apiGet(port, "/config");
+  assert.equal(config.status, 200);
+  assert.ok(config.body.total > 0);
+  assert.ok(
+    config.body.config.some((entry) => entry.key === "REDDWARF_POLL_INTERVAL_MS")
+  );
+
+  const configSchema = await apiGet(port, "/config/schema");
+  assert.equal(configSchema.status, 200);
+  assert.equal(configSchema.body.schema.type, "object");
+  assert.equal(
+    configSchema.body.schema.properties.REDDWARF_POLL_INTERVAL_MS.type,
+    "integer"
+  );
+
+  const badConfigUpdate = await apiPut(port, "/config", {
+    entries: [{ key: "REDDWARF_POLL_INTERVAL_MS", value: "bad" }]
+  });
+  assert.equal(badConfigUpdate.status, 400);
+
+  const updatedConfig = await apiPut(port, "/config", {
+    entries: [
+      { key: "REDDWARF_POLL_INTERVAL_MS", value: 45000 },
+      { key: "REDDWARF_SKIP_OPENCLAW", value: true }
+    ]
+  });
+  assert.equal(updatedConfig.status, 200);
+  assert.ok(
+    updatedConfig.body.config.some(
+      (entry) =>
+        entry.key === "REDDWARF_POLL_INTERVAL_MS" &&
+        entry.value === 45000 &&
+        entry.source === "database"
     )
   );
 

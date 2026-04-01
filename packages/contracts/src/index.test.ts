@@ -23,7 +23,9 @@ import {
   promptSnapshotSchema,
   openClawAgentRoleDefinitionSchema,
   operatorConfigEntrySchema,
+  operatorConfigSchemaResponseSchema,
   parseOperatorConfigValue,
+  buildOperatorConfigJsonSchema,
   serializeOperatorConfigValue
 } from "@reddwarf/contracts";
 
@@ -245,6 +247,23 @@ describe("contracts", () => {
       )
     ).toBe("");
     expect(parseOperatorConfigValue("REDDWARF_API_PORT", 8080)).toBe(8080);
+  });
+
+  it("builds a JSON-schema-style operator config schema response", () => {
+    const response = operatorConfigSchemaResponseSchema.parse({
+      schema: buildOperatorConfigJsonSchema()
+    });
+
+    expect(response.schema.type).toBe("object");
+    expect(
+      (response.schema.properties["REDDWARF_POLL_INTERVAL_MS"] as Record<string, unknown>)[
+        "type"
+      ]
+    ).toBe("integer");
+    expect(response.schema.defaults["REDDWARF_LOG_LEVEL"]).toBe("info");
+    expect(response.schema.descriptions["REDDWARF_SKIP_OPENCLAW"]).toContain(
+      "OpenClaw"
+    );
   });
 
   it("parses an eligibility rejection record", () => {
