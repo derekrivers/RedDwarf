@@ -163,6 +163,7 @@ describe("evidence memory partitions", () => {
       title: "Poll issue 77",
       summary: "A planning task created from the polling daemon.",
       priority: 7,
+      dryRun: false,
       riskClass: "low",
       approvalMode: "auto",
       currentPhase: "planning",
@@ -266,4 +267,3 @@ describe("evidence memory partitions", () => {
     expect(secondClaim.blockedByRun?.runId).toBe("run-fresh");
   });
 });
-

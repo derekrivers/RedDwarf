@@ -26,6 +26,7 @@ export const approvalRequestSchema = z.object({
   taskId: z.string().min(1),
   runId: z.string().min(1),
   phase: taskPhaseSchema,
+  dryRun: z.boolean().default(false),
   approvalMode: approvalModeSchema,
   status: approvalRequestStatusSchema,
   riskClass: riskClassSchema,

@@ -70,6 +70,7 @@ const eligibleInput: PlanningTaskInput = {
   summary:
     "Plan a deterministic docs-safe change for the platform repository with durable evidence output.",
   priority: 1,
+  dryRun: false,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists", "Policy output is archived"],
   affectedPaths: ["docs/guide.md"],
@@ -268,6 +269,33 @@ describe("control-plane", () => {
           record.level === "info"
       )
     ).toBe(true);
+  });
+
+  it("persists dry-run planning state across the manifest, run, and approval request", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        dryRun: true,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/dry-run.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-01T09:00:00.000Z"),
+        idGenerator: () => "run-dry-run-planning"
+      }
+    );
+
+    const persistedRun = await repository.getPipelineRun(result.runId);
+    const persistedManifest = await repository.getManifest(result.manifest.taskId);
+
+    expect(result.nextAction).toBe("await_human");
+    expect(result.manifest.dryRun).toBe(true);
+    expect(result.approvalRequest?.dryRun).toBe(true);
+    expect(persistedRun?.dryRun).toBe(true);
+    expect(persistedManifest?.dryRun).toBe(true);
   });
 
   describe("role-scoped context materialization", () => {
@@ -1893,6 +1921,125 @@ describe("control-plane", () => {
         await expect(access(record.metadata.archivePath as string)).resolves.toBeUndefined();
         expect(record.location.startsWith("evidence://")).toBe(true);
       }
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(evidenceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("completes SCM in dry-run mode without publishing a pull request", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-dry-run-workspace-"));
+    const evidenceRoot = await mkdtemp(join(tmpdir(), "reddwarf-scm-dry-run-evidence-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        dryRun: true,
+        summary:
+          "Plan a deterministic change that exercises the dry-run SCM path without creating a live branch or pull request.",
+        requestedCapabilities: ["can_write_code", "can_open_pr"],
+        affectedPaths: ["src/dry-run-scm.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-01T10:00:00.000Z"),
+        idGenerator: () => "run-scm-dry-run-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for dry-run SCM verification."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-04-01T10:01:00.000Z")
+      }
+    );
+
+    try {
+      const repoBootstrapper = createFixtureWorkspaceRepoBootstrapper();
+      const completionAwaiter = createFixtureOpenClawCompletionAwaiter(
+        "OpenClaw developer session completed with a dry-run repository update."
+      );
+      const github = new FixtureGitHubAdapter({
+        candidates: [],
+        mutations: {
+          allowBranchCreation: true,
+          allowPullRequestCreation: true,
+          pullRequestNumberStart: 99
+        }
+      });
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scm-dry-run",
+          evidenceRoot
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({
+            fixedSessionId: "session-scm-dry-run"
+          }),
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: repoBootstrapper,
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-04-01T10:02:00.000Z"),
+          idGenerator: () => "run-scm-dry-run-dev"
+        }
+      );
+
+      const validation = await runValidationPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          validator: new DeterministicValidationAgent(),
+          clock: () => new Date("2026-04-01T10:03:00.000Z"),
+          idGenerator: () => "run-scm-dry-run-validation"
+        }
+      );
+
+      const scm = await runScmPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          evidenceRoot
+        },
+        {
+          repository,
+          scm: new DeterministicScmAgent(),
+          github,
+          workspaceRepoBootstrapper: repoBootstrapper,
+          workspaceCommitPublisher: createFixtureWorkspaceCommitPublisher(github),
+          clock: () => new Date("2026-04-01T10:04:00.000Z"),
+          idGenerator: () => "run-scm-dry-run-phase"
+        }
+      );
+
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const reportMarkdown = await readFile(scm.reportPath!, "utf8");
+
+      expect(validation.nextAction).toBe("await_scm");
+      expect(scm.nextAction).toBe("complete");
+      expect(scm.pullRequest).toBeUndefined();
+      expect(persistedManifest?.dryRun).toBe(true);
+      expect(persistedManifest?.branchName).toBeTruthy();
+      expect(persistedManifest?.prNumber).toBeNull();
+      expect(reportMarkdown).toContain("DRY RUN: yes");
+      expect(reportMarkdown).toContain("create pull request");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       await rm(evidenceRoot, { recursive: true, force: true });
@@ -4424,6 +4571,7 @@ describe("dispatchReadyTask", () => {
       title: "Dispatch test issue",
       summary: "Plan a deterministic docs-safe change for dispatch testing.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["docs/guide.md"],
@@ -4469,6 +4617,7 @@ describe("dispatchReadyTask", () => {
       title: "Dispatch ready task test",
       summary: "Plan a deterministic docs-safe change for dispatch ready testing.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["docs/guide.md"],
@@ -4538,6 +4687,7 @@ describe("dispatchReadyTask", () => {
       title: "Dispatch memory cache test",
       summary: "Reuse one resolved project memory snapshot across downstream phases.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["docs/guide.md"],
@@ -4869,6 +5019,7 @@ describe("dispatchReadyTask", () => {
       title: "Dispatch redaction test",
       summary: "Plan a deterministic docs-safe change for dispatch redaction testing.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["src/app.ts"],
@@ -4934,6 +5085,7 @@ describe("listManifestsByLifecycleStatus", () => {
       title: "Task 200",
       summary: "Plan a deterministic docs-safe change for task 200 testing.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["docs/guide.md"],
@@ -4945,6 +5097,7 @@ describe("listManifestsByLifecycleStatus", () => {
       title: "Task 201",
       summary: "Plan a deterministic docs-safe change for task 201 testing.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: ["Planning spec exists"],
       affectedPaths: ["docs/guide.md"],

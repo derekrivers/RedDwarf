@@ -174,6 +174,7 @@ describe("GitHub issue polling daemon", () => {
         summary:
           "This planning task already exists and should cause the polling daemon to skip duplicate intake.",
         priority: 4,
+        dryRun: false,
         labels: ["ai-eligible"],
         acceptanceCriteria: ["Duplicate intake is skipped."],
         affectedPaths: ["docs/polling.md"],

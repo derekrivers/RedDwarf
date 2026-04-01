@@ -50,6 +50,7 @@ export interface OperatorApiConfig {
 export interface OperatorApiDependencies {
   repository: PlanningRepository;
   planner?: PlanningAgent;
+  defaultPlanningDryRun?: boolean;
   clock?: () => Date;
   /** When provided, enables POST /tasks/:taskId/dispatch and dispatcher health reporting. */
   dispatcher?: ReadyTaskDispatcher;
@@ -140,6 +141,7 @@ export function createOperatorApiServer(
   const {
     repository,
     planner,
+    defaultPlanningDryRun = false,
     clock = () => new Date(),
     dispatcher,
     pollingDaemon,
@@ -176,6 +178,7 @@ export function createOperatorApiServer(
           dispatcher,
           pollingDaemon,
           planner,
+          defaultPlanningDryRun,
           dispatchDependencies,
           managedTargetRoot,
           managedEvidenceRoot
@@ -363,6 +366,7 @@ async function handleOperatorRequest(
   dispatcher?: ReadyTaskDispatcher,
   pollingDaemon?: GitHubIssuePollingDaemon,
   planner?: PlanningAgent,
+  defaultPlanningDryRun?: boolean,
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
   managedTargetRoot?: string,
   managedEvidenceRoot?: string
@@ -527,7 +531,10 @@ async function handleOperatorRequest(
       return;
     }
 
-    const planningInput = buildPlanningTaskInputFromInjection(injected);
+    const planningInput = buildPlanningTaskInputFromInjection(
+      injected,
+      defaultPlanningDryRun
+    );
     const result = await runPlanningPipeline(planningInput, {
       repository,
       planner,
@@ -577,7 +584,10 @@ async function handleOperatorRequest(
     const taskIdByKey = new Map<string, string>();
 
     for (const task of groupTasks) {
-      const planningInput = buildPlanningTaskInputFromInjection(task);
+      const planningInput = buildPlanningTaskInputFromInjection(
+        task,
+        defaultPlanningDryRun
+      );
       const result = await runPlanningPipeline(planningInput, {
         repository,
         planner,
@@ -741,7 +751,8 @@ async function handleOperatorRequest(
 function buildPlanningTaskInputFromInjection(
   input:
     | import("@reddwarf/contracts").DirectTaskInjectionRequest
-    | import("@reddwarf/contracts").GroupedTaskInjectionRequest
+    | import("@reddwarf/contracts").GroupedTaskInjectionRequest,
+  defaultDryRun = false
 ): PlanningTaskInput {
   const intakeMetadata = {
     mode: "direct_injection",
@@ -759,6 +770,7 @@ function buildPlanningTaskInputFromInjection(
     title: input.title,
     summary: input.summary,
     priority: input.priority,
+    dryRun: input.dryRun ?? defaultDryRun,
     labels: [...new Set(["ai-eligible", ...input.labels])],
     acceptanceCriteria: input.acceptanceCriteria,
     affectedPaths: input.affectedPaths,

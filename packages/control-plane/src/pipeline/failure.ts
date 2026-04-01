@@ -308,6 +308,7 @@ export async function handleAutomatedPhaseFailure(input: {
       taskId: manifest.taskId,
       runId,
       phase,
+      dryRun: manifest.dryRun,
       approvalMode: "human_signoff_required",
       status: "pending",
       riskClass: manifest.riskClass,
@@ -338,6 +339,7 @@ export async function handleAutomatedPhaseFailure(input: {
     !retryEligible &&
     followUpIssue === null &&
     input.github &&
+    !manifest.dryRun &&
     manifest.source.issueNumber !== undefined
   ) {
     try {

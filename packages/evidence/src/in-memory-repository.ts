@@ -229,6 +229,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
         manifest.source.repo === source.repo &&
         manifest.source.issueId === source.issueId &&
         manifest.source.issueNumber === source.issueNumber &&
+        manifest.dryRun === false &&
         this.planningSpecs.has(manifest.taskId)
       ) {
         return true;

@@ -86,10 +86,15 @@ const pollIntervalMs = parseInt(
 );
 const skipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW === "true";
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
+const dryRun = process.env.REDDWARF_DRY_RUN === "true";
 
 if (operatorApiToken.length === 0) {
   logError("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
   process.exit(1);
+}
+
+if (dryRun) {
+  log("[DRY RUN MODE] SCM and follow-up GitHub mutations will be suppressed.");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -359,6 +364,7 @@ if (pollRepos.length > 0) {
     {
       intervalMs: pollIntervalMs,
       repositories: pollRepos.map((repo) => ({ repo, labels: ["ai-eligible"] })),
+      dryRun,
       runOnStart: true
     },
     { repository, github, planner, logger: runtimeLogger }
@@ -376,6 +382,7 @@ const server = createOperatorApiServer(
   },
     {
       repository,
+      defaultPlanningDryRun: dryRun,
       ...(planner ? { planner } : {}),
       ...(dispatcher ? { dispatcher } : {}),
       ...(daemon ? { pollingDaemon: daemon } : {}),

@@ -14,6 +14,7 @@ import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const port = parseInt(process.argv[2] ?? "8080", 10);
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
+const dryRun = process.env.REDDWARF_DRY_RUN === "true";
 
 if (operatorApiToken.length === 0) {
   console.error("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
@@ -41,11 +42,14 @@ try {
 
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
-  { repository, planner }
+  { repository, planner, defaultPlanningDryRun: dryRun }
 );
 
 await server.start();
 console.log(`Operator API listening on http://127.0.0.1:${server.port}`);
+if (dryRun) {
+  console.log("  [DRY RUN MODE] Planning intake defaults to dry-run and downstream SCM mutations are suppressed.");
+}
 console.log("  Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 console.log(`  GET  http://127.0.0.1:${server.port}/approvals`);
 console.log(`  GET  http://127.0.0.1:${server.port}/blocked`);

@@ -183,6 +183,7 @@ export async function runScmPhase(
     taskId,
     concurrencyKey,
     strategy: concurrency.strategy,
+    dryRun: currentManifest.dryRun,
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,
@@ -409,76 +410,111 @@ export async function runScmPhase(
     }
 
     let publication: import("../live-workflow.js").WorkspaceCommitPublicationResult;
+    const dryRunBranch = {
+      repo: currentManifest.source.repo,
+      baseBranch: draft.baseBranch,
+      branchName: draft.branchName,
+      ref: `dry-run://${draft.branchName}`,
+      url: `dry-run://github/${currentManifest.source.repo}/tree/${encodeURIComponent(draft.branchName)}`,
+      createdAt: runStartedAtIso
+    };
 
-    try {
-      publication = await waitWithHeartbeat({
-        work: workspaceCommitPublisher.publish({
-          manifest: currentManifest,
-          workspace,
-          baseBranch: draft.baseBranch,
-          branchName: draft.branchName,
-          allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
-          logger: runLogger
-        }),
-        heartbeatIntervalMs,
-        onHeartbeat: () =>
-          heartbeatTrackedRun({
-            phase: "scm",
-            persistTrackedRun,
-            clock,
-            metadata: {
-              ...scmHeartbeatMetadata,
-              scmStep: "publish",
-              branchName: draft.branchName,
-              baseBranch: draft.baseBranch
-            }
-          })
-      });
-    } catch (error) {
-      if (error instanceof AllowedPathViolationError) {
-        throw new PlanningPipelineFailure({
-          message: error.message,
-          failureClass: "policy_violation",
-          phase: "scm",
-          code: EventCodes.ALLOWED_PATHS_VIOLATED,
-          details: {
-            workspaceId: workspace.workspaceId,
+    if (currentManifest.dryRun) {
+      publication = {
+        branch: dryRunBranch,
+        commitSha: "dry-run",
+        changedFiles: [],
+        diff: ""
+      };
+    } else {
+      try {
+        publication = await waitWithHeartbeat({
+          work: workspaceCommitPublisher.publish({
+            manifest: currentManifest,
+            workspace,
             baseBranch: draft.baseBranch,
             branchName: draft.branchName,
-            allowedPaths: error.allowedPaths,
-            changedFiles: error.changedFiles,
-            violatingFiles: error.violatingFiles
-          },
-          cause: error,
-          taskId,
-          runId
+            allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
+            logger: runLogger
+          }),
+          heartbeatIntervalMs,
+          onHeartbeat: () =>
+            heartbeatTrackedRun({
+              phase: "scm",
+              persistTrackedRun,
+              clock,
+              metadata: {
+                ...scmHeartbeatMetadata,
+                scmStep: "publish",
+                branchName: draft.branchName,
+                baseBranch: draft.baseBranch
+              }
+            })
         });
-      }
+      } catch (error) {
+        if (error instanceof AllowedPathViolationError) {
+          throw new PlanningPipelineFailure({
+            message: error.message,
+            failureClass: "policy_violation",
+            phase: "scm",
+            code: EventCodes.ALLOWED_PATHS_VIOLATED,
+            details: {
+              workspaceId: workspace.workspaceId,
+              baseBranch: draft.baseBranch,
+              branchName: draft.branchName,
+              allowedPaths: error.allowedPaths,
+              changedFiles: error.changedFiles,
+              violatingFiles: error.violatingFiles
+            },
+            cause: error,
+            taskId,
+            runId
+          });
+        }
 
-      throw error;
+        throw error;
+      }
     }
     const branch = publication.branch;
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("scm", EventCodes.BRANCH_CREATED),
-      taskId,
-      runId,
-      phase: "scm",
-      level: "info",
-      code: EventCodes.BRANCH_CREATED,
-      message: `SCM branch ${branch.branchName} created with commit ${publication.commitSha}.`,
-      data: {
-        workspaceId: workspace.workspaceId,
-        baseBranch: branch.baseBranch,
-        branchName: branch.branchName,
-        branchUrl: branch.url,
-        branchRef: branch.ref,
-        commitSha: publication.commitSha,
-        changedFiles: publication.changedFiles
-      },
-      createdAt: scmStartedAtIso
-    });
+    if (currentManifest.dryRun) {
+      await repository.saveEvidenceRecord(
+        createEvidenceRecord({
+          recordId: `${taskId}:scm:${runId}:dry-run`,
+          taskId,
+          kind: "gate_decision",
+          title: "SCM dry-run mutation skip",
+          metadata: {
+            dryRun: true,
+            skippedOperations: ["create_branch", "create_pull_request"],
+            branchName: branch.branchName,
+            baseBranch: branch.baseBranch
+          },
+          createdAt: scmStartedAtIso
+        })
+      );
+    } else {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("scm", EventCodes.BRANCH_CREATED),
+        taskId,
+        runId,
+        phase: "scm",
+        level: "info",
+        code: EventCodes.BRANCH_CREATED,
+        message: `SCM branch ${branch.branchName} created with commit ${publication.commitSha}.`,
+        data: {
+          workspaceId: workspace.workspaceId,
+          baseBranch: branch.baseBranch,
+          branchName: branch.branchName,
+          branchUrl: branch.url,
+          branchRef: branch.ref,
+          commitSha: publication.commitSha,
+          changedFiles: publication.changedFiles
+        },
+        createdAt: scmStartedAtIso
+      });
+    }
     await heartbeatTrackedRun({
       phase: "scm",
       persistTrackedRun,
@@ -490,42 +526,92 @@ export async function runScmPhase(
       }
     });
 
-    const pullRequest = await github.createPullRequest({
-      repo: currentManifest.source.repo,
-      baseBranch: draft.baseBranch,
-      headBranch: publication.branch.branchName,
-      title: draft.pullRequestTitle,
-      body: draft.pullRequestBody,
-      labels: draft.labels,
-      ...(currentManifest.source.issueNumber
-        ? { issueNumber: currentManifest.source.issueNumber }
-        : {})
-    });
+    const pullRequest = currentManifest.dryRun
+      ? null
+      : await github.createPullRequest({
+          repo: currentManifest.source.repo,
+          baseBranch: draft.baseBranch,
+          headBranch: publication.branch.branchName,
+          title: draft.pullRequestTitle,
+          body: draft.pullRequestBody,
+          labels: draft.labels,
+          ...(currentManifest.source.issueNumber
+            ? { issueNumber: currentManifest.source.issueNumber }
+            : {})
+        });
     const scmCompletedAt = clock();
     const scmCompletedAtIso = asIsoTimestamp(scmCompletedAt);
     const reportPath = join(workspace.artifactsDir, "scm-report.md");
     await writeFile(
       reportPath,
-      renderScmReportMarkdown({
-        bundle,
-        draft,
-        publication,
-        pullRequest,
-        workspace,
-        runId,
-        validationReportPath
-      }),
+      currentManifest.dryRun
+        ? [
+            "# SCM Report",
+            "",
+            `- Task ID: ${bundle.manifest.taskId}`,
+            `- Run ID: ${runId}`,
+            `- Workspace ID: ${workspace.workspaceId}`,
+            `- Base branch: ${publication.branch.baseBranch}`,
+            `- Planned head branch: ${publication.branch.branchName}`,
+            "- DRY RUN: yes",
+            `- Validation report path: ${join("repo", validationReportPath).replace(/\\/g, "/")}`,
+            "",
+            "## Summary",
+            "",
+            draft.summary,
+            "",
+            "## Dry-run skipped operations",
+            "",
+            "- create branch",
+            "- create pull request",
+            "",
+            "## Planned Pull Request Title",
+            "",
+            draft.pullRequestTitle,
+            ""
+          ].join("\n")
+        : pullRequest
+          ? renderScmReportMarkdown({
+              bundle,
+              draft,
+              publication,
+              pullRequest,
+              workspace,
+              runId,
+              validationReportPath
+            })
+          : "",
       "utf8"
     );
     const diffPath = join(workspace.artifactsDir, "scm-diff.md");
     await writeFile(
       diffPath,
-      renderScmDiffMarkdown({
-        bundle,
-        publication,
-        pullRequest,
-        validationSummary
-      }),
+      currentManifest.dryRun
+        ? [
+            "# SCM Diff Summary",
+            "",
+            `- Task ID: ${bundle.manifest.taskId}`,
+            `- Base branch: ${publication.branch.baseBranch}`,
+            `- Planned head branch: ${publication.branch.branchName}`,
+            "- DRY RUN: yes",
+            "",
+            "## Validation Summary",
+            "",
+            validationSummary,
+            "",
+            "## Patch",
+            "",
+            "Dry run skipped branch publication and pull request creation, so no SCM diff artifact was generated.",
+            ""
+          ].join("\n")
+        : pullRequest
+          ? renderScmDiffMarkdown({
+              bundle,
+              publication,
+              pullRequest,
+              validationSummary
+            })
+          : "",
       "utf8"
     );
     const reportSourceLocation = `${workspaceLocationPrefix}${workspace.workspaceId}/artifacts/scm-report.md`;
@@ -552,13 +638,13 @@ export async function runScmPhase(
       currentPhase: "scm",
       lifecycleStatus: "completed",
       branchName: branch.branchName,
-      prNumber: pullRequest.number,
+      prNumber: pullRequest?.number ?? null,
       workspaceId: workspace.workspaceId,
       updatedAt: scmCompletedAtIso,
       evidenceLinks: [
         ...new Set([
           ...currentManifest.evidenceLinks,
-          pullRequest.url,
+          ...(pullRequest ? [pullRequest.url] : []),
           branch.url
         ])
       ]
@@ -576,6 +662,7 @@ export async function runScmPhase(
           summary: draft.summary,
           branch,
           pullRequest,
+          dryRun: currentManifest.dryRun,
           commitSha: publication.commitSha,
           changedFiles: publication.changedFiles,
           runId,
@@ -600,11 +687,14 @@ export async function runScmPhase(
         phase: "scm",
         status: "passed",
         actor: "scm",
-        summary: "SCM phase created an approved branch and pull request.",
+        summary: currentManifest.dryRun
+          ? "SCM phase completed in dry-run mode; branch and pull request creation were skipped."
+          : "SCM phase created an approved branch and pull request.",
         details: {
           workspaceId: workspace.workspaceId,
           branch,
           pullRequest,
+          dryRun: currentManifest.dryRun,
           commitSha: publication.commitSha,
           changedFiles: publication.changedFiles,
           reportPath,
@@ -632,6 +722,7 @@ export async function runScmPhase(
           summary: draft.summary,
           branch,
           pullRequest,
+          dryRun: currentManifest.dryRun,
           commitSha: publication.commitSha,
           changedFiles: publication.changedFiles,
           validationReportPath,
@@ -658,6 +749,7 @@ export async function runScmPhase(
           workspaceId: workspace.workspaceId,
           branch,
           pullRequest,
+          dryRun: currentManifest.dryRun,
           commitSha: publication.commitSha,
           changedFiles: publication.changedFiles,
           validationReportPath,
@@ -672,26 +764,28 @@ export async function runScmPhase(
         createdAt: scmCompletedAtIso
       })
     );
-    await recordRunEvent({
-      repository,
-      logger: runLogger,
-      eventId: nextEventId("scm", EventCodes.PULL_REQUEST_CREATED),
-      taskId,
-      runId,
-      phase: "scm",
-      level: "info",
-      code: EventCodes.PULL_REQUEST_CREATED,
-      message: `Pull request #${pullRequest.number} created for ${branch.branchName}.`,
-      data: {
-        workspaceId: workspace.workspaceId,
-        branchName: branch.branchName,
-        prNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.url,
-        labels: draft.labels,
-        commitSha: publication.commitSha
-      },
-      createdAt: scmCompletedAtIso
-    });
+    if (!currentManifest.dryRun && pullRequest) {
+      await recordRunEvent({
+        repository,
+        logger: runLogger,
+        eventId: nextEventId("scm", EventCodes.PULL_REQUEST_CREATED),
+        taskId,
+        runId,
+        phase: "scm",
+        level: "info",
+        code: EventCodes.PULL_REQUEST_CREATED,
+        message: `Pull request #${pullRequest.number} created for ${branch.branchName}.`,
+        data: {
+          workspaceId: workspace.workspaceId,
+          branchName: branch.branchName,
+          prNumber: pullRequest.number,
+          pullRequestUrl: pullRequest.url,
+          labels: draft.labels,
+          commitSha: publication.commitSha
+        },
+        createdAt: scmCompletedAtIso
+      });
+    }
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -701,13 +795,16 @@ export async function runScmPhase(
       phase: "scm",
       level: "info",
       code: EventCodes.PHASE_PASSED,
-      message: "SCM branch and pull request created.",
+      message: currentManifest.dryRun
+        ? "SCM dry run completed without publishing a branch or pull request."
+        : "SCM branch and pull request created.",
       durationMs: getDurationMs(scmStartedAt, scmCompletedAt),
       data: {
         actor: "scm",
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
-        prNumber: pullRequest.number,
+        prNumber: pullRequest?.number ?? null,
+        dryRun: currentManifest.dryRun,
         reportPath,
         reportArchiveLocation: archivedScmReport.location,
         diffArchiveLocation: archivedScmDiff.location,
@@ -724,13 +821,16 @@ export async function runScmPhase(
       phase: "scm",
       level: "info",
       code: EventCodes.PIPELINE_COMPLETED,
-      message: "Task completed after SCM handoff.",
+      message: currentManifest.dryRun
+        ? "Task completed after SCM dry-run handoff."
+        : "Task completed after SCM handoff.",
       durationMs: getDurationMs(runStartedAt, scmCompletedAt),
       data: {
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
-        prNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.url,
+        prNumber: pullRequest?.number ?? null,
+        pullRequestUrl: pullRequest?.url ?? null,
+        dryRun: currentManifest.dryRun,
         commitSha: publication.commitSha,
         reportArchiveLocation: archivedScmReport.location,
         diffArchiveLocation: archivedScmDiff.location
@@ -745,8 +845,9 @@ export async function runScmPhase(
         currentPhase: "scm",
         workspaceId: workspace.workspaceId,
         branchName: branch.branchName,
-        prNumber: pullRequest.number,
-        pullRequestUrl: pullRequest.url,
+        prNumber: pullRequest?.number ?? null,
+        pullRequestUrl: pullRequest?.url ?? null,
+        dryRun: currentManifest.dryRun,
         commitSha: publication.commitSha,
         reportPath,
         reportArchiveLocation: archivedScmReport.location,
@@ -760,7 +861,7 @@ export async function runScmPhase(
       workspace,
       draft,
       branch,
-      pullRequest,
+      ...(pullRequest ? { pullRequest } : {}),
       reportPath,
       nextAction: "complete",
       concurrencyDecision

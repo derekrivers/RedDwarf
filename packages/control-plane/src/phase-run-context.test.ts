@@ -9,6 +9,7 @@ function makeTrackedRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
     taskId: "task-1",
     concurrencyKey: "key",
     strategy: "serialize",
+    dryRun: false,
     status: "active",
     startedAt: "2026-01-01T00:00:00.000Z",
     lastHeartbeatAt: "2026-01-01T00:00:00.000Z",

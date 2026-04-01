@@ -161,6 +161,7 @@ export async function runArchitectureReviewPhase(
     taskId,
     concurrencyKey,
     strategy: concurrency.strategy,
+    dryRun: currentManifest.dryRun,
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,

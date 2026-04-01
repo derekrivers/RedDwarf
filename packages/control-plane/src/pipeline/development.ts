@@ -144,6 +144,7 @@ export async function runDeveloperPhase(
     taskId,
     concurrencyKey,
     strategy: concurrency.strategy,
+    dryRun: currentManifest.dryRun,
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,

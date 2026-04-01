@@ -34,6 +34,7 @@ const manifest: TaskManifest = {
   summary:
     "Create a deterministic planning package for the docs-only backlog in the platform repo.",
   priority: 1,
+  dryRun: false,
   riskClass: "low",
   approvalMode: "auto",
   currentPhase: "archive",

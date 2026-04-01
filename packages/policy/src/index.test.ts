@@ -19,6 +19,7 @@ const baseInput: PlanningTaskInput = {
   summary:
     "Prepare deterministic planning artifacts for the docs-only task in the platform repository.",
   priority: 1,
+  dryRun: false,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists"],
   affectedPaths: ["docs/guide.md"],

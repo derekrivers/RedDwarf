@@ -107,6 +107,7 @@ export async function runPlanningPipeline(
     taskId,
     concurrencyKey,
     strategy: concurrency.strategy,
+    dryRun: input.dryRun,
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,
@@ -121,6 +122,7 @@ export async function runPlanningPipeline(
     title: input.title,
     summary: input.summary,
     priority: input.priority,
+    dryRun: input.dryRun,
     riskClass,
     approvalMode,
     currentPhase: "intake",
@@ -281,7 +283,12 @@ export async function runPlanningPipeline(
         taskId,
         kind: "manifest",
         title: "Initial task manifest",
-        metadata: { approvalMode, riskClass, concurrencyDecision },
+        metadata: {
+          approvalMode,
+          riskClass,
+          concurrencyDecision,
+          dryRun: input.dryRun
+        },
         createdAt: runStartedAtIso
       })
     );
@@ -796,6 +803,7 @@ export async function runPlanningPipeline(
             taskId,
             runId,
             phase: "policy_gate",
+            dryRun: input.dryRun,
             approvalMode,
             status: "pending",
             riskClass,
@@ -863,6 +871,7 @@ export async function runPlanningPipeline(
           title: "Approval request queued",
           metadata: {
             requestId: approvalRequest.requestId,
+            dryRun: approvalRequest.dryRun,
             approvalMode,
             riskClass,
             requestedCapabilities: approvalRequest.requestedCapabilities,

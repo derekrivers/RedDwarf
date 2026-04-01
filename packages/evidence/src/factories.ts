@@ -111,6 +111,7 @@ export function createPipelineRun(input: {
   taskId: string;
   concurrencyKey: string;
   strategy: ConcurrencyStrategy;
+  dryRun?: boolean;
   status: PipelineRun["status"];
   blockedByRunId?: string | null;
   overlapReason?: string | null;
@@ -126,6 +127,7 @@ export function createPipelineRun(input: {
     taskId: input.taskId,
     concurrencyKey: input.concurrencyKey,
     strategy: input.strategy,
+    dryRun: input.dryRun ?? false,
     status: input.status,
     blockedByRunId: input.blockedByRunId ?? null,
     overlapReason: input.overlapReason ?? null,
@@ -142,6 +144,7 @@ export function createApprovalRequest(input: {
   taskId: string;
   runId: string;
   phase: ApprovalRequest["phase"];
+  dryRun?: boolean;
   approvalMode: ApprovalRequest["approvalMode"];
   status: ApprovalRequest["status"];
   riskClass: ApprovalRequest["riskClass"];
@@ -166,6 +169,7 @@ export function createApprovalRequest(input: {
     taskId: input.taskId,
     runId: input.runId,
     phase: input.phase,
+    dryRun: input.dryRun ?? false,
     approvalMode: input.approvalMode,
     status: input.status,
     riskClass: input.riskClass,
@@ -205,4 +209,3 @@ export function createGitHubIssuePollingCursor(input: {
     updatedAt: input.updatedAt ?? asIsoTimestamp()
   };
 }
-

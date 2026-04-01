@@ -53,6 +53,7 @@ export interface GitHubPollingRepoConfig {
 export interface GitHubIssuePollingDaemonConfig {
   intervalMs: number;
   repositories: GitHubPollingRepoConfig[];
+  dryRun?: boolean;
   runOnStart?: boolean;
   cycleTimeoutMs?: number;
   /**
@@ -300,14 +301,20 @@ export function createGitHubIssuePollingDaemon(
           }
 
           const planningInput = await deps.github.convertToPlanningInput(candidate);
-          const result = await runPlanningPipeline(planningInput, {
+          const result = await runPlanningPipeline(
+            {
+              ...planningInput,
+              dryRun: config.dryRun ?? planningInput.dryRun
+            },
+            {
             repository: deps.repository,
             planner: deps.planner,
             ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
             clock,
             ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
             ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
-          });
+            }
+          );
 
           decisions.push({
             repo: candidate.repo,

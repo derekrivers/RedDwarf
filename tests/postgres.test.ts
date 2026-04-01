@@ -91,6 +91,7 @@ describeIfDatabase("postgres planning repository", () => {
       summary:
         "Persist a docs-safe planning run into Postgres and verify the durable audit, observability, memory, pipeline-run records, and managed workspace lifecycle are queryable.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: [
         "The planning spec exists",
@@ -274,6 +275,7 @@ describeIfDatabase("postgres planning repository", () => {
       summary:
         "Persist a planning run that requires human approval, verify the approval queue entry is durable, and confirm approval resolution updates the manifest and evidence state.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: [
         "Approval request is stored",
@@ -813,6 +815,7 @@ describeIfDatabase("postgres planning repository", () => {
       summary:
         "Verify that stale overlapping runs are retired and fresh overlaps are blocked conservatively in the Postgres-backed planning pipeline.",
       priority: 1,
+      dryRun: false,
       labels: ["ai-eligible"],
       acceptanceCriteria: [
         "Stale runs are marked",
@@ -956,4 +959,3 @@ describeIfDatabase("postgres planning repository", () => {
     expect(cursors.some((entry) => entry.repo === repo)).toBe(true);
   });
 });
-

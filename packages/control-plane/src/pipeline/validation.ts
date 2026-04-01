@@ -156,6 +156,7 @@ export async function runValidationPhase(
     taskId,
     concurrencyKey,
     strategy: concurrency.strategy,
+    dryRun: currentManifest.dryRun,
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,

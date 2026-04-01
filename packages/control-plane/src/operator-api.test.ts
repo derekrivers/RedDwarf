@@ -32,6 +32,7 @@ const eligibleInput: PlanningTaskInput = {
   summary:
     "Plan a deterministic docs-safe change for the platform repository with durable evidence output.",
   priority: 1,
+  dryRun: false,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists", "Policy output is archived"],
   affectedPaths: ["docs/guide.md"],
@@ -674,6 +675,41 @@ describe("operator API server", () => {
 
       expect(response.status).toBe(503);
       expect((response.body as Record<string, unknown>)["error"]).toBe("service_unavailable");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("defaults injected planning work to dry-run when configured on the server", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        defaultPlanningDryRun: true
+      }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const injected = await operatorPost(port, "/tasks/inject", {
+        repo: "acme/platform",
+        title: "Inject a dry-run planning task",
+        summary: "Push a task into planning and default it to dry-run mode.",
+        acceptanceCriteria: ["Planning runs in dry-run mode."],
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/dry-run.ts"]
+      });
+
+      expect(injected.status).toBe(201);
+      const manifest = (injected.body as Record<string, unknown>)["manifest"] as Record<string, unknown>;
+      expect(manifest["dryRun"]).toBe(true);
+
+      const runs = await repository.listPipelineRuns();
+      expect(runs[0]?.dryRun).toBe(true);
     } finally {
       await apiServer.stop();
     }

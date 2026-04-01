@@ -242,6 +242,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           task_id,
           concurrency_key,
           strategy,
+          dry_run,
           status,
           blocked_by_run_id,
           overlap_reason,
@@ -250,11 +251,12 @@ export class PostgresPlanningRepository implements PlanningRepository {
           completed_at,
           stale_at,
           metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
         ON CONFLICT (run_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           concurrency_key = EXCLUDED.concurrency_key,
           strategy = EXCLUDED.strategy,
+          dry_run = EXCLUDED.dry_run,
           status = EXCLUDED.status,
           blocked_by_run_id = EXCLUDED.blocked_by_run_id,
           overlap_reason = EXCLUDED.overlap_reason,
@@ -269,6 +271,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
         run.taskId,
         run.concurrencyKey,
         run.strategy,
+        run.dryRun,
         run.status,
         run.blockedByRunId,
         run.overlapReason,
@@ -293,6 +296,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           title,
           summary,
           priority,
+          dry_run,
           risk_class,
           approval_mode,
           current_phase,
@@ -308,14 +312,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
           created_at,
           updated_at
         ) VALUES (
-          $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11::jsonb, $12, $13::jsonb, $14, $15, $16, $17, $18, $19
+          $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+          $12::jsonb, $13, $14::jsonb, $15, $16, $17, $18, $19, $20
         )
         ON CONFLICT (task_id) DO UPDATE SET
           source = EXCLUDED.source,
           title = EXCLUDED.title,
           summary = EXCLUDED.summary,
           priority = EXCLUDED.priority,
+          dry_run = EXCLUDED.dry_run,
           risk_class = EXCLUDED.risk_class,
           approval_mode = EXCLUDED.approval_mode,
           current_phase = EXCLUDED.current_phase,
@@ -337,6 +342,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
         manifest.title,
         manifest.summary,
         manifest.priority,
+        manifest.dryRun,
         manifest.riskClass,
         manifest.approvalMode,
         manifest.currentPhase,
@@ -707,6 +713,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           task_id,
           run_id,
           phase,
+          dry_run,
           approval_mode,
           status,
           risk_class,
@@ -725,12 +732,13 @@ export class PostgresPlanningRepository implements PlanningRepository {
           resolved_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb,
-          $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20
+          $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $21
         )
         ON CONFLICT (request_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           run_id = EXCLUDED.run_id,
           phase = EXCLUDED.phase,
+          dry_run = EXCLUDED.dry_run,
           approval_mode = EXCLUDED.approval_mode,
           status = EXCLUDED.status,
           risk_class = EXCLUDED.risk_class,
@@ -753,6 +761,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
         request.taskId,
         request.runId,
         request.phase,
+        request.dryRun,
         request.approvalMode,
         request.status,
         request.riskClass,
@@ -884,7 +893,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
   ): Promise<boolean> {
     const conditions = [
       "task_manifests.source ->> 'provider' = $1",
-      "task_manifests.source ->> 'repo' = $2"
+      "task_manifests.source ->> 'repo' = $2",
+      "task_manifests.dry_run = FALSE"
     ];
     const params: unknown[] = [source.provider, source.repo];
 
@@ -1173,4 +1183,3 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
 export * from "./row-mappers.js";
 export * from "./schema.js";
-

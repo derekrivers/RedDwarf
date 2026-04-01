@@ -382,6 +382,7 @@ export function createPlanningInputFromGitHubIssue(
     title: candidate.title,
     summary: buildSummary(candidate.body),
     priority,
+    dryRun: false,
     labels: dedupeStrings(candidate.labels),
     acceptanceCriteria,
     affectedPaths,

@@ -23,6 +23,7 @@ const eligibleInput: PlanningTaskInput = {
   summary:
     "Plan a deterministic docs-safe change for the platform repository with durable evidence output.",
   priority: 1,
+  dryRun: false,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists", "Policy output is archived"],
   affectedPaths: ["docs/guide.md"],

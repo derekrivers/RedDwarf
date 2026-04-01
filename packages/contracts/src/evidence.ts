@@ -144,6 +144,7 @@ export const pipelineRunSchema = z.object({
   taskId: z.string().min(1),
   concurrencyKey: z.string().min(1),
   strategy: concurrencyStrategySchema,
+  dryRun: z.boolean().default(false),
   status: pipelineRunStatusSchema,
   blockedByRunId: z.string().min(1).nullable().default(null),
   overlapReason: z.string().min(1).nullable().default(null),

@@ -15,7 +15,7 @@ import {
   githubIssuePollingCursorStatuses,
   taskPhases
 } from "@reddwarf/contracts";
-import { integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 
 export const taskPhaseEnum = pgEnum("task_phase", taskPhases);
 export const taskLifecycleStatusEnum = pgEnum("task_lifecycle_status", taskLifecycleStatuses);
@@ -39,6 +39,7 @@ export const manifestsTable = pgTable("task_manifests", {
   title: text("title").notNull(),
   summary: text("summary").notNull(),
   priority: integer("priority").notNull(),
+  dryRun: boolean("dry_run").notNull().default(false),
   riskClass: riskClassEnum("risk_class").notNull(),
   approvalMode: approvalModeEnum("approval_mode").notNull(),
   currentPhase: taskPhaseEnum("current_phase").notNull(),
@@ -138,6 +139,7 @@ export const pipelineRunsTable = pgTable("pipeline_runs", {
   taskId: text("task_id").notNull(),
   concurrencyKey: text("concurrency_key").notNull(),
   strategy: concurrencyStrategyEnum("strategy").notNull(),
+  dryRun: boolean("dry_run").notNull().default(false),
   status: pipelineRunStatusEnum("status").notNull(),
   blockedByRunId: text("blocked_by_run_id"),
   overlapReason: text("overlap_reason"),
@@ -153,6 +155,7 @@ export const approvalRequestsTable = pgTable("approval_requests", {
   taskId: text("task_id").notNull(),
   runId: text("run_id").notNull(),
   phase: taskPhaseEnum("phase").notNull(),
+  dryRun: boolean("dry_run").notNull().default(false),
   approvalMode: approvalModeEnum("approval_mode").notNull(),
   status: approvalRequestStatusEnum("status").notNull(),
   riskClass: riskClassEnum("risk_class").notNull(),
@@ -181,5 +184,4 @@ export const githubIssuePollingCursorsTable = pgTable("github_issue_polling_curs
   lastPollError: text("last_poll_error"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
-
 

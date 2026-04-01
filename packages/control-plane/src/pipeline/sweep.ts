@@ -220,6 +220,7 @@ export async function sweepOrphanedDispatcherState(
       taskId: manifest.taskId,
       runId: recovery.runId,
       phase,
+      dryRun: manifest.dryRun,
       approvalMode: "human_signoff_required",
       status: "pending",
       riskClass: manifest.riskClass,

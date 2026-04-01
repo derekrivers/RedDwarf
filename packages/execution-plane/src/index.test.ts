@@ -57,6 +57,7 @@ const testInput: PlanningTaskInput = {
   title: "Plan a docs-safe change",
   summary: "A deterministic docs-safe change for evidence output.",
   priority: 5,
+  dryRun: false,
   labels: ["ai-eligible"],
   acceptanceCriteria: ["A planning spec exists"],
   affectedPaths: ["docs/guide.md"],
