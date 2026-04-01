@@ -7,12 +7,14 @@ import {
   memoryContextSchema,
   memoryRecordSchema,
   pipelineRunSchema,
+  pipelineRunQuerySchema,
   planningTaskInputSchema,
   directTaskInjectionRequestSchema,
   policyPackManifestSchema,
   runEventSchema,
   runSummarySchema,
   runtimeInstructionLayerSchema,
+  taskManifestQuerySchema,
   workspaceContextBundleSchema,
   workspaceDescriptorSchema,
   approvalRequestSchema,
@@ -290,6 +292,24 @@ describe("contracts", () => {
 
     expect(request.repo).toBe("acme/platform");
     expect(response.repos[0]?.repo).toBe("acme/platform");
+  });
+
+  it("parses task and run query contracts used by operator observability", () => {
+    const runQuery = pipelineRunQuerySchema.parse({
+      repo: "acme/platform",
+      statuses: ["blocked"],
+      limit: 10
+    });
+    const taskQuery = taskManifestQuerySchema.parse({
+      repo: "acme/platform",
+      lifecycleStatuses: ["blocked"],
+      phases: ["policy_gate"],
+      limit: 10
+    });
+
+    expect(runQuery.repo).toBe("acme/platform");
+    expect(taskQuery.lifecycleStatuses).toEqual(["blocked"]);
+    expect(taskQuery.phases).toEqual(["policy_gate"]);
   });
 
   it("parses an eligibility rejection record", () => {

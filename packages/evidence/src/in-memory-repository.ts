@@ -24,6 +24,7 @@ import {
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
   normalizePipelineRunQuery,
+  normalizeTaskManifestQuery,
   type ClaimPipelineRunInput,
   type ClaimPipelineRunResult,
   type PersistedTaskSnapshot,
@@ -398,6 +399,25 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       .slice(0, limit);
   }
 
+  async listTaskManifests(
+    query: Partial<import("@reddwarf/contracts").TaskManifestQuery> = {}
+  ): Promise<TaskManifest[]> {
+    const parsed = normalizeTaskManifestQuery(query);
+
+    return [...this.manifests.values()]
+      .filter((manifest) => (parsed.repo ? manifest.source.repo === parsed.repo : true))
+      .filter((manifest) =>
+        parsed.lifecycleStatuses.length > 0
+          ? parsed.lifecycleStatuses.includes(manifest.lifecycleStatus)
+          : true
+      )
+      .filter((manifest) =>
+        parsed.phases.length > 0 ? parsed.phases.includes(manifest.currentPhase) : true
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, parsed.limit);
+  }
+
   async listPipelineRuns(
     query: Partial<import("@reddwarf/contracts").PipelineRunQuery> = {}
   ): Promise<PipelineRun[]> {
@@ -405,6 +425,14 @@ export class InMemoryPlanningRepository implements PlanningRepository {
 
     return [...this.pipelineRuns.values()]
       .filter((run) => (parsed.taskId ? run.taskId === parsed.taskId : true))
+      .filter((run) => {
+        if (!parsed.repo) {
+          return true;
+        }
+
+        const manifest = this.manifests.get(run.taskId);
+        return manifest?.source.repo === parsed.repo;
+      })
       .filter((run) =>
         parsed.concurrencyKey
           ? run.concurrencyKey === parsed.concurrencyKey

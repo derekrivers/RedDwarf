@@ -11,6 +11,7 @@ import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 
 const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
+const managedRepo = `acme/operator-${issueNumber}`;
 const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const operatorApiToken = "verify-operator-token";
 
@@ -200,6 +201,10 @@ try {
   assert.ok(Array.isArray(blockedRuns.body.runs));
   assert.equal(blockedRuns.body.total, blockedRuns.body.runs.length);
 
+  const repoRuns = await apiGet(port, `/runs?repo=${repo}&status=blocked`);
+  assert.equal(repoRuns.status, 200);
+  assert.ok(repoRuns.body.runs.every((run) => run.taskId === taskId));
+
   // GET /approvals?taskId=...&statuses=pending
   const pendingApprovals = await apiGet(
     port,
@@ -247,11 +252,11 @@ try {
   const badRepoCreate = await apiPost(port, "/repos", { repo: "not-a-repo" });
   assert.equal(badRepoCreate.status, 400);
 
-  const createdRepo = await apiPost(port, "/repos", { repo: "acme/new-platform" });
+  const createdRepo = await apiPost(port, "/repos", { repo: managedRepo });
   assert.equal(createdRepo.status, 201);
   assert.equal(createdRepo.body.created, true);
 
-  const duplicateRepo = await apiPost(port, "/repos", { repo: "acme/new-platform" });
+  const duplicateRepo = await apiPost(port, "/repos", { repo: managedRepo });
   assert.equal(duplicateRepo.status, 200);
   assert.equal(duplicateRepo.body.created, false);
 
@@ -345,6 +350,22 @@ try {
   );
   assert.equal(missingEvidence.status, 404);
 
+  const runEvidence = await apiGet(port, `/runs/${planResult.runId}/evidence`);
+  assert.equal(runEvidence.status, 200);
+  assert.equal(runEvidence.body.runId, planResult.runId);
+  assert.ok(runEvidence.body.total > 0, "run-scoped evidence records should be present");
+
+  const tasks = await apiGet(port, `/tasks?repo=${repo}&status=blocked`);
+  assert.equal(tasks.status, 200);
+  assert.ok(tasks.body.total >= 1);
+  assert.ok(tasks.body.tasks.some((task) => task.manifest.taskId === taskId));
+
+  const taskDetail = await apiGet(port, `/tasks/${taskId}`);
+  assert.equal(taskDetail.status, 200);
+  assert.equal(taskDetail.body.manifest.taskId, taskId);
+  assert.ok(taskDetail.body.evidenceTotal > 0);
+  assert.ok(taskDetail.body.runSummaries.length >= 1);
+
   // GET /tasks/:taskId/snapshot
   const snapshot = await apiGet(port, `/tasks/${taskId}/snapshot`);
   assert.equal(snapshot.status, 200);
@@ -396,7 +417,7 @@ try {
       {
         hostname: "127.0.0.1",
         port,
-        path: "/repos/acme/new-platform",
+        path: `/repos/${managedRepo}`,
         method: "DELETE",
         headers: buildAuthHeaders(operatorApiToken)
       },

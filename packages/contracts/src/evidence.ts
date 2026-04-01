@@ -157,6 +157,7 @@ export const pipelineRunSchema = z.object({
 
 export const pipelineRunQuerySchema = z.object({
   taskId: z.string().min(1).optional(),
+  repo: z.string().min(1).optional(),
   concurrencyKey: z.string().min(1).optional(),
   statuses: z.array(pipelineRunStatusSchema).default([]),
   limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)

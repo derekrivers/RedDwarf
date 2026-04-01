@@ -213,6 +213,82 @@ describe("evidence memory partitions", () => {
     );
   });
 
+  it("filters task manifests and pipeline runs by repository metadata", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveManifest({
+      taskId: "acme-platform-1",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 1 },
+      title: "Platform task",
+      summary: "A task for the platform repo.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "auto",
+      currentPhase: "planning",
+      lifecycleStatus: "active",
+      assignedAgentType: "architect",
+      requestedCapabilities: ["can_plan"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveManifest({
+      taskId: "acme-api-2",
+      source: { provider: "github", repo: "acme/api", issueNumber: 2 },
+      title: "API task",
+      summary: "A task for the api repo.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "auto",
+      currentPhase: "planning",
+      lifecycleStatus: "blocked",
+      assignedAgentType: "architect",
+      requestedCapabilities: ["can_plan"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: timestamp,
+      updatedAt: "2026-03-25T20:25:00.000Z"
+    });
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-platform",
+        taskId: "acme-platform-1",
+        concurrencyKey: "github:acme/platform:1",
+        strategy: "serialize",
+        status: "active",
+        startedAt: timestamp
+      })
+    );
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-api",
+        taskId: "acme-api-2",
+        concurrencyKey: "github:acme/api:2",
+        strategy: "serialize",
+        status: "blocked",
+        startedAt: "2026-03-25T20:25:00.000Z"
+      })
+    );
+
+    await expect(
+      repository.listTaskManifests({ repo: "acme/api", lifecycleStatuses: ["blocked"] })
+    ).resolves.toMatchObject([{ taskId: "acme-api-2" }]);
+    await expect(
+      repository.listPipelineRuns({ repo: "acme/platform", statuses: ["active"] })
+    ).resolves.toMatchObject([{ runId: "run-platform", taskId: "acme-platform-1" }]);
+  });
+
   it("deduplicates prompt snapshots by phase and prompt hash", async () => {
     const repository = new InMemoryPlanningRepository();
 

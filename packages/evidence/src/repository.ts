@@ -3,6 +3,7 @@ import {
   eligibilityRejectionQuerySchema,
   memoryQuerySchema,
   pipelineRunQuerySchema,
+  taskManifestQuerySchema,
   type ApprovalRequest,
   type ApprovalRequestQuery,
   type EvidenceRecord,
@@ -21,7 +22,8 @@ import {
   type PromptSnapshot,
   type RunEvent,
   type RunSummary,
-  type TaskManifest
+  type TaskManifest,
+  type TaskManifestQuery
 } from "@reddwarf/contracts";
 
 export type RepositoryHealthStatus = "healthy" | "degraded";
@@ -100,6 +102,7 @@ export interface PlanningQueryRepository {
     status: string,
     limit?: number
   ): Promise<TaskManifest[]>;
+  listTaskManifests(query?: Partial<TaskManifestQuery>): Promise<TaskManifest[]>;
   listPipelineRuns(query?: Partial<PipelineRunQuery>): Promise<PipelineRun[]>;
   getRunSummary(taskId: string, runId: string): Promise<RunSummary | null>;
   getMemoryContext(input: {
@@ -155,6 +158,12 @@ export function normalizeApprovalRequestQuery(
   query: Partial<ApprovalRequestQuery>
 ): ApprovalRequestQuery {
   return approvalRequestQuerySchema.parse(query);
+}
+
+export function normalizeTaskManifestQuery(
+  query: Partial<TaskManifestQuery>
+): TaskManifestQuery {
+  return taskManifestQuerySchema.parse(query);
 }
 
 export function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {

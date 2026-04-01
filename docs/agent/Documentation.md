@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+- Completed feature 118 from `FEATURE_BOARD.md`: expanded the operator observability surface for runs, evidence, and tasks.
+- Extended repository query contracts with repo-aware run filters plus first-class task-manifest queries so the operator API can list tasks across states without reconstructing everything from bespoke snapshot routes.
+- Added repo-filter support to `GET /runs`, a new `GET /runs/:id/evidence` route, a filtered `GET /tasks` summary route, and `GET /tasks/:id` for task-level history, approvals, and run summaries while keeping the older snapshot/evidence routes intact.
+- Added focused in-memory repository coverage for task-manifest and repo-filtered run queries, plus operator API coverage for the new observability routes.
+- Expanded `scripts/verify-operator-api.mjs` to exercise the new run evidence and task summary/detail routes against the Postgres-backed operator API.
+- Verification for feature 118: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/evidence/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work --network host node:22 bash -lc "corepack pnpm verify:operator-api"`.
+- Updated the feature board so feature 118 is marked complete and feature 119 is now the next actionable M14 item.
 - Completed feature 117 from `FEATURE_BOARD.md`: added operator repo-management endpoints and moved poll-repo control to the database.
 - Added shared operator-repo contracts so `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo` validate against the same typed surface as the rest of the operator API.
 - Extended the evidence repository with polling-cursor deletion support and used the existing `github_issue_polling_cursors` table as the durable source of truth for the polled repo roster.

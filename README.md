@@ -242,6 +242,11 @@ The operator API now exposes configuration endpoints alongside the existing appr
 - `GET /repos` lists the DB-backed polled repo roster with current per-repo cursor state.
 - `POST /repos` adds a repository to the polled repo roster without restarting the stack.
 - `DELETE /repos/:owner/:repo` removes a repository from the polled repo roster.
+- `GET /runs` supports `repo`, `taskId`, `status`/`statuses`, and `limit` filters for pipeline-run inspection.
+- `GET /runs/:id` returns full run detail, event history, and the derived run summary.
+- `GET /runs/:id/evidence` returns evidence records associated with a specific pipeline run.
+- `GET /tasks` supports `repo`, `status`/`statuses`, `phase`/`phases`, and `limit` filters for cross-task visibility.
+- `GET /tasks/:id` returns task detail with phase history, approvals, pipeline runs, run summaries, and evidence totals.
 
 ### OpenClaw Discord channel
 

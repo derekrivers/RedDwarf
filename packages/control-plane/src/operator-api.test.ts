@@ -464,6 +464,66 @@ describe("operator API server", () => {
     }
   });
 
+  it("serves expanded run and task observability endpoints", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        source: {
+          provider: "github",
+          repo: "acme/platform",
+          issueNumber: 123,
+          issueUrl: "https://github.com/acme/platform/issues/123"
+        },
+        requestedCapabilities: ["can_write_code"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-01T10:30:00.000Z"),
+        idGenerator: () => "observability-run-001"
+      }
+    );
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-01T10:35:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const runs = await operatorGet(port, "/runs?repo=acme/platform&status=blocked");
+      expect(runs.status).toBe(200);
+      expect((runs.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const runEvidence = await operatorGet(port, `/runs/${result.runId}/evidence`);
+      expect(runEvidence.status).toBe(200);
+      expect((runEvidence.body as Record<string, unknown>)["runId"]).toBe(result.runId);
+      expect((runEvidence.body as Record<string, unknown>)["total"]).toBeGreaterThan(0);
+
+      const tasks = await operatorGet(port, "/tasks?repo=acme/platform&status=blocked");
+      expect(tasks.status).toBe(200);
+      expect((tasks.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const task = await operatorGet(port, `/tasks/${result.manifest.taskId}`);
+      expect(task.status).toBe(200);
+      expect(
+        ((task.body as Record<string, unknown>)["manifest"] as Record<string, unknown>)[
+          "taskId"
+        ]
+      ).toBe(result.manifest.taskId);
+      expect(
+        (task.body as Record<string, unknown>)["evidenceTotal"]
+      ).toBeGreaterThan(0);
+      expect(
+        ((task.body as Record<string, unknown>)["runSummaries"] as Array<unknown>).length
+      ).toBeGreaterThan(0);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("includes polling cursor health in the /health response", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveGitHubIssuePollingCursor({

@@ -52,6 +52,7 @@ import {
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
   normalizePipelineRunQuery,
+  normalizeTaskManifestQuery,
   type ClaimPipelineRunInput,
   type ClaimPipelineRunResult,
   type PlanningRepository,
@@ -1195,6 +1196,43 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapManifestRow);
   }
 
+  async listTaskManifests(
+    query: Partial<import("@reddwarf/contracts").TaskManifestQuery> = {}
+  ): Promise<TaskManifest[]> {
+    const parsed = normalizeTaskManifestQuery(query);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let parameterIndex = 1;
+
+    if (parsed.repo) {
+      conditions.push(`source->>'repo' = $${parameterIndex}`);
+      params.push(parsed.repo);
+      parameterIndex += 1;
+    }
+
+    if (parsed.lifecycleStatuses.length > 0) {
+      conditions.push(`lifecycle_status = ANY($${parameterIndex})`);
+      params.push(parsed.lifecycleStatuses);
+      parameterIndex += 1;
+    }
+
+    if (parsed.phases.length > 0) {
+      conditions.push(`current_phase = ANY($${parameterIndex})`);
+      params.push(parsed.phases);
+      parameterIndex += 1;
+    }
+
+    params.push(parsed.limit);
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.pool.query(
+      `SELECT * FROM task_manifests ${whereClause} ORDER BY updated_at DESC, task_id ASC LIMIT $${parameterIndex}`,
+      params
+    );
+
+    return result.rows.map(mapManifestRow);
+  }
+
   async listPipelineRuns(
     query: Partial<PipelineRunQuery> = {}
   ): Promise<PipelineRun[]> {
@@ -1206,6 +1244,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
     if (parsed.taskId) {
       conditions.push(`task_id = $${parameterIndex}`);
       params.push(parsed.taskId);
+      parameterIndex += 1;
+    }
+
+    if (parsed.repo) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM task_manifests tm WHERE tm.task_id = pipeline_runs.task_id AND tm.source->>'repo' = $${parameterIndex})`
+      );
+      params.push(parsed.repo);
       parameterIndex += 1;
     }
 

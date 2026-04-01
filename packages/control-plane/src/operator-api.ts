@@ -438,6 +438,43 @@ function buildOperatorConfigResponse(
   });
 }
 
+function matchesEvidenceRecordToRun(
+  record: import("@reddwarf/contracts").EvidenceRecord,
+  runId: string
+): boolean {
+  const metadataRunId =
+    typeof record.metadata["runId"] === "string" ? record.metadata["runId"] : null;
+
+  return metadataRunId === runId || record.recordId.includes(`:${runId}`);
+}
+
+async function buildOperatorTaskSummary(
+  repository: PlanningRepository,
+  manifest: import("@reddwarf/contracts").TaskManifest
+): Promise<{
+  manifest: import("@reddwarf/contracts").TaskManifest;
+  latestRun: PipelineRun | null;
+  pendingApprovalCount: number;
+  totalApprovals: number;
+  totalRuns: number;
+  totalEvidenceRecords: number;
+  totalPhaseRecords: number;
+}> {
+  const snapshot = await repository.getTaskSnapshot(manifest.taskId);
+
+  return {
+    manifest,
+    latestRun: snapshot.pipelineRuns[0] ?? null,
+    pendingApprovalCount: snapshot.approvalRequests.filter(
+      (request) => request.status === "pending"
+    ).length,
+    totalApprovals: snapshot.approvalRequests.length,
+    totalRuns: snapshot.pipelineRuns.length,
+    totalEvidenceRecords: snapshot.evidenceRecords.length,
+    totalPhaseRecords: snapshot.phaseRecords.length
+  };
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -624,13 +661,15 @@ async function handleOperatorRequest(
 
   // GET /runs
   if (method === "GET" && path === "/runs") {
+    const repo = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
     const taskId = typeof qp["taskId"] === "string" ? qp["taskId"] : undefined;
     const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
-    const rawStatuses = qp["statuses"];
+    const rawStatuses = qp["statuses"] ?? qp["status"];
     const statuses = rawStatuses
       ? (Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses])
       : undefined;
     const runs = await repository.listPipelineRuns({
+      ...(repo !== undefined ? { repo } : {}),
       ...(taskId !== undefined ? { taskId } : {}),
       ...(limit !== undefined && !isNaN(limit) ? { limit } : {}),
       ...(statuses !== undefined ? { statuses: statuses as PipelineRun["status"][] } : {})
@@ -663,6 +702,31 @@ async function handleOperatorRequest(
       tokenUsage: summarizeRunTokenUsage(events)
     };
     writeOperatorJsonResponse(res, 200, response);
+    return;
+  }
+
+  const runEvidenceMatch = /^\/runs\/([^/]+)\/evidence$/.exec(path);
+  if (method === "GET" && runEvidenceMatch) {
+    const runId = decodeURIComponent(runEvidenceMatch[1]!);
+    const run = await repository.getPipelineRun(runId);
+    if (!run) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Pipeline run ${runId} not found.`
+      });
+      return;
+    }
+
+    const snapshot = await repository.getTaskSnapshot(run.taskId);
+    const evidenceRecords = snapshot.evidenceRecords.filter((record) =>
+      matchesEvidenceRecordToRun(record, runId)
+    );
+    writeOperatorJsonResponse(res, 200, {
+      runId,
+      taskId: run.taskId,
+      evidenceRecords,
+      total: evidenceRecords.length
+    });
     return;
   }
 
@@ -959,6 +1023,74 @@ async function handleOperatorRequest(
       groupName: injectedGroup.groupName ?? null,
       totalTasks: results.length,
       tasks: results
+    });
+    return;
+  }
+
+  if (method === "GET" && path === "/tasks") {
+    const repo = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
+    const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const rawStatuses = qp["statuses"] ?? qp["status"];
+    const rawPhases = qp["phases"] ?? qp["phase"];
+    const lifecycleStatuses = rawStatuses
+      ? (Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses])
+      : undefined;
+    const phases = rawPhases
+      ? (Array.isArray(rawPhases) ? rawPhases : [rawPhases])
+      : undefined;
+    const manifests = await repository.listTaskManifests({
+      ...(repo !== undefined ? { repo } : {}),
+      ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+      ...(lifecycleStatuses !== undefined
+        ? {
+            lifecycleStatuses:
+              lifecycleStatuses as import("@reddwarf/contracts").TaskManifestQuery["lifecycleStatuses"]
+          }
+        : {}),
+      ...(phases !== undefined
+        ? {
+            phases: phases as import("@reddwarf/contracts").TaskManifestQuery["phases"]
+          }
+        : {})
+    });
+    const tasks = await Promise.all(
+      manifests.map((manifest) => buildOperatorTaskSummary(repository, manifest))
+    );
+    writeOperatorJsonResponse(res, 200, {
+      tasks,
+      total: tasks.length
+    });
+    return;
+  }
+
+  const taskMatch = /^\/tasks\/([^/]+)$/.exec(path);
+  if (method === "GET" && taskMatch) {
+    const taskId = decodeURIComponent(taskMatch[1]!);
+    const snapshot = await repository.getTaskSnapshot(taskId);
+    if (!snapshot.manifest) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Task ${taskId} not found.`
+      });
+      return;
+    }
+
+    const runSummaries = (
+      await Promise.all(
+        snapshot.pipelineRuns.map((run) => repository.getRunSummary(taskId, run.runId))
+      )
+    ).filter((summary): summary is NonNullable<typeof summary> => summary !== null);
+
+    writeOperatorJsonResponse(res, 200, {
+      manifest: snapshot.manifest,
+      spec: snapshot.spec,
+      policySnapshot: snapshot.policySnapshot,
+      phaseRecords: snapshot.phaseRecords,
+      approvalRequests: snapshot.approvalRequests,
+      pipelineRuns: snapshot.pipelineRuns,
+      runSummaries,
+      evidenceTotal: snapshot.evidenceRecords.length,
+      memoryRecords: snapshot.memoryRecords
     });
     return;
   }

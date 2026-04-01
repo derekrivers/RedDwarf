@@ -306,7 +306,9 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The serve
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Server health check (includes repository, polling runtime, cursor, and dispatcher state) |
-| GET | `/runs` | List pipeline runs (filter: `taskId`, `statuses`, `limit`) |
+| GET | `/runs` | List pipeline runs (filter: `repo`, `taskId`, `status`/`statuses`, `limit`) |
+| GET | `/runs/:id` | Return full detail for a specific pipeline run |
+| GET | `/runs/:id/evidence` | Return run-scoped evidence records for a specific pipeline run |
 | GET | `/config` | List runtime-configurable operator settings with current value, default, description, and source |
 | GET | `/config/schema` | Return JSON-schema-style metadata for runtime-configurable operator settings |
 | PUT | `/config` | Persist one or more runtime-configurable operator settings to `operator_config` |
@@ -316,6 +318,8 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The serve
 | GET | `/approvals` | List approval requests (filter: `taskId`, `runId`, `statuses`, `limit`) |
 | POST | `/approvals/:id/resolve` | Resolve an approval request |
 | GET | `/approvals/:id` | Get specific approval request |
+| GET | `/tasks` | List task summaries (filter: `repo`, `status`/`statuses`, `phase`/`phases`, `limit`) |
+| GET | `/tasks/:taskId` | Return task detail including history, approvals, and run summaries |
 | GET | `/tasks/:taskId/evidence` | List evidence records for a task |
 | GET | `/tasks/:taskId/snapshot` | Full task snapshot |
 | GET | `/blocked` | Summary of blocked runs and pending approvals |

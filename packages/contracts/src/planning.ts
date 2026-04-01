@@ -9,6 +9,8 @@ import {
   taskPhaseSchema,
   taskLifecycleStatusSchema,
   agentTypeSchema,
+  QUERY_LIMIT_DEFAULT,
+  QUERY_LIMIT_MAX,
   TITLE_MIN_LENGTH,
   SUMMARY_MIN_LENGTH,
   PRIORITY_MIN,
@@ -176,6 +178,13 @@ export const taskManifestSchema = z.object({
   updatedAt: isoDateTimeSchema
 });
 
+export const taskManifestQuerySchema = z.object({
+  repo: z.string().min(1).optional(),
+  lifecycleStatuses: z.array(taskLifecycleStatusSchema).default([]),
+  phases: z.array(taskPhaseSchema).default([]),
+  limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
+});
+
 export type PlanningTaskInput = z.infer<typeof planningTaskInputSchema>;
 export type DirectTaskInjectionRequest = z.infer<typeof directTaskInjectionRequestSchema>;
 export type PreScreenFinding = z.infer<typeof preScreenFindingSchema>;
@@ -197,6 +206,7 @@ export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 export type TokenBudgetResult = z.infer<typeof tokenBudgetResultSchema>;
 export type PhaseRetryBudgetState = z.infer<typeof phaseRetryBudgetStateSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
+export type TaskManifestQuery = z.infer<typeof taskManifestQuerySchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
 
 export interface RetryBudgetConfig {
