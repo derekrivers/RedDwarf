@@ -1,6 +1,7 @@
 import {
   approvalRequestQuerySchema,
   approvalRequestSchema,
+  eligibilityRejectionQuerySchema,
   asIsoTimestamp,
   memoryContextSchema,
   memoryQuerySchema,
@@ -12,6 +13,8 @@ import {
   type ApprovalRequest,
   type ApprovalRequestQuery,
   type EvidenceRecord,
+  type EligibilityRejectionQuery,
+  type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryQuery,
@@ -38,10 +41,12 @@ import {
   mapPipelineRunRow,
   mapGitHubIssuePollingCursorRow,
   mapApprovalRequestRow,
-  mapPromptSnapshotRow
+  mapPromptSnapshotRow,
+  mapEligibilityRejectionRow
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
+  normalizeEligibilityRejectionQuery,
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
   normalizePipelineRunQuery,
@@ -877,6 +882,48 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return this.savePromptSnapshotWithExecutor(this.pool, snapshot);
   }
 
+  private async saveEligibilityRejectionWithExecutor(
+    executor: QueryExecutor,
+    record: EligibilityRejectionRecord
+  ): Promise<void> {
+    await executor.query(
+      `
+        INSERT INTO eligibility_rejections (
+          rejection_id,
+          task_id,
+          rejected_at,
+          reason_code,
+          reason_detail,
+          policy_version,
+          source_issue,
+          dry_run
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+        ON CONFLICT (rejection_id) DO UPDATE SET
+          task_id = EXCLUDED.task_id,
+          rejected_at = EXCLUDED.rejected_at,
+          reason_code = EXCLUDED.reason_code,
+          reason_detail = EXCLUDED.reason_detail,
+          policy_version = EXCLUDED.policy_version,
+          source_issue = EXCLUDED.source_issue,
+          dry_run = EXCLUDED.dry_run
+      `,
+      [
+        record.rejectionId,
+        record.taskId,
+        record.rejectedAt,
+        record.reasonCode,
+        record.reasonDetail,
+        record.policyVersion,
+        JSON.stringify(record.sourceIssue),
+        record.dryRun
+      ]
+    );
+  }
+
+  async saveEligibilityRejection(record: EligibilityRejectionRecord): Promise<void> {
+    await this.saveEligibilityRejectionWithExecutor(this.pool, record);
+  }
+
   async runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T> {
@@ -890,7 +937,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
       saveMemoryRecord: (record) => this.saveMemoryRecordWithExecutor(client, record),
       savePipelineRun: (run) => this.savePipelineRunWithExecutor(client, run),
       saveApprovalRequest: (request) => this.saveApprovalRequestWithExecutor(client, request),
-      savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot)
+      savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot),
+      saveEligibilityRejection: (record) =>
+        this.saveEligibilityRejectionWithExecutor(client, record)
     };
 
     try {
@@ -1152,6 +1201,37 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
 
     return result.rows.map(mapPromptSnapshotRow);
+  }
+
+  async listEligibilityRejections(
+    query: Partial<EligibilityRejectionQuery> = {}
+  ): Promise<EligibilityRejectionRecord[]> {
+    const parsed = normalizeEligibilityRejectionQuery(query);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let parameterIndex = 1;
+
+    if (parsed.reasonCode) {
+      conditions.push(`reason_code = $${parameterIndex}`);
+      params.push(parsed.reasonCode);
+      parameterIndex += 1;
+    }
+
+    if (parsed.since) {
+      conditions.push(`rejected_at >= $${parameterIndex}`);
+      params.push(parsed.since);
+      parameterIndex += 1;
+    }
+
+    params.push(parsed.limit);
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.pool.query(
+      `SELECT * FROM eligibility_rejections ${whereClause} ORDER BY rejected_at DESC, rejection_id ASC LIMIT $${parameterIndex}`,
+      params
+    );
+
+    return result.rows.map(mapEligibilityRejectionRow);
   }
 
   async listApprovalRequests(

@@ -195,6 +195,10 @@ describe("operator API server", () => {
       expect(approvals.status).toBe(200);
       expect((approvals.body as Record<string, unknown>)["total"]).toBe(0);
 
+      const rejected = await operatorGet(port, "/rejected");
+      expect(rejected.status).toBe(200);
+      expect((rejected.body as Record<string, unknown>)["total"]).toBe(0);
+
       const blocked = await operatorGet(port, "/blocked");
       expect(blocked.status).toBe(200);
       expect(
@@ -568,6 +572,50 @@ describe("operator API server", () => {
         process.env.REDDWARF_MAX_RETRIES_VALIDATOR = previousRetryLimit;
       }
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("serves structured eligibility rejection records from /rejected", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        labels: []
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:20:00.000Z"),
+        idGenerator: () => "op-run-rejected"
+      }
+    );
+
+    expect(result.nextAction).toBe("task_blocked");
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const rejected = await operatorGet(port, "/rejected?reason=label-missing");
+      const items = (rejected.body as Record<string, unknown>)["items"] as Array<Record<string, unknown>>;
+      const byReason = (rejected.body as Record<string, unknown>)["byReason"] as Record<string, number>;
+
+      expect(rejected.status).toBe(200);
+      expect((rejected.body as Record<string, unknown>)["total"]).toBe(1);
+      expect(items[0]).toMatchObject({
+        taskId: result.manifest.taskId,
+        reasonCode: "label-missing",
+        issueTitle: eligibleInput.title,
+        issueUrl: eligibleInput.source.issueUrl
+      });
+      expect(byReason["label-missing"]).toBe(1);
+    } finally {
+      await apiServer.stop();
     }
   });
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   asIsoTimestamp,
+  type EligibilityRejectionReasonCode,
   planningSpecSchema,
   planningTaskInputSchema,
   type PlanningTaskInput
@@ -8,6 +9,7 @@ import {
 import {
   createApprovalRequest,
   createEvidenceRecord,
+  createEligibilityRejection,
   createMemoryRecord,
   createPipelineRun,
   deriveOrganizationId
@@ -69,6 +71,35 @@ import {
   heartbeatTrackedRun,
   waitWithHeartbeat
 } from "./shared.js";
+
+function mapEligibilityReason(
+  reason: string
+): { reasonCode: EligibilityRejectionReasonCode; reasonDetail: string } {
+  if (reason.includes("ai-eligible") || reason.includes("ai-ready")) {
+    return {
+      reasonCode: "label-missing",
+      reasonDetail: reason
+    };
+  }
+
+  return {
+    reasonCode: "under-specified",
+    reasonDetail: reason
+  };
+}
+
+function mapPreScreenFindingKind(
+  kind: "under_specified" | "duplicate" | "out_of_scope"
+): EligibilityRejectionReasonCode {
+  switch (kind) {
+    case "duplicate":
+      return "duplicate";
+    case "out_of_scope":
+      return "out-of-scope";
+    case "under_specified":
+      return "under-specified";
+  }
+}
 
 export async function runPlanningPipeline(
   rawInput: PlanningTaskInput,
@@ -391,6 +422,25 @@ export async function runPlanningPipeline(
           createdAt: blockedAtIso
         })
       );
+      for (const [index, reason] of eligibility.reasons.entries()) {
+        const rejection = mapEligibilityReason(reason);
+        await repository.saveEligibilityRejection(
+          createEligibilityRejection({
+            rejectionId: `${taskId}:eligibility:${index}`,
+            taskId,
+            reasonCode: rejection.reasonCode,
+            reasonDetail: rejection.reasonDetail,
+            policyVersion: getPolicyVersion(),
+            sourceIssue: {
+              source: input.source,
+              title: input.title,
+              summary: input.summary
+            },
+            dryRun: input.dryRun,
+            rejectedAt: blockedAtIso
+          })
+        );
+      }
       await recordRunEvent({
         repository,
         logger: runLogger,
@@ -530,6 +580,24 @@ export async function runPlanningPipeline(
           createdAt: blockedAtIso
         })
       );
+      for (const [index, finding] of preScreenAssessment.findings.entries()) {
+        await repository.saveEligibilityRejection(
+          createEligibilityRejection({
+            rejectionId: `${taskId}:pre-screen:${index}`,
+            taskId,
+            reasonCode: mapPreScreenFindingKind(finding.kind),
+            reasonDetail: finding.detail,
+            policyVersion: getPolicyVersion(),
+            sourceIssue: {
+              source: input.source,
+              title: input.title,
+              summary: input.summary
+            },
+            dryRun: input.dryRun,
+            rejectedAt: blockedAtIso
+          })
+        );
+      }
       await repository.saveMemoryRecord(
         createMemoryRecord({
           memoryId: `${taskId}:memory:task:pre-screen`,

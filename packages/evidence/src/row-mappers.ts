@@ -4,6 +4,7 @@ import {
   type ApprovalRequest,
   type ConcurrencyStrategy,
   type EvidenceRecord,
+  type EligibilityRejectionRecord,
   type FailureClass,
   type GitHubIssuePollingCursor,
   type MemoryRecord,
@@ -18,6 +19,7 @@ import {
 import {
   createApprovalRequest,
   createMemoryRecord,
+  createEligibilityRejection,
   createPipelineRun,
   createPromptSnapshot,
   createRunEvent
@@ -229,5 +231,20 @@ export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapsh
     promptHash: row.prompt_hash as string,
     promptPath: row.prompt_path as string,
     capturedAt: asIsoTimestamp(new Date(row.captured_at as string | Date))
+  });
+}
+
+export function mapEligibilityRejectionRow(
+  row: Record<string, unknown>
+): EligibilityRejectionRecord {
+  return createEligibilityRejection({
+    rejectionId: row.rejection_id as string,
+    taskId: row.task_id as string,
+    rejectedAt: asIsoTimestamp(new Date(row.rejected_at as string | Date)),
+    reasonCode: row.reason_code as EligibilityRejectionRecord["reasonCode"],
+    reasonDetail: (row.reason_detail as string | null) ?? null,
+    policyVersion: (row.policy_version as string | null) ?? null,
+    sourceIssue: (row.source_issue as EligibilityRejectionRecord["sourceIssue"]) ?? null,
+    dryRun: Boolean(row.dry_run)
   });
 }

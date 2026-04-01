@@ -562,6 +562,9 @@ describe("control-plane", () => {
     const pipelineRuns = await repository.listPipelineRuns({
       taskId: result.manifest.taskId
     });
+    const rejections = await repository.listEligibilityRejections({
+      reasonCode: "label-missing"
+    });
 
     expect(result.nextAction).toBe("task_blocked");
     expect(result.manifest.currentPhase).toBe("eligibility");
@@ -569,6 +572,11 @@ describe("control-plane", () => {
     expect(runSummary?.status).toBe("blocked");
     expect(runSummary?.failureClass).toBe("policy_violation");
     expect(pipelineRuns[0]?.status).toBe("blocked");
+    expect(rejections[0]).toMatchObject({
+      taskId: result.manifest.taskId,
+      reasonCode: "label-missing",
+      dryRun: false
+    });
   });
 
   it("blocks duplicate tasks in the pre-screening gate before creating a second planning spec", async () => {
@@ -594,6 +602,9 @@ describe("control-plane", () => {
       expect.arrayContaining([expect.objectContaining({ kind: "duplicate" })])
     );
     expect(repository.planningSpecs.size).toBe(1);
+    const rejections = await repository.listEligibilityRejections({
+      reasonCode: "duplicate"
+    });
     const latestPlanningRecord = repository.phaseRecords
       .filter(
         (record) =>
@@ -601,6 +612,7 @@ describe("control-plane", () => {
       )
       .at(-1);
     expect(latestPlanningRecord?.actor).toBe("pre-screener");
+    expect(rejections[0]?.taskId).toBe(result.manifest.taskId);
   });
 
   it("blocks under-specified tasks in the pre-screening gate before the architect runs", async () => {
@@ -631,6 +643,10 @@ describe("control-plane", () => {
       ])
     );
     expect(repository.planningSpecs.size).toBe(0);
+    const rejections = await repository.listEligibilityRejections({
+      reasonCode: "under-specified"
+    });
+    expect(rejections[0]?.taskId).toBe(result.manifest.taskId);
   });
 
   it("archives planning output but queues a human approval request for code-writing tasks", async () => {

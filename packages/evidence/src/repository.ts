@@ -1,10 +1,13 @@
 import {
   approvalRequestQuerySchema,
+  eligibilityRejectionQuerySchema,
   memoryQuerySchema,
   pipelineRunQuerySchema,
   type ApprovalRequest,
   type ApprovalRequestQuery,
   type EvidenceRecord,
+  type EligibilityRejectionQuery,
+  type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryQuery,
@@ -53,6 +56,7 @@ export interface PlanningTransactionRepository {
   savePipelineRun(run: PipelineRun): Promise<void>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
   savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot>;
+  saveEligibilityRejection(record: EligibilityRejectionRecord): Promise<void>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {
@@ -76,6 +80,9 @@ export interface PlanningQueryRepository {
   getPromptSnapshot(snapshotId: string): Promise<PromptSnapshot | null>;
   listPhaseRecords(taskId: string): Promise<PhaseRecord[]>;
   listEvidenceRecords(taskId: string): Promise<EvidenceRecord[]>;
+  listEligibilityRejections(
+    query?: Partial<EligibilityRejectionQuery>
+  ): Promise<EligibilityRejectionRecord[]>;
   listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]>;
   listPromptSnapshots(): Promise<PromptSnapshot[]>;
   listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
@@ -125,6 +132,12 @@ export interface ClaimPipelineRunResult {
 
 export function normalizeMemoryQuery(query: Partial<MemoryQuery>): MemoryQuery {
   return memoryQuerySchema.parse(query);
+}
+
+export function normalizeEligibilityRejectionQuery(
+  query: Partial<EligibilityRejectionQuery>
+): EligibilityRejectionQuery {
+  return eligibilityRejectionQuerySchema.parse(query);
 }
 
 export function normalizePipelineRunQuery(

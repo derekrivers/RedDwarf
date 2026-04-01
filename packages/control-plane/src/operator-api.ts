@@ -6,6 +6,7 @@ import {
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   groupedTaskInjectionRequestSchema,
+  eligibilityRejectionReasonCodeSchema,
   taskGroupInjectionRequestSchema,
   directTaskInjectionRequestSchema,
   type ApprovalDecision,
@@ -515,6 +516,68 @@ async function handleOperatorRequest(
       renderRunReportMarkdown(report),
       "text/markdown; charset=utf-8"
     );
+    return;
+  }
+
+  // GET /approvals
+  if (method === "GET" && path === "/rejected") {
+    const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const rawReason = typeof qp["reason"] === "string" ? qp["reason"] : undefined;
+    const since = typeof qp["since"] === "string" ? qp["since"] : undefined;
+
+    let reasonCode:
+      | import("@reddwarf/contracts").EligibilityRejectionReasonCode
+      | undefined;
+    if (rawReason !== undefined) {
+      const parsedReason = eligibilityRejectionReasonCodeSchema.safeParse(rawReason);
+      if (!parsedReason.success) {
+        writeOperatorJsonResponse(res, 400, {
+          error: "bad_request",
+          message: `Unknown rejection reason "${rawReason}".`
+        });
+        return;
+      }
+      reasonCode = parsedReason.data;
+    }
+
+    const items = await repository.listEligibilityRejections({
+      ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+      ...(reasonCode !== undefined ? { reasonCode } : {}),
+      ...(since !== undefined ? { since } : {})
+    });
+    const byReason = items.reduce<Record<string, number>>((acc, item) => {
+      acc[item.reasonCode] = (acc[item.reasonCode] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    writeOperatorJsonResponse(res, 200, {
+      items: items.map((item) => {
+        const sourceIssue =
+          item.sourceIssue && typeof item.sourceIssue === "object"
+            ? (item.sourceIssue as Record<string, unknown>)
+            : {};
+        const sourceRef =
+          sourceIssue["source"] && typeof sourceIssue["source"] === "object"
+            ? (sourceIssue["source"] as Record<string, unknown>)
+            : {};
+
+        return {
+          taskId: item.taskId,
+          rejectedAt: item.rejectedAt,
+          reasonCode: item.reasonCode,
+          reasonDetail: item.reasonDetail,
+          issueTitle:
+            typeof sourceIssue["title"] === "string" ? sourceIssue["title"] : null,
+          issueUrl:
+            typeof sourceRef["issueUrl"] === "string"
+              ? sourceRef["issueUrl"]
+              : null,
+          dryRun: item.dryRun
+        };
+      }),
+      total: items.length,
+      byReason
+    });
     return;
   }
 

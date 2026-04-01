@@ -17,6 +17,7 @@ import {
   workspaceDescriptorSchema,
   approvalRequestSchema,
   approvalRequestQuerySchema,
+  eligibilityRejectionRecordSchema,
   githubIssuePollingCursorSchema,
   phaseRetryBudgetStateSchema,
   promptSnapshotSchema,
@@ -211,6 +212,27 @@ describe("contracts", () => {
 
     expect(retryBudget.retryExhausted).toBe(true);
     expect(retryBudget.attempts).toBe(2);
+  });
+
+  it("parses an eligibility rejection record", () => {
+    const rejection = eligibilityRejectionRecordSchema.parse({
+      rejectionId: "reject-1",
+      taskId: "acme-platform-42",
+      rejectedAt: timestamp,
+      reasonCode: "under-specified",
+      reasonDetail: "No acceptance criteria provided",
+      policyVersion: "reddwarf-v1",
+      sourceIssue: {
+        title: "Add dark mode",
+        source: {
+          issueUrl: "https://github.com/acme/platform/issues/42"
+        }
+      },
+      dryRun: false
+    });
+
+    expect(rejection.reasonCode).toBe("under-specified");
+    expect(rejection.dryRun).toBe(false);
   });
 
   it("parses an OpenClaw agent role definition", () => {

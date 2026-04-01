@@ -209,6 +209,37 @@ export const promptSnapshotSchema = z.object({
   capturedAt: isoDateTimeSchema
 });
 
+export const eligibilityRejectionReasonCodes = [
+  "out-of-scope",
+  "under-specified",
+  "duplicate",
+  "label-missing",
+  "risk-too-high",
+  "concurrent-run",
+  "budget-exceeded"
+] as const;
+
+export const eligibilityRejectionReasonCodeSchema = z.enum(
+  eligibilityRejectionReasonCodes
+);
+
+export const eligibilityRejectionRecordSchema = z.object({
+  rejectionId: z.string().min(1),
+  taskId: z.string().min(1),
+  rejectedAt: isoDateTimeSchema,
+  reasonCode: eligibilityRejectionReasonCodeSchema,
+  reasonDetail: z.string().min(1).nullable().default(null),
+  policyVersion: z.string().min(1).nullable().default(null),
+  sourceIssue: jsonValueSchema.nullable().default(null),
+  dryRun: z.boolean().default(false)
+});
+
+export const eligibilityRejectionQuerySchema = z.object({
+  limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT),
+  reasonCode: eligibilityRejectionReasonCodeSchema.optional(),
+  since: isoDateTimeSchema.optional()
+});
+
 export type PhaseRecord = z.infer<typeof phaseRecordSchema>;
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
@@ -223,3 +254,12 @@ export type PolicyPackEntry = z.infer<typeof policyPackEntrySchema>;
 export type PolicyPackManifest = z.infer<typeof policyPackManifestSchema>;
 export type GitHubIssuePollingCursor = z.infer<typeof githubIssuePollingCursorSchema>;
 export type PromptSnapshot = z.infer<typeof promptSnapshotSchema>;
+export type EligibilityRejectionReasonCode = z.infer<
+  typeof eligibilityRejectionReasonCodeSchema
+>;
+export type EligibilityRejectionRecord = z.infer<
+  typeof eligibilityRejectionRecordSchema
+>;
+export type EligibilityRejectionQuery = z.infer<
+  typeof eligibilityRejectionQuerySchema
+>;

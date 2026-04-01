@@ -11,6 +11,12 @@
 - Approval resolution now resets the exhausted retry-budget state when an operator approves a failure-automation request, so the task can be re-queued intentionally after the underlying issue is fixed.
 - Added focused coverage in `packages/contracts/src/index.test.ts`, `packages/control-plane/src/index.test.ts`, and `packages/control-plane/src/operator-api.test.ts` for retry-budget state parsing, architecture-review exhaustion, and `/blocked` exhausted-entry reporting.
 - Verification for feature 112: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`.
+- Completed feature 113 from `FEATURE_BOARD.md`: structured eligibility rejection reasons.
+- Added first-class `eligibility_rejections` contracts and evidence storage, plus a new additive SQL migration (`packages/evidence/drizzle/0011_eligibility_rejections.sql`) so rejections are queryable instead of disappearing into phase logs.
+- The planning pipeline now records structured rejection rows for both eligibility-gate failures (`label-missing`, `under-specified`) and pre-screen failures (`duplicate`, `under-specified`, `out-of-scope`) with source issue context and dry-run state.
+- Added protected operator route `GET /rejected` with `limit`, `reason`, and `since` filters plus a `byReason` breakdown so operators can inspect the current rejection mix without log archaeology.
+- Added focused coverage in `packages/contracts/src/index.test.ts`, `packages/control-plane/src/index.test.ts`, and `packages/control-plane/src/operator-api.test.ts` for rejection-record parsing, planning-time rejection persistence, and `/rejected` responses.
+- Verification for feature 113: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`.
 
 ## 2026-03-26
 

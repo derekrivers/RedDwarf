@@ -8,6 +8,7 @@ import {
   type ApprovalRequest,
   type ConcurrencyStrategy,
   type EvidenceRecord,
+  type EligibilityRejectionRecord,
   type FailureClass,
   type GitHubIssuePollingCursor,
   type MemoryRecord,
@@ -192,6 +193,28 @@ export function createApprovalRequest(input: {
     updatedAt: input.updatedAt ?? createdAt,
     resolvedAt: input.resolvedAt ?? null
   });
+}
+
+export function createEligibilityRejection(input: {
+  rejectionId: string;
+  taskId: string;
+  reasonCode: EligibilityRejectionRecord["reasonCode"];
+  rejectedAt?: string;
+  reasonDetail?: string | null;
+  policyVersion?: string | null;
+  sourceIssue?: EligibilityRejectionRecord["sourceIssue"];
+  dryRun?: boolean;
+}): EligibilityRejectionRecord {
+  return {
+    rejectionId: input.rejectionId,
+    taskId: input.taskId,
+    rejectedAt: input.rejectedAt ?? asIsoTimestamp(),
+    reasonCode: input.reasonCode,
+    reasonDetail: input.reasonDetail ?? null,
+    policyVersion: input.policyVersion ?? null,
+    sourceIssue: input.sourceIssue ?? null,
+    dryRun: input.dryRun ?? false
+  };
 }
 export function createGitHubIssuePollingCursor(input: {
   repo: string;

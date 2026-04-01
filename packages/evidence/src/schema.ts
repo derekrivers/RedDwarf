@@ -196,3 +196,14 @@ export const promptSnapshotsTable = pgTable("prompt_snapshots", {
   promptPath: text("prompt_path").notNull(),
   capturedAt: timestamp("captured_at", { withTimezone: true }).notNull()
 });
+
+export const eligibilityRejectionsTable = pgTable("eligibility_rejections", {
+  rejectionId: text("rejection_id").primaryKey(),
+  taskId: text("task_id").notNull(),
+  rejectedAt: timestamp("rejected_at", { withTimezone: true }).notNull(),
+  reasonCode: text("reason_code").notNull(),
+  reasonDetail: text("reason_detail"),
+  policyVersion: text("policy_version"),
+  sourceIssue: jsonb("source_issue"),
+  dryRun: boolean("dry_run").notNull().default(false)
+});

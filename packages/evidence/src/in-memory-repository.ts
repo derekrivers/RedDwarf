@@ -2,6 +2,7 @@ import {
   pipelineRunSchema,
   type ApprovalRequest,
   type EvidenceRecord,
+  type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryRecord,
@@ -18,6 +19,7 @@ import {
   compareApprovalRequests,
   compareMemoryRecords,
   comparePipelineRuns,
+  normalizeEligibilityRejectionQuery,
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
   normalizePipelineRunQuery,
@@ -41,6 +43,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly approvalRequests = new Map<string, ApprovalRequest>();
   public readonly githubIssuePollingCursors = new Map<string, GitHubIssuePollingCursor>();
   public readonly promptSnapshots = new Map<string, PromptSnapshot>();
+  public readonly eligibilityRejections: EligibilityRejectionRecord[] = [];
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -160,6 +163,21 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     return snapshot;
   }
 
+  async saveEligibilityRejection(
+    record: EligibilityRejectionRecord
+  ): Promise<void> {
+    const index = this.eligibilityRejections.findIndex(
+      (entry) => entry.rejectionId === record.rejectionId
+    );
+
+    if (index >= 0) {
+      this.eligibilityRejections[index] = record;
+      return;
+    }
+
+    this.eligibilityRejections.push(record);
+  }
+
   async saveGitHubIssuePollingCursor(
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
@@ -182,6 +200,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       this.githubIssuePollingCursors
     );
     const promptSnapshots = cloneInMemoryMap(this.promptSnapshots);
+    const eligibilityRejections = cloneInMemoryArray(this.eligibilityRejections);
 
     try {
       return await operation(this);
@@ -226,6 +245,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       for (const [key, value] of promptSnapshots.entries()) {
         this.promptSnapshots.set(key, value);
       }
+
+      this.eligibilityRejections.splice(
+        0,
+        this.eligibilityRejections.length,
+        ...eligibilityRejections
+      );
 
       throw error;
     }
@@ -298,6 +323,22 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     return [...this.promptSnapshots.values()].sort((left, right) =>
       right.capturedAt.localeCompare(left.capturedAt)
     );
+  }
+
+  async listEligibilityRejections(
+    query: Partial<import("@reddwarf/contracts").EligibilityRejectionQuery> = {}
+  ): Promise<EligibilityRejectionRecord[]> {
+    const parsed = normalizeEligibilityRejectionQuery(query);
+
+    return [...this.eligibilityRejections]
+      .filter((record) =>
+        parsed.reasonCode ? record.reasonCode === parsed.reasonCode : true
+      )
+      .filter((record) =>
+        parsed.since ? record.rejectedAt >= parsed.since : true
+      )
+      .sort((left, right) => right.rejectedAt.localeCompare(left.rejectedAt))
+      .slice(0, parsed.limit);
   }
 
   async listMemoryRecords(
