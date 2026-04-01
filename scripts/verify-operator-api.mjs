@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DeterministicPlanningAgent,
   createOperatorApiServer,
@@ -12,6 +15,8 @@ import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
 const issueNumber = 100000 + (Date.now() % 1000000);
 const repo = `operator-api-${issueNumber}/platform-${issueNumber}`;
 const managedRepo = `acme/operator-${issueNumber}`;
+const secretStoreRoot = await mkdtemp(join(tmpdir(), "reddwarf-operator-api-"));
+const secretStorePath = join(secretStoreRoot, ".secrets");
 const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const operatorApiToken = "verify-operator-token";
 
@@ -107,7 +112,12 @@ function apiPut(port, path, body, authToken = operatorApiToken) {
 }
 
 const apiServer = createOperatorApiServer(
-  { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+  {
+    port: 0,
+    host: "127.0.0.1",
+    authToken: operatorApiToken,
+    localSecretsPath: secretStorePath
+  },
   {
     repository,
     planner: new DeterministicPlanningAgent(),
@@ -289,6 +299,19 @@ try {
     )
   );
 
+  const rotatedSecret = await apiPost(port, "/secrets/GITHUB_TOKEN/rotate", {
+    value: "ghp_verify_rotated"
+  });
+  assert.equal(rotatedSecret.status, 200);
+  assert.equal(rotatedSecret.body.key, "GITHUB_TOKEN");
+  assert.equal(rotatedSecret.body.restartRequired, false);
+  assert.ok(!("value" in rotatedSecret.body));
+
+  const storedSecrets = await readFile(secretStorePath, "utf8");
+  assert.match(storedSecrets, /GITHUB_TOKEN=ghp_verify_rotated/);
+  const secretStats = await stat(secretStorePath);
+  assert.equal(secretStats.mode & 0o777, 0o600);
+
   // POST /tasks/inject
   const injected = await apiPost(port, "/tasks/inject", {
     repo,
@@ -464,4 +487,5 @@ try {
 } finally {
   await apiServer.stop().catch(() => {});
   await repository.close();
+  await rm(secretStoreRoot, { recursive: true, force: true });
 }

@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+- Completed feature 119 from `FEATURE_BOARD.md`: added write-only operator secret rotation backed by a restricted local `.secrets` store.
+- Added typed operator-secret contracts, a `POST /secrets/:key/rotate` operator API route, and allowlisted rotation support for GitHub, Anthropic, OpenClaw, Discord, and operator bearer tokens.
+- The rotation flow now persists secrets to a repo-root `.secrets` file with `0600` permissions, updates `process.env` for the current Node process, and returns only non-secret metadata plus restart guidance for long-lived services.
+- Updated startup and tooling env loading so `.env` and `.secrets` are both consumed across `start`, `setup`, the operator API entry point, the CLI, teardown, and E2E scripts; `setup` / `start` also create an empty `.secrets` file before Docker Compose starts so Compose can always mount it safely.
+- Updated Docker Compose, README, and the demo runbook so the local secret-store behavior and restart expectations are documented.
+- Verification for feature 119: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work --network host node:22 bash -lc "corepack pnpm verify:operator-api"`.
+- Updated the feature board so feature 119 is marked complete and feature 120 is now the next actionable M14 item.
 - Completed feature 118 from `FEATURE_BOARD.md`: expanded the operator observability surface for runs, evidence, and tasks.
 - Extended repository query contracts with repo-aware run filters plus first-class task-manifest queries so the operator API can list tasks across states without reconstructing everything from bespoke snapshot routes.
 - Added repo-filter support to `GET /runs`, a new `GET /runs/:id/evidence` route, a filtered `GET /tasks` summary route, and `GET /tasks/:id` for task-level history, approvals, and run summaries while keeping the older snapshot/evidence routes intact.

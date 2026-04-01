@@ -18,7 +18,7 @@ import {
   refreshDerivedConfig
 } from "./lib/config.mjs";
 
-loadRepoEnv();
+await loadRepoEnv();
 refreshDerivedConfig();
 await applyOperatorRuntimeConfig();
 

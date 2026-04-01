@@ -60,7 +60,7 @@ OPENCLAW_HOOK_TOKEN=<long-random-token>
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>
 ```
 
-The `.env` file is referenced by both the Node.js app and the Docker Compose stack (`env_file: ../../.env`). All tokens and secrets are loaded from this single file.
+The `.env` file is the bootstrap source of truth, and RedDwarf also maintains an optional repo-root `.secrets` file for rotated credentials. Both the Node.js app and Docker Compose read the pair (`env_file: ../../.env` and `env_file: ../../.secrets`), and the standard startup flows create an empty `.secrets` file automatically.
 
 ### 1.2 Boot the full stack (one command)
 
@@ -93,7 +93,7 @@ corepack pnpm compose:up:openclaw
 ```
 
 This starts the OpenClaw gateway alongside Postgres. The compose stack:
-- Reads tokens from your `.env` file via `env_file: ../../.env`
+- Reads tokens from `.env` and `.secrets` via `env_file: ../../.env` and `env_file: ../../.secrets`
 - Generates the live runtime config at `runtime-data/openclaw-home/openclaw.json` from RedDwarf's typed OpenClaw config surface, using [infra/docker/openclaw.json](../infra/docker/openclaw.json) as the checked-in template baseline
 - Binds the gateway to LAN (`gateway.bind: "lan"`) so the host can reach port 3578
 - Mounts the policy-pack root read-only at `/opt/reddwarf`
@@ -302,6 +302,17 @@ corepack pnpm operator:api
 ```
 
 This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The server verifies Postgres connectivity before accepting requests. Set `REDDWARF_OPERATOR_TOKEN` first; every route except `/health` requires `Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>`.
+
+For secret rotation, use the write-only endpoint:
+
+```bash
+curl -X POST http://127.0.0.1:8080/secrets/GITHUB_TOKEN/rotate \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"value":"ghp_new_token"}'
+```
+
+The response confirms the key and whether a restart is required, but it never returns the secret value. Rotated OpenClaw-facing secrets still require a service restart before the running container sees the new token.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -585,7 +596,7 @@ The database volume is **preserved by default** so you can restart without losin
 | OpenClaw dispatch 429/529 | Rate limited | Adapter retries automatically (3 attempts, 2s backoff) |
 | Developer phase `task_blocked` | Approval not resolved | Check `/approvals` — resolve pending approval first |
 | Approval decision rejected | Wrong enum value | Use `"approve"` not `"approved"` |
-| Inline docker env overrides tokens to empty | `environment:` block overrides `env_file` | Remove explicit token entries from `environment:`, rely on `env_file: ../../.env` |
+| Inline docker env overrides tokens to empty | `environment:` block overrides `env_file` | Remove explicit token entries from `environment:`, rely on `env_file: ../../.env` and `env_file: ../../.secrets` |
 | E2E test fails but leaves GitHub resources | Ran without `E2E_CLEANUP=true` | Use `corepack pnpm e2e:cleanup -- --issue N --pr N --branch name` |
 
 For more known issues, see [docs/agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md).

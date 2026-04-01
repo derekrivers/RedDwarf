@@ -28,6 +28,8 @@ import {
   operatorConfigSchemaResponseSchema,
   operatorRepoCreateRequestSchema,
   operatorRepoListResponseSchema,
+  operatorSecretRotationRequestSchema,
+  operatorSecretRotationResponseSchema,
   parseOperatorConfigValue,
   buildOperatorConfigJsonSchema,
   serializeOperatorConfigValue
@@ -191,6 +193,22 @@ describe("contracts", () => {
 
     expect(cursor.lastSeenIssueNumber).toBe(88);
     expect(cursor.lastPollStatus).toBe("succeeded");
+  });
+
+  it("parses operator secret rotation payloads", () => {
+    const request = operatorSecretRotationRequestSchema.parse({
+      value: "secret-value-123"
+    });
+    const response = operatorSecretRotationResponseSchema.parse({
+      key: "OPENCLAW_HOOK_TOKEN",
+      rotatedAt: timestamp,
+      restartRequired: true,
+      notes: ["Restart OpenClaw to apply the rotated token."]
+    });
+
+    expect(request.value).toBe("secret-value-123");
+    expect(response.key).toBe("OPENCLAW_HOOK_TOKEN");
+    expect(response.restartRequired).toBe(true);
   });
 
   it("parses a prompt snapshot", () => {

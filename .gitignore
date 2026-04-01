@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .env
+.secrets
 .corepack/
 .codex
 .docker-config/

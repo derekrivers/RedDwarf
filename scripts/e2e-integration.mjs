@@ -25,34 +25,17 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import pg from "pg";
 import { fileURLToPath } from "node:url";
+import { loadRepoEnv } from "./lib/repo-env.mjs";
 
 const { Client } = pg;
 
 const __scriptdir = dirname(fileURLToPath(import.meta.url));
-const envPath = resolve(__scriptdir, "..", ".env");
-
-try {
-  const envContent = readFileSync(envPath, "utf8");
-  for (const line of envContent.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex < 1) continue;
-    const key = trimmed.slice(0, eqIndex).trim();
-    const value = trimmed.slice(eqIndex + 1).trim();
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
-} catch {
-  // .env is optional
-}
+await loadRepoEnv();
 
 import {
   dispatchReadyTask,
@@ -74,7 +57,15 @@ import {
   createHttpOpenClawDispatchAdapter
 } from "../packages/integrations/dist/index.js";
 import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
-import { connectionString, createScriptLogger, formatError, postgresPoolConfig } from "./lib/config.mjs";
+import {
+  connectionString,
+  createScriptLogger,
+  formatError,
+  postgresPoolConfig,
+  refreshDerivedConfig
+} from "./lib/config.mjs";
+
+refreshDerivedConfig();
 
 const { log, logError } = createScriptLogger("e2e");
 

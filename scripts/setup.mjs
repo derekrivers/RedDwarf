@@ -26,7 +26,17 @@ import { execFileSync, execSync } from "node:child_process";
 import { readdir, stat, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { connectionString, repoRoot, scriptsDir, createScriptLogger, formatError, resolveOpenClawConfig } from "./lib/config.mjs";
+import {
+  connectionString,
+  ensureRepoSecretsFile,
+  loadRepoEnv,
+  refreshDerivedConfig,
+  repoRoot,
+  scriptsDir,
+  createScriptLogger,
+  formatError,
+  resolveOpenClawConfig
+} from "./lib/config.mjs";
 
 const { Client } = pg;
 
@@ -36,9 +46,13 @@ const MAX_WAIT_MS = 60_000;
 
 const { log, logError } = createScriptLogger("setup");
 
+await loadRepoEnv();
+refreshDerivedConfig();
+
 // ── Step 0: Resolve OpenClaw config template ─────────────────────────────
 
 try {
+  await ensureRepoSecretsFile();
   await resolveOpenClawConfig({ log });
 } catch {
   log("OpenClaw config resolution skipped (tokens may not be set yet).");

@@ -118,7 +118,9 @@ Press `Ctrl+C` to shut down all services gracefully.
 - Secrets: API keys and operator credentials. Keep these out of any plaintext UI.
 - Dev / E2E: local verification helpers, not part of normal production operation.
 
-At startup, RedDwarf loads `.env` first and then overlays any matching rows from the Postgres-backed `operator_config` table for runtime-configurable keys. If the table does not exist yet, startup falls back to `.env` only.
+At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matching rows from the Postgres-backed `operator_config` table for runtime-configurable keys. If the table does not exist yet, startup falls back to file-backed values only.
+
+`.secrets` is a local write-only companion store for rotated credentials. The normal `setup` and `start` flows create it automatically with restricted permissions so Docker Compose can consume it alongside `.env`.
 
 **Boot-time**
 
@@ -390,3 +392,4 @@ For a complete walkthrough from a fresh clone through each pipeline phase, see [
 - Verify the packaged runtime with `corepack pnpm verify:package`.
 - Point Docker Compose at the packaged root with `REDDWARF_POLICY_SOURCE_ROOT=<artifact path>`.
 - Packaged artifacts contain the runtime assets, built package dist output, packaged manifests, and a self-contained runtime `node_modules` tree materialized from the repo's installed dependency graph.
+Secrets can stay in `.env` for bootstrap, but the operator API now also supports `POST /secrets/:key/rotate` for a small allowlisted set of credentials. Rotated values are persisted to `.secrets`, never echoed back in the API response, and require a service restart for already-running Docker containers such as OpenClaw to pick them up.

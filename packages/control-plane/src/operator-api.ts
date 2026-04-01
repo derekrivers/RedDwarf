@@ -18,6 +18,10 @@ import {
   operatorConfigResponseSchema,
   operatorConfigSchemaResponseSchema,
   operatorConfigUpdateRequestSchema,
+  operatorSecretKeySchema,
+  operatorSecretMetadata,
+  operatorSecretRotationRequestSchema,
+  operatorSecretRotationResponseSchema,
   parseOperatorConfigEnvValue,
   parseOperatorConfigValue,
   serializeOperatorConfigValue,
@@ -32,6 +36,9 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   createGitHubIssuePollingCursor,
   type PlanningRepository,
@@ -67,6 +74,7 @@ export interface OperatorApiConfig {
   maxRequestBodyBytes?: number;
   managedTargetRoot?: string;
   managedEvidenceRoot?: string;
+  localSecretsPath?: string;
 }
 
 export interface OperatorApiDependencies {
@@ -181,6 +189,10 @@ export function createOperatorApiServer(
     config.managedEvidenceRoot !== undefined
       ? resolve(config.managedEvidenceRoot)
       : undefined;
+  const localSecretsPath =
+    config.localSecretsPath !== undefined
+      ? resolve(config.localSecretsPath)
+      : resolve(process.cwd(), ".secrets");
   const {
     repository,
     planner,
@@ -224,7 +236,8 @@ export function createOperatorApiServer(
           defaultPlanningDryRun,
           dispatchDependencies,
           managedTargetRoot,
-          managedEvidenceRoot
+          managedEvidenceRoot,
+          localSecretsPath
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -475,6 +488,57 @@ async function buildOperatorTaskSummary(
   };
 }
 
+function parseSimpleEnvFileContent(content: string): Map<string, string> {
+  const entries = new Map<string, string>();
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separator = trimmed.indexOf("=");
+    if (separator < 1) {
+      continue;
+    }
+
+    entries.set(trimmed.slice(0, separator).trim(), trimmed.slice(separator + 1).trim());
+  }
+
+  return entries;
+}
+
+async function writeOperatorSecret(
+  secretStorePath: string,
+  key: import("@reddwarf/contracts").OperatorSecretKey,
+  value: string
+): Promise<void> {
+  await mkdir(dirname(secretStorePath), { recursive: true });
+
+  let entries = new Map<string, string>();
+  try {
+    const current = await readFile(secretStorePath, "utf8");
+    entries = parseSimpleEnvFileContent(current);
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
+  entries.set(key, value);
+  const content =
+    [...entries.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([entryKey, entryValue]) => `${entryKey}=${entryValue}`)
+      .join("\n") + "\n";
+  const tempPath = `${secretStorePath}.${randomUUID()}.tmp`;
+
+  await writeFile(tempPath, content, { encoding: "utf8", mode: 0o600 });
+  await chmod(tempPath, 0o600);
+  await rename(tempPath, secretStorePath);
+  await chmod(secretStorePath, 0o600);
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -488,7 +552,8 @@ async function handleOperatorRequest(
   defaultPlanningDryRun?: boolean,
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
   managedTargetRoot?: string,
-  managedEvidenceRoot?: string
+  managedEvidenceRoot?: string,
+  localSecretsPath?: string
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -581,6 +646,64 @@ async function handleOperatorRequest(
       res,
       200,
       buildOperatorConfigResponse(await repository.listOperatorConfigEntries())
+    );
+    return;
+  }
+
+  const rotateSecretMatch = /^\/secrets\/([^/]+)\/rotate$/.exec(path);
+  if (method === "POST" && rotateSecretMatch) {
+    const keyCandidate = decodeURIComponent(rotateSecretMatch[1]!);
+    const parsedKey = operatorSecretKeySchema.safeParse(keyCandidate);
+    if (!parsedKey.success) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Secret ${keyCandidate} is not rotatable.`
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    const parsedBody = operatorSecretRotationRequestSchema.safeParse(rawBody ?? {});
+    if (!parsedBody.success) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: parsedBody.error.message
+      });
+      return;
+    }
+
+    const key = parsedKey.data;
+    const rotatedAt = clock().toISOString();
+    await writeOperatorSecret(
+      localSecretsPath ?? resolve(process.cwd(), ".secrets"),
+      key,
+      parsedBody.data.value
+    );
+    process.env[key] = parsedBody.data.value;
+
+    const metadata = operatorSecretMetadata[key];
+    const notes = metadata.restartRequired
+      ? [
+          "Persisted to the local .secrets store.",
+          "Restart the affected service stack to apply this secret to already-running processes."
+        ]
+      : [
+          "Persisted to the local .secrets store.",
+          "New child processes and future startups will use the rotated value immediately."
+        ];
+    if (key === "REDDWARF_OPERATOR_TOKEN") {
+      notes.push("The current operator API process keeps using the previous bearer token until it restarts.");
+    }
+
+    writeOperatorJsonResponse(
+      res,
+      200,
+      operatorSecretRotationResponseSchema.parse({
+        key,
+        rotatedAt,
+        restartRequired: metadata.restartRequired,
+        notes
+      })
     );
     return;
   }

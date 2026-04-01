@@ -8,20 +8,26 @@
  *   import { connectionString, repoRoot, createScriptLogger, formatError } from "./lib/config.mjs";
  */
 
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import pg from "pg";
+import {
+  ensureRepoSecretsFile,
+  loadRepoEnv as loadSharedRepoEnv,
+  repoRoot as sharedRepoRoot,
+  repoSecretsPath
+} from "./repo-env.mjs";
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
 const __libdir = dirname(fileURLToPath(import.meta.url));
 
 /** Absolute path to the repository root directory. */
-export const repoRoot = resolve(__libdir, "..", "..");
+export const repoRoot = sharedRepoRoot;
 
 /** Absolute path to the scripts directory. */
 export const scriptsDir = resolve(__libdir, "..");
+export { repoSecretsPath, ensureRepoSecretsFile };
 
 // ── Database ─────────────────────────────────────────────────────────────────
 
@@ -31,32 +37,8 @@ export const DEFAULT_CONNECTION_STRING =
 
 const { Client } = pg;
 
-export function loadRepoEnv() {
-  const envPath = resolve(repoRoot, ".env");
-
-  try {
-    const envContent = readFileSync(envPath, "utf8");
-
-    for (const line of envContent.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex < 1) {
-        continue;
-      }
-
-      const key = trimmed.slice(0, eqIndex).trim();
-      const value = trimmed.slice(eqIndex + 1).trim();
-      if (!(key in process.env)) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-    // .env is optional
-  }
+export async function loadRepoEnv() {
+  await loadSharedRepoEnv();
 }
 
 function readPositiveIntegerEnvWithFallback(name, fallback) {

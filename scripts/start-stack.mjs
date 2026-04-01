@@ -40,6 +40,7 @@ import {
   repoRoot,
   scriptsDir,
   createScriptLogger,
+  ensureRepoSecretsFile,
   formatError,
   loadRepoEnv,
   refreshDerivedConfig,
@@ -54,7 +55,7 @@ const POLL_INTERVAL_MS = 2_000;
 const MAX_WAIT_MS = 60_000;
 const WORKSPACE_MAX_AGE_MS = 24 * 60 * 60_000;
 
-loadRepoEnv();
+await loadRepoEnv();
 refreshDerivedConfig();
 await applyOperatorRuntimeConfig({ log });
 
@@ -87,6 +88,7 @@ if (dryRun) {
 // ══════════════════════════════════════════════════════════════════════════
 
 log("Phase 1: Starting infrastructure...");
+await ensureRepoSecretsFile();
 
 // ── 1a: Resolve OpenClaw config template ──────────────────────────────
 

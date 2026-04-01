@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
+import { loadRepoEnv } from "./lib/repo-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
 
-loadRepoEnv();
+await loadRepoEnv();
 
 const usage = `RedDwarf CLI
 
@@ -176,31 +176,6 @@ try {
   }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
-}
-
-function loadRepoEnv() {
-  try {
-    const envContent = readFileSync(join(repoRoot, ".env"), "utf8");
-    for (const line of envContent.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-
-      const separator = trimmed.indexOf("=");
-      if (separator <= 0) {
-        continue;
-      }
-
-      const key = trimmed.slice(0, separator).trim();
-      const value = trimmed.slice(separator + 1).trim();
-      if (!(key in process.env)) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-    // .env is optional for the CLI.
-  }
 }
 
 function requiredString(value, flagName) {

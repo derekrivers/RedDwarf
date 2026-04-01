@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -461,6 +461,93 @@ describe("operator API server", () => {
       expect(missingDelete.status).toBe(404);
     } finally {
       await apiServer.stop();
+    }
+  });
+
+  it("rotates write-only secrets into a restricted local store", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-operator-secrets-"));
+    const secretStorePath = join(tempRoot, ".secrets");
+    const previousGitHubToken = process.env.GITHUB_TOKEN;
+    const previousOperatorToken = process.env.REDDWARF_OPERATOR_TOKEN;
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        authToken: operatorApiToken,
+        localSecretsPath: secretStorePath
+      },
+      { repository, clock: () => new Date("2026-04-01T10:15:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const rotatedGitHubToken = await operatorPost(
+        port,
+        "/secrets/GITHUB_TOKEN/rotate",
+        { value: "ghp_rotated_fixture" }
+      );
+      expect(rotatedGitHubToken.status).toBe(200);
+      expect(rotatedGitHubToken.body).toMatchObject({
+        key: "GITHUB_TOKEN",
+        restartRequired: false,
+        rotatedAt: "2026-04-01T10:15:00.000Z"
+      });
+      expect((rotatedGitHubToken.body as Record<string, unknown>)["value"]).toBeUndefined();
+      expect(process.env.GITHUB_TOKEN).toBe("ghp_rotated_fixture");
+
+      const rotatedOperatorToken = await operatorPost(
+        port,
+        "/secrets/REDDWARF_OPERATOR_TOKEN/rotate",
+        { value: "operator-token-next" }
+      );
+      expect(rotatedOperatorToken.status).toBe(200);
+      expect(rotatedOperatorToken.body).toMatchObject({
+        key: "REDDWARF_OPERATOR_TOKEN",
+        restartRequired: true
+      });
+      expect(
+        ((rotatedOperatorToken.body as Record<string, unknown>)["notes"] as string[]).some(
+          (note) => note.includes("previous bearer token until it restarts")
+        )
+      ).toBe(true);
+
+      const configStillAuthorized = await operatorGet(port, "/config");
+      expect(configStillAuthorized.status).toBe(200);
+
+      const secretContent = await readFile(secretStorePath, "utf8");
+      expect(secretContent).toContain("GITHUB_TOKEN=ghp_rotated_fixture");
+      expect(secretContent).toContain("REDDWARF_OPERATOR_TOKEN=operator-token-next");
+
+      const secretStats = await stat(secretStorePath);
+      expect(secretStats.mode & 0o777).toBe(0o600);
+
+      const badSecret = await operatorPost(port, "/secrets/NOT_REAL/rotate", {
+        value: "noop"
+      });
+      expect(badSecret.status).toBe(404);
+
+      const badPayload = await operatorPost(port, "/secrets/GITHUB_TOKEN/rotate", {
+        value: "line-one\nline-two"
+      });
+      expect(badPayload.status).toBe(400);
+    } finally {
+      if (previousGitHubToken === undefined) {
+        delete process.env.GITHUB_TOKEN;
+      } else {
+        process.env.GITHUB_TOKEN = previousGitHubToken;
+      }
+
+      if (previousOperatorToken === undefined) {
+        delete process.env.REDDWARF_OPERATOR_TOKEN;
+      } else {
+        process.env.REDDWARF_OPERATOR_TOKEN = previousOperatorToken;
+      }
+
+      await apiServer.stop();
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
