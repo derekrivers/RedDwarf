@@ -25,6 +25,8 @@ import {
 import { type PlanningPipelineLogger } from "../logger.js";
 import {
   EventCodes,
+  failureAutomationRequestedBy,
+  failureRecoveryMemoryKey,
   PlanningPipelineFailure,
   phaseRegistry,
   type AutomatedFailureRecoveryResult,
@@ -42,6 +44,11 @@ import {
   serializeError,
   findPendingFailureEscalationRequest
 } from "./shared.js";
+import {
+  getPhaseRetryBudgetMemoryKey,
+  readPhaseRetryBudgetState,
+  resolvePhaseRetryLimit
+} from "./retry-budget.js";
 
 import { sanitizeSecretBearingText } from "../live-workflow.js";
 
@@ -220,6 +227,8 @@ function formatPhaseLabel(phase: RecoverablePhase): string {
   switch (phase) {
     case "development":
       return "Development";
+    case "architecture_review":
+      return "Architecture review";
     case "validation":
       return "Validation";
     case "scm":
@@ -231,6 +240,7 @@ function buildFailureEscalationSummary(input: {
   manifest: TaskManifest;
   phase: RecoverablePhase;
   failure: PlanningPipelineFailure;
+  attempts: number;
   retryLimit: number;
 }): string {
   const sourceIssue =
@@ -240,7 +250,7 @@ function buildFailureEscalationSummary(input: {
       ? input.manifest.source.repo
       : `${input.manifest.source.repo}#${sourceIssue}`;
 
-  return `${formatPhaseLabel(input.phase)} failed for ${sourceLabel}. Code ${input.failure.code} (${input.failure.failureClass}). Retry limit ${input.retryLimit} reached or recovery is not retryable.`;
+  return `${formatPhaseLabel(input.phase)} failed for ${sourceLabel}. Code ${input.failure.code} (${input.failure.failureClass}). Attempts ${input.attempts}. Retry budget ${input.retryLimit} exhausted or recovery is not retryable.`;
 }
 
 function buildFollowUpIssueBody(input: {
@@ -289,14 +299,33 @@ export async function handleAutomatedPhaseFailure(input: {
 }): Promise<AutomatedFailureRecoveryResult> {
   const { repository, snapshot, manifest, phase, runId, failure } = input;
   const policy = phaseRegistry[phase].recovery;
+  const retryLimit = resolvePhaseRetryLimit(phase);
+  const priorRetryState = readPhaseRetryBudgetState(snapshot, phase);
+  const nextAttempt = (priorRetryState?.attempts ?? 0) + 1;
   const retryEligible =
     policy.retryableFailureClasses.includes(failure.failureClass) &&
-    manifest.retryCount < policy.retryLimit;
+    nextAttempt <= retryLimit;
+  const retryExhausted = !retryEligible;
   const organizationId = deriveOrganizationId(manifest.source.repo);
   const failedPhaseDetails = {
+    attemptNumber: nextAttempt,
+    retryLimit,
+    retryExhausted,
+    retryReason: failure.message,
     code: failure.code,
     failureClass: failure.failureClass,
     ...failure.details
+  };
+  const retryBudgetState = {
+    phase,
+    attempts: nextAttempt,
+    retryLimit,
+    retryExhausted,
+    lastError: failure.message,
+    lastFailureCode: failure.code,
+    lastFailureClass: failure.failureClass,
+    lastRunId: runId,
+    updatedAt: input.failedAtIso
   };
 
   let approvalRequest = findPendingFailureEscalationRequest(snapshot, phase);
@@ -316,7 +345,8 @@ export async function handleAutomatedPhaseFailure(input: {
         manifest,
         phase,
         failure,
-        retryLimit: policy.retryLimit
+        attempts: nextAttempt,
+        retryLimit
       }),
       requestedCapabilities: manifest.requestedCapabilities,
       allowedPaths: snapshot.policySnapshot?.allowedPaths ?? [],
@@ -325,7 +355,7 @@ export async function handleAutomatedPhaseFailure(input: {
         `${formatPhaseLabel(phase)} failed with ${failure.failureClass}.`,
         "Human review is required before retrying the phase."
       ],
-      requestedBy: "failure-automation",
+      requestedBy: failureAutomationRequestedBy,
       createdAt: input.failedAtIso,
       updatedAt: input.failedAtIso
     });
@@ -352,7 +382,7 @@ export async function handleAutomatedPhaseFailure(input: {
           runId,
           failure,
           approvalRequest,
-          retryLimit: policy.retryLimit
+          retryLimit
         }),
         labels: ["reddwarf", "follow-up", phase]
       });
@@ -409,7 +439,7 @@ export async function handleAutomatedPhaseFailure(input: {
     });
 
     if (retryEligible) {
-      const retryCount = manifest.retryCount + 1;
+      const retryCount = Math.min(nextAttempt, retryLimit);
       const nextManifest = patchManifest(manifest, {
         currentPhase: phase,
         lifecycleStatus: "blocked",
@@ -423,16 +453,32 @@ export async function handleAutomatedPhaseFailure(input: {
         failureCode: failure.code,
         failureClass: failure.failureClass,
         retryCount,
-        retryLimit: policy.retryLimit
+        retryLimit
       };
 
+      await transactionalRepository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${manifest.taskId}:memory:task:retry-budget:${phase}`,
+          taskId: manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: getPhaseRetryBudgetMemoryKey(phase),
+          title: `${formatPhaseLabel(phase)} retry budget state`,
+          value: retryBudgetState,
+          repo: manifest.source.repo,
+          organizationId,
+          tags: ["failure", "retry-budget", phase],
+          createdAt: input.failedAtIso,
+          updatedAt: input.failedAtIso
+        })
+      );
       await transactionalRepository.saveMemoryRecord(
         createMemoryRecord({
           memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
           taskId: manifest.taskId,
           scope: "task",
           provenance: "pipeline_derived",
-          key: "failure.recovery",
+          key: failureRecoveryMemoryKey,
           title: "Automated failure recovery plan",
           value: recoveryMetadata,
           repo: manifest.source.repo,
@@ -463,7 +509,11 @@ export async function handleAutomatedPhaseFailure(input: {
         code: EventCodes.PHASE_RETRY_SCHEDULED,
         message: `${formatPhaseLabel(phase)} failure was classified as retryable and queued for another attempt.`,
         failureClass: failure.failureClass,
-        data: recoveryMetadata,
+        data: {
+          ...recoveryMetadata,
+          attempts: nextAttempt,
+          lastError: failure.message
+        },
         createdAt: input.failedAtIso
       });
       await recordRunEvent({
@@ -493,7 +543,9 @@ export async function handleAutomatedPhaseFailure(input: {
             failureClass: failure.failureClass,
             recoveryAction: "retry",
             retryCount,
-            retryLimit: policy.retryLimit
+            retryLimit,
+            attempts: nextAttempt,
+            retryExhausted: false
           }
         },
         transactionalRepository
@@ -574,8 +626,13 @@ export async function handleAutomatedPhaseFailure(input: {
       runId,
       failureCode: failure.code,
       failureClass: failure.failureClass,
-      retryCount: manifest.retryCount,
-      retryLimit: policy.retryLimit,
+      retryCount: Math.min(nextAttempt, retryLimit),
+      retryLimit,
+      attempts: nextAttempt,
+      reason: retryExhausted
+        ? "retry-budget-exhausted"
+        : "non-retryable-failure",
+      lastError: failure.message,
       approvalRequestId: approvalRequest.requestId,
       ...(followUpIssue
         ? {
@@ -599,11 +656,27 @@ export async function handleAutomatedPhaseFailure(input: {
     );
     await transactionalRepository.saveMemoryRecord(
       createMemoryRecord({
+        memoryId: `${manifest.taskId}:memory:task:retry-budget:${phase}`,
+        taskId: manifest.taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: getPhaseRetryBudgetMemoryKey(phase),
+        title: `${formatPhaseLabel(phase)} retry budget state`,
+        value: retryBudgetState,
+        repo: manifest.source.repo,
+        organizationId,
+        tags: ["failure", "retry-budget", phase],
+        createdAt: input.failedAtIso,
+        updatedAt: input.failedAtIso
+      })
+    );
+    await transactionalRepository.saveMemoryRecord(
+      createMemoryRecord({
         memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
         taskId: manifest.taskId,
         scope: "task",
         provenance: "pipeline_derived",
-        key: "failure.recovery",
+        key: failureRecoveryMemoryKey,
         title: "Automated failure recovery plan",
         value: recoveryMetadata,
         repo: manifest.source.repo,
@@ -663,8 +736,10 @@ export async function handleAutomatedPhaseFailure(input: {
           failureCode: failure.code,
           failureClass: failure.failureClass,
           recoveryAction: "escalate",
-          retryCount: manifest.retryCount,
-          retryLimit: policy.retryLimit,
+          retryCount: Math.min(nextAttempt, retryLimit),
+          retryLimit,
+          attempts: nextAttempt,
+          retryExhausted,
           approvalRequestId: approvalRequest.requestId,
           ...(followUpIssue
             ? { followUpIssueNumber: followUpIssue.issueNumber }
@@ -769,7 +844,12 @@ export async function persistConcurrencyBlock(
 export async function persistPhaseFailure(
   ctx: PhaseFailureContext
 ): Promise<TaskManifest> {
-  const recoverable: RecoverablePhase[] = ["development", "validation", "scm"];
+  const recoverable: RecoverablePhase[] = [
+    "development",
+    "architecture_review",
+    "validation",
+    "scm"
+  ];
 
   if (recoverable.includes(ctx.phase as RecoverablePhase)) {
     return (

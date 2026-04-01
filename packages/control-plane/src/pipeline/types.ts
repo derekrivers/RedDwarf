@@ -65,10 +65,10 @@ export const phaseRegistry: Record<TaskPhase, PhaseDefinition> = {
   planning: { failureClass: "planning_failure", failureCode: "PLANNING_FAILED", recovery: defaultRecovery },
   policy_gate: { failureClass: "policy_violation", failureCode: "POLICY_GATE_FAILED", recovery: defaultRecovery },
   development: { failureClass: "integration_failure", failureCode: "DEVELOPMENT_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["integration_failure"] } },
-  architecture_review: { failureClass: "review_failure", failureCode: "ARCHITECTURE_REVIEW_FAILED", recovery: defaultRecovery },
+  architecture_review: { failureClass: "review_failure", failureCode: "ARCHITECTURE_REVIEW_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["review_failure", "integration_failure"] } },
   validation: { failureClass: "validation_failure", failureCode: "VALIDATION_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["validation_failure", "integration_failure"] } },
   review: { failureClass: "review_failure", failureCode: "REVIEW_FAILED", recovery: defaultRecovery },
-  scm: { failureClass: "merge_failure", failureCode: "SCM_FAILED", recovery: defaultRecovery },
+  scm: { failureClass: "merge_failure", failureCode: "SCM_FAILED", recovery: { retryLimit: 1, retryableFailureClasses: ["merge_failure", "integration_failure"] } },
   archive: { failureClass: "integration_failure", failureCode: "ARCHIVE_FAILED", recovery: defaultRecovery }
 };
 
@@ -133,7 +133,11 @@ export const phaseTimeoutBudgetsMs: Partial<Record<TaskPhase, number>> = {
   scm: DEFAULT_GIT_COMMAND_TIMEOUT_MS
 };
 
-export type RecoverablePhase = "development" | "validation" | "scm";
+export type RecoverablePhase =
+  | "development"
+  | "architecture_review"
+  | "validation"
+  | "scm";
 
 export interface PlanningConcurrencyOptions {
   strategy?: ConcurrencyStrategy;

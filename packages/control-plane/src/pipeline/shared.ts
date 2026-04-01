@@ -632,7 +632,12 @@ export function findApprovedFailureEscalationRequest(
 }
 
 export function isRecoverablePhase(phase: TaskPhase): phase is RecoverablePhase {
-  return phase === "development" || phase === "validation" || phase === "scm";
+  return (
+    phase === "development" ||
+    phase === "architecture_review" ||
+    phase === "validation" ||
+    phase === "scm"
+  );
 }
 
 export function findAutomatedRetryRecovery(
@@ -676,6 +681,7 @@ export function readFailureRecoveryMemory(
   const phaseCandidate = typeof rawPhase === "string" ? rawPhase : "";
   const isRecoverablePhaseCandidate =
     phaseCandidate === "development" ||
+    phaseCandidate === "architecture_review" ||
     phaseCandidate === "validation" ||
     phaseCandidate === "scm";
 

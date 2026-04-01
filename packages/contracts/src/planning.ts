@@ -3,6 +3,7 @@ import {
   isoDateTimeSchema,
   jsonValueSchema,
   capabilitySchema,
+  failureClassSchema,
   riskClassSchema,
   approvalModeSchema,
   taskPhaseSchema,
@@ -124,6 +125,18 @@ export const tokenBudgetResultSchema = z.object({
   actualOutputTokens: z.number().int().min(0).nullable().optional()
 });
 
+export const phaseRetryBudgetStateSchema = z.object({
+  phase: taskPhaseSchema,
+  attempts: z.number().int().min(0),
+  retryLimit: z.number().int().min(0),
+  retryExhausted: z.boolean(),
+  lastError: z.string().nullable(),
+  lastFailureCode: z.string().nullable(),
+  lastFailureClass: failureClassSchema.nullable().optional(),
+  lastRunId: z.string().nullable(),
+  updatedAt: isoDateTimeSchema
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -182,5 +195,30 @@ export type TokenBudgetOverageAction = z.infer<
 >;
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 export type TokenBudgetResult = z.infer<typeof tokenBudgetResultSchema>;
+export type PhaseRetryBudgetState = z.infer<typeof phaseRetryBudgetStateSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
+
+export interface RetryBudgetConfig {
+  maxRetries: Partial<Record<z.infer<typeof taskPhaseSchema>, number>>;
+}
+
+export class PhaseRetryExhaustedError extends Error {
+  readonly phase: z.infer<typeof taskPhaseSchema>;
+  readonly attempts: number;
+  readonly runId: string;
+
+  constructor(
+    phase: z.infer<typeof taskPhaseSchema>,
+    attempts: number,
+    runId: string
+  ) {
+    super(
+      `Phase '${phase}' retry budget exhausted after ${attempts} attempts (run: ${runId})`
+    );
+    this.name = "PhaseRetryExhaustedError";
+    this.phase = phase;
+    this.attempts = attempts;
+    this.runId = runId;
+  }
+}

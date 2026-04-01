@@ -1506,6 +1506,131 @@ describe("control-plane", () => {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("retries architecture review once and then escalates when the retry budget is exhausted", async () => {
+    const previousRetryLimit = process.env.REDDWARF_MAX_RETRIES_REVIEWER;
+    process.env.REDDWARF_MAX_RETRIES_REVIEWER = "1";
+
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-architecture-review-retry-budget-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:24:00.000Z"),
+        idGenerator: () => "run-architecture-review-retry-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for architecture review retry-budget coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:25:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-architecture-review-retry-budget"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:26:00.000Z"),
+          idGenerator: () => "run-architecture-review-retry-dev"
+        }
+      );
+
+      const failingReviewer = {
+        async reviewImplementation() {
+          throw new SyntaxError("confidence block missing from architecture review output");
+        }
+      } as unknown as DeterministicArchitectureReviewAgent;
+
+      await expect(
+        runArchitectureReviewPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            reviewer: failingReviewer,
+            clock: () => new Date("2026-03-25T18:27:00.000Z"),
+            idGenerator: () => "run-architecture-review-retry-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      await expect(
+        runArchitectureReviewPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            reviewer: failingReviewer,
+            clock: () => new Date("2026-03-25T18:28:00.000Z"),
+            idGenerator: () => "run-architecture-review-retry-second"
+          }
+        )
+      ).rejects.toBeInstanceOf(PlanningPipelineFailure);
+
+      const persistedManifest = await repository.getManifest(
+        planningResult.manifest.taskId
+      );
+      const retryState = repository.memoryRecords.find(
+        (record) => record.key === "failure.retry_budget.architecture_review"
+      );
+      const failureRequest = repository.approvalRequests.get(
+        `${planningResult.manifest.taskId}:approval:architecture_review:failure:run-architecture-review-retry-second`
+      );
+
+      expect(persistedManifest?.currentPhase).toBe("architecture_review");
+      expect(persistedManifest?.lifecycleStatus).toBe("blocked");
+      expect(retryState?.value).toMatchObject({
+        attempts: 2,
+        retryLimit: 1,
+        retryExhausted: true,
+        lastFailureCode: "ARCHITECTURE_REVIEW_OUTPUT_INVALID"
+      });
+      expect(failureRequest?.status).toBe("pending");
+      expect(
+        repository.runEvents.some((event) => event.code === "PHASE_RETRY_SCHEDULED")
+      ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.phase === "architecture_review" &&
+            event.code === "PHASE_ESCALATED"
+        )
+      ).toBe(true);
+    } finally {
+      if (previousRetryLimit === undefined) {
+        delete process.env.REDDWARF_MAX_RETRIES_REVIEWER;
+      } else {
+        process.env.REDDWARF_MAX_RETRIES_REVIEWER = previousRetryLimit;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
   it("runs validation commands in the managed workspace and blocks pending review", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(

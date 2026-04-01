@@ -30,6 +30,7 @@ import {
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
 } from "./pipeline.js";
+import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
   GitHubIssuePollingDaemon,
@@ -65,6 +66,19 @@ export interface OperatorApiDependencies {
 export interface OperatorBlockedSummary {
   blockedRuns: PipelineRun[];
   pendingApprovals: ApprovalRequest[];
+  retryExhaustedEntries: {
+    approvalId: string;
+    taskId: string;
+    taskTitle: string;
+    runId: string;
+    reason: "retry-budget-exhausted";
+    phase: string;
+    attempts: number;
+    retryLimit: number;
+    humanReadable: string;
+    lastError: string | null;
+    dryRun: boolean;
+  }[];
   totalBlockedRuns: number;
   totalPendingApprovals: number;
 }
@@ -810,9 +824,43 @@ async function handleOperatorRequest(
       repository.listPipelineRuns({ statuses: ["blocked"] }),
       repository.listApprovalRequests({ statuses: ["pending"] })
     ]);
+    const retryExhaustedEntries: OperatorBlockedSummary["retryExhaustedEntries"] = [];
+
+    for (const approval of pendingApprovals) {
+      if (
+        approval.requestedBy !== "failure-automation" ||
+        (approval.phase !== "development" &&
+          approval.phase !== "architecture_review" &&
+          approval.phase !== "validation" &&
+          approval.phase !== "scm")
+      ) {
+        continue;
+      }
+
+      const snapshot = await repository.getTaskSnapshot(approval.taskId);
+      const retryState = readPhaseRetryBudgetState(snapshot, approval.phase);
+      if (!retryState?.retryExhausted) {
+        continue;
+      }
+
+      retryExhaustedEntries.push({
+        approvalId: approval.requestId,
+        taskId: approval.taskId,
+        taskTitle: snapshot.manifest?.title ?? approval.taskId,
+        runId: approval.runId,
+        reason: "retry-budget-exhausted",
+        phase: approval.phase,
+        attempts: retryState.attempts,
+        retryLimit: retryState.retryLimit,
+        humanReadable: approval.summary,
+        lastError: retryState.lastError,
+        dryRun: approval.dryRun
+      });
+    }
     const summary: OperatorBlockedSummary = {
       blockedRuns,
       pendingApprovals,
+      retryExhaustedEntries,
       totalBlockedRuns: blockedRuns.length,
       totalPendingApprovals: pendingApprovals.length
     };

@@ -42,7 +42,7 @@ Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md
 | 109 | Token budget enforcement | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#3-token-budget-enforcement`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 110 | Pipeline run report export | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#4-pipeline-run-report-export`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 111 | Prompt version tracking | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#5-prompt-version-tracking`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 112 | Phase retry budget | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#6-phase-retry-budget`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
+| 112 | Phase retry budget | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#6-phase-retry-budget`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 113 | Structured eligibility rejection reasons | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#7-structured-eligibility-rejection-reasons`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 
 ---

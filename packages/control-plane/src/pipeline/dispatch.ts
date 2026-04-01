@@ -204,14 +204,14 @@ export async function dispatchReadyTask(
       };
     }
   } else {
-    dispatchLogger.info("Skipping developer phase for approved failure recovery resume.", {
+    dispatchLogger.info("Skipping developer phase for downstream recovery resume.", {
       taskId,
       startPhase,
       approvalRequestId: approvedFailureRecoveryRequest?.requestId ?? null
     });
   }
 
-  if (startPhase === "development") {
+  if (startPhase === "development" || startPhase === "architecture_review") {
     try {
       dispatchLogger.info("Dispatching architecture review phase.", { taskId });
 

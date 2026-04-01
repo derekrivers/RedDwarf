@@ -687,13 +687,18 @@ export interface ReadyTaskDispatcher {
 
 function isRecoverableDispatchPhase(
   phase: TaskManifest["currentPhase"]
-): phase is "development" | "validation" | "scm" {
-  return phase === "development" || phase === "validation" || phase === "scm";
+): phase is "development" | "architecture_review" | "validation" | "scm" {
+  return (
+    phase === "development" ||
+    phase === "architecture_review" ||
+    phase === "validation" ||
+    phase === "scm"
+  );
 }
 
 function hasPendingFailureEscalationRequest(
   snapshot: PersistedTaskSnapshot,
-  phase: "development" | "validation" | "scm"
+  phase: "development" | "architecture_review" | "validation" | "scm"
 ): boolean {
   return snapshot.approvalRequests.some(
     (request) =>
@@ -705,7 +710,7 @@ function hasPendingFailureEscalationRequest(
 
 function hasAutomatedRetryRecovery(
   snapshot: PersistedTaskSnapshot,
-  phase: "development" | "validation" | "scm"
+  phase: "development" | "architecture_review" | "validation" | "scm"
 ): boolean {
   const recoveryRecord = snapshot.memoryRecords.find(
     (record) => record.key === "failure.recovery"

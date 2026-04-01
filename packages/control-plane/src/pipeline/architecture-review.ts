@@ -34,6 +34,7 @@ import {
   readPlanningDefaultBranchFromSnapshot,
   recordRunEvent,
   requireApprovedRequest,
+  requireNoFailureEscalation,
   requirePhaseSnapshot,
   resolvePhaseDependencies,
   resolveTaskMemoryContext,
@@ -111,6 +112,7 @@ export async function runArchitectureReviewPhase(
     validatedManifest,
     "architecture_review"
   );
+  requireNoFailureEscalation(snapshot, taskId, "architecture_review");
 
   const lifecycleAllowsArchitectureReview =
     (validatedManifest.lifecycleStatus === "blocked" &&

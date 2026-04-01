@@ -11,7 +11,9 @@ import {
   DeterministicValidationAgent,
   createOperatorApiServer,
   resolveApprovalRequest,
-  runPlanningPipeline
+  runDeveloperPhase,
+  runPlanningPipeline,
+  runValidationPhase
 } from "@reddwarf/control-plane";
 import {
   FixtureGitHubAdapter
@@ -438,6 +440,134 @@ describe("operator API server", () => {
       ).toBe(1);
     } finally {
       await apiServer.stop();
+    }
+  });
+
+  it("surfaces retry-budget-exhausted entries from /blocked", async () => {
+    const previousRetryLimit = process.env.REDDWARF_MAX_RETRIES_VALIDATOR;
+    process.env.REDDWARF_MAX_RETRIES_VALIDATOR = "1";
+
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "operator-blocked-retry-budget-"));
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/api.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:10:00.000Z"),
+        idGenerator: () => "op-run-retry-budget-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approve retry budget blocked summary coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-26T12:11:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-operator-blocked-retry-budget"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-26T12:12:00.000Z"),
+          idGenerator: () => "op-run-retry-budget-dev"
+        }
+      );
+
+      const failingValidator = {
+        async createPlan() {
+          return {
+            summary: "Force retry budget exhaustion.",
+            commands: [
+              {
+                id: "failing-command",
+                name: "Failing validation command",
+                executable: process.execPath,
+                args: ["-e", "process.exit(17)"]
+              }
+            ]
+          };
+        }
+      };
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-26T12:13:00.000Z"),
+            idGenerator: () => "op-run-retry-budget-validation-first"
+          }
+        )
+      ).rejects.toBeInstanceOf(Error);
+
+      await expect(
+        runValidationPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot
+          },
+          {
+            repository,
+            validator: failingValidator,
+            clock: () => new Date("2026-03-26T12:14:00.000Z"),
+            idGenerator: () => "op-run-retry-budget-validation-second"
+          }
+        )
+      ).rejects.toBeInstanceOf(Error);
+
+      const apiServer = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        { repository }
+      );
+
+      await apiServer.start();
+      const port = apiServer.port;
+
+      try {
+        const blocked = await operatorGet(port, "/blocked");
+        const entries = (blocked.body as Record<string, unknown>)["retryExhaustedEntries"] as Array<Record<string, unknown>>;
+
+        expect(blocked.status).toBe(200);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          reason: "retry-budget-exhausted",
+          phase: "validation",
+          attempts: 2,
+          retryLimit: 1
+        });
+        expect(String(entries[0]?.["lastError"] ?? "")).toContain("Validation command");
+      } finally {
+        await apiServer.stop();
+      }
+    } finally {
+      if (previousRetryLimit === undefined) {
+        delete process.env.REDDWARF_MAX_RETRIES_VALIDATOR;
+      } else {
+        process.env.REDDWARF_MAX_RETRIES_VALIDATOR = previousRetryLimit;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 

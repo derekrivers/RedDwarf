@@ -3,6 +3,7 @@ import {
   type PhaseLifecycleStatus
 } from "@reddwarf/contracts";
 import {
+  createMemoryRecord,
   createApprovalRequest,
   createEvidenceRecord
 } from "@reddwarf/evidence";
@@ -18,6 +19,8 @@ import {
   patchManifest,
   recordRunEvent
 } from "./shared.js";
+import { getPhaseRetryBudgetMemoryKey, readPhaseRetryBudgetState } from "./retry-budget.js";
+import { failureAutomationRequestedBy } from "./types.js";
 import {
   type ResolveApprovalRequestDependencies,
   type ResolveApprovalRequestInput,
@@ -90,6 +93,28 @@ export async function resolveApprovalRequest(
     ],
     updatedAt: resolvedAtIso
   });
+  const recoverableApprovalPhase =
+    approvalRequest.phase === "development" ||
+    approvalRequest.phase === "architecture_review" ||
+    approvalRequest.phase === "validation" ||
+    approvalRequest.phase === "scm"
+      ? approvalRequest.phase
+      : null;
+  const snapshot = await repository.getTaskSnapshot(approvalRequest.taskId);
+  const retryBudgetState =
+    recoverableApprovalPhase !== null
+      ? readPhaseRetryBudgetState(snapshot, recoverableApprovalPhase)
+      : null;
+  const resetRetryBudgetOnApproval =
+    approvalRequest.requestedBy === failureAutomationRequestedBy &&
+    input.decision === "approve" &&
+    retryBudgetState !== null;
+  const finalManifest = resetRetryBudgetOnApproval
+    ? patchManifest(updatedManifest, {
+        retryCount: 0,
+        updatedAt: resolvedAtIso
+      })
+    : updatedManifest;
   const decisionCode =
     input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
   const decisionMessage =
@@ -107,7 +132,35 @@ export async function resolveApprovalRequest(
 
   await repository.runInTransaction(async (transactionalRepository) => {
     await transactionalRepository.saveApprovalRequest(updatedApprovalRequest);
-    await transactionalRepository.updateManifest(updatedManifest);
+    await transactionalRepository.updateManifest(finalManifest);
+    if (resetRetryBudgetOnApproval && retryBudgetState !== null) {
+      const phase = recoverableApprovalPhase!;
+      await transactionalRepository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${approvalRequest.taskId}:memory:task:retry-budget:${phase}`,
+          taskId: approvalRequest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: getPhaseRetryBudgetMemoryKey(phase),
+          title: `${phase} retry budget state`,
+          value: {
+            ...retryBudgetState,
+            attempts: 0,
+            retryExhausted: false,
+            lastError: null,
+            lastFailureCode: null,
+            lastFailureClass: null,
+            lastRunId: null,
+            updatedAt: resolvedAtIso
+          },
+          repo: manifest.source.repo,
+          organizationId: null,
+          tags: ["failure", "retry-budget", phase],
+          createdAt: resolvedAtIso,
+          updatedAt: resolvedAtIso
+        })
+      );
+    }
     await transactionalRepository.savePhaseRecord(
       createPhaseRecord({
         id: `${approvalRequest.taskId}:phase:policy_gate:approval:${approvalRequest.requestId}`,
@@ -167,6 +220,6 @@ export async function resolveApprovalRequest(
 
   return {
     approvalRequest: updatedApprovalRequest,
-    manifest: updatedManifest
+    manifest: finalManifest
   };
 }

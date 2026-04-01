@@ -1,5 +1,17 @@
 # Agent Documentation
 
+## 2026-04-01
+
+- Completed feature 112 from `FEATURE_BOARD.md`: phase retry budget.
+- Added explicit per-phase retry-budget configuration via `REDDWARF_MAX_RETRIES_*` env vars, including alias names that match the proposal document (`ARCHITECT`, `DEVELOPER`, `VALIDATOR`, `REVIEWER`) plus repo-native phase names.
+- Added durable retry-budget state under `failure.retry_budget.<phase>` so repeated failures now persist attempts, last error, retry limit, and exhausted state independently per phase instead of relying only on the legacy manifest-wide `retryCount`.
+- Extended automated recovery to architecture review, so `architecture_review` can now queue one automated retry and then escalate through the existing approval flow when its retry budget is exhausted.
+- Kept SCM retry behavior opt-in by config: the retry-budget plumbing supports SCM, but the default limit remains `0` to preserve the repo's earlier first-failure escalation behavior unless `REDDWARF_MAX_RETRIES_SCM` is set.
+- Updated `GET /blocked` to include `retryExhaustedEntries` with attempts, retry limit, and last error for failure-automation approvals whose retry budget is exhausted.
+- Approval resolution now resets the exhausted retry-budget state when an operator approves a failure-automation request, so the task can be re-queued intentionally after the underlying issue is fixed.
+- Added focused coverage in `packages/contracts/src/index.test.ts`, `packages/control-plane/src/index.test.ts`, and `packages/control-plane/src/operator-api.test.ts` for retry-budget state parsing, architecture-review exhaustion, and `/blocked` exhausted-entry reporting.
+- Verification for feature 112: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`.
+
 ## 2026-03-26
 
 - Completed feature 18 from `FEATURE_BOARD.md`: developer phase orchestration with code-write disabled by default.

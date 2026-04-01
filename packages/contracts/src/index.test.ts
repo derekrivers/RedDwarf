@@ -18,6 +18,7 @@ import {
   approvalRequestSchema,
   approvalRequestQuerySchema,
   githubIssuePollingCursorSchema,
+  phaseRetryBudgetStateSchema,
   promptSnapshotSchema,
   openClawAgentRoleDefinitionSchema
 } from "@reddwarf/contracts";
@@ -193,6 +194,23 @@ describe("contracts", () => {
 
     expect(snapshot.phase).toBe("planning");
     expect(snapshot.promptHash).toBe("0123456789abcdef");
+  });
+
+  it("parses a phase retry budget state", () => {
+    const retryBudget = phaseRetryBudgetStateSchema.parse({
+      phase: "architecture_review",
+      attempts: 2,
+      retryLimit: 1,
+      retryExhausted: true,
+      lastError: "Architecture review output for acme-platform-42 was not valid JSON.",
+      lastFailureCode: "ARCHITECTURE_REVIEW_OUTPUT_INVALID",
+      lastFailureClass: "review_failure",
+      lastRunId: "run-architecture-review-fail-2",
+      updatedAt: timestamp
+    });
+
+    expect(retryBudget.retryExhausted).toBe(true);
+    expect(retryBudget.attempts).toBe(2);
   });
 
   it("parses an OpenClaw agent role definition", () => {
