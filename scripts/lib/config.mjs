@@ -260,6 +260,7 @@ export async function resolveOpenClawConfig(options) {
       repoRoot,
       process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces"
     ),
+    policyRoot: process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf",
     browser: {
       enabled: readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true)
     },

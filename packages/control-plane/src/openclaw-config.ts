@@ -110,8 +110,26 @@ export interface OpenClawAgentConfig {
 export interface OpenClawConfig {
   gateway: OpenClawGatewayConfig;
   hooks: OpenClawHooksConfig;
+  commands?: {
+    text?: boolean;
+    native?: boolean | "auto";
+  };
   channels?: OpenClawChannelsConfig;
   browser?: OpenClawBrowserConfig;
+  plugins?: {
+    enabled: boolean;
+    allow?: string[];
+    load?: {
+      paths: string[];
+    };
+    entries?: Record<
+      string,
+      {
+        enabled: boolean;
+        config?: Record<string, unknown>;
+      }
+    >;
+  };
   agents: {
     defaults: {
       skipBootstrap: boolean;
@@ -123,6 +141,9 @@ export interface OpenClawConfig {
 export interface GenerateOpenClawConfigOptions {
   /** Shared workspace root mounted into OpenClaw agents. */
   workspaceRoot: string;
+
+  /** Runtime-visible policy root mounted into the OpenClaw gateway. */
+  policyRoot?: string;
 
   /**
    * Role definitions to include. Defaults to all roles from the execution-plane.
@@ -212,6 +233,14 @@ export function generateOpenClawConfig(
       ? createOpenClawAgentRoleDefinitions(options.modelProvider)
       : openClawAgentRoleDefinitions);
   const skipBootstrap = options.skipBootstrap ?? true;
+  const policyRoot = options.policyRoot ?? "/opt/reddwarf";
+  const reddwarfOperatorPluginPath = join(
+    policyRoot,
+    "agents",
+    "openclaw",
+    "plugins",
+    "reddwarf-operator"
+  ).replace(/\\/g, "/");
 
   const config: OpenClawConfig = {
     gateway: {
@@ -235,6 +264,10 @@ export function generateOpenClawConfig(
       allowedAgentIds: roles.map((role) => role.agentId),
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
+    },
+    commands: {
+      text: true,
+      native: "auto"
     },
     ...(options.discord
       ? {
@@ -373,6 +406,21 @@ export function generateOpenClawConfig(
         }
       : {}),
     ...(options.browser ? { browser: { enabled: options.browser.enabled } } : {}),
+    plugins: {
+      enabled: true,
+      allow: ["reddwarf-operator"],
+      load: {
+        paths: [reddwarfOperatorPluginPath]
+      },
+      entries: {
+        "reddwarf-operator": {
+          enabled: true,
+          config: {
+            operatorApiBaseUrl: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}"
+          }
+        }
+      }
+    },
     agents: {
       defaults: { skipBootstrap },
       list: []

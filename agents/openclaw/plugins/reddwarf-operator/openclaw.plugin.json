@@ -1,0 +1,20 @@
+{
+  "id": "reddwarf-operator",
+  "name": "RedDwarf Operator Commands",
+  "description": "WebChat and native command helpers for RedDwarf operator status, approvals, and task intake.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "operatorApiBaseUrl": {
+        "type": "string"
+      }
+    }
+  },
+  "uiHints": {
+    "operatorApiBaseUrl": {
+      "label": "Operator API Base URL",
+      "help": "Container-reachable RedDwarf operator API base URL used by WebChat command handlers."
+    }
+  }
+}

@@ -150,6 +150,8 @@ The checked-in Docker template lives at [infra/docker/openclaw.json](../infra/do
 corepack pnpm generate:openclaw-config
 ```
 
+The generated config also loads the repo-mounted `reddwarf-operator` OpenClaw plugin and points it at `REDDWARF_OPENCLAW_OPERATOR_API_URL` so WebChat can talk back to the host-side operator API from inside the container.
+
 To enable the native Discord operator surface in the generated config, set:
 
 ```bash
@@ -207,6 +209,7 @@ The fastest way to prove the full pipeline is the automated E2E integration test
 | `E2E_CLEANUP=true` | `false` | Close the created issue, PR, and branch after the test |
 | `E2E_USE_OPENCLAW=true` | `false` | Dispatch developer phase to OpenClaw instead of deterministic fallback |
 | `OPENCLAW_BASE_URL` | — | Required when `E2E_USE_OPENCLAW=true` (e.g. `http://127.0.0.1:3578`) |
+| `REDDWARF_OPENCLAW_OPERATOR_API_URL` | `http://host.docker.internal:8080` | Container-reachable Operator API URL for the OpenClaw operator-command plugin |
 | `OPENCLAW_HOOK_TOKEN` | — | Required when `E2E_USE_OPENCLAW=true` |
 | `HOST_DATABASE_URL` | `postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf` | Postgres connection string |
 
@@ -596,6 +599,7 @@ The database volume is **preserved by default** so you can restart without losin
 | `spawn EPERM` in verify scripts | Windows sandbox restriction | Run outside the Claude Code sandbox |
 | OpenClaw `curl` returns empty reply on 3578 | Gateway bound to container loopback | Ensure `openclaw.json` has `gateway.bind: "lan"`, check `runtime-data/openclaw-home/openclaw.json`, recreate the container |
 | OpenClaw agents not showing in Control UI | Old agent config format | Ensure `openclaw.json` uses `agents.list[]` array format (not object keys), recreate container |
+| WebChat RedDwarf commands fail with Operator API connection errors | Gateway container cannot reach the host API | Confirm `REDDWARF_OPENCLAW_OPERATOR_API_URL` points at the host-reachable operator API and Compose has the `host.docker.internal` host-gateway mapping |
 | OpenClaw dispatch 401/403 | Invalid `OPENCLAW_HOOK_TOKEN` | Check `.env` token matches gateway config |
 | OpenClaw dispatch 429/529 | Rate limited | Adapter retries automatically (3 attempts, 2s backoff) |
 | Developer phase `task_blocked` | Approval not resolved | Check `/approvals` — resolve pending approval first |

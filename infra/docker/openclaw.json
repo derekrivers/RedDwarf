@@ -30,6 +30,10 @@
       "github:issue:"
     ]
   },
+  "commands": {
+    "text": true,
+    "native": "auto"
+  },
   "channels": {
     "discord": {
       "enabled": false,
@@ -58,6 +62,25 @@
   },
   "browser": {
     "enabled": true
+  },
+  "plugins": {
+    "enabled": true,
+    "allow": [
+      "reddwarf-operator"
+    ],
+    "load": {
+      "paths": [
+        "/opt/reddwarf/agents/openclaw/plugins/reddwarf-operator"
+      ]
+    },
+    "entries": {
+      "reddwarf-operator": {
+        "enabled": true,
+        "config": {
+          "operatorApiBaseUrl": "${REDDWARF_OPENCLAW_OPERATOR_API_URL}"
+        }
+      }
+    }
   },
   "agents": {
     "defaults": {

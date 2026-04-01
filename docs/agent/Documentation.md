@@ -2,6 +2,15 @@
 
 ## 2026-04-01
 
+- Completed feature 121 from `FEATURE_BOARD.md`: registered OpenClaw WebChat operator commands through a repo-mounted `reddwarf-operator` plugin.
+- Added a native OpenClaw plugin under `agents/openclaw/plugins/reddwarf-operator/` with command handlers for recent runs, lightweight task submission, and RedDwarf-specific status and approval flows backed by the existing operator API.
+- Wired the generated and checked-in `openclaw.json` configs to load that plugin from the mounted policy tree, enabled explicit slash-command parsing in the runtime config, and added `REDDWARF_OPENCLAW_OPERATOR_API_URL` plus a Docker `host.docker.internal` mapping so the gateway container can call the host-side operator API.
+- Added an explicit OpenClaw `plugins.allow` trust list for `reddwarf-operator` after live gateway verification surfaced the non-bundled-plugin auto-load warning. The trust-list fix is now part of the generated config and the checked-in template.
+- Upstream OpenClaw reserves `/status`, `/approve`, and `/reject`, so the RedDwarf plugin deliberately registers `/rdstatus`, `/rdapprove`, and `/rdreject` while keeping `/runs` and `/submit` on their exact names. This limitation is documented in `README.md` and `docs/agent/TROUBLESHOOTING.md`.
+- Expanded config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts` so plugin load paths, plugin config, and explicit command-surface settings stay under test.
+- Verification for feature 121: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm build && node scripts/generate-openclaw-config.mjs runtime-data/openclaw-workspaces runtime-data/openclaw-home/openclaw.json"`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d --force-recreate openclaw`; `docker compose -f infra/docker/docker-compose.yml exec -T openclaw sh -lc "node openclaw.mjs plugins inspect reddwarf-operator --json"`.
+- Updated the feature board so feature 121 is marked complete and feature 122 is now the next actionable M14 item.
+
 - Completed feature 120 from `FEATURE_BOARD.md`: served a single-file operator configuration panel from `GET /ui`.
 - Added a browser-first operator panel on the existing operator API server with grouped sections for Polling & Dispatch, DB Pool tuning, Logging, Paths, Status, repo management, recent runs/tasks, and write-only secret rotation.
 - Kept the page single-file by rendering inline HTML/CSS/JS from the control-plane package and reusing the existing operator endpoints for live mutations instead of adding a separate frontend build pipeline.

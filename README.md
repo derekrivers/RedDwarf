@@ -143,6 +143,7 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `REDDWARF_POLICY_PACKAGE_OUTPUT_ROOT` | `artifacts/policy-packs` | Output directory for packaged policy assets |
 | `REDDWARF_OPENCLAW_WORKSPACE_ROOT` | `runtime-data/openclaw-workspaces` | Host-mounted OpenClaw session workspace root |
 | `REDDWARF_OPENCLAW_CONFIG_PATH` | `runtime-data/openclaw.json` | Generated OpenClaw runtime config path |
+| `REDDWARF_OPENCLAW_OPERATOR_API_URL` | `http://host.docker.internal:8080` | Container-reachable Operator API base URL used by the OpenClaw command plugin |
 
 **Runtime-configurable**
 
@@ -328,6 +329,16 @@ The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1
 The operator API now also serves a single-file panel at `http://127.0.0.1:8080/ui`. It is intentionally lightweight: the page stores the bearer token only in the current browser tab, reads live data from the existing operator endpoints, and gives you grouped controls for polling, DB pool tuning, logging, repo management, paths, status, and secret rotation.
 
 The shell itself is public so a browser can load it without custom headers, but the live bootstrap data and all mutations still require `REDDWARF_OPERATOR_TOKEN`. Paste the token into the panel after load or keep using `curl` for the same operations.
+
+### OpenClaw WebChat operator commands
+
+The generated OpenClaw runtime config now loads a repo-mounted `reddwarf-operator` plugin from [agents/openclaw/plugins/reddwarf-operator](/home/derek/code/RedDwarf/agents/openclaw/plugins/reddwarf-operator). In WebChat and native command surfaces, it exposes:
+
+- `/runs` for recent RedDwarf pipeline runs
+- `/submit <description>` when exactly one repo is managed, or `/submit owner/repo | description` when multiple repos exist
+- `/rdstatus`, `/rdapprove <task-id-or-approval-id>`, and `/rdreject <task-id-or-approval-id> <reason>` for RedDwarf-specific status and approval flows
+
+OpenClaw reserves built-in `/status`, `/approve`, and `/reject`, so the RedDwarf plugin intentionally uses the `rd...` aliases instead of trying to override gateway-native commands. The gateway container reaches the host-side operator API through `REDDWARF_OPENCLAW_OPERATOR_API_URL`, which defaults to `http://host.docker.internal:8080` in Docker Compose.
 
 ### Service health checks
 

@@ -146,3 +146,19 @@
 - Failing approach: treating the operator API as an unauthenticated localhost control port, or starting `scripts/start-stack.mjs` / `scripts/start-operator-api.mjs` without `REDDWARF_OPERATOR_TOKEN` set.
 - Working workaround: set `REDDWARF_OPERATOR_TOKEN` in the environment before starting the stack, then include `Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}` on every protected operator request. Manual dispatch roots are also now restricted to the configured managed roots, so do not pass arbitrary filesystem paths.
 - Verification: `corepack pnpm verify:operator-api`; `curl http://127.0.0.1:8080/health`; `curl http://127.0.0.1:8080/approvals -H "Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>"`.
+
+## OpenClaw cannot register RedDwarf commands as `/status`, `/approve`, or `/reject`
+
+- Symptom: a custom OpenClaw plugin tries to register RedDwarf operator commands named `/status`, `/approve`, or `/reject`, but the gateway keeps the built-in behavior or rejects the plugin command registration.
+- Root cause: current OpenClaw builds reserve those slash-command names for gateway-native commands. Plugins can add new command names, but they cannot safely override the built-ins.
+- Failing approach: implementing feature 121 with exact command names and expecting the RedDwarf plugin to replace the upstream `/status`, `/approve`, or `/reject` handlers.
+- Working workaround: keep the RedDwarf-specific commands on non-conflicting aliases such as `/rdstatus`, `/rdapprove`, and `/rdreject`, while using exact `/runs` and `/submit` because those names are not reserved in the current runtime.
+- Verification: `docker compose -f infra/docker/docker-compose.yml exec -T openclaw sh -lc "node openclaw.mjs plugins inspect reddwarf-operator --json"` should show the RedDwarf plugin commands, and the built-in slash-command docs still list `/status` and `/approve` as native OpenClaw commands.
+
+## OpenClaw warns that a repo plugin may auto-load because `plugins.allow` is empty
+
+- Symptom: after adding a repo-mounted OpenClaw plugin, gateway logs warn that `plugins.allow is empty; discovered non-bundled plugins may auto-load`.
+- Root cause: OpenClaw treats repo plugins as non-bundled code and expects an explicit trust list in `plugins.allow` so only named plugin ids are permitted to load from configured paths.
+- Failing approach: adding `plugins.load.paths` and `plugins.entries` for a repo plugin without also pinning the trusted plugin ids.
+- Working workaround: set `plugins.allow` explicitly in both the generated config and the checked-in template. For feature 121, RedDwarf now trusts only `reddwarf-operator`.
+- Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate the OpenClaw container, and confirm `node openclaw.mjs plugins inspect reddwarf-operator --json` reports `status: "loaded"` without the trust warning.

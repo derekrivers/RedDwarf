@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { generateOpenClawConfig, serializeOpenClawConfig } from "../packages/control-plane/dist/index.js";
 
 function readBooleanEnv(name, fallback = false) {
@@ -38,6 +38,7 @@ const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const workspaceRoot = args[0] ?? process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces";
 const outputPath = args[1] ?? process.env.REDDWARF_OPENCLAW_CONFIG_PATH ?? "runtime-data/openclaw.json";
 const modelProvider = args[2] ?? process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER;
+const policyRoot = process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf";
 const browserEnabled = readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true);
 const discordEnabled = readBooleanEnv("REDDWARF_OPENCLAW_DISCORD_ENABLED");
 const discordGuildIds = readListEnv("REDDWARF_OPENCLAW_DISCORD_GUILD_IDS");
@@ -60,6 +61,7 @@ const resolvedOutputPath = resolve(outputPath);
 
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
+  policyRoot,
   ...(modelProvider ? { modelProvider } : {}),
   browser: {
     enabled: browserEnabled
@@ -167,6 +169,7 @@ const config = generateOpenClawConfig({
 });
 const json = serializeOpenClawConfig(config);
 
+mkdirSync(dirname(resolvedOutputPath), { recursive: true });
 writeFileSync(resolvedOutputPath, json, "utf8");
 console.log(`Generated openclaw.json at ${resolvedOutputPath}`);
 console.log(`  Workspace root: ${resolvedWorkspaceRoot}`);

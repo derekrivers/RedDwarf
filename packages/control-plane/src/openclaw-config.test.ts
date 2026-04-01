@@ -27,6 +27,25 @@ describe("generateOpenClawConfig", () => {
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
     });
+    expect(config.commands).toEqual({
+      text: true,
+      native: "auto"
+    });
+    expect(config.plugins).toEqual({
+      enabled: true,
+      allow: ["reddwarf-operator"],
+      load: {
+        paths: ["/opt/reddwarf/agents/openclaw/plugins/reddwarf-operator"]
+      },
+      entries: {
+        "reddwarf-operator": {
+          enabled: true,
+          config: {
+            operatorApiBaseUrl: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}"
+          }
+        }
+      }
+    });
     expect(config.agents.defaults.skipBootstrap).toBe(true);
 
     const agentIds = config.agents.list.map((agent) => agent.id);
@@ -211,6 +230,17 @@ describe("generateOpenClawConfig", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/ws", roles: reviewerOnly });
     const agentIds = config.agents.list.map((agent) => agent.id);
     expect(agentIds).toEqual(["reddwarf-arch-reviewer"]);
+  });
+
+  it("can target a custom runtime policy root for plugin loading", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      policyRoot: "/srv/reddwarf"
+    });
+
+    expect(config.plugins?.load?.paths).toEqual([
+      "/srv/reddwarf/agents/openclaw/plugins/reddwarf-operator"
+    ]);
   });
 
   it("serializes to valid JSON with trailing newline", () => {
