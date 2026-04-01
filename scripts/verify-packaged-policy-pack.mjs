@@ -66,6 +66,9 @@ const bundle = {
     testExpectations: ["Packaged dist imports resolve."],
     recommendedAgentType: "architect",
     riskClass: "low",
+    confidenceLevel: "high",
+    confidenceReason:
+      "This verification fixture is fully specified and only exercises packaged runtime helpers.",
     createdAt: packaged.manifest.createdAt
   },
   policySnapshot: {
@@ -150,4 +153,3 @@ try {
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }
-
