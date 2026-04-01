@@ -111,7 +111,7 @@ Verify the agent roster is loaded:
 docker compose -f infra/docker/docker-compose.yml exec openclaw sh -lc "node openclaw.mjs agents list"
 ```
 
-You should see four agents: `reddwarf-coordinator` (Rimmer), `reddwarf-analyst` (Holly), `reddwarf-developer` (Lister), `reddwarf-validator` (Kryten).
+You should see five agents: `reddwarf-coordinator` (Rimmer), `reddwarf-analyst` (Holly), `reddwarf-arch-reviewer` (Kryten), `reddwarf-developer` (Lister), and `reddwarf-validator` (Kryten).
 
 Browse the OpenClaw Control UI at `http://127.0.0.1:3578/` — authenticate with your `OPENCLAW_GATEWAY_TOKEN`.
 
@@ -369,63 +369,44 @@ Requested Capabilities:
 
 Add the label **`ai-eligible`** to the issue. Note the issue number (e.g., `#1`).
 
-### 4.3 Run the Polling Daemon
+### 4.3 Add Your Repo to the Polling Roster
 
-The polling daemon watches GitHub for new `ai-eligible` issues and automatically runs them through the planning pipeline.
+If `corepack pnpm start` is already running, the polling daemon is already live. The only thing you need to do is tell RedDwarf which GitHub repo to watch.
 
-There is no committed start script for the daemon yet. Create a one-off launcher:
+The friendliest option is the operator panel:
 
-```js
-// start-polling.mjs (not committed — one-off demo script)
-import { createGitHubIssuePollingDaemon } from "./packages/control-plane/dist/index.js";
-import { createPostgresPlanningRepository } from "./packages/evidence/dist/index.js";
-import { createRestGitHubAdapter } from "./packages/integrations/dist/index.js";
-import { createPlanningAgent } from "./packages/execution-plane/dist/index.js";
+1. Open `http://127.0.0.1:8080/ui`
+2. Paste `REDDWARF_OPERATOR_TOKEN`
+3. Add `owner/repo` under the repo-management section
 
-const repo = "your-org/demo-repo"; // Replace with your repo (owner/repo format)
+If you prefer the API directly:
 
-const repository = createPostgresPlanningRepository(
-  process.env.HOST_DATABASE_URL ?? "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf"
-);
-const github = createRestGitHubAdapter();
-const planner = createPlanningAgent({ type: "anthropic" });
-
-const daemon = createGitHubIssuePollingDaemon(
-  {
-    intervalMs: 30_000, // poll every 30 seconds
-    repositories: [{ repo, labels: ["ai-eligible"] }],
-    runOnStart: true
-  },
-  { repository, github, planner }
-);
-
-console.log(`Polling ${repo} for ai-eligible issues every 30s...`);
-console.log("Press Ctrl+C to stop.\n");
-
-await daemon.start();
-
-process.on("SIGINT", async () => {
-  console.log("\nStopping polling daemon...");
-  await daemon.stop();
-  await repository.close();
-  process.exit(0);
-});
+**PowerShell:**
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri "http://localhost:8080/repos" `
+  -Headers @{ Authorization = "Bearer $env:REDDWARF_OPERATOR_TOKEN" } `
+  -ContentType "application/json" `
+  -Body '{"repo":"your-org/demo-repo"}'
 ```
 
-Run it:
-
+**Bash:**
 ```bash
-node start-polling.mjs
+curl -X POST "http://localhost:8080/repos" \
+  -H "Authorization: Bearer ${REDDWARF_OPERATOR_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"repo":"your-org/demo-repo"}'
 ```
 
-The daemon will:
-1. Poll your repo for issues with the `ai-eligible` label
-2. Deduplicate against existing planning specs in Postgres
-3. Run new issues through the full planning pipeline (intake → eligibility → planning → policy gate)
-4. Persist polling cursors so restarts don't reprocess old issues
-5. Apply exponential backoff if GitHub is unreachable (up to 5 minutes between retries)
+After that, the running polling daemon will:
+1. Watch the repo for issues with the `ai-eligible` label
+2. Deduplicate against persisted planning specs in Postgres
+3. Run new issues through intake, eligibility, planning, and the policy gate
+4. Persist polling cursors so restarts do not reprocess old issues
+5. Back off automatically if GitHub is temporarily unreachable
 
-Watch the output — when it picks up your issue, you should see planning pipeline output including a Task ID and Approval Request ID.
+You can confirm the roster with `GET /repos`, then watch `/tasks`, `/runs`, or the operator panel for the new issue to appear.
 
 ### 4.4 Approve the Plan
 
@@ -468,7 +449,7 @@ curl -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
 
 ### 4.5 Run Downstream Phases
 
-After approval, the developer, validation, and SCM phases must be triggered manually in a phase-by-phase walkthrough. The E2E integration test (Part 3) automates all of this. See the E2E script source at `scripts/e2e-integration.mjs` for the exact API calls used at each phase.
+After approval, the rest of the pipeline continues automatically as long as the full stack is running. Use the operator panel, `GET /tasks`, or `GET /runs` to watch the task move through development, validation, and SCM.
 
 ---
 
@@ -581,7 +562,7 @@ The database volume is **preserved by default** so you can restart without losin
 | `corepack pnpm operator:api` | Start operator API on :8080 (standalone) |
 | `corepack pnpm query:evidence` | Query Postgres evidence |
 | `corepack pnpm cleanup:evidence` | Remove old evidence (dry-run default) |
-| `corepack pnpm generate:openclaw-config` | Generate openclaw.json from policy |
+| `corepack pnpm generate:openclaw-config` | Regenerate the live OpenClaw config at `runtime-data/openclaw-home/openclaw.json` |
 | `corepack pnpm typecheck` | TypeScript type check |
 | `corepack pnpm verify:all` | Run all verification scripts |
 

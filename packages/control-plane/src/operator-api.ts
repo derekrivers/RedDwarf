@@ -496,7 +496,7 @@ const operatorUiPathFields = [
   {
     key: "REDDWARF_OPENCLAW_CONFIG_PATH",
     description: "Generated OpenClaw runtime config path.",
-    defaultValue: "runtime-data/openclaw.json"
+    defaultValue: "runtime-data/openclaw-home/openclaw.json"
   }
 ] as const;
 

@@ -36,7 +36,10 @@ function readPositiveIntegerEnv(name) {
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const workspaceRoot = args[0] ?? process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces";
-const outputPath = args[1] ?? process.env.REDDWARF_OPENCLAW_CONFIG_PATH ?? "runtime-data/openclaw.json";
+const outputPath =
+  args[1] ??
+  process.env.REDDWARF_OPENCLAW_CONFIG_PATH ??
+  "runtime-data/openclaw-home/openclaw.json";
 const modelProvider = args[2] ?? process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER;
 const policyRoot = process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf";
 const browserEnabled = readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true);

@@ -59,6 +59,7 @@ const scripts = [
   "verify-evidence.mjs",
   "verify-recovery.mjs",
   "verify-operator-api.mjs",
+  "verify-operator-mcp.mjs",
   "verify-submit-cli.mjs",
   "verify-knowledge-ingestion.mjs",
   "verify-packaged-policy-pack.mjs",

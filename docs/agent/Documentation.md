@@ -2,6 +2,11 @@
 
 ## 2026-04-01
 
+- Cleaned up `README.md` and `docs/DEMO_RUNBOOK.md` after the M14 operator-surface rollout so the docs match the current user-facing workflow.
+- Replaced the stale demo-runbook advice about a hand-written polling launcher with the real repo-management flow (`corepack pnpm start` plus `POST /repos` or the `/ui` panel), corrected the agent-roster count to five, and clarified that post-approval phases now continue automatically while the stack is running.
+- Aligned the OpenClaw config-path defaults across `.env.example`, `scripts/generate-openclaw-config.mjs`, and the operator API metadata so the documented manual generator path now matches the live `runtime-data/openclaw-home/openclaw.json` file used by normal startup.
+- Updated `scripts/verify-all.mjs` to include `verify-operator-mcp.mjs`, closing the aggregate verification gap introduced when feature 122 landed.
+
 - Completed feature 122 from `FEATURE_BOARD.md`: added a read-only MCP bridge over the operator API for task history and evidence lookups.
 - Added `packages/control-plane/src/operator-mcp.ts` plus `scripts/start-operator-mcp.mjs`, implementing a stdio MCP server that proxies to the existing operator API with read-only tools for task-history search, task detail, task evidence, run listing, run detail, and run evidence.
 - Registered that bridge in generated and checked-in OpenClaw runtime config under `mcp.servers.reddwarf`, using the already-established `REDDWARF_OPENCLAW_OPERATOR_API_URL` host mapping and the operator bearer token for authenticated calls from inside the gateway container.

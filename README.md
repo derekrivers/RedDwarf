@@ -67,14 +67,14 @@ corepack pnpm run setup           # compose:up → Postgres → migrate → heal
 1. Enable Corepack: `corepack enable`
 2. Install dependencies: `corepack pnpm install`
 3. Copy env file: `cp .env.example .env` (Windows: `Copy-Item .env.example .env`)
-4. Start the local stack: `corepack pnpm compose:up`
-5. Apply DB schema: `corepack pnpm db:migrate`
-6. Confirm the stack is healthy: `corepack pnpm verify:postgres`
+4. Bootstrap infrastructure: `corepack pnpm run setup`
+5. Start the full RedDwarf stack: `corepack pnpm start`
+6. If you want separate terminals instead, use the service-specific commands under `Starting services separately` below.
 
 ### Run all verification checks
 
 ```bash
-corepack pnpm verify:all      # runs all 18 feature verification scripts in sequence
+corepack pnpm verify:all      # runs the aggregate verification suite
 ```
 
 Or run individual checks:
@@ -142,8 +142,8 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `REDDWARF_HOST_EVIDENCE_ROOT` | `runtime-data/evidence` | Host-side evidence archive root |
 | `REDDWARF_POLICY_PACKAGE_OUTPUT_ROOT` | `artifacts/policy-packs` | Output directory for packaged policy assets |
 | `REDDWARF_OPENCLAW_WORKSPACE_ROOT` | `runtime-data/openclaw-workspaces` | Host-mounted OpenClaw session workspace root |
-| `REDDWARF_OPENCLAW_CONFIG_PATH` | `runtime-data/openclaw.json` | Generated OpenClaw runtime config path |
-| `REDDWARF_OPENCLAW_OPERATOR_API_URL` | `http://host.docker.internal:8080` | Container-reachable Operator API base URL used by the OpenClaw command plugin |
+| `REDDWARF_OPENCLAW_CONFIG_PATH` | `runtime-data/openclaw-home/openclaw.json` | Live OpenClaw runtime config path used by `generate:openclaw-config` and the standard `setup` / `start` flows |
+| `REDDWARF_OPENCLAW_OPERATOR_API_URL` | `http://host.docker.internal:8080` | Container-reachable Operator API base URL used by the OpenClaw command plugin and the RedDwarf MCP bridge |
 
 **Runtime-configurable**
 
@@ -237,6 +237,8 @@ corepack pnpm compose:up:openclaw          # OpenClaw gateway (if not already st
 corepack pnpm operator:api                 # operator API on :8080
 ```
 
+For most local work, prefer `corepack pnpm start` unless you specifically need to split infrastructure, OpenClaw, and the operator API across terminals for debugging.
+
 The operator API now exposes configuration endpoints alongside the existing approvals and runs surface:
 
 - `GET /config` returns runtime-configurable settings with current value, default, description, and source.
@@ -262,7 +264,7 @@ export REDDWARF_OPENCLAW_DISCORD_GUILD_IDS=<guild-id>
 corepack pnpm generate:openclaw-config
 ```
 
-The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the checked-in template. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
+The standard `setup` and `start` flows now generate `runtime-data/openclaw-home/openclaw.json` from the typed control-plane config, so the Discord block can be driven from `.env` instead of hand-editing the checked-in template. The standalone `corepack pnpm generate:openclaw-config` command now writes to that same live path by default. The default posture is conservative: DM pairing, server allowlisting, native commands enabled, and mention requirements on allowed guilds.
 
 For feature 100, OpenClaw can also drive native Discord status visibility and approval prompts:
 
