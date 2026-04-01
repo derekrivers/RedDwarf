@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## GitHub Actions `docker compose ... config` fails because `.secrets` is missing
+
+- Symptom: CI fails on `docker compose -f infra/docker/docker-compose.yml config` with `env file .../.secrets not found`.
+- Root cause: the compose file now intentionally reads both `.env` and `.secrets`, but a clean GitHub Actions checkout only creates `.env` unless the workflow also creates the empty companion secrets file.
+- Failing approach: copying `.env.example` to `.env` in CI and then validating Compose without first creating `.secrets`.
+- Working workaround: add a workflow step such as `touch .secrets` before any `docker compose ... config` or `docker compose ... up` command. This mirrors the repo's normal `setup` / `start` behavior, which already ensures the file exists locally.
+- Verification: rerun the workflow and confirm `docker compose -f infra/docker/docker-compose.yml config` succeeds on a clean checkout.
+
 ## `corepack pnpm ...` fails immediately in WSL with a Windows Node path
 
 - Symptom: repo scripts such as `corepack pnpm verify:package` fail before running project code with errors like `/mnt/c/Program Files/nodejs/corepack: cannot execute: required file not found`, and direct calls to `"/mnt/c/Program Files/nodejs/node.exe"` fail with `WSL ... UtilBindVsockAnyPort ... socket failed 1`.

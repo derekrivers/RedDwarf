@@ -2,6 +2,10 @@
 
 ## 2026-04-01
 
+- Fixed a GitHub Actions regression where `docker compose -f infra/docker/docker-compose.yml config` failed on clean runners because `.secrets` was missing even though Compose now references it for both services.
+- Updated `.github/workflows/ci.yml` to create an empty repo-root `.secrets` file after copying `.env.example`, matching the local `setup` / `start` contract.
+- Added a troubleshooting note documenting the CI symptom, root cause, and the `touch .secrets` workaround for future workflow changes.
+
 - Added [docs/ARCHITECTURE.md](/home/derek/code/RedDwarf/docs/ARCHITECTURE.md), a current-state architecture reference covering the control-plane/runtime split, pipeline lifecycle, OpenClaw integration model, Discord/WebChat/MCP operator surfaces, storage layout, trust boundaries, and deployment topology with Mermaid diagrams.
 - Linked the README to the new architecture doc so operators and contributors have a single entry point for system design context.
 
