@@ -88,7 +88,7 @@ export async function runPlanningPipeline(
   const taskId = createTaskId(input, runId);
   const concurrencyKey = createTaskConcurrencyKey(input);
   const riskClass = classifyRisk(input);
-  const approvalMode = resolveApprovalMode({
+  const initialApprovalMode = resolveApprovalMode({
     phase: "development",
     riskClass,
     requestedCapabilities: input.requestedCapabilities
@@ -124,7 +124,7 @@ export async function runPlanningPipeline(
     priority: input.priority,
     dryRun: input.dryRun,
     riskClass,
-    approvalMode,
+    approvalMode: initialApprovalMode,
     currentPhase: "intake",
     lifecycleStatus: "active",
     assignedAgentType: "architect",
@@ -284,7 +284,7 @@ export async function runPlanningPipeline(
         kind: "manifest",
         title: "Initial task manifest",
         metadata: {
-          approvalMode,
+          approvalMode: initialApprovalMode,
           riskClass,
           concurrencyDecision,
           dryRun: input.dryRun
@@ -303,7 +303,7 @@ export async function runPlanningPipeline(
       code: EventCodes.PIPELINE_STARTED,
       message: "Planning pipeline started.",
       data: {
-        approvalMode,
+        approvalMode: initialApprovalMode,
         riskClass,
         requestedCapabilities: input.requestedCapabilities,
         concurrencyKey,
@@ -668,8 +668,22 @@ export async function runPlanningPipeline(
       testExpectations: draft.testExpectations,
       recommendedAgentType: "architect",
       riskClass,
+      confidenceLevel: draft.confidence.level,
+      confidenceReason: draft.confidence.reason,
       createdAt: planningCompletedAtIso
     });
+
+    const approvalMode = resolveApprovalMode({
+      phase: "development",
+      riskClass,
+      requestedCapabilities: input.requestedCapabilities,
+      confidenceLevel: spec.confidenceLevel
+    });
+    currentManifest = patchManifest(currentManifest, {
+      approvalMode,
+      updatedAt: planningCompletedAtIso
+    });
+    await repository.updateManifest(currentManifest);
 
     await repository.savePlanningSpec(spec);
     await repository.savePhaseRecord(
@@ -680,6 +694,10 @@ export async function runPlanningPipeline(
         status: "passed",
         actor: "architect",
         summary: "Planning spec generated.",
+        details: {
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason
+        },
         createdAt: planningCompletedAtIso
       })
     );
@@ -689,7 +707,11 @@ export async function runPlanningPipeline(
         taskId,
         kind: "planning_spec",
         title: "Planning specification",
-        metadata: { specId: spec.specId },
+        metadata: {
+          specId: spec.specId,
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason
+        },
         createdAt: planningCompletedAtIso
       })
     );
@@ -745,6 +767,8 @@ export async function runPlanningPipeline(
       data: {
         actor: "architect",
         specId: spec.specId,
+        confidenceLevel: spec.confidenceLevel,
+        confidenceReason: spec.confidenceReason,
         status: "passed"
       },
       createdAt: planningCompletedAtIso
@@ -759,7 +783,12 @@ export async function runPlanningPipeline(
 
     activePhase = "policy_gate";
     const policyStartedAt = clock();
-    const policySnapshot = buildPolicySnapshot(input, riskClass, approvalMode);
+    const policySnapshot = buildPolicySnapshot(
+      input,
+      riskClass,
+      approvalMode,
+      draft.confidence
+    );
     const approvalRequestId =
       approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
     await repository.savePolicySnapshot(taskId, policySnapshot);
@@ -779,6 +808,8 @@ export async function runPlanningPipeline(
           constraints: spec.constraints,
           policyReasons: policySnapshot.reasons,
           approvalMode,
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason,
           allowedSecretScopes: policySnapshot.allowedSecretScopes,
           defaultBranch: readConfiguredBaseBranch(input),
           ...(approvalRequestId ? { approvalRequestId } : {})
@@ -804,6 +835,8 @@ export async function runPlanningPipeline(
             runId,
             phase: "policy_gate",
             dryRun: input.dryRun,
+            confidenceLevel: spec.confidenceLevel,
+            confidenceReason: spec.confidenceReason,
             approvalMode,
             status: "pending",
             riskClass,
@@ -838,6 +871,8 @@ export async function runPlanningPipeline(
         details: {
           approvalMode,
           reasons: policySnapshot.reasons,
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason,
           ...(approvalRequest
             ? { approvalRequestId: approvalRequest.requestId }
             : {})
@@ -854,6 +889,8 @@ export async function runPlanningPipeline(
         metadata: {
           approvalMode,
           blockedPhases: policySnapshot.blockedPhases,
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason,
           policySnapshot,
           ...(approvalRequest
             ? { approvalRequestId: approvalRequest.requestId }
@@ -872,6 +909,8 @@ export async function runPlanningPipeline(
           metadata: {
             requestId: approvalRequest.requestId,
             dryRun: approvalRequest.dryRun,
+            confidenceLevel: approvalRequest.confidenceLevel,
+            confidenceReason: approvalRequest.confidenceReason,
             approvalMode,
             riskClass,
             requestedCapabilities: approvalRequest.requestedCapabilities,
@@ -905,6 +944,8 @@ export async function runPlanningPipeline(
         actor: "policy",
         approvalMode,
         reasons: policySnapshot.reasons,
+        confidenceLevel: spec.confidenceLevel,
+        confidenceReason: spec.confidenceReason,
         allowedSecretScopes: policySnapshot.allowedSecretScopes,
         status: policyStatus,
         ...(approvalRequest
@@ -927,6 +968,8 @@ export async function runPlanningPipeline(
         data: {
           requestId: approvalRequest.requestId,
           approvalMode,
+          confidenceLevel: approvalRequest.confidenceLevel,
+          confidenceReason: approvalRequest.confidenceReason,
           blockedPhases: approvalRequest.blockedPhases,
           requestedCapabilities: approvalRequest.requestedCapabilities,
           allowedSecretScopes: policySnapshot.allowedSecretScopes

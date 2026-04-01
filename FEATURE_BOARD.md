@@ -38,7 +38,7 @@ Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
 | 107 | Dry-run / simulation mode | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#1-dry-run--simulation-mode`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 108 | Plan confidence gate | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#2-plan-confidence-gate`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
+| 108 | Plan confidence gate | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#2-plan-confidence-gate`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 109 | Token budget enforcement | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#3-token-budget-enforcement`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 110 | Pipeline run report export | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#4-pipeline-run-report-export`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
 | 111 | Prompt version tracking | M16 | pending | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#5-prompt-version-tracking`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |

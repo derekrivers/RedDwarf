@@ -62,6 +62,8 @@ const spec: PlanningSpec = {
   testExpectations: ["Schemas validate."],
   recommendedAgentType: "architect",
   riskClass: "low",
+  confidenceLevel: "high",
+  confidenceReason: "This fixture is intentionally scoped to a docs-only planning surface.",
   createdAt: timestamp
 };
 

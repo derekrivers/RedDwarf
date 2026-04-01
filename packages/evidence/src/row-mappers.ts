@@ -74,6 +74,8 @@ export function mapPlanningSpecRow(row: Record<string, unknown>): PlanningSpec {
     recommendedAgentType:
       row.recommended_agent_type as PlanningSpec["recommendedAgentType"],
     riskClass: row.risk_class as PlanningSpec["riskClass"],
+    confidenceLevel: row.confidence_level as PlanningSpec["confidenceLevel"],
+    confidenceReason: row.confidence_reason as PlanningSpec["confidenceReason"],
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date))
   };
 }
@@ -189,6 +191,9 @@ export function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalReq
     runId: row.run_id as string,
     phase: row.phase as ApprovalRequest["phase"],
     dryRun: Boolean(row.dry_run),
+    confidenceLevel:
+      (row.confidence_level as ApprovalRequest["confidenceLevel"] | null) ?? null,
+    confidenceReason: (row.confidence_reason as string | null) ?? null,
     approvalMode: row.approval_mode as ApprovalRequest["approvalMode"],
     status: row.status as ApprovalRequest["status"],
     riskClass: row.risk_class as ApprovalRequest["riskClass"],

@@ -84,6 +84,8 @@ export const planningSpecsTable = pgTable("planning_specs", {
   testExpectations: jsonb("test_expectations").notNull(),
   recommendedAgentType: text("recommended_agent_type").notNull(),
   riskClass: riskClassEnum("risk_class").notNull(),
+  confidenceLevel: text("confidence_level").notNull(),
+  confidenceReason: text("confidence_reason").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull()
 });
 
@@ -156,6 +158,8 @@ export const approvalRequestsTable = pgTable("approval_requests", {
   runId: text("run_id").notNull(),
   phase: taskPhaseEnum("phase").notNull(),
   dryRun: boolean("dry_run").notNull().default(false),
+  confidenceLevel: text("confidence_level"),
+  confidenceReason: text("confidence_reason"),
   approvalMode: approvalModeEnum("approval_mode").notNull(),
   status: approvalRequestStatusEnum("status").notNull(),
   riskClass: riskClassEnum("risk_class").notNull(),
@@ -184,4 +188,3 @@ export const githubIssuePollingCursorsTable = pgTable("github_issue_polling_curs
   lastPollError: text("last_poll_error"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
-

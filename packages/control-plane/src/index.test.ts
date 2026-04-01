@@ -723,6 +723,36 @@ describe("control-plane", () => {
     ).toBe(true);
   });
 
+  it("forces low-confidence planning results through human review even for docs-safe work", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: {
+        async createSpec() {
+          return {
+            summary: "Plan a docs-safe change with explicit human review.",
+            assumptions: ["The task remains docs-only."],
+            affectedAreas: ["docs/guide.md"],
+            constraints: ["Keep the change within docs."],
+            testExpectations: ["Validate the planning schema."],
+            confidence: {
+              level: "low",
+              reason: "The planner is not confident that the issue text fully captures the expected outcome."
+            }
+          };
+        }
+      },
+      clock: () => new Date("2026-04-01T11:00:00.000Z"),
+      idGenerator: () => "run-low-confidence"
+    });
+
+    expect(result.nextAction).toBe("await_human");
+    expect(result.spec?.confidenceLevel).toBe("low");
+    expect(result.policySnapshot?.approvalMode).toBe("human_signoff_required");
+    expect(result.approvalRequest?.confidenceLevel).toBe("low");
+    expect(result.approvalRequest?.confidenceReason).toContain("not confident");
+  });
+
   it("rolls back approval resolution when transactional persistence fails", async () => {
     class ApprovalDecisionFailureRepository extends InMemoryPlanningRepository {
       override async saveEvidenceRecord(
@@ -4322,6 +4352,8 @@ function makeOrphanSpec(taskId: string) {
     testExpectations: [],
     recommendedAgentType: "developer",
     riskClass: "low",
+    confidenceLevel: "medium",
+    confidenceReason: "Orphan-sweep fixtures use a neutral planning confidence baseline.",
     createdAt: orphanTs
   });
 }

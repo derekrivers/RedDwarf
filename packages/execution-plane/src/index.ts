@@ -388,6 +388,7 @@ export class DeterministicPlanningAgent implements PlanningAgent {
     input: PlanningTaskInput,
     context: { manifest: TaskManifest; runId: string }
   ): Promise<PlanningDraft> {
+    const confidence = deriveDeterministicPlanningConfidence(input);
     return {
       summary: `Plan task ${context.manifest.taskId} for ${input.source.repo}: ${input.title}`,
       assumptions: [
@@ -405,7 +406,8 @@ export class DeterministicPlanningAgent implements PlanningAgent {
       testExpectations: [
         "Validate schemas for manifest, spec, and workspace context bundle.",
         "Verify policy gate output and lifecycle records for the task."
-      ]
+      ],
+      confidence
     };
   }
 }
@@ -936,7 +938,8 @@ function buildPlanningUserMessage(
     "",
     "## Required Output",
     "",
-    "Produce a planning spec as a JSON object with fields: summary, assumptions, affectedAreas, constraints, testExpectations.",
+    "Produce a planning spec as a JSON object with fields: summary, assumptions, affectedAreas, constraints, testExpectations, confidence.",
+    'The confidence field must be an object with shape: {"level":"low"|"medium"|"high","reason":"<short explanation>"}',
     "",
     renderUntrustedTaskInputBlock({
       title: input.title,
@@ -981,7 +984,11 @@ export function parsePlanningDraft(
       "Do not write product code in RedDwarf v1.",
       "Archive all planning outputs as durable evidence."
     ],
-    testExpectations: ["Validate planning spec structure and evidence archival."]
+    testExpectations: ["Validate planning spec structure and evidence archival."],
+    confidence: {
+      level: "low",
+      reason: "Planner output could not be parsed into the required JSON contract."
+    }
   };
 }
 
@@ -993,8 +1000,44 @@ export function isValidPlanningDraft(value: unknown): value is PlanningDraft {
     Array.isArray(v["assumptions"]) &&
     Array.isArray(v["affectedAreas"]) &&
     Array.isArray(v["constraints"]) &&
-    Array.isArray(v["testExpectations"])
+    Array.isArray(v["testExpectations"]) &&
+    typeof v["confidence"] === "object" &&
+    v["confidence"] !== null &&
+    ["low", "medium", "high"].includes(
+      (v["confidence"] as Record<string, unknown>)["level"] as string
+    ) &&
+    typeof (v["confidence"] as Record<string, unknown>)["reason"] === "string"
   );
+}
+
+function deriveDeterministicPlanningConfidence(
+  input: PlanningTaskInput
+): PlanningDraft["confidence"] {
+  const touchesSensitivePath = input.affectedPaths.some((path) =>
+    /(auth|billing|secret|infra|deploy|migration)/i.test(path)
+  );
+
+  if (touchesSensitivePath || input.affectedPaths.length === 0) {
+    return {
+      level: "low",
+      reason:
+        input.affectedPaths.length === 0
+          ? "The task does not identify concrete affected paths."
+          : "The task touches sensitive or high-risk paths that warrant review."
+    };
+  }
+
+  if (input.affectedPaths.length > 1) {
+    return {
+      level: "medium",
+      reason: "The task spans more than one affected area and may need review."
+    };
+  }
+
+  return {
+    level: "high",
+    reason: "The task is scoped to a single explicit area with clear acceptance criteria."
+  };
 }
 
 function createValidationNodeScript(kind: "lint" | "test"): string {

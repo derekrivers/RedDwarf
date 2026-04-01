@@ -424,8 +424,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
           test_expectations,
           recommended_agent_type,
           risk_class,
+          confidence_level,
+          confidence_reason,
           created_at
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11)
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
         ON CONFLICT (spec_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           summary = EXCLUDED.summary,
@@ -436,6 +438,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
           test_expectations = EXCLUDED.test_expectations,
           recommended_agent_type = EXCLUDED.recommended_agent_type,
           risk_class = EXCLUDED.risk_class,
+          confidence_level = EXCLUDED.confidence_level,
+          confidence_reason = EXCLUDED.confidence_reason,
           created_at = EXCLUDED.created_at
       `,
       [
@@ -449,6 +453,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
         JSON.stringify(spec.testExpectations),
         spec.recommendedAgentType,
         spec.riskClass,
+        spec.confidenceLevel,
+        spec.confidenceReason,
         spec.createdAt
       ]
     );
@@ -714,6 +720,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
           run_id,
           phase,
           dry_run,
+          confidence_level,
+          confidence_reason,
           approval_mode,
           status,
           risk_class,
@@ -731,14 +739,16 @@ export class PostgresPlanningRepository implements PlanningRepository {
           updated_at,
           resolved_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb,
-          $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $21
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
+          $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
         )
         ON CONFLICT (request_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           run_id = EXCLUDED.run_id,
           phase = EXCLUDED.phase,
           dry_run = EXCLUDED.dry_run,
+          confidence_level = EXCLUDED.confidence_level,
+          confidence_reason = EXCLUDED.confidence_reason,
           approval_mode = EXCLUDED.approval_mode,
           status = EXCLUDED.status,
           risk_class = EXCLUDED.risk_class,
@@ -762,6 +772,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
         request.runId,
         request.phase,
         request.dryRun,
+        request.confidenceLevel,
+        request.confidenceReason,
         request.approvalMode,
         request.status,
         request.riskClass,

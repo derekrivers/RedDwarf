@@ -145,6 +145,8 @@ export function createApprovalRequest(input: {
   runId: string;
   phase: ApprovalRequest["phase"];
   dryRun?: boolean;
+  confidenceLevel?: ApprovalRequest["confidenceLevel"];
+  confidenceReason?: string | null;
   approvalMode: ApprovalRequest["approvalMode"];
   status: ApprovalRequest["status"];
   riskClass: ApprovalRequest["riskClass"];
@@ -170,6 +172,8 @@ export function createApprovalRequest(input: {
     runId: input.runId,
     phase: input.phase,
     dryRun: input.dryRun ?? false,
+    confidenceLevel: input.confidenceLevel ?? null,
+    confidenceReason: input.confidenceReason ?? null,
     approvalMode: input.approvalMode,
     status: input.status,
     riskClass: input.riskClass,

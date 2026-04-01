@@ -2,6 +2,8 @@
 import type {
   ApprovalMode,
   Capability,
+  ConfidenceLevel,
+  ConfidenceSignal,
   PlanningTaskInput,
   PolicySnapshot,
   RiskClass,
@@ -45,6 +47,7 @@ export interface ApprovalResolutionInput {
   phase: TaskPhase;
   riskClass: RiskClass;
   requestedCapabilities: Capability[];
+  confidenceLevel?: ConfidenceLevel;
 }
 
 export function assessEligibility(
@@ -101,6 +104,10 @@ export function classifyRisk(input: PlanningTaskInput): RiskClass {
 export function resolveApprovalMode(
   input: ApprovalResolutionInput
 ): ApprovalMode {
+  if (input.confidenceLevel === "low") {
+    return "human_signoff_required";
+  }
+
   if (
     [
       "intake",
@@ -185,7 +192,8 @@ export function createAllowedPaths(
 export function buildPolicySnapshot(
   input: PlanningTaskInput,
   riskClass: RiskClass,
-  approvalMode: ApprovalMode
+  approvalMode: ApprovalMode,
+  confidence?: ConfidenceSignal
 ): PolicySnapshot {
   const allowedSecretScopes = createAllowedSecretScopes(input, riskClass);
   const allowedCapabilities = [
@@ -200,6 +208,18 @@ export function buildPolicySnapshot(
       : [
           "Developer orchestration may continue after human intervention, architecture review now runs before validation, SCM can open an approved branch and pull request after validation, and only the final post-validation review remains blocked in v1."
         ];
+
+  if (confidence) {
+    reasons.push(
+      `Architect confidence is ${confidence.level}: ${confidence.reason}`
+    );
+  }
+
+  if (confidence?.level === "low") {
+    reasons.unshift(
+      "Low-confidence plans always require human review before downstream execution."
+    );
+  }
 
   if (
     input.requestedCapabilities.includes("can_use_secrets") &&

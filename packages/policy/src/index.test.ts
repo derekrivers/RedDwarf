@@ -42,6 +42,17 @@ describe("policy", () => {
     ).toBe("human_signoff_required");
   });
 
+  it("requires human signoff for low-confidence plans even on low-risk work", () => {
+    expect(
+      resolveApprovalMode({
+        phase: "development",
+        riskClass: "low",
+        requestedCapabilities: ["can_plan", "can_archive_evidence"],
+        confidenceLevel: "low"
+      })
+    ).toBe("human_signoff_required");
+  });
+
   it("keeps code writing disabled by default in the development phase", () => {
     expect(capabilitiesAllowedForPhase("development", ["can_write_code"])).toBe(
       false
@@ -111,6 +122,17 @@ describe("policy", () => {
     );
 
     expect(snapshot.reasons[0]).toContain("architecture review now runs before validation");
+  });
+
+  it("records planner confidence in the policy snapshot reasons", () => {
+    const snapshot = buildPolicySnapshot(baseInput, "low", "auto", {
+      level: "high",
+      reason: "The task is narrowly scoped and fully specified."
+    });
+
+    expect(snapshot.reasons.some((reason) => reason.includes("Architect confidence is high"))).toBe(
+      true
+    );
   });
 
   it("grants scoped secrets only to non-high-risk tasks with explicit scopes", () => {

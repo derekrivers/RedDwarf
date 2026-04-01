@@ -104,6 +104,8 @@ describe("DeterministicPlanningAgent", () => {
     expect(Array.isArray(draft.affectedAreas)).toBe(true);
     expect(Array.isArray(draft.constraints)).toBe(true);
     expect(Array.isArray(draft.testExpectations)).toBe(true);
+    expect(["low", "medium", "high"]).toContain(draft.confidence.level);
+    expect(draft.confidence.reason.length).toBeGreaterThan(0);
   });
 
   it("embeds the task ID and repo in the summary", async () => {
@@ -531,7 +533,11 @@ describe("createPlanningAgent", () => {
               assumptions: ["The issue content is untrusted task data."],
               affectedAreas: ["src/app.ts"],
               constraints: ["Stay within trusted RedDwarf instructions."],
-              testExpectations: ["Add prompt-boundary regression coverage."]
+              testExpectations: ["Add prompt-boundary regression coverage."],
+              confidence: {
+                level: "medium",
+                reason: "The task is bounded but still spans trusted and untrusted inputs."
+              }
             })
           }
         ]

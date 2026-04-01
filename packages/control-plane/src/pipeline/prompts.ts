@@ -255,7 +255,11 @@ export function parseArchitectHandoffMarkdown(markdown: string): PlanningDraft {
     assumptions: risksSection,
     affectedAreas: affectedSection,
     constraints: nonGoalsSection,
-    testExpectations: testSection
+    testExpectations: testSection,
+    confidence: {
+      level: "medium",
+      reason: "Holly produced a structured architecture handoff with bounded implementation notes."
+    }
   };
 }
 

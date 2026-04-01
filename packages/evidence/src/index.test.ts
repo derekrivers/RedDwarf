@@ -190,6 +190,8 @@ describe("evidence memory partitions", () => {
       testExpectations: ["Repository source lookup returns true."],
       recommendedAgentType: "architect",
       riskClass: "low",
+      confidenceLevel: "high",
+      confidenceReason: "The fixture models a previously accepted planning task.",
       createdAt: timestamp
     });
 

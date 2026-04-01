@@ -144,6 +144,8 @@ describe("contracts", () => {
         testExpectations: ["Schemas validate."],
         recommendedAgentType: "architect",
         riskClass: "low",
+        confidenceLevel: "high",
+        confidenceReason: "The fixture plan is fully specified and docs-scoped.",
         createdAt: timestamp
       },
       policySnapshot: {
@@ -458,6 +460,8 @@ describe("contracts", () => {
         testExpectations: ["Schemas validate."],
         recommendedAgentType: "developer",
         riskClass: "medium",
+        confidenceLevel: "medium",
+        confidenceReason: "The fixture crosses more than one policy concern.",
         createdAt: timestamp
       },
       policySnapshot: {

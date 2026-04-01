@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { confidenceLevelSchema } from "./planning.js";
 import {
   isoDateTimeSchema,
   approvalModeSchema,
@@ -27,6 +28,8 @@ export const approvalRequestSchema = z.object({
   runId: z.string().min(1),
   phase: taskPhaseSchema,
   dryRun: z.boolean().default(false),
+  confidenceLevel: confidenceLevelSchema.nullable().default(null),
+  confidenceReason: z.string().min(1).nullable().default(null),
   approvalMode: approvalModeSchema,
   status: approvalRequestStatusSchema,
   riskClass: riskClassSchema,

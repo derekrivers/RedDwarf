@@ -17,6 +17,7 @@ import type {
   MaterializedManagedWorkspace
 } from "./workspace.js";
 import type {
+  ConfidenceSignal,
   PlanningTaskInput,
   PreScreenAssessment,
   TaskManifest
@@ -114,6 +115,7 @@ export interface PlanningDraft {
   affectedAreas: string[];
   constraints: string[];
   testExpectations: string[];
+  confidence: ConfidenceSignal;
 }
 
 export interface DevelopmentDraft {

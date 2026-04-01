@@ -100,6 +100,13 @@ export const taskGroupMembershipSchema = z.object({
   dependsOnTaskIds: z.array(z.string().min(1))
 });
 
+export const confidenceLevelSchema = z.enum(["low", "medium", "high"]);
+
+export const confidenceSignalSchema = z.object({
+  level: confidenceLevelSchema,
+  reason: z.string().min(1).max(300)
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -111,6 +118,8 @@ export const planningSpecSchema = z.object({
   testExpectations: z.array(z.string().min(1)),
   recommendedAgentType: agentTypeSchema,
   riskClass: riskClassSchema,
+  confidenceLevel: confidenceLevelSchema,
+  confidenceReason: z.string().min(1).max(300),
   createdAt: isoDateTimeSchema
 });
 
@@ -149,5 +158,7 @@ export type TaskGroupInjectionRequest = z.infer<
   typeof taskGroupInjectionRequestSchema
 >;
 export type TaskGroupMembership = z.infer<typeof taskGroupMembershipSchema>;
+export type ConfidenceLevel = z.infer<typeof confidenceLevelSchema>;
+export type ConfidenceSignal = z.infer<typeof confidenceSignalSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
