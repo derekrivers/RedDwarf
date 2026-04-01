@@ -323,6 +323,12 @@ corepack pnpm exec reddwarf submit \
 
 The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1:${REDDWARF_API_PORT:-8080}`. Add `--json` if you want the raw planning response back for scripting.
 
+### Operator panel
+
+The operator API now also serves a single-file panel at `http://127.0.0.1:8080/ui`. It is intentionally lightweight: the page stores the bearer token only in the current browser tab, reads live data from the existing operator endpoints, and gives you grouped controls for polling, DB pool tuning, logging, repo management, paths, status, and secret rotation.
+
+The shell itself is public so a browser can load it without custom headers, but the live bootstrap data and all mutations still require `REDDWARF_OPERATOR_TOKEN`. Paste the token into the panel after load or keep using `curl` for the same operations.
+
 ### Service health checks
 
 | Service | Endpoint | Expected |
@@ -330,6 +336,7 @@ The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1
 | Postgres | `pg_isready` via Docker health check | Automatic |
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
 | Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...},"dispatcher":{...}}` |
+| Operator Panel | `http://127.0.0.1:8080/ui` | HTML page with grouped operator controls |
 
 ### Teardown
 

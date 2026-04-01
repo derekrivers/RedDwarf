@@ -45,6 +45,36 @@ function apiGet(port, path, authToken = operatorApiToken) {
   });
 }
 
+function apiGetRaw(port, path, accept, authToken = operatorApiToken) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "GET",
+        headers: {
+          ...buildAuthHeaders(authToken),
+          Accept: accept
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk) => (raw += chunk.toString()));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: raw,
+            contentType: String(res.headers["content-type"] ?? "")
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function apiPost(port, path, body, authToken = operatorApiToken) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -195,6 +225,17 @@ try {
   const seededRepository = health.body.polling.repositories.find((entry) => entry.repo === repo);
   assert.ok(seededRepository, "polling health should include the seeded repository");
   assert.equal(seededRepository.lastSeenIssueNumber, issueNumber);
+
+  const uiShell = await apiGetRaw(port, "/ui", "text/html", null);
+  assert.equal(uiShell.status, 200);
+  assert.match(uiShell.contentType, /text\/html/);
+  assert.match(uiShell.body, /RedDwarf Operator Panel/);
+
+  const uiBootstrap = await apiGet(port, "/ui/bootstrap");
+  assert.equal(uiBootstrap.status, 200);
+  assert.equal(uiBootstrap.body.sessionTier, "operator");
+  assert.ok(Array.isArray(uiBootstrap.body.paths));
+  assert.ok(Array.isArray(uiBootstrap.body.secrets));
 
   // GET /runs?taskId=...
   const runsForTask = await apiGet(port, `/runs?taskId=${taskId}`);

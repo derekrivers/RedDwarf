@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+- Completed feature 120 from `FEATURE_BOARD.md`: served a single-file operator configuration panel from `GET /ui`.
+- Added a browser-first operator panel on the existing operator API server with grouped sections for Polling & Dispatch, DB Pool tuning, Logging, Paths, Status, repo management, recent runs/tasks, and write-only secret rotation.
+- Kept the page single-file by rendering inline HTML/CSS/JS from the control-plane package and reusing the existing operator endpoints for live mutations instead of adding a separate frontend build pipeline.
+- Added a protected `GET /ui/bootstrap` metadata route so the page can load version, uptime, path values, masked secret status, and OpenClaw reachability after the operator pastes `REDDWARF_OPERATOR_TOKEN` into the page.
+- Expanded contract and operator API coverage for the new UI bootstrap response and HTML panel route, and extended `scripts/verify-operator-api.mjs` to assert that `/ui` and `/ui/bootstrap` are live in the Postgres-backed server.
+- Verification for feature 120: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/operator-api.test.ts"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work --network host node:22 bash -lc "corepack pnpm verify:operator-api"`.
+- Updated the feature board so feature 120 is marked complete and feature 121 is now the next actionable M14 item.
 - Completed feature 119 from `FEATURE_BOARD.md`: added write-only operator secret rotation backed by a restricted local `.secrets` store.
 - Added typed operator-secret contracts, a `POST /secrets/:key/rotate` operator API route, and allowlisted rotation support for GitHub, Anthropic, OpenClaw, Discord, and operator bearer tokens.
 - The rotation flow now persists secrets to a repo-root `.secrets` file with `0600` permissions, updates `process.env` for the current Node process, and returns only non-secret metadata plus restart guidance for long-lived services.

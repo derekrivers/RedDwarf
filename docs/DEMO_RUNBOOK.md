@@ -314,9 +314,13 @@ curl -X POST http://127.0.0.1:8080/secrets/GITHUB_TOKEN/rotate \
 
 The response confirms the key and whether a restart is required, but it never returns the secret value. Rotated OpenClaw-facing secrets still require a service restart before the running container sees the new token.
 
+For a browser-first workflow, open `http://127.0.0.1:8080/ui`. The page is a single-file operator panel that groups Polling & Dispatch, DB Pool, Logging, Paths, Status, repo management, and secret rotation. Paste `REDDWARF_OPERATOR_TOKEN` into the page after load; it keeps the token only in the current tab.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Server health check (includes repository, polling runtime, cursor, and dispatcher state) |
+| GET | `/ui` | Single-file operator configuration panel shell |
+| GET | `/ui/bootstrap` | Protected UI bootstrap metadata for paths, masked secret state, version, uptime, and OpenClaw reachability |
 | GET | `/runs` | List pipeline runs (filter: `repo`, `taskId`, `status`/`statuses`, `limit`) |
 | GET | `/runs/:id` | Return full detail for a specific pipeline run |
 | GET | `/runs/:id/evidence` | Return run-scoped evidence records for a specific pipeline run |

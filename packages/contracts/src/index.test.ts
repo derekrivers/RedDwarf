@@ -30,6 +30,7 @@ import {
   operatorRepoListResponseSchema,
   operatorSecretRotationRequestSchema,
   operatorSecretRotationResponseSchema,
+  operatorUiBootstrapResponseSchema,
   parseOperatorConfigValue,
   buildOperatorConfigJsonSchema,
   serializeOperatorConfigValue
@@ -209,6 +210,42 @@ describe("contracts", () => {
     expect(request.value).toBe("secret-value-123");
     expect(response.key).toBe("OPENCLAW_HOOK_TOKEN");
     expect(response.restartRequired).toBe(true);
+  });
+
+  it("parses operator UI bootstrap metadata", () => {
+    const parsed = operatorUiBootstrapResponseSchema.parse({
+      appVersion: "0.1.0",
+      uptimeSeconds: 12,
+      sessionTier: "operator",
+      paths: [
+        {
+          key: "REDDWARF_HOST_WORKSPACE_ROOT",
+          value: "runtime-data/workspaces",
+          description: "Host-side workspace root used by local scripts and E2E runs.",
+          source: "default"
+        }
+      ],
+      secrets: [
+        {
+          key: "GITHUB_TOKEN",
+          description: "GitHub personal access token used for polling, intake, publishing, and cleanup.",
+          restartRequired: false,
+          present: true,
+          maskedValue: "ghp_...1234"
+        }
+      ],
+      openClaw: {
+        baseUrl: "http://127.0.0.1:3578",
+        reachable: true,
+        checkedAt: timestamp,
+        statusCode: 200,
+        message: "ok"
+      }
+    });
+
+    expect(parsed.sessionTier).toBe("operator");
+    expect(parsed.paths[0]?.key).toBe("REDDWARF_HOST_WORKSPACE_ROOT");
+    expect(parsed.secrets[0]?.key).toBe("GITHUB_TOKEN");
   });
 
   it("parses a prompt snapshot", () => {

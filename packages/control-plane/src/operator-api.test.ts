@@ -302,6 +302,14 @@ describe("operator API server", () => {
       const approvals = await operatorGet(port, "/approvals", null);
       expect(approvals.status).toBe(401);
       expect((approvals.body as Record<string, unknown>)["error"]).toBe("unauthorized");
+
+      const bootstrap = await operatorGet(port, "/ui/bootstrap", null);
+      expect(bootstrap.status).toBe(401);
+
+      const ui = await operatorGetRaw(port, "/ui", "text/html", null);
+      expect(ui.status).toBe(200);
+      expect(ui.contentType).toContain("text/html");
+      expect(ui.body).toContain("RedDwarf Operator Panel");
     } finally {
       await apiServer.stop();
     }
@@ -548,6 +556,80 @@ describe("operator API server", () => {
 
       await apiServer.stop();
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("serves a single-file operator panel and protected bootstrap metadata", async () => {
+    const previousOpenClawBaseUrl = process.env.OPENCLAW_BASE_URL;
+    process.env.OPENCLAW_BASE_URL = "http://127.0.0.1:9";
+    const previousWorkspaceRoot = process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+    process.env.REDDWARF_HOST_WORKSPACE_ROOT = "runtime-data/custom-workspaces";
+    const previousGitHubToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "ghp_fixture_ui_1234";
+
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-01T11:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const ui = await operatorGetRaw(port, "/ui", "text/html");
+      expect(ui.status).toBe(200);
+      expect(ui.contentType).toContain("text/html");
+      expect(ui.body).toContain("GET /ui");
+      expect(ui.body).toContain("RedDwarf Operator Panel");
+      expect(ui.body).toContain("Polling & Dispatch");
+
+      const bootstrap = await operatorGet(port, "/ui/bootstrap");
+      expect(bootstrap.status).toBe(200);
+      expect(bootstrap.body).toMatchObject({
+        sessionTier: "operator",
+        appVersion: expect.any(String)
+      });
+      expect(
+        ((bootstrap.body as Record<string, unknown>)["paths"] as Array<Record<string, unknown>>).some(
+          (entry) =>
+            entry["key"] === "REDDWARF_HOST_WORKSPACE_ROOT" &&
+            entry["value"] === "runtime-data/custom-workspaces"
+        )
+      ).toBe(true);
+      expect(
+        ((bootstrap.body as Record<string, unknown>)["secrets"] as Array<Record<string, unknown>>).some(
+          (entry) =>
+            entry["key"] === "GITHUB_TOKEN" &&
+            entry["present"] === true &&
+            typeof entry["maskedValue"] === "string"
+        )
+      ).toBe(true);
+      expect(
+        (((bootstrap.body as Record<string, unknown>)["openClaw"] as Record<string, unknown>)[
+          "reachable"
+        ])
+      ).toBe(false);
+    } finally {
+      if (previousOpenClawBaseUrl === undefined) {
+        delete process.env.OPENCLAW_BASE_URL;
+      } else {
+        process.env.OPENCLAW_BASE_URL = previousOpenClawBaseUrl;
+      }
+
+      if (previousWorkspaceRoot === undefined) {
+        delete process.env.REDDWARF_HOST_WORKSPACE_ROOT;
+      } else {
+        process.env.REDDWARF_HOST_WORKSPACE_ROOT = previousWorkspaceRoot;
+      }
+
+      if (previousGitHubToken === undefined) {
+        delete process.env.GITHUB_TOKEN;
+      } else {
+        process.env.GITHUB_TOKEN = previousGitHubToken;
+      }
+
+      await apiServer.stop();
     }
   });
 
