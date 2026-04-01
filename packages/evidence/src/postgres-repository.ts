@@ -19,6 +19,7 @@ import {
   type MemoryContext,
   type MemoryQuery,
   type MemoryRecord,
+  type OperatorConfigEntry,
   type PhaseRecord,
   type PipelineRun,
   type PipelineRunQuery,
@@ -40,6 +41,7 @@ import {
   mapMemoryRecordRow,
   mapPipelineRunRow,
   mapGitHubIssuePollingCursorRow,
+  mapOperatorConfigRow,
   mapApprovalRequestRow,
   mapPromptSnapshotRow,
   mapEligibilityRejectionRow
@@ -849,6 +851,29 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor);
   }
 
+  private async saveOperatorConfigEntryWithExecutor(
+    executor: QueryExecutor,
+    entry: OperatorConfigEntry
+  ): Promise<void> {
+    await executor.query(
+      `
+        INSERT INTO operator_config (
+          key,
+          value,
+          updated_at
+        ) VALUES ($1, $2::jsonb, $3)
+        ON CONFLICT (key) DO UPDATE SET
+          value = EXCLUDED.value,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [entry.key, JSON.stringify(entry.value), entry.updatedAt]
+    );
+  }
+
+  async saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void> {
+    await this.saveOperatorConfigEntryWithExecutor(this.pool, entry);
+  }
+
   private async savePromptSnapshotWithExecutor(
     executor: QueryExecutor,
     snapshot: PromptSnapshot
@@ -937,6 +962,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
       saveMemoryRecord: (record) => this.saveMemoryRecordWithExecutor(client, record),
       savePipelineRun: (run) => this.savePipelineRunWithExecutor(client, run),
       saveApprovalRequest: (request) => this.saveApprovalRequestWithExecutor(client, request),
+      saveOperatorConfigEntry: (entry) =>
+        this.saveOperatorConfigEntryWithExecutor(client, entry),
       savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot),
       saveEligibilityRejection: (record) =>
         this.saveEligibilityRejectionWithExecutor(client, record)
@@ -983,6 +1010,16 @@ export class PostgresPlanningRepository implements PlanningRepository {
       [repo]
     );
     return result.rows[0] ? mapGitHubIssuePollingCursorRow(result.rows[0]) : null;
+  }
+
+  async getOperatorConfigEntry(
+    key: OperatorConfigEntry["key"]
+  ): Promise<OperatorConfigEntry | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM operator_config WHERE key = $1",
+      [key]
+    );
+    return result.rows[0] ? mapOperatorConfigRow(result.rows[0]) : null;
   }
 
   async hasPlanningSpecForSource(
@@ -1193,6 +1230,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
 
     return result.rows.map(mapGitHubIssuePollingCursorRow);
+  }
+
+  async listOperatorConfigEntries(): Promise<OperatorConfigEntry[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM operator_config ORDER BY key ASC"
+    );
+
+    return result.rows.map(mapOperatorConfigRow);
   }
 
   async listPromptSnapshots(): Promise<PromptSnapshot[]> {

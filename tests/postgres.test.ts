@@ -20,6 +20,7 @@ import {
   createPostgresPlanningRepository,
   createEvidenceRecord,
   createMemoryRecord,
+  createOperatorConfigEntry,
   createPipelineRun,
   deriveOrganizationId
 } from "@reddwarf/evidence";
@@ -75,6 +76,25 @@ describeIfDatabase("postgres planning repository", () => {
     } finally {
       await poolAwareRepository.close();
     }
+  });
+
+  it("persists operator config entries in Postgres", async () => {
+    await repository.saveOperatorConfigEntry(
+      createOperatorConfigEntry({
+        key: "REDDWARF_POLL_REPOS",
+        value: ["acme/platform"],
+        updatedAt: new Date().toISOString()
+      })
+    );
+
+    const entry = await repository.getOperatorConfigEntry("REDDWARF_POLL_REPOS");
+    const entries = await repository.listOperatorConfigEntries();
+
+    expect(entry?.key).toBe("REDDWARF_POLL_REPOS");
+    expect(entry?.value).toEqual(["acme/platform"]);
+    expect(entries.some((candidate) => candidate.key === "REDDWARF_POLL_REPOS")).toBe(
+      true
+    );
   });
 
   it("persists a planning pipeline run and can provision and destroy a managed workspace", async () => {

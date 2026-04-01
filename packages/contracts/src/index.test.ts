@@ -21,7 +21,10 @@ import {
   githubIssuePollingCursorSchema,
   phaseRetryBudgetStateSchema,
   promptSnapshotSchema,
-  openClawAgentRoleDefinitionSchema
+  openClawAgentRoleDefinitionSchema,
+  operatorConfigEntrySchema,
+  parseOperatorConfigValue,
+  serializeOperatorConfigValue
 } from "@reddwarf/contracts";
 
 const timestamp = asIsoTimestamp(new Date("2026-03-25T18:00:00.000Z"));
@@ -212,6 +215,36 @@ describe("contracts", () => {
 
     expect(retryBudget.retryExhausted).toBe(true);
     expect(retryBudget.attempts).toBe(2);
+  });
+
+  it("parses an operator config entry", () => {
+    const entry = operatorConfigEntrySchema.parse({
+      key: "REDDWARF_POLL_REPOS",
+      value: ["acme/platform", "acme/api"],
+      updatedAt: timestamp
+    });
+
+    expect(entry.key).toBe("REDDWARF_POLL_REPOS");
+    expect(entry.value).toEqual(["acme/platform", "acme/api"]);
+  });
+
+  it("serializes typed operator config values back to env strings", () => {
+    expect(
+      serializeOperatorConfigValue("REDDWARF_SKIP_OPENCLAW", true)
+    ).toBe("true");
+    expect(
+      serializeOperatorConfigValue("REDDWARF_POLL_REPOS", [
+        "acme/platform",
+        "acme/api"
+      ])
+    ).toBe("acme/platform,acme/api");
+    expect(
+      serializeOperatorConfigValue(
+        "REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_HEALTHY_TEXT",
+        null
+      )
+    ).toBe("");
+    expect(parseOperatorConfigValue("REDDWARF_API_PORT", 8080)).toBe(8080);
   });
 
   it("parses an eligibility rejection record", () => {

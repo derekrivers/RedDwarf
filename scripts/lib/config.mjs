@@ -8,8 +8,10 @@
  *   import { connectionString, repoRoot, createScriptLogger, formatError } from "./lib/config.mjs";
  */
 
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import pg from "pg";
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -27,16 +29,37 @@ export const scriptsDir = resolve(__libdir, "..");
 export const DEFAULT_CONNECTION_STRING =
   "postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf";
 
-/**
- * Resolve the Postgres connection string from environment variables
- * with a sensible local-development default.
- */
-export const connectionString =
-  process.env.HOST_DATABASE_URL ??
-  process.env.DATABASE_URL ??
-  DEFAULT_CONNECTION_STRING;
+const { Client } = pg;
 
-function readPositiveIntegerEnv(name, fallback) {
+export function loadRepoEnv() {
+  const envPath = resolve(repoRoot, ".env");
+
+  try {
+    const envContent = readFileSync(envPath, "utf8");
+
+    for (const line of envContent.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex < 1) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, eqIndex).trim();
+      const value = trimmed.slice(eqIndex + 1).trim();
+      if (!(key in process.env)) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // .env is optional
+  }
+}
+
+function readPositiveIntegerEnvWithFallback(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw.trim().length === 0) {
     return fallback;
@@ -46,29 +69,115 @@ function readPositiveIntegerEnv(name, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export const postgresPoolConfig = {
-  max: readPositiveIntegerEnv("REDDWARF_DB_POOL_MAX", 10),
-  connectionTimeoutMillis: readPositiveIntegerEnv(
-    "REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS",
-    5_000
-  ),
-  idleTimeoutMillis: readPositiveIntegerEnv(
-    "REDDWARF_DB_POOL_IDLE_TIMEOUT_MS",
-    30_000
-  ),
-  queryTimeoutMillis: readPositiveIntegerEnv(
-    "REDDWARF_DB_POOL_QUERY_TIMEOUT_MS",
-    15_000
-  ),
-  statementTimeoutMillis: readPositiveIntegerEnv(
-    "REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS",
-    15_000
-  ),
-  maxLifetimeSeconds: readPositiveIntegerEnv(
-    "REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS",
-    300
-  )
-};
+/**
+ * Resolve the Postgres connection string from environment variables
+ * with a sensible local-development default.
+ */
+export function resolveConnectionString() {
+  return (
+    process.env.HOST_DATABASE_URL ??
+    process.env.DATABASE_URL ??
+    DEFAULT_CONNECTION_STRING
+  );
+}
+
+export function resolvePostgresPoolConfig() {
+  return {
+    max: readPositiveIntegerEnvWithFallback("REDDWARF_DB_POOL_MAX", 10),
+    connectionTimeoutMillis: readPositiveIntegerEnvWithFallback(
+      "REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS",
+      5_000
+    ),
+    idleTimeoutMillis: readPositiveIntegerEnvWithFallback(
+      "REDDWARF_DB_POOL_IDLE_TIMEOUT_MS",
+      30_000
+    ),
+    queryTimeoutMillis: readPositiveIntegerEnvWithFallback(
+      "REDDWARF_DB_POOL_QUERY_TIMEOUT_MS",
+      15_000
+    ),
+    statementTimeoutMillis: readPositiveIntegerEnvWithFallback(
+      "REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS",
+      15_000
+    ),
+    maxLifetimeSeconds: readPositiveIntegerEnvWithFallback(
+      "REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS",
+      300
+    )
+  };
+}
+
+export let connectionString = resolveConnectionString();
+export let postgresPoolConfig = resolvePostgresPoolConfig();
+
+export function refreshDerivedConfig() {
+  connectionString = resolveConnectionString();
+  postgresPoolConfig = resolvePostgresPoolConfig();
+
+  return {
+    connectionString,
+    postgresPoolConfig
+  };
+}
+
+export async function applyOperatorRuntimeConfig(options = {}) {
+  const {
+    connectionString: bootstrapConnectionString = resolveConnectionString(),
+    connectionTimeoutMillis = 2_000,
+    log
+  } = options;
+
+  const {
+    operatorConfigEntrySchema,
+    serializeOperatorConfigValue
+  } = await import("../../packages/contracts/dist/index.js");
+  const client = new Client({
+    connectionString: bootstrapConnectionString,
+    connectionTimeoutMillis
+  });
+
+  try {
+    await client.connect();
+    const result = await client.query(
+      "SELECT key, value, updated_at FROM operator_config ORDER BY key ASC"
+    );
+
+    for (const row of result.rows) {
+      const entry = operatorConfigEntrySchema.parse({
+        key: row.key,
+        value: row.value,
+        updatedAt: new Date(row.updated_at).toISOString()
+      });
+      process.env[entry.key] = serializeOperatorConfigValue(
+        entry.key,
+        entry.value
+      );
+    }
+
+    refreshDerivedConfig();
+    if (typeof log === "function" && result.rows.length > 0) {
+      log(`Applied ${result.rows.length} operator config override(s) from Postgres.`);
+    }
+    return result.rows.length;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      message.includes('relation "operator_config" does not exist') ||
+      message.includes("relation \"operator_config\" does not exist")
+    ) {
+      if (typeof log === "function") {
+        log("Operator config table not found yet; using .env runtime values.");
+      }
+      refreshDerivedConfig();
+      return 0;
+    }
+
+    throw error;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
 
 // ── Evidence ─────────────────────────────────────────────────────────────────
 

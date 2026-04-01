@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+- Completed feature 115 from `FEATURE_BOARD.md`: added DB-backed runtime config persistence and startup merge logic.
+- Added typed operator-config contracts for runtime-configurable env keys, plus serialization helpers so persisted values can round-trip cleanly between JSONB storage and `process.env`.
+- Added `operator_config` persistence to the evidence layer with a new SQL migration (`packages/evidence/drizzle/0012_operator_config.sql`), in-memory and Postgres repository support, row mapping, and focused repository coverage.
+- Updated `scripts/lib/config.mjs`, `scripts/start-stack.mjs`, and `scripts/start-operator-api.mjs` so startup now loads `.env`, then overlays any matching runtime-config rows from Postgres before deriving API, polling, OpenClaw, and pool settings.
+- Updated the README configuration docs to note that `operator_config` overrides `.env` only for runtime-classified keys.
+- Verification status for feature 115: added focused contract, repository, and Postgres-backed tests, but local execution was blocked in this WSL session because Docker is unavailable, Linux `node`/`pnpm` are absent, and the documented Windows host fallback could not resolve the repo path from this environment.
+- Updated the feature board so feature 115 is marked complete and feature 116 is now the next actionable M14 item.
 - Completed feature 114 from `FEATURE_BOARD.md`: classified the live env surface into boot-time, runtime-configurable, secrets, and dev/E2E tiers.
 - Refactored `.env.example` to use grouped section headers for infrastructure, OpenClaw runtime toggles, polling/dispatch/API settings, pool and guardrail controls, secrets, and local E2E helpers.
 - Updated the README configuration reference to mirror the same classification so operators can see which values are safe future UI candidates versus restart-required bootstrap settings and plaintext-only secrets.
@@ -10,7 +17,7 @@
 - Added a new top-priority `M14 — Operator UX` milestone covering `.env` classification, DB-backed runtime config, Operator API config and repo-management endpoints, richer runs/tasks observability, write-only secret rotation, a single-file `/ui` operator panel, OpenClaw WebChat commands, and an MCP bridge over the Operator API.
 - Added a new `M18 — VPS Expansion` milestone covering VPS-specific compose topology, webhook intake, Tailscale Funnel exposure, CI webhook reception, and multi-provider failover after config-schema validation.
 - Extended the active board format with explicit `Depends On` and `Deployment` columns so upcoming work is easier to sequence and reason about.
-- Current likely next board item: feature 115, add the `operator_config` table and startup merge logic for DB-backed runtime config.
+- Current likely next board item: feature 116, add `GET /config`, `PUT /config`, and `GET /config/schema` with Zod-backed contracts.
 - Completed feature 112 from `FEATURE_BOARD.md`: phase retry budget.
 - Added explicit per-phase retry-budget configuration via `REDDWARF_MAX_RETRIES_*` env vars, including alias names that match the proposal document (`ARCHITECT`, `DEVELOPER`, `VALIDATOR`, `REVIEWER`) plus repo-native phase names.
 - Added durable retry-budget state under `failure.retry_budget.<phase>` so repeated failures now persist attempts, last error, retry limit, and exhausted state independently per phase instead of relying only on the legacy manifest-wide `retryCount`.

@@ -12,6 +12,7 @@ import {
   type MemoryContext,
   type MemoryQuery,
   type MemoryRecord,
+  type OperatorConfigEntry,
   type PhaseRecord,
   type PipelineRun,
   type PipelineRunQuery,
@@ -57,6 +58,7 @@ export interface PlanningTransactionRepository {
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
   savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot>;
   saveEligibilityRejection(record: EligibilityRejectionRecord): Promise<void>;
+  saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {
@@ -73,6 +75,7 @@ export interface PlanningQueryRepository {
   getManifest(taskId: string): Promise<TaskManifest | null>;
   getApprovalRequest(requestId: string): Promise<ApprovalRequest | null>;
   getGitHubIssuePollingCursor(repo: string): Promise<GitHubIssuePollingCursor | null>;
+  getOperatorConfigEntry(key: OperatorConfigEntry["key"]): Promise<OperatorConfigEntry | null>;
   hasPlanningSpecForSource(source: TaskManifest["source"]): Promise<boolean>;
   getPlanningSpec(taskId: string): Promise<PlanningSpec | null>;
   getPolicySnapshot(taskId: string): Promise<PolicySnapshot | null>;
@@ -87,6 +90,7 @@ export interface PlanningQueryRepository {
   listPromptSnapshots(): Promise<PromptSnapshot[]>;
   listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
   listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]>;
+  listOperatorConfigEntries(): Promise<OperatorConfigEntry[]>;
   listApprovalRequests(
     query?: Partial<ApprovalRequestQuery>
   ): Promise<ApprovalRequest[]>;

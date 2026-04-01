@@ -118,6 +118,8 @@ Press `Ctrl+C` to shut down all services gracefully.
 - Secrets: API keys and operator credentials. Keep these out of any plaintext UI.
 - Dev / E2E: local verification helpers, not part of normal production operation.
 
+At startup, RedDwarf loads `.env` first and then overlays any matching rows from the Postgres-backed `operator_config` table for runtime-configurable keys. If the table does not exist yet, startup falls back to `.env` only.
+
 **Boot-time**
 
 | Variable | Default | Description |

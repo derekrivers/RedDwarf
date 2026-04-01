@@ -10,9 +10,19 @@
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { connectionString, postgresPoolConfig } from "./lib/config.mjs";
+import {
+  applyOperatorRuntimeConfig,
+  connectionString,
+  loadRepoEnv,
+  postgresPoolConfig,
+  refreshDerivedConfig
+} from "./lib/config.mjs";
 
-const port = parseInt(process.argv[2] ?? "8080", 10);
+loadRepoEnv();
+refreshDerivedConfig();
+await applyOperatorRuntimeConfig();
+
+const port = parseInt(process.argv[2] ?? process.env.REDDWARF_API_PORT ?? "8080", 10);
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
 const dryRun = process.env.REDDWARF_DRY_RUN === "true";
 

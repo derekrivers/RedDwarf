@@ -3,6 +3,7 @@ import {
   InMemoryPlanningRepository,
   buildMemoryContextForRepository,
   createMemoryRecord,
+  createOperatorConfigEntry,
   createPipelineRun,
   createPromptSnapshot,
   deriveOrganizationId
@@ -146,6 +147,45 @@ describe("evidence memory partitions", () => {
         lastPollCompletedAt: timestamp,
         lastPollStatus: "succeeded",
         lastPollError: null,
+        updatedAt: timestamp
+      }
+    ]);
+  });
+
+  it("stores and lists operator config entries", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveOperatorConfigEntry(
+      createOperatorConfigEntry({
+        key: "REDDWARF_POLL_REPOS",
+        value: ["acme/platform"],
+        updatedAt: timestamp
+      })
+    );
+    await repository.saveOperatorConfigEntry(
+      createOperatorConfigEntry({
+        key: "REDDWARF_POLL_INTERVAL_MS",
+        value: 45000,
+        updatedAt: "2026-03-25T20:21:00.000Z"
+      })
+    );
+
+    await expect(
+      repository.getOperatorConfigEntry("REDDWARF_POLL_REPOS")
+    ).resolves.toEqual({
+      key: "REDDWARF_POLL_REPOS",
+      value: ["acme/platform"],
+      updatedAt: timestamp
+    });
+    await expect(repository.listOperatorConfigEntries()).resolves.toEqual([
+      {
+        key: "REDDWARF_POLL_INTERVAL_MS",
+        value: 45000,
+        updatedAt: "2026-03-25T20:21:00.000Z"
+      },
+      {
+        key: "REDDWARF_POLL_REPOS",
+        value: ["acme/platform"],
         updatedAt: timestamp
       }
     ]);

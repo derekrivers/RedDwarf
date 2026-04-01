@@ -6,6 +6,7 @@ import {
   type GitHubIssuePollingCursor,
   type MemoryContext,
   type MemoryRecord,
+  type OperatorConfigEntry,
   type PhaseRecord,
   type PipelineRun,
   type PlanningSpec,
@@ -42,6 +43,10 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly pipelineRuns = new Map<string, PipelineRun>();
   public readonly approvalRequests = new Map<string, ApprovalRequest>();
   public readonly githubIssuePollingCursors = new Map<string, GitHubIssuePollingCursor>();
+  public readonly operatorConfigEntries = new Map<
+    OperatorConfigEntry["key"],
+    OperatorConfigEntry
+  >();
   public readonly promptSnapshots = new Map<string, PromptSnapshot>();
   public readonly eligibilityRejections: EligibilityRejectionRecord[] = [];
 
@@ -184,6 +189,10 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.githubIssuePollingCursors.set(cursor.repo, cursor);
   }
 
+  async saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void> {
+    this.operatorConfigEntries.set(entry.key, entry);
+  }
+
   async runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T> {
@@ -199,6 +208,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     const githubIssuePollingCursors = cloneInMemoryMap(
       this.githubIssuePollingCursors
     );
+    const operatorConfigEntries = cloneInMemoryMap(this.operatorConfigEntries);
     const promptSnapshots = cloneInMemoryMap(this.promptSnapshots);
     const eligibilityRejections = cloneInMemoryArray(this.eligibilityRejections);
 
@@ -241,6 +251,11 @@ export class InMemoryPlanningRepository implements PlanningRepository {
         this.githubIssuePollingCursors.set(key, value);
       }
 
+      this.operatorConfigEntries.clear();
+      for (const [key, value] of operatorConfigEntries.entries()) {
+        this.operatorConfigEntries.set(key, value);
+      }
+
       this.promptSnapshots.clear();
       for (const [key, value] of promptSnapshots.entries()) {
         this.promptSnapshots.set(key, value);
@@ -266,6 +281,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
 
   async getGitHubIssuePollingCursor(repo: string): Promise<GitHubIssuePollingCursor | null> {
     return this.githubIssuePollingCursors.get(repo) ?? null;
+  }
+
+  async getOperatorConfigEntry(
+    key: OperatorConfigEntry["key"]
+  ): Promise<OperatorConfigEntry | null> {
+    return this.operatorConfigEntries.get(key) ?? null;
   }
 
   async hasPlanningSpecForSource(
@@ -416,6 +437,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   async listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]> {
     return [...this.githubIssuePollingCursors.values()].sort((left, right) =>
       left.repo.localeCompare(right.repo)
+    );
+  }
+
+  async listOperatorConfigEntries(): Promise<OperatorConfigEntry[]> {
+    return [...this.operatorConfigEntries.values()].sort((left, right) =>
+      left.key.localeCompare(right.key)
     );
   }
 

@@ -8,6 +8,7 @@ import {
   type FailureClass,
   type GitHubIssuePollingCursor,
   type MemoryRecord,
+  type OperatorConfigEntry,
   type PhaseRecord,
   type PipelineRun,
   type PlanningSpec,
@@ -19,6 +20,7 @@ import {
 import {
   createApprovalRequest,
   createMemoryRecord,
+  createOperatorConfigEntry,
   createEligibilityRejection,
   createPipelineRun,
   createPromptSnapshot,
@@ -186,6 +188,16 @@ export function mapGitHubIssuePollingCursorRow(
     lastPollError: (row.last_poll_error as string | null) ?? null,
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };
+}
+
+export function mapOperatorConfigRow(
+  row: Record<string, unknown>
+): OperatorConfigEntry {
+  return createOperatorConfigEntry({
+    key: row.key as OperatorConfigEntry["key"],
+    value: row.value as OperatorConfigEntry["value"],
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  });
 }
 
 export function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalRequest {

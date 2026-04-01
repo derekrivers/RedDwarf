@@ -2,6 +2,7 @@ import {
   approvalRequestSchema,
   asIsoTimestamp,
   memoryRecordSchema,
+  operatorConfigEntrySchema,
   pipelineRunSchema,
   runEventSchema,
   type ApprovalDecision,
@@ -12,6 +13,7 @@ import {
   type FailureClass,
   type GitHubIssuePollingCursor,
   type MemoryRecord,
+  type OperatorConfigEntry,
   type PipelineRun,
   type PromptSnapshot,
   type RunEvent,
@@ -216,6 +218,19 @@ export function createEligibilityRejection(input: {
     dryRun: input.dryRun ?? false
   };
 }
+
+export function createOperatorConfigEntry(input: {
+  key: OperatorConfigEntry["key"];
+  value: OperatorConfigEntry["value"];
+  updatedAt?: string;
+}): OperatorConfigEntry {
+  return operatorConfigEntrySchema.parse({
+    key: input.key,
+    value: input.value,
+    updatedAt: input.updatedAt ?? asIsoTimestamp()
+  }) as OperatorConfigEntry;
+}
+
 export function createGitHubIssuePollingCursor(input: {
   repo: string;
   lastSeenIssueNumber?: number | null;

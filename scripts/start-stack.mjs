@@ -29,39 +29,20 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { readdir, stat, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import pg from "pg";
 
-// ── Load .env from repo root ──────────────────────────────────────────────
-const __scriptdir = dirname(fileURLToPath(import.meta.url));
-const envPath = resolve(__scriptdir, "..", ".env");
-try {
-  const envContent = readFileSync(envPath, "utf8");
-  for (const line of envContent.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex < 1) continue;
-    const key = trimmed.slice(0, eqIndex).trim();
-    const value = trimmed.slice(eqIndex + 1).trim();
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
-} catch {
-  // .env is optional
-}
-
 import {
+  applyOperatorRuntimeConfig,
   connectionString,
   postgresPoolConfig,
   repoRoot,
   scriptsDir,
   createScriptLogger,
   formatError,
+  loadRepoEnv,
+  refreshDerivedConfig,
   resolveOpenClawConfig
 } from "./lib/config.mjs";
 
@@ -72,6 +53,10 @@ const COMPOSE_FILE = join(repoRoot, "infra", "docker", "docker-compose.yml");
 const POLL_INTERVAL_MS = 2_000;
 const MAX_WAIT_MS = 60_000;
 const WORKSPACE_MAX_AGE_MS = 24 * 60 * 60_000;
+
+loadRepoEnv();
+refreshDerivedConfig();
+await applyOperatorRuntimeConfig({ log });
 
 // ── Configuration ─────────────────────────────────────────────────────────
 

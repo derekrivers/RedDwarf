@@ -189,6 +189,12 @@ export const githubIssuePollingCursorsTable = pgTable("github_issue_polling_curs
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
 
+export const operatorConfigTable = pgTable("operator_config", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
+});
+
 export const promptSnapshotsTable = pgTable("prompt_snapshots", {
   snapshotId: text("snapshot_id").primaryKey(),
   phase: taskPhaseEnum("phase").notNull(),

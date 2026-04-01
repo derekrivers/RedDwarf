@@ -19,7 +19,7 @@ Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDw
 | # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
 | - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
 | 114 | Classify `.env` into boot-time, runtime, and secret tiers; refactor `.env.example` with grouped comment headers | M14 | complete | — | Both | UX report: Section 1.2, Appendix |
-| 115 | Add `operator_config` Drizzle table and startup merge logic so DB-backed runtime config overrides `.env` | M14 | pending | 114 | Both | UX report: Sections 1.5, 2.4 |
+| 115 | Add `operator_config` Drizzle table and startup merge logic so DB-backed runtime config overrides `.env` | M14 | complete | 114 | Both | UX report: Sections 1.5, 2.4 |
 | 116 | Add `GET /config`, `PUT /config`, and `GET /config/schema` Operator API endpoints with Zod contracts | M14 | pending | 115 | Both | UX report: Sections 2.2, 2.4 |
 | 117 | Add `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo`; replace comma-string poll repo config with DB-backed repo management | M14 | pending | 116 | Both | UX report: Sections 1.3, 2.2 |
 | 118 | Expand observability endpoints: filtered `GET /runs`, `GET /runs/:id`, `GET /runs/:id/evidence`, `GET /tasks`, `GET /tasks/:id` | M14 | pending | — | Both | UX report: Section 2.2 |
