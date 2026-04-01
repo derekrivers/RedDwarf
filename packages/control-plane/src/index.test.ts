@@ -906,6 +906,81 @@ describe("control-plane", () => {
     }
   });
 
+  it("warns on developer token-budget overages without blocking validation handoff", async () => {
+    const previousBudget = process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER;
+    const previousAction = process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+    process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER = "1";
+    process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = "warn";
+
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-development-budget-")
+    );
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-dev-budget-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for developer orchestration."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dev-budget"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:10:00.000Z"),
+          idGenerator: () => "run-dev-budget-phase"
+        }
+      );
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.phase === "development" &&
+            event.code === "TOKEN_BUDGET_EXCEEDED"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      if (previousBudget === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER = previousBudget;
+      }
+      if (previousAction === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = previousAction;
+      }
+    }
+  });
+
 
   it("injects scoped credentials into the developer workspace when policy and adapter both allow them", async () => {
     const repository = new InMemoryPlanningRepository();
@@ -3324,6 +3399,56 @@ describe("control-plane", () => {
     expect(
       bufferedLogger.records.some((record) => record.level === "error")
     ).toBe(true);
+  });
+
+  it("blocks planning when the token budget overage action is set to block", async () => {
+    const previousBudget = process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT;
+    const previousAction = process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+    process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT = "1";
+    process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = "block";
+
+    const repository = new InMemoryPlanningRepository();
+
+    try {
+      await expect(
+        runPlanningPipeline(eligibleInput, {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-03-25T18:00:00.000Z"),
+          idGenerator: () => "run-budget-block"
+        })
+      ).rejects.toMatchObject({
+        code: "TOKEN_BUDGET_EXCEEDED",
+        phase: "planning",
+        failureClass: "policy_violation"
+      });
+
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.runId === "run-budget-block" &&
+            event.code === "TOKEN_BUDGET_EXCEEDED"
+        )
+      ).toBe(true);
+      expect(
+        repository.evidenceRecords.some(
+          (record) =>
+            record.recordId ===
+            "acme-platform-99:token-budget:planning:run-budget-block"
+        )
+      ).toBe(true);
+    } finally {
+      if (previousBudget === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT = previousBudget;
+      }
+      if (previousAction === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = previousAction;
+      }
+    }
   });
 });
 

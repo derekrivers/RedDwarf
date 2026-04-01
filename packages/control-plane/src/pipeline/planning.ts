@@ -59,6 +59,10 @@ import {
   dispatchHollyArchitectPhase
 } from "./prompts.js";
 import {
+  enforceTokenBudget,
+  recordActualTokenUsage
+} from "./token-budget.js";
+import {
   heartbeatTrackedRun,
   waitWithHeartbeat
 } from "./shared.js";
@@ -598,6 +602,28 @@ export async function runPlanningPipeline(
 
     let draft: import("@reddwarf/contracts").PlanningDraft;
     let hollyHandoffMarkdown: string | null = null;
+    let planningTokenBudget = await enforceTokenBudget({
+      repository,
+      logger: runLogger,
+      nextEventId,
+      manifest: currentManifest,
+      runId,
+      phase: "planning",
+      actor: "architect",
+      contextValue: {
+        input,
+        manifest: currentManifest,
+        mode:
+          dependencies.openClawDispatch && dependencies.architectTargetRoot
+            ? "openclaw"
+            : "direct"
+      },
+      checkedAt: asIsoTimestamp(planningStartedAt),
+      detailLabel: "Architect planning",
+      eventData: {
+        currentPhase: "planning"
+      }
+    });
 
     if (dependencies.openClawDispatch && dependencies.architectTargetRoot) {
       try {
@@ -650,6 +676,21 @@ export async function runPlanningPipeline(
           manifest: currentManifest,
           runId
         });
+        planningTokenBudget = await recordActualTokenUsage({
+          repository,
+          logger: runLogger,
+          nextEventId,
+          manifest: currentManifest,
+          runId,
+          phase: "planning",
+          actor: "architect",
+          recordedAt: asIsoTimestamp(clock()),
+          priorBudget: planningTokenBudget,
+          usage: draft.usage ?? null,
+          eventData: {
+            currentPhase: "planning"
+          }
+        });
       } catch (error) {
         throw normalizePipelineFailure(error, activePhase, taskId, runId);
       }
@@ -696,7 +737,8 @@ export async function runPlanningPipeline(
         summary: "Planning spec generated.",
         details: {
           confidenceLevel: spec.confidenceLevel,
-          confidenceReason: spec.confidenceReason
+          confidenceReason: spec.confidenceReason,
+          tokenBudget: planningTokenBudget
         },
         createdAt: planningCompletedAtIso
       })
@@ -710,7 +752,8 @@ export async function runPlanningPipeline(
         metadata: {
           specId: spec.specId,
           confidenceLevel: spec.confidenceLevel,
-          confidenceReason: spec.confidenceReason
+          confidenceReason: spec.confidenceReason,
+          tokenBudget: planningTokenBudget
         },
         createdAt: planningCompletedAtIso
       })
@@ -769,6 +812,7 @@ export async function runPlanningPipeline(
         specId: spec.specId,
         confidenceLevel: spec.confidenceLevel,
         confidenceReason: spec.confidenceReason,
+        tokenBudget: planningTokenBudget,
         status: "passed"
       },
       createdAt: planningCompletedAtIso

@@ -63,6 +63,7 @@ import {
   persistConcurrencyBlock,
   persistPhaseFailure
 } from "./failure.js";
+import { enforceTokenBudget } from "./token-budget.js";
 import {
   renderValidationReportMarkdown
 } from "./prompts.js";
@@ -391,6 +392,25 @@ export async function runValidationPhase(
         createdAt: validationStartedAtIso
       });
     }
+
+    const validationTokenBudget = await enforceTokenBudget({
+      repository,
+      logger: runLogger,
+      nextEventId,
+      manifest: currentManifest,
+      runId,
+      phase: "validation",
+      actor: "validation",
+      contextValue: {
+        bundle,
+        workspaceId: workspace.workspaceId
+      },
+      checkedAt: asIsoTimestamp(clock()),
+      detailLabel: "Validation plan",
+      eventData: {
+        workspaceId: workspace.workspaceId
+      }
+    });
 
     const plan = await validator.createPlan(bundle, {
       manifest: currentManifest,
@@ -723,6 +743,7 @@ export async function runValidationPhase(
           reportArchiveLocation: archivedReport.location,
           resultsArchiveLocation: archivedResults.location,
           developerCodeWriteEnabled,
+          tokenBudget: validationTokenBudget,
           commandResults,
           ...(approvedRequest
             ? { approvalRequestId: approvedRequest.requestId }
@@ -742,6 +763,7 @@ export async function runValidationPhase(
           runId,
           workspaceId: workspace.workspaceId,
           summary: report.summary,
+          tokenBudget: validationTokenBudget,
           commandResults,
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedReport,
@@ -764,6 +786,7 @@ export async function runValidationPhase(
           runId,
           workspaceId: workspace.workspaceId,
           summary: report.summary,
+          tokenBudget: validationTokenBudget,
           commandResults,
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedResults,
@@ -793,6 +816,7 @@ export async function runValidationPhase(
         reportArchiveLocation: archivedReport.location,
         resultsArchiveLocation: archivedResults.location,
         developerCodeWriteEnabled,
+        tokenBudget: validationTokenBudget,
         commandCount: commandResults.length
       },
       createdAt: validationCompletedAtIso

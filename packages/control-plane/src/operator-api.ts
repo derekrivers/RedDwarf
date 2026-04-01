@@ -23,6 +23,7 @@ import {
   dispatchReadyTask,
   resolveApprovalRequest,
   runPlanningPipeline,
+  summarizeRunTokenUsage,
   sweepOrphanedDispatcherState,
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
@@ -105,6 +106,14 @@ export interface OperatorApiServer {
   stop(): Promise<void>;
   readonly port: number;
   readonly host: string;
+}
+
+export interface OperatorRunDetailResponse {
+  run: PipelineRun;
+  summary: Awaited<ReturnType<PlanningRepository["getRunSummary"]>>;
+  events: Awaited<ReturnType<PlanningRepository["listRunEvents"]>>;
+  totalEvents: number;
+  tokenUsage: ReturnType<typeof summarizeRunTokenUsage>;
 }
 
 class OperatorApiRequestError extends Error {
@@ -423,6 +432,33 @@ async function handleOperatorRequest(
       ...(statuses !== undefined ? { statuses: statuses as PipelineRun["status"][] } : {})
     });
     writeOperatorJsonResponse(res, 200, { runs, total: runs.length });
+    return;
+  }
+
+  const runMatch = /^\/runs\/([^/]+)$/.exec(path);
+  if (method === "GET" && runMatch) {
+    const runId = decodeURIComponent(runMatch[1]!);
+    const run = await repository.getPipelineRun(runId);
+    if (!run) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Pipeline run ${runId} not found.`
+      });
+      return;
+    }
+
+    const [summary, events] = await Promise.all([
+      repository.getRunSummary(run.taskId, runId),
+      repository.listRunEvents(run.taskId, runId)
+    ]);
+    const response: OperatorRunDetailResponse = {
+      run,
+      summary,
+      events,
+      totalEvents: events.length,
+      tokenUsage: summarizeRunTokenUsage(events)
+    };
+    writeOperatorJsonResponse(res, 200, response);
     return;
   }
 

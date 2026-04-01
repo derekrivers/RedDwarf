@@ -672,6 +672,10 @@ export interface AnthropicPlanningAgentOptions {
 
 interface AnthropicMessagesResponse {
   content: Array<{ type: string; text?: string }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
 }
 
 export interface FetchWithRetryOptions {
@@ -779,7 +783,20 @@ export class AnthropicPlanningAgent implements PlanningAgent {
 
     const result = (await response.json()) as AnthropicMessagesResponse;
     const text = extractAnthropicTextContent(result);
-    return parsePlanningDraft(text, input, context);
+    const draft = parsePlanningDraft(text, input, context);
+    return {
+      ...draft,
+      ...(result.usage &&
+      typeof result.usage.input_tokens === "number" &&
+      typeof result.usage.output_tokens === "number"
+        ? {
+            usage: {
+              inputTokens: result.usage.input_tokens,
+              outputTokens: result.usage.output_tokens
+            }
+          }
+        : {})
+    };
   }
 }
 

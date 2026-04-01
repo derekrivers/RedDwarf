@@ -66,6 +66,7 @@ import {
   persistConcurrencyBlock,
   persistPhaseFailure
 } from "./failure.js";
+import { enforceTokenBudget } from "./token-budget.js";
 import {
   buildOpenClawDeveloperPrompt,
   parseDevelopmentHandoffMarkdown,
@@ -380,6 +381,7 @@ export async function runDeveloperPhase(
 
     let handoff: DevelopmentDraft;
     let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
+    let developmentTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
     const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
     const developmentHeartbeatMetadata = {
       workspaceId: workspace.workspaceId,
@@ -413,6 +415,22 @@ export async function runDeveloperPhase(
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
       const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown, dependencies.runtimeConfig);
+      developmentTokenBudget = await enforceTokenBudget({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        manifest: currentManifest,
+        runId,
+        phase: "development",
+        actor: "developer",
+        contextValue: prompt,
+        checkedAt: asIsoTimestamp(clock()),
+        detailLabel: "Developer prompt",
+        eventData: {
+          workspaceId: workspace.workspaceId,
+          mode: "openclaw"
+        }
+      });
 
       dispatchResult = await dependencies.openClawDispatch.dispatch({
         sessionKey,
@@ -494,6 +512,26 @@ export async function runDeveloperPhase(
         createdAt: developmentStartedAtIso
       });
 
+      developmentTokenBudget = await enforceTokenBudget({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        manifest: currentManifest,
+        runId,
+        phase: "development",
+        actor: "developer",
+        contextValue: {
+          bundle,
+          workspaceId: workspace.workspaceId,
+          codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        },
+        checkedAt: asIsoTimestamp(clock()),
+        detailLabel: "Developer handoff",
+        eventData: {
+          workspaceId: workspace.workspaceId,
+          mode: "deterministic"
+        }
+      });
       handoff = await developer.createHandoff(bundle, {
         manifest: currentManifest,
         runId,
@@ -601,6 +639,9 @@ export async function runDeveloperPhase(
           handoffPath,
           toolPolicyMode: workspace.descriptor.toolPolicy.mode,
           codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+          ...(developmentTokenBudget
+            ? { tokenBudget: developmentTokenBudget }
+            : {}),
           ...(approvedRequest
             ? { approvalRequestId: approvedRequest.requestId }
             : {})
@@ -621,6 +662,9 @@ export async function runDeveloperPhase(
           toolPolicyMode: workspace.descriptor.toolPolicy.mode,
           codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
           summary: handoff.summary,
+          ...(developmentTokenBudget
+            ? { tokenBudget: developmentTokenBudget }
+            : {}),
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedHandoff,
             artifactClass: "handoff",
@@ -647,7 +691,10 @@ export async function runDeveloperPhase(
         workspaceId: workspace.workspaceId,
         handoffPath,
         handoffArchiveLocation: archivedHandoff.location,
-        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
+        codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled,
+        ...(developmentTokenBudget
+          ? { tokenBudget: developmentTokenBudget }
+          : {})
       },
       createdAt: developmentCompletedAtIso
     });

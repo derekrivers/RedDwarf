@@ -829,4 +829,56 @@ describe("operator API server", () => {
       await apiServer.stop();
     }
   });
+
+  it("serves per-run token usage details", async () => {
+    const previousBudget = process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT;
+    const previousAction = process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+    process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT = "1";
+    process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = "warn";
+
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-26T12:00:00.000Z"),
+      idGenerator: () => "op-run-budget"
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const runDetail = await operatorGet(port, `/runs/${planResult.runId}`);
+      expect(runDetail.status).toBe(200);
+      expect(
+        ((runDetail.body as Record<string, unknown>)["run"] as Record<string, unknown>)[
+          "runId"
+        ]
+      ).toBe(planResult.runId);
+
+      const tokenUsage = (runDetail.body as Record<string, unknown>)[
+        "tokenUsage"
+      ] as Record<string, unknown>;
+      expect((tokenUsage["anyPhaseExceeded"] as boolean)).toBe(true);
+      const byPhase = tokenUsage["byPhase"] as Record<string, Record<string, unknown>>;
+      expect((byPhase["planning"]?.["budgetLimit"] as number)).toBe(1);
+      expect((byPhase["planning"]?.["estimatedTokens"] as number)).toBeGreaterThan(1);
+    } finally {
+      await apiServer.stop();
+      if (previousBudget === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_ARCHITECT = previousBudget;
+      }
+      if (previousAction === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = previousAction;
+      }
+    }
+  });
 });

@@ -55,6 +55,7 @@ import {
   persistConcurrencyBlock,
   persistPhaseFailure
 } from "./failure.js";
+import { enforceTokenBudget } from "./token-budget.js";
 import {
   buildOpenClawArchitectureReviewPrompt,
   renderArchitectureReviewReportMarkdown
@@ -401,6 +402,7 @@ export async function runArchitectureReviewPhase(
     });
     let reportJsonPath = join(workspace.artifactsDir, "architecture-review.json");
     let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
+    let reviewTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
 
     if (dependencies.openClawDispatch) {
       const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
@@ -441,6 +443,22 @@ export async function runArchitectureReviewPhase(
         architectHandoffMarkdown,
         dependencies.runtimeConfig
       );
+      reviewTokenBudget = await enforceTokenBudget({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        manifest: currentManifest,
+        runId,
+        phase: "architecture_review",
+        actor: "reviewer",
+        contextValue: prompt,
+        checkedAt: asIsoTimestamp(clock()),
+        detailLabel: "Architecture review prompt",
+        eventData: {
+          workspaceId: workspace.workspaceId,
+          mode: "openclaw"
+        }
+      });
 
       dispatchResult = await dependencies.openClawDispatch.dispatch({
         sessionKey,
@@ -512,6 +530,27 @@ export async function runArchitectureReviewPhase(
         JSON.parse(await readFile(completion.reportPath, "utf8"))
       );
     } else {
+      reviewTokenBudget = await enforceTokenBudget({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        manifest: currentManifest,
+        runId,
+        phase: "architecture_review",
+        actor: "reviewer",
+        contextValue: {
+          bundle,
+          workspaceId: workspace.workspaceId,
+          architectHandoffMarkdown,
+          developerHandoffMarkdown
+        },
+        checkedAt: asIsoTimestamp(clock()),
+        detailLabel: "Architecture review",
+        eventData: {
+          workspaceId: workspace.workspaceId,
+          mode: "deterministic"
+        }
+      });
       report = architectureReviewReportSchema.parse(
         await reviewer.reviewImplementation(bundle, {
           manifest: currentManifest,
@@ -615,6 +654,7 @@ export async function runArchitectureReviewPhase(
           structuralDrift: report.structuralDrift,
           checks: report.checks,
           findings: report.findings,
+          ...(reviewTokenBudget ? { tokenBudget: reviewTokenBudget } : {}),
           reportArchiveLocation: archivedReport.location,
           reportMarkdownArchiveLocation: archivedReportMarkdown.location,
           ...(approvedRequest
@@ -637,6 +677,7 @@ export async function runArchitectureReviewPhase(
           verdict: report.verdict,
           summary: report.summary,
           findings: report.findings,
+          ...(reviewTokenBudget ? { tokenBudget: reviewTokenBudget } : {}),
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedReport,
             artifactClass: "review_output",
@@ -659,6 +700,7 @@ export async function runArchitectureReviewPhase(
           workspaceId: workspace.workspaceId,
           verdict: report.verdict,
           summary: report.summary,
+          ...(reviewTokenBudget ? { tokenBudget: reviewTokenBudget } : {}),
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedReportMarkdown,
             artifactClass: "review_output",
@@ -689,6 +731,7 @@ export async function runArchitectureReviewPhase(
           actor: "reviewer",
           workspaceId: workspace.workspaceId,
           verdict: report.verdict,
+          ...(reviewTokenBudget ? { tokenBudget: reviewTokenBudget } : {}),
           reportArchiveLocation: archivedReport.location,
           reportMarkdownArchiveLocation: archivedReportMarkdown.location
         },

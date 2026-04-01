@@ -107,6 +107,23 @@ export const confidenceSignalSchema = z.object({
   reason: z.string().min(1).max(300)
 });
 
+export const tokenBudgetOverageActionSchema = z.enum(["warn", "block"]);
+
+export const tokenUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0)
+});
+
+export const tokenBudgetResultSchema = z.object({
+  phase: taskPhaseSchema,
+  estimatedTokens: z.number().int().min(0),
+  budgetLimit: z.number().int().min(0),
+  withinBudget: z.boolean(),
+  overageAction: tokenBudgetOverageActionSchema,
+  actualInputTokens: z.number().int().min(0).nullable().optional(),
+  actualOutputTokens: z.number().int().min(0).nullable().optional()
+});
+
 export const planningSpecSchema = z.object({
   specId: z.string().min(1),
   taskId: z.string().min(1),
@@ -160,5 +177,10 @@ export type TaskGroupInjectionRequest = z.infer<
 export type TaskGroupMembership = z.infer<typeof taskGroupMembershipSchema>;
 export type ConfidenceLevel = z.infer<typeof confidenceLevelSchema>;
 export type ConfidenceSignal = z.infer<typeof confidenceSignalSchema>;
+export type TokenBudgetOverageAction = z.infer<
+  typeof tokenBudgetOverageActionSchema
+>;
+export type TokenUsage = z.infer<typeof tokenUsageSchema>;
+export type TokenBudgetResult = z.infer<typeof tokenBudgetResultSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;

@@ -67,6 +67,7 @@ import {
   persistConcurrencyBlock,
   persistPhaseFailure
 } from "./failure.js";
+import { enforceTokenBudget } from "./token-budget.js";
 import {
   renderScmDiffMarkdown,
   renderScmReportMarkdown
@@ -392,6 +393,29 @@ export async function runScmPhase(
       createdAt: scmStartedAtIso
     });
 
+    const scmTokenBudget = await enforceTokenBudget({
+      repository,
+      logger: runLogger,
+      nextEventId,
+      manifest: currentManifest,
+      runId,
+      phase: "scm",
+      actor: "scm",
+      contextValue: {
+        bundle,
+        workspaceId: workspace.workspaceId,
+        validationSummary,
+        validationReportPath,
+        baseBranch
+      },
+      checkedAt: asIsoTimestamp(clock()),
+      detailLabel: "SCM draft",
+      eventData: {
+        workspaceId: workspace.workspaceId,
+        dryRun: currentManifest.dryRun
+      }
+    });
+
     const draft = await scm.createPullRequest(bundle, {
       manifest: currentManifest,
       runId,
@@ -700,6 +724,7 @@ export async function runScmPhase(
           reportPath,
           diffPath,
           validationReportPath,
+          tokenBudget: scmTokenBudget,
           reportArchiveLocation: archivedScmReport.location,
           diffArchiveLocation: archivedScmDiff.location,
           ...(approvedRequest
@@ -727,6 +752,7 @@ export async function runScmPhase(
           changedFiles: publication.changedFiles,
           validationReportPath,
           reportPath,
+          tokenBudget: scmTokenBudget,
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedScmReport,
             artifactClass: "report",
@@ -754,6 +780,7 @@ export async function runScmPhase(
           changedFiles: publication.changedFiles,
           validationReportPath,
           diffPath,
+          tokenBudget: scmTokenBudget,
           ...buildArchivedArtifactMetadata({
             archivedArtifact: archivedScmDiff,
             artifactClass: "diff",
@@ -806,6 +833,7 @@ export async function runScmPhase(
         prNumber: pullRequest?.number ?? null,
         dryRun: currentManifest.dryRun,
         reportPath,
+        tokenBudget: scmTokenBudget,
         reportArchiveLocation: archivedScmReport.location,
         diffArchiveLocation: archivedScmDiff.location,
         commitSha: publication.commitSha
