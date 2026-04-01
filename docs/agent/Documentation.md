@@ -2,6 +2,9 @@
 
 ## 2026-04-01
 
+- Added [docs/ARCHITECTURE.md](/home/derek/code/RedDwarf/docs/ARCHITECTURE.md), a current-state architecture reference covering the control-plane/runtime split, pipeline lifecycle, OpenClaw integration model, Discord/WebChat/MCP operator surfaces, storage layout, trust boundaries, and deployment topology with Mermaid diagrams.
+- Linked the README to the new architecture doc so operators and contributors have a single entry point for system design context.
+
 - Cleaned up `README.md` and `docs/DEMO_RUNBOOK.md` after the M14 operator-surface rollout so the docs match the current user-facing workflow.
 - Replaced the stale demo-runbook advice about a hand-written polling launcher with the real repo-management flow (`corepack pnpm start` plus `POST /repos` or the `/ui` panel), corrected the agent-roster count to five, and clarified that post-approval phases now continue automatically while the stack is running.
 - Aligned the OpenClaw config-path defaults across `.env.example`, `scripts/generate-openclaw-config.mjs`, and the operator API metadata so the documented manual generator path now matches the live `runtime-data/openclaw-home/openclaw.json` file used by normal startup.

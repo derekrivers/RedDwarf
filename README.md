@@ -9,6 +9,8 @@ The repo is designed to be bind-mounted into an OpenClaw Docker container during
 - durable and auditable
 - full pipeline from GitHub issue intake through planning, developer code generation (via OpenClaw), validation, and SCM branch/PR creation — proven end-to-end with real GitHub PRs
 
+For a current system-level view, see [docs/ARCHITECTURE.md](/home/derek/code/RedDwarf/docs/ARCHITECTURE.md).
+
 ## Repository Shape
 
 - `packages/contracts`: shared domain schemas and types, including partitioned memory contracts
