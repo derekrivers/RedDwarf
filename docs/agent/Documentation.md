@@ -2,6 +2,11 @@
 
 ## 2026-04-01
 
+- Reviewed `docs/RedDwarf-UX-Research-Report.md` and reprioritized `FEATURE_BOARD.md` around operator experience rather than only pipeline internals.
+- Added a new top-priority `M14 — Operator UX` milestone covering `.env` classification, DB-backed runtime config, Operator API config and repo-management endpoints, richer runs/tasks observability, write-only secret rotation, a single-file `/ui` operator panel, OpenClaw WebChat commands, and an MCP bridge over the Operator API.
+- Added a new `M18 — VPS Expansion` milestone covering VPS-specific compose topology, webhook intake, Tailscale Funnel exposure, CI webhook reception, and multi-provider failover after config-schema validation.
+- Extended the active board format with explicit `Depends On` and `Deployment` columns so upcoming work is easier to sequence and reason about.
+- Current likely next board item: feature 114, classify `.env` into boot-time, runtime, and secret tiers.
 - Completed feature 112 from `FEATURE_BOARD.md`: phase retry budget.
 - Added explicit per-phase retry-budget configuration via `REDDWARF_MAX_RETRIES_*` env vars, including alias names that match the proposal document (`ARCHITECT`, `DEVELOPER`, `VALIDATOR`, `REVIEWER`) plus repo-native phase names.
 - Added durable retry-budget state under `failure.retry_budget.<phase>` so repeated failures now persist attempts, last error, retry limit, and exhausted state independently per phase instead of relying only on the legacy manifest-wide `retryCount`.

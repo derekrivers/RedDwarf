@@ -4,34 +4,54 @@ The board is ordered by implementation priority.
 
 This active board only lists pending work. Completed items are archived in [features_archive/COMPLETED_FEATURES.md](/c:/Dev/RedDwarf/features_archive/COMPLETED_FEATURES.md).
 
-Priority reset note: after the March 29, 2026 hardening audit, pending feature work is intentionally ordered by production blast radius rather than feature-number chronology. Concurrency correctness, transactional durability, policy enforcement, credential safety, and operator-surface hardening now take precedence over new provider and intake features. Read [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
+Priority reset note: after the March 29, 2026 hardening audit and the April 2026 UX research pass, pending feature work is intentionally ordered by operator leverage and production blast radius rather than feature-number chronology. Operator onboarding, configuration safety, and day-to-day observability now sit ahead of speculative platform expansion. Read [docs/RedDwarf-UX-Research-Report.md](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md) before picking up features 114-127, and read [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
 
 **OpenClaw platform principle (adopted March 2026):** Use OpenClaw for infrastructure concerns — sandboxing, model failover, notifications, scheduling, browser access. Own RedDwarf's domain logic — eligibility gating, role-scoped context, policy enforcement, pipeline orchestration. Where OpenClaw already provides a capability, configure it rather than build it. See [`docs/openclaw/reddwarf-openclaw-opportunities.md`](/c:/Dev/RedDwarf/docs/openclaw/reddwarf-openclaw-opportunities.md).
 
----
-
-### M15 — Pipeline Hardening
-
-| # | Feature | Milestone | Status | Architecture Trace |
-| - | ------- | --------- | ------ | ------------------ |
-| 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — |
-| 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — |
+Column legend: `Depends On` captures explicit delivery sequencing; `Deployment` is `Local`, `VPS`, or `Both`.
 
 ---
 
-### Fast-track — OpenClaw infrastructure config (low effort, no domain risk)
+## M14 — Operator UX
+
+Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md). This milestone is the current top priority because operator friction is now a bigger adoption blocker than core pipeline semantics.
+
+| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
+| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
+| 114 | Classify `.env` into boot-time, runtime, and secret tiers; refactor `.env.example` with grouped comment headers | M14 | pending | — | Both | UX report: Section 1.2, Appendix |
+| 115 | Add `operator_config` Drizzle table and startup merge logic so DB-backed runtime config overrides `.env` | M14 | pending | 114 | Both | UX report: Sections 1.5, 2.4 |
+| 116 | Add `GET /config`, `PUT /config`, and `GET /config/schema` Operator API endpoints with Zod contracts | M14 | pending | 115 | Both | UX report: Sections 2.2, 2.4 |
+| 117 | Add `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo`; replace comma-string poll repo config with DB-backed repo management | M14 | pending | 116 | Both | UX report: Sections 1.3, 2.2 |
+| 118 | Expand observability endpoints: filtered `GET /runs`, `GET /runs/:id`, `GET /runs/:id/evidence`, `GET /tasks`, `GET /tasks/:id` | M14 | pending | — | Both | UX report: Section 2.2 |
+| 119 | Add `POST /secrets/:key/rotate` write-only endpoint backed by a permissions-restricted local secrets store | M14 | pending | 115 | Both | UX report: Sections 1.4, 2.2 |
+| 120 | Build and serve a single-file operator configuration panel from `GET /ui` for Polling, DB Pool, Logging, Paths, Status, and secret rotation | M14 | pending | 116, 117, 118, 119 | Both | UX report: Sections 1.3, 2.2 |
+| 121 | Register OpenClaw WebChat operator commands for `status`, `approve`, `reject`, `submit`, and `runs` | M14 | pending | 118 | Both | UX report: Section 4.2 |
+| 122 | Add an MCP bridge over the Operator API so OpenClaw agents can query RedDwarf task history and evidence during context building | M14 | pending | 118 | Both | UX report: Section 4.3 |
+
+---
+
+## M15 — Pipeline Hardening
+
+| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
+| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
+| 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — | Both | — |
+| 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — | Both | — |
+
+---
+
+## Fast-track — OpenClaw Infrastructure Config
 
 These items are configuration tasks against confirmed OpenClaw platform capabilities. They do not touch pipeline domain logic and can be picked up in any order independent of milestone sequencing.
 
-| # | Feature | Status | Notes |
-| - | ------- | ------ | ----- |
-| 104 | Telegram channel integration - wire OpenClaw's native Telegram channel support for operators who prefer Telegram for approval and status notifications | pending | OpenClaw native Telegram support; config-only, mirrors 99–100 |
-| 105 | **[BLOCKED FOR CURRENT TOPOLOGY]** Docker sandboxing for developer phase - run the Developer phase in a per-session Docker sandbox for execution isolation | blocked | Blocked in RedDwarf's current Docker-hosted OpenClaw topology because the seeded gateway container does not have Docker backend access, so sandboxed sessions fail and all agents currently use `sandbox: { mode: "off" }`. This is not a platform-wide OpenClaw limitation. Unblocks if deployment moves to a Linux host-installed OpenClaw gateway that can reach host Docker, or if the Docker deployment is rebuilt around OpenClaw's upstream sandbox-enabled container flow. See TROUBLESHOOTING.md. |
-| 106 | **[NEEDS SCHEMA]** Model failover wiring - configure OpenClaw auth profile rotation between OAuth and API keys with automatic fallbacks so a model outage does not stall the full pipeline | blocked | OpenClaw failover config schema is not documented in this repo. Current gateway auth is `mode: "token"` only. Do not implement blind. Needs OpenClaw docs review before any config change. |
+| # | Feature | Status | Depends On | Deployment | Notes |
+| - | ------- | ------ | ---------- | ---------- | ----- |
+| 104 | Telegram channel integration - wire OpenClaw's native Telegram channel support for operators who prefer Telegram for approval and status notifications | pending | — | Both | OpenClaw native Telegram support; config-only, mirrors Discord-style operator notifications without changing RedDwarf domain logic |
+| 105 | **[BLOCKED FOR CURRENT TOPOLOGY]** Docker sandboxing for developer phase - run the Developer phase in a per-session Docker sandbox for execution isolation | blocked | VPS deployment or sandbox-capable host OpenClaw | VPS | Blocked in RedDwarf's current Docker-hosted OpenClaw topology because the seeded gateway container does not have Docker backend access, so sandboxed sessions fail and all agents currently use `sandbox: { mode: "off" }`. This is not a platform-wide OpenClaw limitation. Unblocks if deployment moves to a Linux host-installed OpenClaw gateway that can reach host Docker, or if the Docker deployment is rebuilt around OpenClaw's upstream sandbox-enabled container flow. See TROUBLESHOOTING.md. |
+| 106 | **[NEEDS SCHEMA]** Model failover wiring - configure OpenClaw auth profile rotation between OAuth and API keys with automatic fallbacks so a model outage does not stall the full pipeline | blocked | OpenClaw failover config schema review | Both | OpenClaw failover config schema is not documented in this repo. Current gateway auth is `mode: "token"` only. Do not implement blind. Needs OpenClaw docs review before any config change. |
 
 ---
 
-### M16 — Pipeline Domain Features
+## M16 — Pipeline Domain Features
 
 Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md). Read the linked section before implementation so schema, contract, control-plane, and operator-surface notes stay aligned with the original proposal.
 
@@ -47,10 +67,24 @@ Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md
 
 ---
 
-### M17 — Provider Expansion
+## M17 — Provider Expansion
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
+
+---
+
+## M18 — VPS Expansion
+
+Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md). These features are intentionally grouped after Operator UX because they are materially more valuable once the stack is continuously hosted.
+
+| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
+| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
+| 123 | VPS-specific Docker Compose config: internal-only Postgres, no `HOST_DATABASE_URL` workaround, optional TLS reverse proxy | M18 | pending | — | VPS | UX report: Section 5.9 |
+| 124 | GitHub webhook intake endpoint to replace polling; reuse the direct task-intake path instead of duplicating intake logic | M18 | pending | S-4 resolution | VPS | UX report: Section 5.5 |
+| 125 | Tailscale Funnel guide and optional `funnel` compose profile for authenticated remote access to gateway and operator UI | M18 | pending | 123 | VPS | UX report: Sections 5.3, 4.7 |
+| 126 | CI adapter webhook receiver so validation can await real CI status events from GitHub Actions or equivalent | M18 | pending | 123 | VPS | UX report: Section 5.8 |
+| 127 | Multi-provider per-phase failover using Anthropic and OpenAI once provider routing semantics are settled | M18 | pending | 106 | VPS | UX report: Section 5.7 |
 
 ---
 
