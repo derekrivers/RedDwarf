@@ -111,14 +111,49 @@ Press `Ctrl+C` to shut down all services gracefully.
 
 ### Configuration
 
+`.env.example` is now grouped into four classes:
+
+- Boot-time: infrastructure, connection strings, and filesystem paths that are resolved before startup and require a restart when changed.
+- Runtime-configurable: polling, dispatch, OpenClaw feature toggles, log level, pool tuning, retry budgets, and token budgets. These are the first candidates for the future operator config UI.
+- Secrets: API keys and operator credentials. Keep these out of any plaintext UI.
+- Dev / E2E: local verification helpers, not part of normal production operation.
+
+**Boot-time**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:latest` | OpenClaw container image to run in the local Docker stack |
+| `OPENCLAW_HOST_PORT` | `3578` | Host port for the OpenClaw Control UI |
+| `POSTGRES_DB` | `reddwarf` | Local Postgres database name |
+| `POSTGRES_USER` | `reddwarf` | Local Postgres username |
+| `POSTGRES_PASSWORD` | `reddwarf` | Local Postgres password |
+| `POSTGRES_HOST_PORT` | `55532` | Host port for Docker-managed Postgres |
+| `DATABASE_URL` | `postgresql://reddwarf:reddwarf@postgres:5432/reddwarf` | In-container Postgres connection string |
+| `HOST_DATABASE_URL` | `postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf` | Host-side Postgres connection string used by local scripts |
+| `REDDWARF_POLICY_SOURCE_ROOT` | `../../` | Source tree root used when packaging the policy pack |
+| `REDDWARF_POLICY_ROOT` | `/opt/reddwarf` | Runtime-visible policy-pack root inside managed environments |
+| `REDDWARF_WORKSPACE_ROOT` | `/var/lib/reddwarf/workspaces` | Runtime-visible managed workspace root |
+| `REDDWARF_EVIDENCE_ROOT` | `/var/lib/reddwarf/evidence` | Runtime-visible evidence archive root |
+| `REDDWARF_HOST_WORKSPACE_ROOT` | `runtime-data/workspaces` | Host-side workspace root used by local scripts and E2E runs |
+| `REDDWARF_HOST_EVIDENCE_ROOT` | `runtime-data/evidence` | Host-side evidence archive root |
+| `REDDWARF_POLICY_PACKAGE_OUTPUT_ROOT` | `artifacts/policy-packs` | Output directory for packaged policy assets |
+| `REDDWARF_OPENCLAW_WORKSPACE_ROOT` | `runtime-data/openclaw-workspaces` | Host-mounted OpenClaw session workspace root |
+| `REDDWARF_OPENCLAW_CONFIG_PATH` | `runtime-data/openclaw.json` | Generated OpenClaw runtime config path |
+
+**Runtime-configurable**
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDDWARF_POLL_REPOS` | _(disabled)_ | Comma-separated `owner/repo` list to poll (e.g. `acme/platform,acme/api`) |
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
+| `REDDWARF_DISPATCH_INTERVAL_MS` | `15000` | Ready-task dispatch loop interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
 | `REDDWARF_API_URL` | `http://127.0.0.1:8080` | Optional full base URL override for the operator API; mainly used by `reddwarf submit` when the API is not on the default local port |
-| `REDDWARF_OPENCLAW_DISCORD_ENABLED` | `false` | Emit a native `channels.discord` block into the generated OpenClaw runtime config |
+| `REDDWARF_LOG_LEVEL` | `info` | Structured runtime log level for poller, dispatcher, and pipeline logs |
+| `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
+| `REDDWARF_DRY_RUN` | `false` | Suppress SCM and follow-up GitHub mutations while still exercising the pipeline |
 | `REDDWARF_OPENCLAW_BROWSER_ENABLED` | `true` | Enable OpenClaw's built-in browser so Holly can inspect live library docs and API references |
+| `REDDWARF_OPENCLAW_DISCORD_ENABLED` | `false` | Emit a native `channels.discord` block into the generated OpenClaw runtime config |
 | `REDDWARF_OPENCLAW_DISCORD_DM_POLICY` | `pairing` | Direct-message policy for the native OpenClaw Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY` | `allowlist` | Server policy for the native OpenClaw Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_GUILD_IDS` | _(empty)_ | Comma-separated Discord server ids to allow when Discord mode is enabled |
@@ -127,19 +162,52 @@ Press `Ctrl+C` to shut down all services gracefully.
 | `REDDWARF_OPENCLAW_DISCORD_STREAMING` | `partial` | Discord streaming mode for native OpenClaw replies |
 | `REDDWARF_OPENCLAW_DISCORD_HISTORY_LIMIT` | `24` | Recent message history count to retain in the Discord bridge |
 | `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_ENABLED` | `true` | Turn on OpenClaw's native Discord presence updates when notifications are enabled |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_INTERVAL_MS` | _(empty)_ | Optional override for the Discord presence refresh cadence |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_MIN_UPDATE_INTERVAL_MS` | _(empty)_ | Optional minimum interval between presence updates |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_HEALTHY_TEXT` | _(empty)_ | Optional custom healthy-status presence text |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_DEGRADED_TEXT` | _(empty)_ | Optional custom degraded-status presence text |
+| `REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_EXHAUSTED_TEXT` | _(empty)_ | Optional custom exhausted-status presence text |
 | `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED` | `false` | Enable native OpenClaw approval prompts in Discord |
 | `REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS` | _(empty)_ | Comma-separated Discord user ids allowed to resolve native OpenClaw approval prompts |
 | `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVAL_TARGET` | `channel` | Where OpenClaw posts approval prompts: `dm`, `channel`, or `both` |
 | `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` | `#d7263d` | Accent color for native Discord button components and cards |
-| `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
 | `REDDWARF_DB_POOL_MAX` | `10` | Max Postgres connections in the shared `pg.Pool` |
 | `REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Fail DB connection attempts after this many milliseconds |
 | `REDDWARF_DB_POOL_IDLE_TIMEOUT_MS` | `30000` | Evict idle Postgres clients after this many milliseconds |
 | `REDDWARF_DB_POOL_QUERY_TIMEOUT_MS` | `15000` | Fail Postgres queries after this many milliseconds |
 | `REDDWARF_DB_POOL_STATEMENT_TIMEOUT_MS` | `15000` | Ask Postgres to cancel statements that exceed this runtime |
 | `REDDWARF_DB_POOL_MAX_LIFETIME_SECONDS` | `300` | Recycle Postgres clients after this lifetime |
-| `REDDWARF_LOG_LEVEL` | `info` | Structured runtime log level for poller, dispatcher, and pipeline logs |
-| `REDDWARF_SKIP_OPENCLAW` | `false` | Set to `true` to skip OpenClaw startup |
+| `REDDWARF_MAX_RETRIES_ARCHITECT` | `2` | Planning retry budget alias for the architect phase |
+| `REDDWARF_MAX_RETRIES_DEVELOPER` | `1` | Development retry budget alias |
+| `REDDWARF_MAX_RETRIES_VALIDATOR` | `1` | Validation retry budget alias |
+| `REDDWARF_MAX_RETRIES_REVIEWER` | `1` | Architecture-review retry budget alias |
+| `REDDWARF_MAX_RETRIES_SCM` | `1` | SCM retry budget |
+| `REDDWARF_TOKEN_BUDGET_ARCHITECT` | `80000` | Planning token budget |
+| `REDDWARF_TOKEN_BUDGET_DEVELOPER` | `120000` | Development token budget |
+| `REDDWARF_TOKEN_BUDGET_VALIDATOR` | `40000` | Validation token budget |
+| `REDDWARF_TOKEN_BUDGET_REVIEWER` | `60000` | Architecture-review token budget |
+| `REDDWARF_TOKEN_BUDGET_SCM` | `40000` | SCM token budget |
+| `REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION` | `warn` | Budget overage behavior: warn or block |
+
+**Secrets**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_TOKEN` | _(required)_ | GitHub PAT for issue intake, branch publishing, PR creation, and cleanup |
+| `ANTHROPIC_API_KEY` | _(required for Anthropic planning)_ | Anthropic API key for planning and provider-backed execution |
+| `OPENCLAW_HOOK_TOKEN` | _(required when dispatching to OpenClaw)_ | Privileged hook-ingress token for RedDwarf -> OpenClaw dispatch |
+| `OPENCLAW_BASE_URL` | `http://localhost:3578` | Base URL for the OpenClaw gateway HTTP API |
+| `OPENCLAW_GATEWAY_TOKEN` | _(required for Control UI)_ | Browser auth token for the OpenClaw Control UI |
+| `OPENCLAW_DISCORD_BOT_TOKEN` | _(required when Discord is enabled)_ | Bot token for OpenClaw's native Discord integration |
+| `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
+
+**Dev / E2E**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `E2E_TARGET_REPO` | _(unset)_ | Target repository in `owner/repo` format for the live E2E workflow |
+| `E2E_USE_OPENCLAW` | `false` | Dispatch developer work through the live OpenClaw runtime during E2E |
+| `E2E_CLEANUP` | `false` | Close or delete created GitHub resources after E2E completes |
 
 **Example — full stack with polling:**
 
