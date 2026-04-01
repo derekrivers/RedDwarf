@@ -20,7 +20,9 @@ import {
   type RepositoryHealthSnapshot
 } from "@reddwarf/evidence";
 import {
+  assembleRunReport,
   dispatchReadyTask,
+  renderRunReportMarkdown,
   resolveApprovalRequest,
   runPlanningPipeline,
   summarizeRunTokenUsage,
@@ -252,6 +254,19 @@ function writeOperatorJsonResponse(
   res.end(json);
 }
 
+function writeOperatorTextResponse(
+  res: ServerResponse,
+  status: number,
+  body: string,
+  contentType = "text/plain; charset=utf-8"
+): void {
+  res.writeHead(status, {
+    "Content-Type": contentType,
+    "Content-Length": Buffer.byteLength(body)
+  });
+  res.end(body);
+}
+
 async function readOperatorJsonBody(
   req: IncomingMessage,
   maxRequestBodyBytes: number
@@ -459,6 +474,33 @@ async function handleOperatorRequest(
       tokenUsage: summarizeRunTokenUsage(events)
     };
     writeOperatorJsonResponse(res, 200, response);
+    return;
+  }
+
+  const runReportMatch = /^\/runs\/([^/]+)\/report$/.exec(path);
+  if (method === "GET" && runReportMatch) {
+    const runId = decodeURIComponent(runReportMatch[1]!);
+    const report = await assembleRunReport(repository, runId);
+    if (!report) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Pipeline run ${runId} not found.`
+      });
+      return;
+    }
+
+    const accept = String(req.headers["accept"] ?? "text/markdown");
+    if (accept.includes("application/json")) {
+      writeOperatorJsonResponse(res, 200, report);
+      return;
+    }
+
+    writeOperatorTextResponse(
+      res,
+      200,
+      renderRunReportMarkdown(report),
+      "text/markdown; charset=utf-8"
+    );
     return;
   }
 

@@ -16,6 +16,8 @@ const usage = `RedDwarf CLI
 
 Usage:
   reddwarf submit --repo <owner/repo> --title <title> --summary <summary> --acceptance <criterion> [options]
+  reddwarf report --run-id <run-id> [options]
+  reddwarf report --last [options]
 
 Submit options:
   --repo <owner/repo>          Repository the task belongs to
@@ -35,6 +37,15 @@ Submit options:
   --json                       Print the raw JSON response
   --help                       Show this message
 
+Report options:
+  --run-id <id>                Pipeline run id to export
+  --last                       Export the most recent run
+  --out <dir>                  Output directory (default: current directory)
+  --api-url <url>              Operator API base URL (default: REDDWARF_API_URL or local :8080)
+  --token <token>              Operator token (default: REDDWARF_OPERATOR_TOKEN)
+  --json                       Print the raw JSON report payload instead of markdown
+  --help                       Show this message
+
 Examples:
   reddwarf submit \\
     --repo acme/platform \\
@@ -45,6 +56,8 @@ Examples:
 
   reddwarf submit --repo acme/platform --title "Improve logs" --summary "..." \\
     --acceptance "Structured logs include task ids." --json
+
+  reddwarf report --run-id acme-run-123 --out reports/
 `;
 
 const argv = process.argv.slice(2);
@@ -55,9 +68,14 @@ if (!command || command === "--help" || command === "help") {
   process.exit(0);
 }
 
-if (command !== "submit") {
+if (!["submit", "report"].includes(command)) {
   process.stderr.write(`Unknown command: ${command}\n\n${usage}\n`);
   process.exit(1);
+}
+
+if (command === "report") {
+  await handleReportCommand(argv.slice(1));
+  process.exit(0);
 }
 
 const { values } = parseArgs({
@@ -201,6 +219,82 @@ function normalizeList(value) {
   return value.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 }
 
+async function handleReportCommand(args) {
+  const { values } = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      "run-id": { type: "string" },
+      last: { type: "boolean" },
+      out: { type: "string" },
+      "api-url": { type: "string" },
+      token: { type: "string" },
+      json: { type: "boolean" },
+      help: { type: "boolean" }
+    }
+  });
+
+  if (values.help) {
+    process.stdout.write(`${usage}\n`);
+    return;
+  }
+
+  const apiBaseUrl = resolveApiBaseUrl(values["api-url"]);
+  const operatorToken = resolveOperatorToken(values.token);
+  const outDir = values.out?.trim() || ".";
+
+  let runId =
+    typeof values["run-id"] === "string" && values["run-id"].trim().length > 0
+      ? values["run-id"].trim()
+      : null;
+
+  if (values.last) {
+    const runsResponse = await getResponse(
+      new URL("/runs?limit=1", ensureTrailingSlash(apiBaseUrl)),
+      operatorToken,
+      "application/json"
+    );
+    if (runsResponse.statusCode < 200 || runsResponse.statusCode >= 300) {
+      fail(`Failed to resolve the latest run: HTTP ${runsResponse.statusCode}`);
+    }
+    const runsBody = JSON.parse(runsResponse.body || "{}");
+    runId = runsBody.runs?.[0]?.runId ?? null;
+  }
+
+  if (!runId) {
+    fail("Provide --run-id <id> or --last.");
+  }
+
+  if (values.json) {
+    const reportResponse = await getResponse(
+      new URL(`/runs/${encodeURIComponent(runId)}/report`, ensureTrailingSlash(apiBaseUrl)),
+      operatorToken,
+      "application/json"
+    );
+    if (reportResponse.statusCode < 200 || reportResponse.statusCode >= 300) {
+      fail(`Failed to export the run report: HTTP ${reportResponse.statusCode}`);
+    }
+    process.stdout.write(`${JSON.stringify(JSON.parse(reportResponse.body || "{}"), null, 2)}\n`);
+    return;
+  }
+
+  const markdownResponse = await getResponse(
+    new URL(`/runs/${encodeURIComponent(runId)}/report`, ensureTrailingSlash(apiBaseUrl)),
+    operatorToken,
+    "text/markdown"
+  );
+  if (markdownResponse.statusCode < 200 || markdownResponse.statusCode >= 300) {
+    fail(`Failed to export the run report: HTTP ${markdownResponse.statusCode}`);
+  }
+
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  mkdirSync(outDir, { recursive: true });
+  const filePath = join(outDir, `run-${runId.slice(0, 8)}.md`);
+  writeFileSync(filePath, markdownResponse.body, "utf8");
+  process.stdout.write(`Report written: ${filePath}\n`);
+}
+
 function resolveApiBaseUrl(override) {
   const fallbackPort = process.env.REDDWARF_API_PORT?.trim() || "8080";
   const raw =
@@ -282,6 +376,44 @@ function postJson(url, body, token) {
     });
     req.on("error", reject);
     req.write(payload);
+    req.end();
+  });
+}
+
+function getResponse(url, token, accept = "application/json") {
+  const requestImpl = url.protocol === "https:" ? httpsRequest : httpRequest;
+
+  return new Promise((resolve, reject) => {
+    const req = requestImpl(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: accept
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk) => {
+          raw += chunk.toString();
+        });
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: raw
+          });
+        });
+      }
+    );
+
+    req.setTimeout(15_000, () => {
+      req.destroy(new Error("Operator API request timed out."));
+    });
+    req.on("error", reject);
     req.end();
   });
 }

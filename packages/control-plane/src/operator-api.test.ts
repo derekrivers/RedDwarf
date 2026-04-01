@@ -83,6 +83,41 @@ function operatorGet(
   });
 }
 
+function operatorGetRaw(
+  port: number,
+  path: string,
+  accept: string,
+  authToken: string | null = operatorApiToken
+): Promise<{ status: number; body: string; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "GET",
+        headers: {
+          ...buildOperatorHeaders(authToken),
+          Accept: accept
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: raw,
+            contentType: String(res.headers["content-type"] ?? "")
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function operatorPost(
   port: number,
   path: string,
@@ -879,6 +914,38 @@ describe("operator API server", () => {
       } else {
         process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = previousAction;
       }
+    }
+  });
+
+  it("renders a markdown pipeline run report", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-26T12:00:00.000Z"),
+      idGenerator: () => "op-run-report"
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const report = await operatorGetRaw(
+        port,
+        `/runs/${planResult.runId}/report`,
+        "text/markdown"
+      );
+      expect(report.status).toBe(200);
+      expect(report.contentType).toContain("text/markdown");
+      expect(report.body).toContain("# Pipeline Run Report");
+      expect(report.body).toContain(planResult.runId);
+      expect(report.body).toContain(planResult.manifest.taskId);
+    } finally {
+      await apiServer.stop();
     }
   });
 });
