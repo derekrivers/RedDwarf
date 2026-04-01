@@ -340,6 +340,21 @@ The generated OpenClaw runtime config now loads a repo-mounted `reddwarf-operato
 
 OpenClaw reserves built-in `/status`, `/approve`, and `/reject`, so the RedDwarf plugin intentionally uses the `rd...` aliases instead of trying to override gateway-native commands. The gateway container reaches the host-side operator API through `REDDWARF_OPENCLAW_OPERATOR_API_URL`, which defaults to `http://host.docker.internal:8080` in Docker Compose.
 
+### OpenClaw MCP bridge
+
+The generated OpenClaw runtime config now also registers a read-only RedDwarf MCP server under `mcp.servers.reddwarf`. It runs [start-operator-mcp.mjs](/home/derek/code/RedDwarf/scripts/start-operator-mcp.mjs) inside the gateway container and proxies to the existing operator API, so OpenClaw agents can query task history and evidence during context building without adding a second datastore.
+
+The MCP bridge currently exposes these tools:
+
+- `reddwarf_find_task_history`
+- `reddwarf_get_task_history`
+- `reddwarf_get_task_evidence`
+- `reddwarf_list_runs`
+- `reddwarf_get_run`
+- `reddwarf_get_run_evidence`
+
+All six tools are read-only and authenticate to the operator API with `REDDWARF_OPERATOR_TOKEN`. You can verify the bridge locally with `corepack pnpm verify:operator-mcp`.
+
 ### Service health checks
 
 | Service | Endpoint | Expected |

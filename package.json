@@ -42,6 +42,7 @@
     "verify:evidence": "corepack pnpm build && node scripts/verify-evidence.mjs",
     "verify:recovery": "corepack pnpm build && node scripts/verify-recovery.mjs",
     "verify:operator-api": "corepack pnpm build && node scripts/verify-operator-api.mjs",
+    "verify:operator-mcp": "corepack pnpm build && node scripts/verify-operator-mcp.mjs",
     "verify:report-cli": "corepack pnpm build && node scripts/verify-report-cli.mjs",
     "verify:submit-cli": "corepack pnpm build && node scripts/verify-submit-cli.mjs",
     "verify:knowledge-ingestion": "corepack pnpm build && node scripts/verify-knowledge-ingestion.mjs",

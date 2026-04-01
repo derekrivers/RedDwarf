@@ -46,6 +46,18 @@ describe("generateOpenClawConfig", () => {
         }
       }
     });
+    expect(config.mcp).toEqual({
+      servers: {
+        reddwarf: {
+          command: "node",
+          args: ["/opt/reddwarf/scripts/start-operator-mcp.mjs"],
+          env: {
+            REDDWARF_API_URL: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}",
+            REDDWARF_OPERATOR_TOKEN: "${REDDWARF_OPERATOR_TOKEN}"
+          }
+        }
+      }
+    });
     expect(config.agents.defaults.skipBootstrap).toBe(true);
 
     const agentIds = config.agents.list.map((agent) => agent.id);
@@ -240,6 +252,9 @@ describe("generateOpenClawConfig", () => {
 
     expect(config.plugins?.load?.paths).toEqual([
       "/srv/reddwarf/agents/openclaw/plugins/reddwarf-operator"
+    ]);
+    expect(config.mcp?.servers.reddwarf?.args).toEqual([
+      "/srv/reddwarf/scripts/start-operator-mcp.mjs"
     ]);
   });
 

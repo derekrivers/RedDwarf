@@ -92,6 +92,15 @@ export interface OpenClawBrowserConfig {
   enabled: boolean;
 }
 
+export interface OpenClawMcpServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  workingDirectory?: string;
+  url?: string;
+}
+
 export interface OpenClawAgentConfig {
   id: string;
   name: string;
@@ -116,6 +125,9 @@ export interface OpenClawConfig {
   };
   channels?: OpenClawChannelsConfig;
   browser?: OpenClawBrowserConfig;
+  mcp?: {
+    servers: Record<string, OpenClawMcpServerConfig>;
+  };
   plugins?: {
     enabled: boolean;
     allow?: string[];
@@ -240,6 +252,11 @@ export function generateOpenClawConfig(
     "openclaw",
     "plugins",
     "reddwarf-operator"
+  ).replace(/\\/g, "/");
+  const reddwarfOperatorMcpScriptPath = join(
+    policyRoot,
+    "scripts",
+    "start-operator-mcp.mjs"
   ).replace(/\\/g, "/");
 
   const config: OpenClawConfig = {
@@ -406,6 +423,18 @@ export function generateOpenClawConfig(
         }
       : {}),
     ...(options.browser ? { browser: { enabled: options.browser.enabled } } : {}),
+    mcp: {
+      servers: {
+        reddwarf: {
+          command: "node",
+          args: [reddwarfOperatorMcpScriptPath],
+          env: {
+            REDDWARF_API_URL: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}",
+            REDDWARF_OPERATOR_TOKEN: "${REDDWARF_OPERATOR_TOKEN}"
+          }
+        }
+      }
+    },
     plugins: {
       enabled: true,
       allow: ["reddwarf-operator"],

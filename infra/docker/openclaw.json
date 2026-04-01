@@ -63,6 +63,20 @@
   "browser": {
     "enabled": true
   },
+  "mcp": {
+    "servers": {
+      "reddwarf": {
+        "command": "node",
+        "args": [
+          "/opt/reddwarf/scripts/start-operator-mcp.mjs"
+        ],
+        "env": {
+          "REDDWARF_API_URL": "${REDDWARF_OPENCLAW_OPERATOR_API_URL}",
+          "REDDWARF_OPERATOR_TOKEN": "${REDDWARF_OPERATOR_TOKEN}"
+        }
+      }
+    }
+  },
   "plugins": {
     "enabled": true,
     "allow": [

@@ -151,6 +151,7 @@ corepack pnpm generate:openclaw-config
 ```
 
 The generated config also loads the repo-mounted `reddwarf-operator` OpenClaw plugin and points it at `REDDWARF_OPENCLAW_OPERATOR_API_URL` so WebChat can talk back to the host-side operator API from inside the container.
+It also registers a read-only `mcp.servers.reddwarf` entry that starts `scripts/start-operator-mcp.mjs` inside the gateway container for task-history and evidence lookups.
 
 To enable the native Discord operator surface in the generated config, set:
 
@@ -600,6 +601,7 @@ The database volume is **preserved by default** so you can restart without losin
 | OpenClaw `curl` returns empty reply on 3578 | Gateway bound to container loopback | Ensure `openclaw.json` has `gateway.bind: "lan"`, check `runtime-data/openclaw-home/openclaw.json`, recreate the container |
 | OpenClaw agents not showing in Control UI | Old agent config format | Ensure `openclaw.json` uses `agents.list[]` array format (not object keys), recreate container |
 | WebChat RedDwarf commands fail with Operator API connection errors | Gateway container cannot reach the host API | Confirm `REDDWARF_OPENCLAW_OPERATOR_API_URL` points at the host-reachable operator API and Compose has the `host.docker.internal` host-gateway mapping |
+| RedDwarf MCP bridge cannot reach the Operator API | MCP server inherits the wrong API base URL or token | Confirm `mcp.servers.reddwarf.env.REDDWARF_API_URL` points at `http://host.docker.internal:8080`, and `REDDWARF_OPERATOR_TOKEN` is present in the OpenClaw container |
 | OpenClaw dispatch 401/403 | Invalid `OPENCLAW_HOOK_TOKEN` | Check `.env` token matches gateway config |
 | OpenClaw dispatch 429/529 | Rate limited | Adapter retries automatically (3 attempts, 2s backoff) |
 | Developer phase `task_blocked` | Approval not resolved | Check `/approvals` — resolve pending approval first |

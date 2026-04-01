@@ -162,3 +162,11 @@
 - Failing approach: adding `plugins.load.paths` and `plugins.entries` for a repo plugin without also pinning the trusted plugin ids.
 - Working workaround: set `plugins.allow` explicitly in both the generated config and the checked-in template. For feature 121, RedDwarf now trusts only `reddwarf-operator`.
 - Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate the OpenClaw container, and confirm `node openclaw.mjs plugins inspect reddwarf-operator --json` reports `status: "loaded"` without the trust warning.
+
+## RedDwarf MCP bridge inside OpenClaw cannot reach the operator API
+
+- Symptom: MCP tool calls such as `reddwarf_get_task_history` or `reddwarf_get_run_evidence` fail from inside OpenClaw with connection errors to `127.0.0.1:8080` or `ECONNREFUSED` against the operator API.
+- Root cause: the MCP server runs inside the OpenClaw container, so `127.0.0.1` refers to the container itself rather than the host-side operator API process.
+- Failing approach: configuring the MCP bridge to inherit the host-default `REDDWARF_API_URL=http://127.0.0.1:8080` without overriding it for the container runtime.
+- Working workaround: set `REDDWARF_OPENCLAW_OPERATOR_API_URL=http://host.docker.internal:8080` in the OpenClaw service environment, map `host.docker.internal:host-gateway` in Docker Compose, and inject that value into `mcp.servers.reddwarf.env.REDDWARF_API_URL` when generating `openclaw.json`.
+- Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate OpenClaw, and run `docker compose -f infra/docker/docker-compose.yml exec -T openclaw sh -lc "node openclaw.mjs config get mcp.servers"`; the `reddwarf` entry should show `REDDWARF_API_URL` pointing at `http://host.docker.internal:8080`.

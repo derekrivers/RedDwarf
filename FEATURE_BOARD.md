@@ -26,7 +26,7 @@ Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDw
 | 119 | Add `POST /secrets/:key/rotate` write-only endpoint backed by a permissions-restricted local secrets store | M14 | complete | 115 | Both | UX report: Sections 1.4, 2.2 |
 | 120 | Build and serve a single-file operator configuration panel from `GET /ui` for Polling, DB Pool, Logging, Paths, Status, and secret rotation | M14 | complete | 116, 117, 118, 119 | Both | UX report: Sections 1.3, 2.2 |
 | 121 | Register OpenClaw WebChat operator commands for `status`, `approve`, `reject`, `submit`, and `runs` | M14 | complete | 118 | Both | UX report: Section 4.2 |
-| 122 | Add an MCP bridge over the Operator API so OpenClaw agents can query RedDwarf task history and evidence during context building | M14 | pending | 118 | Both | UX report: Section 4.3 |
+| 122 | Add an MCP bridge over the Operator API so OpenClaw agents can query RedDwarf task history and evidence during context building | M14 | complete | 118 | Both | UX report: Section 4.3 |
 
 ---
 
