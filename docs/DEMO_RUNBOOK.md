@@ -68,9 +68,9 @@ The `.env` file is referenced by both the Node.js app and the Docker Compose sta
 corepack pnpm start
 ```
 
-This boots everything in a single process: Docker Compose (Postgres + OpenClaw), migrations, stale-run sweep, workspace cleanup, operator API, and optionally the polling daemon. See the README for configuration options (`REDDWARF_POLL_REPOS`, `REDDWARF_API_PORT`, etc.).
+This boots everything in a single process: Docker Compose (Postgres + OpenClaw), migrations, stale-run sweep, workspace cleanup, operator API, and the polling daemon. See the README for configuration options (`REDDWARF_POLL_INTERVAL_MS`, `REDDWARF_API_PORT`, etc.).
 
-To also enable GitHub polling:
+To seed an initial polled repository list at startup:
 
 ```bash
 REDDWARF_POLL_REPOS=owner/repo corepack pnpm start
@@ -310,6 +310,9 @@ This starts the RedDwarf operator HTTP API on `http://127.0.0.1:8080`. The serve
 | GET | `/config` | List runtime-configurable operator settings with current value, default, description, and source |
 | GET | `/config/schema` | Return JSON-schema-style metadata for runtime-configurable operator settings |
 | PUT | `/config` | Persist one or more runtime-configurable operator settings to `operator_config` |
+| GET | `/repos` | List the DB-backed polled repo roster with cursor status |
+| POST | `/repos` | Add a repo to the polled repo roster |
+| DELETE | `/repos/:owner/:repo` | Remove a repo from the polled repo roster |
 | GET | `/approvals` | List approval requests (filter: `taskId`, `runId`, `statuses`, `limit`) |
 | POST | `/approvals/:id/resolve` | Resolve an approval request |
 | GET | `/approvals/:id` | Get specific approval request |
@@ -582,3 +585,4 @@ The database volume is **preserved by default** so you can restart without losin
 | E2E test fails but leaves GitHub resources | Ran without `E2E_CLEANUP=true` | Use `corepack pnpm e2e:cleanup -- --issue N --pr N --branch name` |
 
 For more known issues, see [docs/agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md).
+After startup, prefer managing the polled repo list through the operator API (`POST /repos`, `DELETE /repos/:owner/:repo`) instead of editing `REDDWARF_POLL_REPOS`.

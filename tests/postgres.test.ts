@@ -81,18 +81,20 @@ describeIfDatabase("postgres planning repository", () => {
   it("persists operator config entries in Postgres", async () => {
     await repository.saveOperatorConfigEntry(
       createOperatorConfigEntry({
-        key: "REDDWARF_POLL_REPOS",
-        value: ["acme/platform"],
+        key: "REDDWARF_POLL_INTERVAL_MS",
+        value: 45000,
         updatedAt: new Date().toISOString()
       })
     );
 
-    const entry = await repository.getOperatorConfigEntry("REDDWARF_POLL_REPOS");
+    const entry = await repository.getOperatorConfigEntry("REDDWARF_POLL_INTERVAL_MS");
     const entries = await repository.listOperatorConfigEntries();
 
-    expect(entry?.key).toBe("REDDWARF_POLL_REPOS");
-    expect(entry?.value).toEqual(["acme/platform"]);
-    expect(entries.some((candidate) => candidate.key === "REDDWARF_POLL_REPOS")).toBe(
+    expect(entry?.key).toBe("REDDWARF_POLL_INTERVAL_MS");
+    expect(entry?.value).toEqual(45000);
+    expect(
+      entries.some((candidate) => candidate.key === "REDDWARF_POLL_INTERVAL_MS")
+    ).toBe(
       true
     );
   });

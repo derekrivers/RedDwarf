@@ -66,6 +66,7 @@ export interface PlanningCommandRepository extends PlanningTransactionRepository
   savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
   claimPipelineRun(input: ClaimPipelineRunInput): Promise<ClaimPipelineRunResult>;
   saveGitHubIssuePollingCursor(cursor: GitHubIssuePollingCursor): Promise<void>;
+  deleteGitHubIssuePollingCursor(repo: string): Promise<boolean>;
   runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T>;

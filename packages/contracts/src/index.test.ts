@@ -24,6 +24,8 @@ import {
   openClawAgentRoleDefinitionSchema,
   operatorConfigEntrySchema,
   operatorConfigSchemaResponseSchema,
+  operatorRepoCreateRequestSchema,
+  operatorRepoListResponseSchema,
   parseOperatorConfigValue,
   buildOperatorConfigJsonSchema,
   serializeOperatorConfigValue
@@ -221,13 +223,13 @@ describe("contracts", () => {
 
   it("parses an operator config entry", () => {
     const entry = operatorConfigEntrySchema.parse({
-      key: "REDDWARF_POLL_REPOS",
-      value: ["acme/platform", "acme/api"],
+      key: "REDDWARF_POLL_INTERVAL_MS",
+      value: 45000,
       updatedAt: timestamp
     });
 
-    expect(entry.key).toBe("REDDWARF_POLL_REPOS");
-    expect(entry.value).toEqual(["acme/platform", "acme/api"]);
+    expect(entry.key).toBe("REDDWARF_POLL_INTERVAL_MS");
+    expect(entry.value).toBe(45000);
   });
 
   it("serializes typed operator config values back to env strings", () => {
@@ -235,11 +237,11 @@ describe("contracts", () => {
       serializeOperatorConfigValue("REDDWARF_SKIP_OPENCLAW", true)
     ).toBe("true");
     expect(
-      serializeOperatorConfigValue("REDDWARF_POLL_REPOS", [
-        "acme/platform",
-        "acme/api"
-      ])
-    ).toBe("acme/platform,acme/api");
+      serializeOperatorConfigValue(
+        "REDDWARF_POLL_INTERVAL_MS",
+        45000
+      )
+    ).toBe("45000");
     expect(
       serializeOperatorConfigValue(
         "REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_HEALTHY_TEXT",
@@ -264,6 +266,30 @@ describe("contracts", () => {
     expect(response.schema.descriptions["REDDWARF_SKIP_OPENCLAW"]).toContain(
       "OpenClaw"
     );
+  });
+
+  it("parses operator repo management contracts", () => {
+    const request = operatorRepoCreateRequestSchema.parse({
+      repo: "acme/platform"
+    });
+    const response = operatorRepoListResponseSchema.parse({
+      repos: [
+        {
+          repo: "acme/platform",
+          lastSeenIssueNumber: 72,
+          lastSeenUpdatedAt: timestamp,
+          lastPollStartedAt: timestamp,
+          lastPollCompletedAt: timestamp,
+          lastPollStatus: "succeeded",
+          lastPollError: null,
+          updatedAt: timestamp
+        }
+      ],
+      total: 1
+    });
+
+    expect(request.repo).toBe("acme/platform");
+    expect(response.repos[0]?.repo).toBe("acme/platform");
   });
 
   it("parses an eligibility rejection record", () => {

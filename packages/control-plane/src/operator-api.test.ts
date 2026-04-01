@@ -196,6 +196,37 @@ function operatorPut(
   });
 }
 
+function operatorDelete(
+  port: number,
+  path: string,
+  authToken: string | null = operatorApiToken
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "DELETE",
+        headers: buildOperatorHeaders(authToken)
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("operator API server", () => {
   it("serves health, runs, and blocked endpoints with an empty repository", async () => {
     const repository = new InMemoryPlanningRepository();
@@ -386,6 +417,49 @@ describe("operator API server", () => {
         process.env.REDDWARF_SKIP_OPENCLAW = previousSkipOpenClaw;
       }
 
+      await apiServer.stop();
+    }
+  });
+
+  it("manages the polled repository list through the operator API", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-01T10:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const empty = await operatorGet(port, "/repos");
+      expect(empty.status).toBe(200);
+      expect((empty.body as Record<string, unknown>)["total"]).toBe(0);
+
+      const created = await operatorPost(port, "/repos", { repo: "acme/platform" });
+      expect(created.status).toBe(201);
+      expect((created.body as Record<string, unknown>)["created"]).toBe(true);
+      expect(
+        ((created.body as Record<string, unknown>)["repo"] as Record<string, unknown>)[
+          "repo"
+        ]
+      ).toBe("acme/platform");
+
+      const duplicate = await operatorPost(port, "/repos", { repo: "acme/platform" });
+      expect(duplicate.status).toBe(200);
+      expect((duplicate.body as Record<string, unknown>)["created"]).toBe(false);
+
+      const listed = await operatorGet(port, "/repos");
+      expect(listed.status).toBe(200);
+      expect((listed.body as Record<string, unknown>)["total"]).toBe(1);
+
+      const deleted = await operatorDelete(port, "/repos/acme/platform");
+      expect(deleted.status).toBe(200);
+      expect((deleted.body as Record<string, unknown>)["deleted"]).toBe(true);
+
+      const missingDelete = await operatorDelete(port, "/repos/acme/platform");
+      expect(missingDelete.status).toBe(404);
+    } finally {
       await apiServer.stop();
     }
   });

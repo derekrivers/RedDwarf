@@ -8,6 +8,10 @@ import {
   buildOperatorConfigJsonSchema,
   groupedTaskInjectionRequestSchema,
   eligibilityRejectionReasonCodeSchema,
+  operatorRepoCreateRequestSchema,
+  operatorRepoDeleteResponseSchema,
+  operatorRepoListResponseSchema,
+  operatorRepoMutationResponseSchema,
   operatorConfigDefaults,
   operatorConfigDescriptions,
   operatorConfigKeys,
@@ -29,6 +33,7 @@ import {
   type PipelineRun
 } from "@reddwarf/contracts";
 import {
+  createGitHubIssuePollingCursor,
   type PlanningRepository,
   type RepositoryHealthSnapshot
 } from "@reddwarf/evidence";
@@ -539,6 +544,80 @@ async function handleOperatorRequest(
       res,
       200,
       buildOperatorConfigResponse(await repository.listOperatorConfigEntries())
+    );
+    return;
+  }
+
+  if (method === "GET" && path === "/repos") {
+    const repos = await repository.listGitHubIssuePollingCursors();
+    writeOperatorJsonResponse(
+      res,
+      200,
+      operatorRepoListResponseSchema.parse({
+        repos,
+        total: repos.length
+      })
+    );
+    return;
+  }
+
+  if (method === "POST" && path === "/repos") {
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    let createRequest: import("@reddwarf/contracts").OperatorRepoCreateRequest;
+
+    try {
+      createRequest = operatorRepoCreateRequestSchema.parse(rawBody ?? {});
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid repository payload.";
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message
+      });
+      return;
+    }
+
+    const existing = await repository.getGitHubIssuePollingCursor(createRequest.repo);
+    const repo =
+      existing ??
+      createGitHubIssuePollingCursor({
+        repo: createRequest.repo,
+        updatedAt: clock().toISOString()
+      });
+    await repository.saveGitHubIssuePollingCursor(repo);
+
+    writeOperatorJsonResponse(
+      res,
+      existing ? 200 : 201,
+      operatorRepoMutationResponseSchema.parse({
+        repo,
+        created: existing === null
+      })
+    );
+    return;
+  }
+
+  const deleteRepoMatch = /^\/repos\/([^/]+)\/([^/]+)$/.exec(path);
+  if (method === "DELETE" && deleteRepoMatch) {
+    const repo = `${decodeURIComponent(deleteRepoMatch[1]!)}\/${decodeURIComponent(
+      deleteRepoMatch[2]!
+    )}`;
+    const deleted = await repository.deleteGitHubIssuePollingCursor(repo);
+    if (!deleted) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Polling repository ${repo} not found.`
+      });
+      return;
+    }
+
+    writeOperatorJsonResponse(
+      res,
+      200,
+      operatorRepoDeleteResponseSchema.parse({
+        repo,
+        deleted: true
+      })
     );
     return;
   }

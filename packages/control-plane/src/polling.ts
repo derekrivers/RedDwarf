@@ -183,10 +183,6 @@ export function createGitHubIssuePollingDaemon(
     throw new Error("GitHub issue polling interval must be at least 1000ms.");
   }
 
-  if (config.repositories.length === 0) {
-    throw new Error("GitHub issue polling requires at least one repository.");
-  }
-
   if ((config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS) < 1_000) {
     throw new Error("GitHub issue polling cycle timeout must be at least 1000ms.");
   }
@@ -219,6 +215,26 @@ export function createGitHubIssuePollingDaemon(
     }
 
     return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
+  }
+
+  async function resolveRepositoryConfigs(): Promise<GitHubPollingRepoConfig[]> {
+    const configured = new Map<string, GitHubPollingRepoConfig>(
+      config.repositories.map((repoConfig) => [repoConfig.repo, repoConfig])
+    );
+    const persisted = await deps.repository.listGitHubIssuePollingCursors();
+
+    for (const cursor of persisted) {
+      if (!configured.has(cursor.repo)) {
+        configured.set(cursor.repo, {
+          repo: cursor.repo,
+          labels: defaultPollingLabels
+        });
+      }
+    }
+
+    return [...configured.values()].sort((left, right) =>
+      left.repo.localeCompare(right.repo)
+    );
   }
 
   async function pollRepository(
@@ -391,16 +407,17 @@ export function createGitHubIssuePollingDaemon(
     const startedAt = clock();
     const startedAtIso = asIsoTimestamp(startedAt);
     const decisions: GitHubIssuePollingDecision[] = [];
+    const repositoryConfigs = await resolveRepositoryConfigs();
     healthState.lastCycleStartedAt = startedAtIso;
 
     logger?.info("GitHub issue polling cycle started.", {
       code: "POLLING_CYCLE_STARTED",
       startedAt: startedAtIso,
-      repositoryCount: config.repositories.length
+      repositoryCount: repositoryConfigs.length
     });
 
     try {
-      for (const repoConfig of config.repositories) {
+      for (const repoConfig of repositoryConfigs) {
         await pollRepository(repoConfig, decisions);
       }
 

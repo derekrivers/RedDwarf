@@ -146,7 +146,6 @@ At startup, RedDwarf loads `.env` first and then overlays any matching rows from
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDDWARF_POLL_REPOS` | _(disabled)_ | Comma-separated `owner/repo` list to poll (e.g. `acme/platform,acme/api`) |
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
 | `REDDWARF_DISPATCH_INTERVAL_MS` | `15000` | Ready-task dispatch loop interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
@@ -211,11 +210,13 @@ At startup, RedDwarf loads `.env` first and then overlays any matching rows from
 | `E2E_USE_OPENCLAW` | `false` | Dispatch developer work through the live OpenClaw runtime during E2E |
 | `E2E_CLEANUP` | `false` | Close or delete created GitHub resources after E2E completes |
 
-**Example — full stack with polling:**
+**Example — full stack with polling bootstrap seed:**
 
 ```bash
 REDDWARF_POLL_REPOS=owner/repo corepack pnpm start
 ```
+
+`REDDWARF_POLL_REPOS` is now only a backward-compatible bootstrap seed. Once the stack is up, manage the polled repo roster through `POST /repos` and `DELETE /repos/:owner/:repo`.
 
 **Example — infrastructure + operator API only (no polling):**
 
@@ -238,6 +239,9 @@ The operator API now exposes configuration endpoints alongside the existing appr
 - `GET /config` returns runtime-configurable settings with current value, default, description, and source.
 - `GET /config/schema` returns JSON-schema-style metadata for those settings.
 - `PUT /config` persists one or more runtime-configurable settings to the Postgres-backed `operator_config` table.
+- `GET /repos` lists the DB-backed polled repo roster with current per-repo cursor state.
+- `POST /repos` adds a repository to the polled repo roster without restarting the stack.
+- `DELETE /repos/:owner/:repo` removes a repository from the polled repo roster.
 
 ### OpenClaw Discord channel
 

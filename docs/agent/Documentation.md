@@ -2,6 +2,15 @@
 
 ## 2026-04-01
 
+- Completed feature 117 from `FEATURE_BOARD.md`: added operator repo-management endpoints and moved poll-repo control to the database.
+- Added shared operator-repo contracts so `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo` validate against the same typed surface as the rest of the operator API.
+- Extended the evidence repository with polling-cursor deletion support and used the existing `github_issue_polling_cursors` table as the durable source of truth for the polled repo roster.
+- Updated the operator API to list, create, and delete polled repositories through the cursor store, returning current per-repo polling status without requiring a separate repo table.
+- Updated the GitHub polling daemon so it can run against a DB-managed repo roster even when no static `REDDWARF_POLL_REPOS` list is configured at startup.
+- Updated `scripts/start-stack.mjs` to seed `REDDWARF_POLL_REPOS` into the DB cursor store only as a backward-compatible bootstrap path; ongoing repo management now belongs to the operator API.
+- Expanded focused coverage in `packages/contracts/src/index.test.ts`, `packages/evidence/src/index.test.ts`, `packages/control-plane/src/operator-api.test.ts`, `packages/control-plane/src/polling-daemon.test.ts`, and `scripts/verify-operator-api.mjs`.
+- Verification for feature 117: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/evidence/src/index.test.ts packages/control-plane/src/operator-api.test.ts packages/control-plane/src/polling-daemon.test.ts"`.
+- Updated the feature board so feature 117 is marked complete and feature 118 is now the next actionable M14 item.
 - Completed feature 116 from `FEATURE_BOARD.md`: added `GET /config`, `PUT /config`, and `GET /config/schema` to the operator API.
 - Extended the operator-config contracts with defaults, descriptions, env parsing helpers, update request and response schemas, and a JSON-schema-style schema response builder so the future UI can validate against the same typed source of truth.
 - Updated the operator API to return effective runtime config entries with value, default, description, source, and persisted timestamp; `PUT /config` now validates updates with Zod, persists them to `operator_config`, and applies the serialized value to `process.env` for the current process.

@@ -748,8 +748,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
           updated_at,
           resolved_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-          $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18, $19, $20, $21, $22, $23
         )
         ON CONFLICT (request_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
@@ -849,6 +849,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
     await this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor);
+  }
+
+  async deleteGitHubIssuePollingCursor(repo: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "DELETE FROM github_issue_polling_cursors WHERE repo = $1",
+      [repo]
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   private async saveOperatorConfigEntryWithExecutor(

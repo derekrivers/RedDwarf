@@ -189,6 +189,10 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.githubIssuePollingCursors.set(cursor.repo, cursor);
   }
 
+  async deleteGitHubIssuePollingCursor(repo: string): Promise<boolean> {
+    return this.githubIssuePollingCursors.delete(repo);
+  }
+
   async saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void> {
     this.operatorConfigEntries.set(entry.key, entry);
   }

@@ -239,6 +239,22 @@ try {
     config.body.config.some((entry) => entry.key === "REDDWARF_POLL_INTERVAL_MS")
   );
 
+  const reposEmpty = await apiGet(port, "/repos");
+  assert.equal(reposEmpty.status, 200);
+  assert.ok(reposEmpty.body.total >= 1);
+  assert.ok(reposEmpty.body.repos.some((entry) => entry.repo === repo));
+
+  const badRepoCreate = await apiPost(port, "/repos", { repo: "not-a-repo" });
+  assert.equal(badRepoCreate.status, 400);
+
+  const createdRepo = await apiPost(port, "/repos", { repo: "acme/new-platform" });
+  assert.equal(createdRepo.status, 201);
+  assert.equal(createdRepo.body.created, true);
+
+  const duplicateRepo = await apiPost(port, "/repos", { repo: "acme/new-platform" });
+  assert.equal(duplicateRepo.status, 200);
+  assert.equal(duplicateRepo.body.created, false);
+
   const configSchema = await apiGet(port, "/config/schema");
   assert.equal(configSchema.status, 200);
   assert.equal(configSchema.body.schema.type, "object");
@@ -374,6 +390,33 @@ try {
     ),
     "resolved approval should not appear in /blocked"
   );
+
+  const deletedRepo = await new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/repos/acme/new-platform",
+        method: "DELETE",
+        headers: buildAuthHeaders(operatorApiToken)
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+  assert.equal(deletedRepo.status, 200);
+  assert.equal(deletedRepo.body.deleted, true);
 
   // GET /unknown-route returns 404
   const unknown = await apiGet(port, "/no-such-route");

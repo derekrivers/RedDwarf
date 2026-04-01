@@ -157,38 +157,60 @@ describe("evidence memory partitions", () => {
 
     await repository.saveOperatorConfigEntry(
       createOperatorConfigEntry({
-        key: "REDDWARF_POLL_REPOS",
-        value: ["acme/platform"],
+        key: "REDDWARF_POLL_INTERVAL_MS",
+        value: 45000,
         updatedAt: timestamp
       })
     );
     await repository.saveOperatorConfigEntry(
       createOperatorConfigEntry({
-        key: "REDDWARF_POLL_INTERVAL_MS",
-        value: 45000,
+        key: "REDDWARF_SKIP_OPENCLAW",
+        value: true,
         updatedAt: "2026-03-25T20:21:00.000Z"
       })
     );
 
     await expect(
-      repository.getOperatorConfigEntry("REDDWARF_POLL_REPOS")
+      repository.getOperatorConfigEntry("REDDWARF_POLL_INTERVAL_MS")
     ).resolves.toEqual({
-      key: "REDDWARF_POLL_REPOS",
-      value: ["acme/platform"],
+      key: "REDDWARF_POLL_INTERVAL_MS",
+      value: 45000,
       updatedAt: timestamp
     });
     await expect(repository.listOperatorConfigEntries()).resolves.toEqual([
       {
         key: "REDDWARF_POLL_INTERVAL_MS",
         value: 45000,
-        updatedAt: "2026-03-25T20:21:00.000Z"
+        updatedAt: timestamp
       },
       {
-        key: "REDDWARF_POLL_REPOS",
-        value: ["acme/platform"],
-        updatedAt: timestamp
+        key: "REDDWARF_SKIP_OPENCLAW",
+        value: true,
+        updatedAt: "2026-03-25T20:21:00.000Z"
       }
     ]);
+  });
+
+  it("stores and deletes GitHub polling cursors", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveGitHubIssuePollingCursor({
+      repo: "acme/platform",
+      lastSeenIssueNumber: null,
+      lastSeenUpdatedAt: null,
+      lastPollStartedAt: null,
+      lastPollCompletedAt: null,
+      lastPollStatus: null,
+      lastPollError: null,
+      updatedAt: timestamp
+    });
+
+    await expect(repository.deleteGitHubIssuePollingCursor("acme/platform")).resolves.toBe(
+      true
+    );
+    await expect(repository.deleteGitHubIssuePollingCursor("acme/platform")).resolves.toBe(
+      false
+    );
   });
 
   it("deduplicates prompt snapshots by phase and prompt hash", async () => {

@@ -15,7 +15,7 @@
  *   ANTHROPIC_API_KEY   — Anthropic API key for LLM planning
  *
  * Optional environment:
- *   REDDWARF_POLL_REPOS       — comma-separated owner/repo list to poll (enables polling)
+ *   REDDWARF_POLL_REPOS       — deprecated bootstrap seed for poll repos when the DB repo list is empty
  *   REDDWARF_POLL_INTERVAL_MS — polling interval in ms (default: 30000)
  *   REDDWARF_API_PORT         — operator API port (default: 8080)
  *   REDDWARF_SKIP_OPENCLAW    — set to "true" to skip OpenClaw startup
@@ -30,7 +30,7 @@
 
 import { execFileSync, execSync } from "node:child_process";
 import { readdir, stat, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import pg from "pg";
 
 import {
@@ -232,7 +232,7 @@ const {
   DeterministicValidationAgent,
   DeterministicScmAgent
 } = await import("../packages/control-plane/dist/index.js");
-const { createPostgresPlanningRepository } =
+const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
 const { createRestGitHubAdapter, createHttpOpenClawDispatchAdapter } =
   await import("../packages/integrations/dist/index.js");
@@ -307,6 +307,26 @@ const dispatchIntervalMs = parseInt(
   10
 );
 
+if (pollRepos.length > 0) {
+  log(
+    "Seeding poll repos from REDDWARF_POLL_REPOS for backward compatibility. Prefer POST /repos for ongoing management."
+  );
+
+  for (const repo of pollRepos) {
+    const existingCursor = await repository.getGitHubIssuePollingCursor(repo);
+    if (existingCursor) {
+      continue;
+    }
+
+    await repository.saveGitHubIssuePollingCursor(
+      createGitHubIssuePollingCursor({
+        repo,
+        updatedAt: new Date().toISOString()
+      })
+    );
+  }
+}
+
 // Phase 3b: Ready-task dispatcher (auto-dispatch after approval)
 
 let dispatcher = null;
@@ -340,21 +360,17 @@ if (openClawAvailable) {
 // Phase 3c: Polling daemon (optional)
 
 let daemon = null;
-let planner = null;
+const planner = createPlanningAgent({ type: "anthropic" });
 
-if (pollRepos.length > 0) {
-  planner = createPlanningAgent({ type: "anthropic" });
-
-  daemon = createGitHubIssuePollingDaemon(
-    {
-      intervalMs: pollIntervalMs,
-      repositories: pollRepos.map((repo) => ({ repo, labels: ["ai-eligible"] })),
-      dryRun,
-      runOnStart: true
-    },
-    { repository, github, planner, logger: runtimeLogger }
-  );
-}
+daemon = createGitHubIssuePollingDaemon(
+  {
+    intervalMs: pollIntervalMs,
+    repositories: [],
+    dryRun,
+    runOnStart: true
+  },
+  { repository, github, planner, logger: runtimeLogger }
+);
 
 // Phase 3d: Operator API
 
@@ -390,7 +406,14 @@ if (dispatcher) {
 }
 
 if (daemon) {
-  log(`Starting polling daemon for ${pollRepos.join(", ")} (every ${pollIntervalMs / 1_000}s)...`);
+  const configuredPollRepos = await repository.listGitHubIssuePollingCursors();
+  log(
+    `Starting polling daemon for ${
+      configuredPollRepos.length > 0
+        ? configuredPollRepos.map((entry) => entry.repo).join(", ")
+        : "DB-managed repo list (currently empty)"
+    } (every ${pollIntervalMs / 1_000}s)...`
+  );
   await daemon.start();
   if (daemon.health.startupStatus === "degraded") {
     log("Polling daemon started in degraded mode; inspect /health and runtime logs for the startup failure.");
@@ -398,7 +421,7 @@ if (daemon) {
     log("Polling daemon started.");
   }
 } else {
-  log("Polling daemon not started - set REDDWARF_POLL_REPOS to enable.");
+  log("Polling daemon not started.");
 }
 
 // Ready
@@ -414,7 +437,20 @@ log(`  OpenClaw:     ${openClawAvailable ? "running (port " + (process.env.OPENC
 log(`  Operator API: http://127.0.0.1:${server.port}`);
 log("  Operator Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 log(`  Dispatcher:   ${dispatcher ? "running (every " + (dispatchIntervalMs / 1_000) + "s)" : "disabled (requires OpenClaw)"}`);
-log(`  Polling:      ${daemon ? pollRepos.join(", ") + " every " + (pollIntervalMs / 1_000) + "s" : "disabled"}`);
+const configuredPollRepos = daemon
+  ? (await repository.listGitHubIssuePollingCursors()).map((entry) => entry.repo)
+  : [];
+log(
+  `  Polling:      ${
+    daemon
+      ? `${
+          configuredPollRepos.length > 0
+            ? configuredPollRepos.join(", ")
+            : "DB-managed repo list (currently empty)"
+        } every ${pollIntervalMs / 1_000}s`
+      : "disabled"
+  }`
+);
 log("");
 log("  Endpoints:");
 log(`    GET  http://127.0.0.1:${server.port}/health`);

@@ -141,6 +141,61 @@ describe("GitHub issue polling daemon", () => {
       lastPollStatus: "succeeded"
     });
   });
+
+  it("polls repositories sourced from persisted cursor state when no static repo list is configured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveGitHubIssuePollingCursor({
+      repo: "acme/platform",
+      lastSeenIssueNumber: null,
+      lastSeenUpdatedAt: null,
+      lastPollStartedAt: null,
+      lastPollCompletedAt: null,
+      lastPollStatus: null,
+      lastPollError: null,
+      updatedAt: "2026-03-27T09:00:00.000Z"
+    });
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 73,
+          title: "DB-managed repo intake",
+          body: [
+            "This issue should be planned from a repo managed only in the database.",
+            "",
+            "Acceptance Criteria:",
+            "- Polling uses persisted repo state"
+          ].join("\n"),
+          labels: ["ai-eligible", "priority:4"],
+          url: "https://github.com/acme/platform/issues/73",
+          state: "open"
+        }
+      ]
+    });
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [],
+        runOnStart: false
+      },
+      {
+        repository,
+        github,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-27T09:05:00.000Z"),
+        idGenerator: () => "poll-run-db-managed-001"
+      }
+    );
+
+    const cycle = await daemon.pollOnce();
+
+    expect(cycle.plannedIssueCount).toBe(1);
+    expect(cycle.decisions[0]).toMatchObject({
+      repo: "acme/platform",
+      issueNumber: 73,
+      action: "planned"
+    });
+  });
   it("skips issues that already have a persisted planning spec", async () => {
     const repository = new InMemoryPlanningRepository();
     const github = new FixtureGitHubAdapter({

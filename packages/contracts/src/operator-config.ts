@@ -2,14 +2,12 @@ import { z } from "zod";
 import { isoDateTimeSchema, eventLevelSchema } from "./enums.js";
 import { tokenBudgetOverageActionSchema } from "./planning.js";
 
-const githubRepoRefSchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/);
 const discordIdSchema = z.string().min(1);
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const nullablePositiveIntegerSchema = z.number().int().positive().nullable();
 const nullableNonEmptyStringSchema = z.string().min(1).nullable();
 
 export const operatorConfigValueSchemas = {
-  REDDWARF_POLL_REPOS: z.array(githubRepoRefSchema),
   REDDWARF_POLL_INTERVAL_MS: z.number().int().positive(),
   REDDWARF_DISPATCH_INTERVAL_MS: z.number().int().positive(),
   REDDWARF_API_PORT: z.number().int().positive(),
@@ -86,7 +84,6 @@ export type OperatorConfigValue<K extends OperatorConfigKey = OperatorConfigKey>
 export const operatorConfigDefaults: {
   [K in OperatorConfigKey]: OperatorConfigValue<K>;
 } = {
-  REDDWARF_POLL_REPOS: [],
   REDDWARF_POLL_INTERVAL_MS: 30000,
   REDDWARF_DISPATCH_INTERVAL_MS: 15000,
   REDDWARF_API_PORT: 8080,
@@ -133,8 +130,6 @@ export const operatorConfigDefaults: {
 };
 
 export const operatorConfigDescriptions: Record<OperatorConfigKey, string> = {
-  REDDWARF_POLL_REPOS:
-    "Comma-separated owner/repo repositories to poll for ai-eligible issues.",
   REDDWARF_POLL_INTERVAL_MS: "Polling interval in milliseconds.",
   REDDWARF_DISPATCH_INTERVAL_MS:
     "Ready-task dispatch loop interval in milliseconds.",
@@ -222,16 +217,6 @@ export function parseOperatorConfigEnvValue<K extends OperatorConfigKey>(
   if (rawValue === undefined || rawValue.trim().length === 0) {
     const defaultValue = operatorConfigDefaults[key];
     return parseOperatorConfigValue(key, defaultValue) as OperatorConfigValue<K>;
-  }
-
-  if (key === "REDDWARF_POLL_REPOS") {
-    return parseOperatorConfigValue(
-      key,
-      rawValue
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0)
-    );
   }
 
   if (
@@ -397,10 +382,6 @@ export const operatorConfigUpdateRequestSchema = z.object({
 });
 
 const jsonSchemaTypeByKey: Record<OperatorConfigKey, unknown> = {
-  REDDWARF_POLL_REPOS: {
-    type: "array",
-    items: { type: "string", pattern: "^[^/\\s]+/[^/\\s]+$" }
-  },
   REDDWARF_POLL_INTERVAL_MS: { type: "integer", minimum: 1 },
   REDDWARF_DISPATCH_INTERVAL_MS: { type: "integer", minimum: 1 },
   REDDWARF_API_PORT: { type: "integer", minimum: 1 },
