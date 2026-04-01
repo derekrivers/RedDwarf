@@ -463,3 +463,11 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Added focused coverage in `packages/control-plane/src/openclaw-config.test.ts` for browser enablement and extended the existing architect/developer prompt-boundary regression in `packages/control-plane/src/index.test.ts` to assert the browser guidance is present in Holly's trusted prompt.
 - Verification for feature 101: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/openclaw-config.test.ts packages/control-plane/src/index.test.ts`.
 - Likely next board item: feature 104, Telegram channel integration.
+
+## 2026-04-01
+
+- Reviewed the proposed feature source file at `docs/REDDWARF_PROPOSED_FEATURES (1).md` against the active `FEATURE_BOARD.md`.
+- Added seven new pending M16 board items (features 107-113): dry-run / simulation mode, plan confidence gate, token budget enforcement, pipeline run report export, prompt version tracking, phase retry budget, and structured eligibility rejection reasons.
+- Updated `FEATURE_BOARD.md` so the M16 section now includes an explicit source-reference note plus per-feature links back to the proposal file, giving future implementation work a durable context handoff path.
+- Evaluation note: the proposal document says "six proposed features" near the top, but it currently defines seven concrete feature sections plus cross-cutting wiring notes; the board now reflects the seven implementable sections.
+- Likely next board item: feature 107, dry-run / simulation mode.
