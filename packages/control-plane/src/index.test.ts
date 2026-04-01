@@ -3450,6 +3450,28 @@ describe("control-plane", () => {
       }
     }
   });
+
+  it("records prompt snapshot metadata for planning runs", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const result = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-25T18:00:00.000Z"),
+      idGenerator: () => "run-prompt-snapshot"
+    });
+
+    const promptSnapshots = await repository.listPromptSnapshots();
+    expect(promptSnapshots).toHaveLength(1);
+    expect(promptSnapshots[0]?.phase).toBe("planning");
+    expect(
+      repository.runEvents.some(
+        (event) =>
+          event.runId === result.runId &&
+          event.code === "PROMPT_SNAPSHOT_RECORDED"
+      )
+    ).toBe(true);
+  });
 });
 
 describe("buildRuntimeWorkspacePath", () => {

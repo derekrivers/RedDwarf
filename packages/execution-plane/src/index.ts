@@ -641,7 +641,7 @@ export class DeterministicScmAgent implements ScmAgent {
 // Live LLM planning agent — Anthropic Messages API
 // ============================================================
 
-const DEFAULT_PLANNING_SYSTEM_PROMPT = [
+export const DEFAULT_PLANNING_SYSTEM_PROMPT = [
   "You are operating inside the RedDwarf Dev Squad policy pack.",
   "",
   "Focus on deterministic planning:",
@@ -936,7 +936,7 @@ function renderUntrustedTaskInputBlock(input: {
   ].join("\n");
 }
 
-function buildPlanningUserMessage(
+export function buildPlanningUserMessage(
   input: PlanningTaskInput,
   context: { manifest: TaskManifest; runId: string }
 ): string {
@@ -967,6 +967,18 @@ function buildPlanningUserMessage(
       affectedPaths: input.affectedPaths,
       requestedCapabilities: input.requestedCapabilities
     })
+  ].join("\n");
+}
+
+export function buildPlanningPromptSource(input: {
+  systemPrompt?: string;
+  taskInput: PlanningTaskInput;
+  context: { manifest: TaskManifest; runId: string };
+}): string {
+  return [
+    input.systemPrompt ?? DEFAULT_PLANNING_SYSTEM_PROMPT,
+    "",
+    buildPlanningUserMessage(input.taskInput, input.context)
   ].join("\n");
 }
 

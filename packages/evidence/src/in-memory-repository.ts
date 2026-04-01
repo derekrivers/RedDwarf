@@ -9,6 +9,7 @@ import {
   type PipelineRun,
   type PlanningSpec,
   type PolicySnapshot,
+  type PromptSnapshot,
   type RunEvent,
   type TaskManifest
 } from "@reddwarf/contracts";
@@ -39,6 +40,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly pipelineRuns = new Map<string, PipelineRun>();
   public readonly approvalRequests = new Map<string, ApprovalRequest>();
   public readonly githubIssuePollingCursors = new Map<string, GitHubIssuePollingCursor>();
+  public readonly promptSnapshots = new Map<string, PromptSnapshot>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -143,6 +145,21 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     this.approvalRequests.set(request.requestId, request);
   }
 
+  async savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot> {
+    const existing = [...this.promptSnapshots.values()].find(
+      (entry) =>
+        entry.phase === snapshot.phase &&
+        entry.promptHash === snapshot.promptHash
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    this.promptSnapshots.set(snapshot.snapshotId, snapshot);
+    return snapshot;
+  }
+
   async saveGitHubIssuePollingCursor(
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
@@ -164,6 +181,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     const githubIssuePollingCursors = cloneInMemoryMap(
       this.githubIssuePollingCursors
     );
+    const promptSnapshots = cloneInMemoryMap(this.promptSnapshots);
 
     try {
       return await operation(this);
@@ -202,6 +220,11 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       this.githubIssuePollingCursors.clear();
       for (const [key, value] of githubIssuePollingCursors.entries()) {
         this.githubIssuePollingCursors.set(key, value);
+      }
+
+      this.promptSnapshots.clear();
+      for (const [key, value] of promptSnapshots.entries()) {
+        this.promptSnapshots.set(key, value);
       }
 
       throw error;
@@ -251,6 +274,10 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     return this.pipelineRuns.get(runId) ?? null;
   }
 
+  async getPromptSnapshot(snapshotId: string): Promise<PromptSnapshot | null> {
+    return this.promptSnapshots.get(snapshotId) ?? null;
+  }
+
   async listPhaseRecords(taskId: string): Promise<PhaseRecord[]> {
     return this.phaseRecords.filter((record) => record.taskId === taskId);
   }
@@ -264,6 +291,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       (event) =>
         event.taskId === taskId &&
         (runId === undefined || event.runId === runId)
+    );
+  }
+
+  async listPromptSnapshots(): Promise<PromptSnapshot[]> {
+    return [...this.promptSnapshots.values()].sort((left, right) =>
+      right.capturedAt.localeCompare(left.capturedAt)
     );
   }
 

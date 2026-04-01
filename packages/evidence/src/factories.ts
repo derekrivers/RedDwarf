@@ -12,6 +12,7 @@ import {
   type GitHubIssuePollingCursor,
   type MemoryRecord,
   type PipelineRun,
+  type PromptSnapshot,
   type RunEvent,
   type TaskManifest
 } from "@reddwarf/contracts";
@@ -211,5 +212,21 @@ export function createGitHubIssuePollingCursor(input: {
     lastPollStatus: input.lastPollStatus ?? null,
     lastPollError: input.lastPollError ?? null,
     updatedAt: input.updatedAt ?? asIsoTimestamp()
+  };
+}
+
+export function createPromptSnapshot(input: {
+  snapshotId: string;
+  phase: PromptSnapshot["phase"];
+  promptHash: string;
+  promptPath: string;
+  capturedAt?: string;
+}): PromptSnapshot {
+  return {
+    snapshotId: input.snapshotId,
+    phase: input.phase,
+    promptHash: input.promptHash,
+    promptPath: input.promptPath,
+    capturedAt: input.capturedAt ?? asIsoTimestamp()
   };
 }

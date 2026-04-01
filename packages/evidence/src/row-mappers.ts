@@ -11,6 +11,7 @@ import {
   type PipelineRun,
   type PlanningSpec,
   type PolicySnapshot,
+  type PromptSnapshot,
   type RunEvent,
   type TaskManifest
 } from "@reddwarf/contracts";
@@ -18,6 +19,7 @@ import {
   createApprovalRequest,
   createMemoryRecord,
   createPipelineRun,
+  createPromptSnapshot,
   createRunEvent
 } from "./factories.js";
 
@@ -217,5 +219,15 @@ export function mapApprovalRequestRow(row: Record<string, unknown>): ApprovalReq
       row.resolved_at === null || row.resolved_at === undefined
         ? null
         : asIsoTimestamp(new Date(row.resolved_at as string | Date))
+  });
+}
+
+export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapshot {
+  return createPromptSnapshot({
+    snapshotId: row.snapshot_id as string,
+    phase: row.phase as PromptSnapshot["phase"],
+    promptHash: row.prompt_hash as string,
+    promptPath: row.prompt_path as string,
+    capturedAt: asIsoTimestamp(new Date(row.captured_at as string | Date))
   });
 }

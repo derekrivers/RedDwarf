@@ -188,3 +188,11 @@ export const githubIssuePollingCursorsTable = pgTable("github_issue_polling_curs
   lastPollError: text("last_poll_error"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
+
+export const promptSnapshotsTable = pgTable("prompt_snapshots", {
+  snapshotId: text("snapshot_id").primaryKey(),
+  phase: taskPhaseEnum("phase").notNull(),
+  promptHash: text("prompt_hash").notNull(),
+  promptPath: text("prompt_path").notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).notNull()
+});

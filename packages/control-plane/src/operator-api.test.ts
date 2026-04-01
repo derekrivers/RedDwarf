@@ -948,4 +948,39 @@ describe("operator API server", () => {
       await apiServer.stop();
     }
   });
+
+  it("includes prompt snapshots in the JSON run report once they are captured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: new DeterministicPlanningAgent(),
+      clock: () => new Date("2026-03-26T12:00:00.000Z"),
+      idGenerator: () => "op-run-report-json"
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const report = await operatorGetRaw(
+        port,
+        `/runs/${planResult.runId}/report`,
+        "application/json"
+      );
+      expect(report.status).toBe(200);
+      const payload = JSON.parse(report.body) as Record<string, unknown>;
+      const prompts = payload["prompts"] as Array<
+        Record<string, unknown>
+      >;
+      expect(prompts.length).toBeGreaterThan(0);
+      expect(prompts[0]?.["phase"]).toBe("planning");
+      expect(prompts[0]?.["promptHash"]).toBeTypeOf("string");
+    } finally {
+      await apiServer.stop();
+    }
+  });
 });

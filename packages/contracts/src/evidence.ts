@@ -201,6 +201,14 @@ export const githubIssuePollingCursorSchema = z.object({
   updatedAt: isoDateTimeSchema
 });
 
+export const promptSnapshotSchema = z.object({
+  snapshotId: z.string().min(1),
+  phase: taskPhaseSchema,
+  promptHash: z.string().min(8).max(64),
+  promptPath: z.string().min(1),
+  capturedAt: isoDateTimeSchema
+});
+
 export type PhaseRecord = z.infer<typeof phaseRecordSchema>;
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;
@@ -214,3 +222,4 @@ export type ConcurrencyDecision = z.infer<typeof concurrencyDecisionSchema>;
 export type PolicyPackEntry = z.infer<typeof policyPackEntrySchema>;
 export type PolicyPackManifest = z.infer<typeof policyPackManifestSchema>;
 export type GitHubIssuePollingCursor = z.infer<typeof githubIssuePollingCursorSchema>;
+export type PromptSnapshot = z.infer<typeof promptSnapshotSchema>;

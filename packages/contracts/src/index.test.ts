@@ -18,6 +18,7 @@ import {
   approvalRequestSchema,
   approvalRequestQuerySchema,
   githubIssuePollingCursorSchema,
+  promptSnapshotSchema,
   openClawAgentRoleDefinitionSchema
 } from "@reddwarf/contracts";
 
@@ -179,6 +180,19 @@ describe("contracts", () => {
 
     expect(cursor.lastSeenIssueNumber).toBe(88);
     expect(cursor.lastPollStatus).toBe("succeeded");
+  });
+
+  it("parses a prompt snapshot", () => {
+    const snapshot = promptSnapshotSchema.parse({
+      snapshotId: "prompt-snapshot-1",
+      phase: "planning",
+      promptHash: "0123456789abcdef",
+      promptPath: "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawArchitectPrompt",
+      capturedAt: timestamp
+    });
+
+    expect(snapshot.phase).toBe("planning");
+    expect(snapshot.promptHash).toBe("0123456789abcdef");
   });
 
   it("parses an OpenClaw agent role definition", () => {

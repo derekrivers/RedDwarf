@@ -60,6 +60,7 @@ import {
   buildOpenClawArchitectureReviewPrompt,
   renderArchitectureReviewReportMarkdown
 } from "./prompts.js";
+import { capturePromptSnapshot } from "./prompt-registry.js";
 
 export async function runArchitectureReviewPhase(
   input: RunArchitectureReviewPhaseInput,
@@ -443,6 +444,22 @@ export async function runArchitectureReviewPhase(
         architectHandoffMarkdown,
         dependencies.runtimeConfig
       );
+      await capturePromptSnapshot({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        taskId,
+        runId,
+        phase: "architecture_review",
+        promptPath:
+          "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawArchitectureReviewPrompt",
+        promptText: prompt,
+        capturedAt: asIsoTimestamp(clock()),
+        metadata: {
+          mode: "openclaw",
+          workspaceId: workspace.workspaceId
+        }
+      });
       reviewTokenBudget = await enforceTokenBudget({
         repository,
         logger: runLogger,

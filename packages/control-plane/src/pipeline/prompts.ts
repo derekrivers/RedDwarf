@@ -33,6 +33,7 @@ import { type PlanningPipelineLogger } from "../logger.js";
 import { EventCodes, PHASE_HEARTBEAT_INTERVAL_MS } from "./types.js";
 import { recordRunEvent } from "./shared.js";
 import { resolveWorkspaceRootConfig, buildRuntimeWorkspacePath } from "./workspace-path.js";
+import { capturePromptSnapshot } from "./prompt-registry.js";
 
 export interface DispatchHollyArchitectPhaseInput {
   input: PlanningTaskInput;
@@ -82,6 +83,21 @@ export async function dispatchHollyArchitectPhase(
   const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "architect-handoff.md").replace(/\\/g, "/");
 
   const prompt = buildOpenClawArchitectPrompt(ctx.input, ctx.manifest, runtimeWorkspacePath, runtimeHandoffPath);
+  await capturePromptSnapshot({
+    repository: ctx.repository,
+    logger: ctx.logger,
+    nextEventId: ctx.nextEventId,
+    taskId: ctx.taskId,
+    runId: ctx.runId,
+    phase: "planning",
+    promptPath: "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawArchitectPrompt",
+    promptText: prompt,
+    capturedAt: asIsoTimestamp(ctx.clock()),
+    metadata: {
+      mode: "openclaw",
+      workspaceId
+    }
+  });
 
   const sessionKey = `github:issue:${ctx.manifest.source.repo}:${ctx.manifest.source.issueNumber ?? ctx.taskId}`;
   const dispatchResult = await ctx.openClawDispatch.dispatch({

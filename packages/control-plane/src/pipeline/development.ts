@@ -72,6 +72,7 @@ import {
   parseDevelopmentHandoffMarkdown,
   renderDevelopmentHandoffMarkdown
 } from "./prompts.js";
+import { capturePromptSnapshot } from "./prompt-registry.js";
 import {
   materializeWorkspaceCiTool,
   processWorkspaceCiRequests
@@ -415,6 +416,21 @@ export async function runDeveloperPhase(
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
       const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown, dependencies.runtimeConfig);
+      await capturePromptSnapshot({
+        repository,
+        logger: runLogger,
+        nextEventId,
+        taskId,
+        runId,
+        phase: "development",
+        promptPath: "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawDeveloperPrompt",
+        promptText: prompt,
+        capturedAt: asIsoTimestamp(clock()),
+        metadata: {
+          mode: "openclaw",
+          workspaceId: workspace.workspaceId
+        }
+      });
       developmentTokenBudget = await enforceTokenBudget({
         repository,
         logger: runLogger,

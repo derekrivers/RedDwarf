@@ -14,6 +14,7 @@ import {
   type PipelineRunQuery,
   type PlanningSpec,
   type PolicySnapshot,
+  type PromptSnapshot,
   type RunEvent,
   type RunSummary,
   type TaskManifest
@@ -51,6 +52,7 @@ export interface PlanningTransactionRepository {
   saveMemoryRecord(record: MemoryRecord): Promise<void>;
   savePipelineRun(run: PipelineRun): Promise<void>;
   saveApprovalRequest(request: ApprovalRequest): Promise<void>;
+  savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {
@@ -71,9 +73,11 @@ export interface PlanningQueryRepository {
   getPlanningSpec(taskId: string): Promise<PlanningSpec | null>;
   getPolicySnapshot(taskId: string): Promise<PolicySnapshot | null>;
   getPipelineRun(runId: string): Promise<PipelineRun | null>;
+  getPromptSnapshot(snapshotId: string): Promise<PromptSnapshot | null>;
   listPhaseRecords(taskId: string): Promise<PhaseRecord[]>;
   listEvidenceRecords(taskId: string): Promise<EvidenceRecord[]>;
   listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]>;
+  listPromptSnapshots(): Promise<PromptSnapshot[]>;
   listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
   listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]>;
   listApprovalRequests(

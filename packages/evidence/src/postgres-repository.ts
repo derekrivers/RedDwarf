@@ -21,6 +21,7 @@ import {
   type PipelineRunQuery,
   type PlanningSpec,
   type PolicySnapshot,
+  type PromptSnapshot,
   type RunEvent,
   type RunSummary,
   type TaskManifest
@@ -36,7 +37,8 @@ import {
   mapMemoryRecordRow,
   mapPipelineRunRow,
   mapGitHubIssuePollingCursorRow,
-  mapApprovalRequestRow
+  mapApprovalRequestRow,
+  mapPromptSnapshotRow
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -842,6 +844,39 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor);
   }
 
+  private async savePromptSnapshotWithExecutor(
+    executor: QueryExecutor,
+    snapshot: PromptSnapshot
+  ): Promise<PromptSnapshot> {
+    const result = await executor.query(
+      `
+        INSERT INTO prompt_snapshots (
+          snapshot_id,
+          phase,
+          prompt_hash,
+          prompt_path,
+          captured_at
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (phase, prompt_hash) DO UPDATE SET
+          prompt_path = EXCLUDED.prompt_path
+        RETURNING *
+      `,
+      [
+        snapshot.snapshotId,
+        snapshot.phase,
+        snapshot.promptHash,
+        snapshot.promptPath,
+        snapshot.capturedAt
+      ]
+    );
+
+    return mapPromptSnapshotRow(result.rows[0]);
+  }
+
+  async savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot> {
+    return this.savePromptSnapshotWithExecutor(this.pool, snapshot);
+  }
+
   async runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T> {
@@ -854,7 +889,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
       saveRunEvent: (event) => this.saveRunEventWithExecutor(client, event),
       saveMemoryRecord: (record) => this.saveMemoryRecordWithExecutor(client, record),
       savePipelineRun: (run) => this.savePipelineRunWithExecutor(client, run),
-      saveApprovalRequest: (request) => this.saveApprovalRequestWithExecutor(client, request)
+      saveApprovalRequest: (request) => this.saveApprovalRequestWithExecutor(client, request),
+      savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot)
     };
 
     try {
@@ -955,6 +991,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
       [runId]
     );
     return result.rows[0] ? mapPipelineRunRow(result.rows[0]) : null;
+  }
+
+  async getPromptSnapshot(snapshotId: string): Promise<PromptSnapshot | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM prompt_snapshots WHERE snapshot_id = $1",
+      [snapshotId]
+    );
+    return result.rows[0] ? mapPromptSnapshotRow(result.rows[0]) : null;
   }
 
   async listPhaseRecords(taskId: string): Promise<PhaseRecord[]> {
@@ -1100,6 +1144,14 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
 
     return result.rows.map(mapGitHubIssuePollingCursorRow);
+  }
+
+  async listPromptSnapshots(): Promise<PromptSnapshot[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM prompt_snapshots ORDER BY captured_at DESC, phase ASC"
+    );
+
+    return result.rows.map(mapPromptSnapshotRow);
   }
 
   async listApprovalRequests(

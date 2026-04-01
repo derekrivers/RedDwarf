@@ -4,6 +4,7 @@ import {
   buildMemoryContextForRepository,
   createMemoryRecord,
   createPipelineRun,
+  createPromptSnapshot,
   deriveOrganizationId
 } from "@reddwarf/evidence";
 
@@ -148,6 +149,37 @@ describe("evidence memory partitions", () => {
         updatedAt: timestamp
       }
     ]);
+  });
+
+  it("deduplicates prompt snapshots by phase and prompt hash", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    const first = await repository.savePromptSnapshot(
+      createPromptSnapshot({
+        snapshotId: "prompt-1",
+        phase: "planning",
+        promptHash: "deadbeefdeadbeef",
+        promptPath:
+          "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawArchitectPrompt",
+        capturedAt: timestamp
+      })
+    );
+    const second = await repository.savePromptSnapshot(
+      createPromptSnapshot({
+        snapshotId: "prompt-2",
+        phase: "planning",
+        promptHash: "deadbeefdeadbeef",
+        promptPath:
+          "packages/control-plane/src/pipeline/prompts.ts#buildOpenClawArchitectPrompt",
+        capturedAt: "2026-03-25T20:21:00.000Z"
+      })
+    );
+
+    expect(second.snapshotId).toBe(first.snapshotId);
+    await expect(repository.listPromptSnapshots()).resolves.toHaveLength(1);
+    await expect(repository.getPromptSnapshot(first.snapshotId)).resolves.toEqual(
+      first
+    );
   });
   it("detects persisted planning specs by GitHub source for polling dedupe", async () => {
     const repository = new InMemoryPlanningRepository();

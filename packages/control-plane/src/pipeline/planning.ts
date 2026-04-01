@@ -13,7 +13,9 @@ import {
   deriveOrganizationId
 } from "@reddwarf/evidence";
 import {
-  assertPhaseExecutable
+  assertPhaseExecutable,
+  DEFAULT_PLANNING_SYSTEM_PROMPT,
+  buildPlanningPromptSource
 } from "@reddwarf/execution-plane";
 import { DeterministicPreScreeningAgent } from "@reddwarf/execution-plane";
 import {
@@ -58,6 +60,7 @@ import {
 import {
   dispatchHollyArchitectPhase
 } from "./prompts.js";
+import { capturePromptSnapshot } from "./prompt-registry.js";
 import {
   enforceTokenBudget,
   recordActualTokenUsage
@@ -672,6 +675,27 @@ export async function runPlanningPipeline(
       }
     } else {
       try {
+        await capturePromptSnapshot({
+          repository,
+          logger: runLogger,
+          nextEventId,
+          taskId,
+          runId,
+          phase: "planning",
+          promptPath: "packages/execution-plane/src/index.ts#AnthropicPlanningAgent",
+          promptText: buildPlanningPromptSource({
+            systemPrompt: DEFAULT_PLANNING_SYSTEM_PROMPT,
+            taskInput: input,
+            context: {
+              manifest: currentManifest,
+              runId
+            }
+          }),
+          capturedAt: asIsoTimestamp(clock()),
+          metadata: {
+            mode: "direct"
+          }
+        });
         draft = await planner.createSpec(input, {
           manifest: currentManifest,
           runId
