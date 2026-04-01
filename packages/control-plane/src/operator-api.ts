@@ -15,6 +15,7 @@ import {
   operatorConfigSchemaResponseSchema,
   operatorConfigUpdateRequestSchema,
   parseOperatorConfigEnvValue,
+  parseOperatorConfigValue,
   serializeOperatorConfigValue,
   taskGroupInjectionRequestSchema,
   directTaskInjectionRequestSchema,
@@ -523,14 +524,15 @@ async function handleOperatorRequest(
 
     const updatedAt = clock().toISOString();
     for (const entry of updateRequest.entries) {
+      const parsedValue = parseOperatorConfigValue(entry.key, entry.value);
       const persistedEntry = {
         key: entry.key,
-        value: entry.value,
+        value: parsedValue,
         updatedAt
       } as OperatorConfigEntry;
 
       await repository.saveOperatorConfigEntry(persistedEntry);
-      process.env[entry.key] = serializeOperatorConfigValue(entry.key, entry.value);
+      process.env[entry.key] = serializeOperatorConfigValue(entry.key, parsedValue);
     }
 
     writeOperatorJsonResponse(
