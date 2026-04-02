@@ -194,7 +194,7 @@
 ## GitHub AI Task issues using the checked-in template still get rejected as under-specified
 
 - Symptom: a GitHub issue created from `.github/ISSUE_TEMPLATE/ai-task.yml` is ingested, but pre-screening blocks planning with `under_specified` and says no affected paths were provided even though the issue includes an `Affected Areas` section.
-- Root cause: the issue template labels the section `Affected Areas`, but `packages/integrations/src/github.ts` originally only parsed the heading `Affected Paths` when converting issue bodies into planning input.
-- Failing approach: resubmitting the same issue body with the template's `Affected Areas` heading and expecting the intake parser to populate `affectedPaths`.
-- Working workaround: intake now accepts both `Affected Paths` and `Affected Areas`. Before this fix, the temporary workaround was to hand-edit the issue body to use `Affected Paths`.
-- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"` and confirm the parser test covering `Affected Areas` passes.
+- Root cause: there were two parser mismatches in `packages/integrations/src/github.ts`: it originally only recognized the heading `Affected Paths`, and it also cleared the active section whenever it saw a blank line. GitHub issue markdown places a blank line after headings like `## Acceptance Criteria`, so the parser discarded the section before it reached the bullet list.
+- Failing approach: resubmitting the same issue body with either `Affected Areas` or `Affected Paths` while relying on the original parser to preserve section context across blank lines.
+- Working workaround: intake now accepts both `Affected Paths` and `Affected Areas`, and it keeps the current section active across blank lines so standard GitHub markdown sections still populate `acceptanceCriteria` and `affectedPaths`.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"` and confirm the parser test covering blank lines after headings passes.

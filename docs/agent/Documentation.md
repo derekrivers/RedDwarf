@@ -606,5 +606,6 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 ## 2026-04-02
 
 - Fixed GitHub issue intake so the parser now accepts both `Affected Paths` and `Affected Areas` headings when converting issue bodies into planning input, matching the checked-in `.github/ISSUE_TEMPLATE/ai-task.yml` wording instead of rejecting otherwise valid issues as under-specified.
-- Added a focused regression test in `packages/integrations/src/github.test.ts` that uses the template's `Affected Areas` heading and asserts the resulting planning input still populates `affectedPaths`.
+- Fixed a second GitHub intake parsing bug where blank lines after markdown headings caused the parser to drop section context before it reached the bullet items. This was the real reason valid GitHub issue bodies like issue `#26` and `#27` still fell back to generic acceptance criteria and empty affected paths after the heading alias fix.
+- Added focused regression coverage in `packages/integrations/src/github.test.ts` for both the template's `Affected Areas` heading and real GitHub markdown sections that include blank lines after headings.
 - Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"`.

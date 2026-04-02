@@ -70,6 +70,40 @@ describe("createPlanningInputFromGitHubIssue", () => {
       "tests/feature-x.test.ts"
     ]);
   });
+
+  it("parses markdown sections that include blank lines after headings", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Summary",
+        "",
+        "Build a React to-do list app called Rimmers List.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Create `src/main.tsx` as the application entry point.",
+        "- Create `src/App.tsx` as the main Rimmers List component.",
+        "",
+        "## Affected Paths",
+        "",
+        "- src/main.tsx",
+        "- src/App.tsx",
+        "- src/styles.css",
+        "- tests/app.test.ts"
+      ].join("\n")
+    });
+
+    expect(input.acceptanceCriteria).toEqual([
+      "Create `src/main.tsx` as the application entry point.",
+      "Create `src/App.tsx` as the main Rimmers List component."
+    ]);
+    expect(input.affectedPaths).toEqual([
+      "src/main.tsx",
+      "src/App.tsx",
+      "src/styles.css",
+      "tests/app.test.ts"
+    ]);
+  });
 });
 
 describe("FixtureGitHubAdapter", () => {

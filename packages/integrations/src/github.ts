@@ -919,7 +919,6 @@ function parseIssueBodySections(body: string): {
     const line = rawLine.trim();
 
     if (line.length === 0) {
-      current = null;
       continue;
     }
 
