@@ -55,7 +55,14 @@ import {
 // Workspace interfaces
 // ============================================================
 
-const [TOOL_MODE_PLANNING, TOOL_MODE_DEVELOPMENT, TOOL_MODE_ARCHITECTURE_REVIEW, TOOL_MODE_VALIDATION, TOOL_MODE_SCM] = workspaceToolModes;
+const [
+  TOOL_MODE_PLANNING,
+  TOOL_MODE_DEVELOPMENT_READONLY,
+  ,
+  TOOL_MODE_ARCHITECTURE_REVIEW,
+  TOOL_MODE_VALIDATION,
+  TOOL_MODE_SCM
+] = workspaceToolModes;
 
 export interface WorkspaceContextArtifacts {
   taskJson: string;
@@ -1001,7 +1008,7 @@ export function createWorkspaceToolPolicy(
     bundle.manifest.assignedAgentType === "developer"
   ) {
     return {
-      mode: TOOL_MODE_DEVELOPMENT,
+      mode: TOOL_MODE_DEVELOPMENT_READONLY,
       codeWriteEnabled: false,
       allowedCapabilities: [
         ...developmentWorkspaceCapabilities.filter(

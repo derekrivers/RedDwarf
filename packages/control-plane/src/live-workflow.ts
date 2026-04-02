@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   architectureReviewReportSchema,
   asIsoTimestamp,
+  capabilities,
   type MaterializedManagedWorkspace,
   type TaskManifest
 } from "@reddwarf/contracts";
@@ -13,6 +14,7 @@ import type {
   OpenClawDispatchResult
 } from "@reddwarf/integrations";
 import type { PlanningPipelineLogger } from "./logger.js";
+import { formatLiteralList } from "./workspace.js";
 
 export interface WorkspaceRepoBootstrapResult {
   repoRoot: string;
@@ -196,7 +198,22 @@ export function readWorkspaceRepoRoot(
 export async function enableWorkspaceCodeWriting(
   workspace: MaterializedManagedWorkspace
 ): Promise<void> {
+  const allowedCapabilities = capabilities.filter(
+    (capability) =>
+      capability === "can_write_code" ||
+      workspace.descriptor.toolPolicy.allowedCapabilities.includes(capability)
+  );
+  const deniedCapabilities = capabilities.filter(
+    (capability) => !allowedCapabilities.includes(capability)
+  );
+
+  workspace.descriptor.toolPolicy.mode = "development_readwrite";
   workspace.descriptor.toolPolicy.codeWriteEnabled = true;
+  workspace.descriptor.toolPolicy.allowedCapabilities = allowedCapabilities;
+  workspace.descriptor.allowedCapabilities = [...new Set([
+    ...workspace.descriptor.allowedCapabilities,
+    "can_write_code"
+  ])];
   workspace.descriptor.toolPolicy.notes = workspace.descriptor.toolPolicy.notes.map((note) =>
     note.includes("product code writes remain disabled by default")
       ? "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task."
@@ -206,6 +223,54 @@ export async function enableWorkspaceCodeWriting(
   await writeFile(
     workspace.stateFile,
     `${JSON.stringify(workspace.descriptor, null, 2)}\n`,
+    "utf8"
+  );
+
+  const toolsPath = workspace.instructions.files.toolsMd;
+  const soulPath = workspace.instructions.files.soulMd;
+  const taskSkillPath = workspace.instructions.files.taskSkillMd;
+
+  const toolsContent = await readFile(toolsPath, "utf8");
+  await writeFile(
+    toolsPath,
+    toolsContent
+      .replace(
+        /- Tool policy mode: `[^`]+`/,
+        "- Tool policy mode: `development_readwrite`"
+      )
+      .replace(/- Code writing enabled: no/, "- Code writing enabled: yes")
+      .replace(
+        /- Allowed capabilities now: .*/,
+        `- Allowed capabilities now: ${formatLiteralList(allowedCapabilities)}`
+      )
+      .replace(
+        /- Currently denied capabilities: .*/,
+        `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`
+      )
+      .replace(
+        /Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default\./,
+        "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task."
+      ),
+    "utf8"
+  );
+
+  const soulContent = await readFile(soulPath, "utf8");
+  await writeFile(
+    soulPath,
+    soulContent.replace(
+      "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
+      "- Product code writes are enabled for this approved development task; stay inside the approved workspace and path scope."
+    ),
+    "utf8"
+  );
+
+  const taskSkillContent = await readFile(taskSkillPath, "utf8");
+  await writeFile(
+    taskSkillPath,
+    taskSkillContent.replace(
+      "6. Escalate whenever the task would require code-writing, secrets outside approved scopes, or a blocked phase in v1.",
+      "6. Escalate whenever the task would require secrets outside approved scopes or a blocked phase in v1."
+    ),
     "utf8"
   );
 }
@@ -829,7 +894,6 @@ function globPatternToRegExp(pattern: string): RegExp {
 function buildGitHubRemoteUrl(repo: string): string {
   return `https://github.com/${repo}.git`;
 }
-
 
 
 

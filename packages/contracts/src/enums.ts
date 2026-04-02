@@ -112,6 +112,7 @@ export const workspaceLifecycleStatuses = ["provisioned", "destroyed"] as const;
 export const workspaceToolModes = [
   "planning_only",
   "development_readonly",
+  "development_readwrite",
   "architecture_review_only",
   "validation_only",
   "scm_only"

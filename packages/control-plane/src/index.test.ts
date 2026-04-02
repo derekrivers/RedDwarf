@@ -4026,7 +4026,13 @@ describe("developer phase with OpenClaw dispatch", () => {
 
       // Verify the OpenClaw handoff was parsed and code writing was enabled
       expect(development.handoff?.summary).toContain("OpenClaw developer session");
+      expect(development.workspace?.descriptor.toolPolicy.mode).toBe(
+        "development_readwrite"
+      );
       expect(development.workspace?.descriptor.toolPolicy.codeWriteEnabled).toBe(true);
+      expect(
+        development.workspace?.descriptor.toolPolicy.allowedCapabilities
+      ).toContain("can_write_code");
 
       // Verify OPENCLAW_DISPATCH event was recorded
       expect(

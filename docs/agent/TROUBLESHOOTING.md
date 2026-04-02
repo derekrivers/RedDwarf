@@ -207,3 +207,11 @@
 - Failing approach: generating the runtime config with `REDDWARF_OPENCLAW_WORKSPACE_ROOT` or a host-resolved relative path as the agent workspace root, then recreating OpenClaw and expecting in-container agents to write there.
 - Working workaround: generate `openclaw.json` with the container-visible runtime root (`REDDWARF_WORKSPACE_ROOT`, default `/var/lib/reddwarf/workspaces`) and recreate the OpenClaw container. Verify the live config shows `/var/lib/reddwarf/workspaces` for every agent `workspace` and `agentDir`.
 - Verification: `node scripts/generate-openclaw-config.mjs /var/lib/reddwarf/workspaces runtime-data/openclaw-home/openclaw.json`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d --force-recreate openclaw`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'grep -n "workspace\\|agentDir" /home/node/.openclaw/openclaw.json | head -n 20'`.
+
+## Approved OpenClaw development runs still behave as `development_readonly`
+
+- Symptom: an approved task reaches development, but OpenClaw logs say the repo is empty and `TOOLS.md` denies `can_write_code`, with messages like `The run completed under a development_readonly tool policy`.
+- Root cause: development workspaces were provisioned as readonly by default and `enableWorkspaceCodeWriting()` only flipped `codeWriteEnabled` in the workspace state JSON. It did not promote the workspace mode to `development_readwrite`, add `can_write_code` to the live tool policy, or refresh the runtime instruction files that OpenClaw actually reads.
+- Failing approach: approving the policy gate and assuming the OpenClaw developer agent will infer write access from the phase alone.
+- Working workaround: when enabling OpenClaw code writing, update the workspace descriptor to `development_readwrite`, add `can_write_code` to the allowed capabilities, and rewrite `TOOLS.md`, `SOUL.md`, and the task skill file so the runtime contract matches the approved development run.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts"` and confirm the OpenClaw development test sees `development_readwrite` plus `can_write_code`.
