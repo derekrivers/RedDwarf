@@ -277,10 +277,9 @@ export async function resolveOpenClawConfig(options) {
     "REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS"
   );
   const config = generateOpenClawConfig({
-    workspaceRoot: resolve(
-      repoRoot,
-      process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces"
-    ),
+    workspaceRoot: (
+      process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces"
+    ).replace(/\\/g, "/"),
     policyRoot: process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf",
     gatewayAuthToken: process.env.OPENCLAW_GATEWAY_TOKEN,
     hookToken: process.env.OPENCLAW_HOOK_TOKEN,

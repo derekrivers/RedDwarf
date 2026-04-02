@@ -35,7 +35,10 @@ function readPositiveIntegerEnv(name) {
 }
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
-const workspaceRoot = args[0] ?? process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces";
+const workspaceRoot =
+  args[0] ??
+  process.env.REDDWARF_WORKSPACE_ROOT ??
+  "/var/lib/reddwarf/workspaces";
 const outputPath =
   args[1] ??
   process.env.REDDWARF_OPENCLAW_CONFIG_PATH ??
@@ -59,7 +62,9 @@ const discordApproverIds = readListEnv(
   "REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS"
 );
 
-const resolvedWorkspaceRoot = resolve(workspaceRoot);
+const resolvedWorkspaceRoot = workspaceRoot.startsWith("/")
+  ? workspaceRoot.replace(/\\/g, "/")
+  : resolve(workspaceRoot);
 const resolvedOutputPath = resolve(outputPath);
 
 const config = generateOpenClawConfig({

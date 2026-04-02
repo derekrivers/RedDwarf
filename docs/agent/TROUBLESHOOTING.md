@@ -198,3 +198,11 @@
 - Failing approach: resubmitting the same issue body with either `Affected Areas` or `Affected Paths` while relying on the original parser to preserve section context across blank lines.
 - Working workaround: intake now accepts both `Affected Paths` and `Affected Areas`, and it keeps the current section active across blank lines so standard GitHub markdown sections still populate `acceptanceCriteria` and `affectedPaths`.
 - Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"` and confirm the parser test covering blank lines after headings passes.
+
+## OpenClaw developer runs time out with `EACCES: permission denied, mkdir '/home/derek'`
+
+- Symptom: development runs block with `OPENCLAW_COMPLETION_TIMED_OUT`, while `docker compose ... logs openclaw` shows `hook agent failed: Error: EACCES: permission denied, mkdir '/home/derek'` and heartbeat failures against the same path.
+- Root cause: the generated `/home/node/.openclaw/openclaw.json` baked the host-only `REDDWARF_OPENCLAW_WORKSPACE_ROOT` path (for example `/home/derek/code/RedDwarf/runtime-data/openclaw-workspaces`) into each agent's `workspace` and `agentDir`. Inside the container only `REDDWARF_WORKSPACE_ROOT` is mounted, so OpenClaw tried to create directories under an unmapped host path and failed before producing a developer handoff.
+- Failing approach: generating the runtime config with `REDDWARF_OPENCLAW_WORKSPACE_ROOT` or a host-resolved relative path as the agent workspace root, then recreating OpenClaw and expecting in-container agents to write there.
+- Working workaround: generate `openclaw.json` with the container-visible runtime root (`REDDWARF_WORKSPACE_ROOT`, default `/var/lib/reddwarf/workspaces`) and recreate the OpenClaw container. Verify the live config shows `/var/lib/reddwarf/workspaces` for every agent `workspace` and `agentDir`.
+- Verification: `node scripts/generate-openclaw-config.mjs /var/lib/reddwarf/workspaces runtime-data/openclaw-home/openclaw.json`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw up -d --force-recreate openclaw`; `docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'grep -n "workspace\\|agentDir" /home/node/.openclaw/openclaw.json | head -n 20'`.
