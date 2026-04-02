@@ -33,7 +33,7 @@ export function summarizeRunEvents(
   const phaseDurations: Record<string, number> = {};
   const failureCodes = new Set<string>();
   let failureClass: FailureClass | null = null;
-  let status: RunSummary["status"] = "completed";
+  let status: RunSummary["status"] = "active";
   let latestPhase = scoped[scoped.length - 1]!.phase;
 
   for (const event of scoped) {
@@ -71,6 +71,10 @@ export function summarizeRunEvents(
 
     if (event.code === "PIPELINE_FAILED") {
       status = "failed";
+    }
+
+    if (event.code === "PIPELINE_COMPLETED") {
+      status = "completed";
     }
   }
 
@@ -157,5 +161,4 @@ export function deriveOrganizationId(repo: string): string | null {
   const owner = repo.split("/")[0]?.trim();
   return owner && owner.length > 0 ? owner : null;
 }
-
 

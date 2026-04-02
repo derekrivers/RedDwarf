@@ -118,7 +118,10 @@ describe("workspace context materialization", () => {
 
     expect(JSON.parse(artifacts.taskJson).taskId).toBe(manifest.taskId);
     expect(JSON.parse(artifacts.policySnapshotJson).approvalMode).toBe("auto");
-    expect(JSON.parse(artifacts.allowedPathsJson)).toEqual(["docs/**"]);
+    expect(JSON.parse(artifacts.allowedPathsJson)).toEqual([
+      "docs/**",
+      "docs/architecture.md"
+    ]);
     expect(JSON.parse(artifacts.acceptanceCriteriaJson)).toEqual([
       "Spec is produced"
     ]);

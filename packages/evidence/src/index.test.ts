@@ -2,16 +2,51 @@ import { describe, expect, it } from "vitest";
 import {
   InMemoryPlanningRepository,
   buildMemoryContextForRepository,
+  createRunEvent,
   createMemoryRecord,
   createOperatorConfigEntry,
   createPipelineRun,
   createPromptSnapshot,
-  deriveOrganizationId
+  deriveOrganizationId,
+  summarizeRunEvents
 } from "@reddwarf/evidence";
 
 const timestamp = "2026-03-25T20:20:00.000Z";
 
 describe("evidence memory partitions", () => {
+  it("keeps run summaries active until a terminal pipeline event is recorded", () => {
+    const summary = summarizeRunEvents("acme-platform-42", "run-active", [
+      createRunEvent({
+        eventId: "event-1",
+        taskId: "acme-platform-42",
+        runId: "run-active",
+        phase: "architecture_review",
+        level: "info",
+        code: "PHASE_STARTED",
+        message: "Architecture review started.",
+        createdAt: timestamp
+      }),
+      createRunEvent({
+        eventId: "event-2",
+        taskId: "acme-platform-42",
+        runId: "run-active",
+        phase: "architecture_review",
+        level: "info",
+        code: "OPENCLAW_DISPATCH",
+        message: "Dispatched to OpenClaw reviewer.",
+        createdAt: "2026-03-25T20:21:00.000Z"
+      })
+    ]);
+
+    expect(summary).toMatchObject({
+      taskId: "acme-platform-42",
+      runId: "run-active",
+      status: "active",
+      latestPhase: "architecture_review",
+      totalDurationMs: 0
+    });
+  });
+
   it("stores and queries partitioned memory records and pipeline runs", async () => {
     const repository = new InMemoryPlanningRepository();
 

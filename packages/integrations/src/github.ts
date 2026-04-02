@@ -369,7 +369,7 @@ export function createPlanningInputFromGitHubIssue(
   const requestedCapabilities = dedupeCapabilities(
     sections.requestedCapabilities.length > 0
       ? sections.requestedCapabilities
-      : (defaults.defaultCapabilities ?? ["can_plan", "can_archive_evidence"])
+      : (defaults.defaultCapabilities ?? ["can_plan", "can_write_code", "can_archive_evidence"])
   );
 
   return {

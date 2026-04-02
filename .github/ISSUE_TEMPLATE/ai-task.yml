@@ -63,6 +63,16 @@ body:
         Do not change the auth model.
         Keep backward compatibility for existing tokens.
       render: text
+  - type: textarea
+    id: requested-capabilities
+    attributes:
+      label: Requested Capabilities
+      description: Optional pipeline capabilities. One per line. Leave blank to use the default task-execution set.
+      placeholder: |
+        can_plan
+        can_write_code
+        can_archive_evidence
+      render: text
   - type: dropdown
     id: risk-class
     attributes:

@@ -25,6 +25,7 @@ import {
   type MaterializedManagedWorkspace
 } from "../workspace.js";
 import {
+  assertWorkspaceRepoChangesWithinAllowedPaths,
   assignWorkspaceRepoRoot,
   createDeveloperHandoffAwaiter,
   createGitHubWorkspaceRepoBootstrapper,
@@ -202,6 +203,25 @@ export async function runDeveloperPhase(
         : null
   });
   await persistTrackedRun({ metadata: { staleRunIds } });
+
+  function workspaceAllowsTests(currentWorkspace: MaterializedManagedWorkspace): boolean {
+    return currentWorkspace.descriptor.toolPolicy.allowedCapabilities.includes(
+      "can_run_tests"
+    );
+  }
+
+  function handoffClaimsTestExecution(handoff: DevelopmentDraft): boolean {
+    const combined = [
+      handoff.summary,
+      ...handoff.implementationNotes,
+      ...handoff.blockedActions,
+      ...handoff.nextActions
+    ].join("\n");
+
+    return /\b(vitest|jest|npm test|pnpm test|tests?\s+(pass|passed|run|ran)|all\s+\d+\s+.*tests?\s+pass)\b/i.test(
+      combined
+    );
+  }
 
   try {
     if (staleRunIds.length > 0) {
@@ -392,7 +412,11 @@ export async function runDeveloperPhase(
     };
 
     if (dependencies.openClawDispatch) {
-      await enableWorkspaceCodeWriting(workspace);
+      const codeWritingApproved =
+        approvedRequest?.requestedCapabilities.includes("can_write_code") ?? false;
+      if (codeWritingApproved) {
+        await enableWorkspaceCodeWriting(workspace);
+      }
       const repoBootstrap = await waitWithHeartbeat({
         work: workspaceRepoBootstrapper.ensureRepo({
           manifest: currentManifest,
@@ -505,9 +529,18 @@ export async function runDeveloperPhase(
         heartbeatIntervalMs
       });
       assignWorkspaceRepoRoot(workspace, completion.repoRoot ?? repoBootstrap.repoRoot);
+      await assertWorkspaceRepoChangesWithinAllowedPaths(workspace, runLogger);
       handoff = parseDevelopmentHandoffMarkdown(
         await readFile(completion.handoffPath, "utf8")
       );
+      if (
+        !workspace.descriptor.toolPolicy.codeWriteEnabled &&
+        handoffClaimsTestExecution(handoff)
+      ) {
+        throw new Error(
+          `Developer handoff for ${taskId} claimed test execution even though the development workspace did not allow can_run_tests.`
+        );
+      }
     } else {
       await recordRunEvent({
         repository,
@@ -565,6 +598,12 @@ export async function runDeveloperPhase(
           codeWriteEnabled: workspace.descriptor.toolPolicy.codeWriteEnabled
         }),
         "utf8"
+      );
+    }
+
+    if (!workspaceAllowsTests(workspace) && handoffClaimsTestExecution(handoff)) {
+      throw new Error(
+        `Developer handoff for ${taskId} claimed test execution even though the development workspace did not allow can_run_tests.`
       );
     }
 

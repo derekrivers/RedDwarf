@@ -49,6 +49,28 @@ describe("createPlanningInputFromGitHubIssue", () => {
     expect(input.acceptanceCriteria).toEqual(["Custom fallback"]);
   });
 
+  it("defaults GitHub issue intake to planning, code writing, and evidence archival", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "Overview of feature X.",
+        "",
+        "Acceptance Criteria:",
+        "- Feature X is implemented",
+        "- Tests pass",
+        "",
+        "Affected Paths:",
+        "- src/feature-x.ts"
+      ].join("\n")
+    });
+
+    expect(input.requestedCapabilities).toEqual([
+      "can_plan",
+      "can_write_code",
+      "can_archive_evidence"
+    ]);
+  });
+
   it("accepts affected areas from the GitHub issue template", () => {
     const input = createPlanningInputFromGitHubIssue({
       ...candidate,

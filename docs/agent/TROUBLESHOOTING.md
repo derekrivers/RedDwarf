@@ -216,6 +216,22 @@
 - Working workaround: when enabling OpenClaw code writing, update the workspace descriptor to `development_readwrite`, add `can_write_code` to the allowed capabilities, and rewrite `TOOLS.md`, `SOUL.md`, and the task skill file so the runtime contract matches the approved development run.
 - Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts"` and confirm the OpenClaw development test sees `development_readwrite` plus `can_write_code`.
 
+## Allowed-path enforcement reports `src/` or `docs/` instead of the actual changed file
+
+- Symptom: developer or SCM phases fail with `ALLOWED_PATHS_VIOLATED`, but the reported `changedFiles` / `violatingFiles` are directory markers like `src/` or `docs/` even when the actual change was to a single allowed file such as `src/app.ts`.
+- Root cause: `git status --porcelain` collapses untracked files into parent directories unless it is asked for full untracked output. Path-scope enforcement then compares the directory marker against file-level allow rules and produces a false violation.
+- Failing approach: relying on plain `git status --porcelain` when validating repo changes against precise allowed paths.
+- Working workaround: use `git status --porcelain --untracked-files=all` before parsing changed files for allowed-path enforcement. That preserves the concrete repo-relative file path instead of a parent directory placeholder.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts tests/context-materialization.test.ts"` and confirm OpenClaw dispatch plus SCM-path tests no longer fail with directory-only violations.
+
+## OpenClaw developer handoffs can overstate validation work if test execution was never allowed
+
+- Symptom: a developer handoff claims things like `all 9 tests passed` or `pnpm test completed successfully`, but the same handoff also lists `can_run_tests` as denied or there is no persisted validation evidence.
+- Root cause: the old developer handoff contract allowed free-form validation notes, and the pipeline accepted those claims without checking whether the workspace tool policy actually granted test execution.
+- Failing approach: trusting handoff markdown as evidence of test execution when the workspace policy never allowed `can_run_tests`.
+- Working workaround: reject developer handoffs that claim tests ran unless the workspace explicitly allowed `can_run_tests`, and keep readonly handoffs explicit about blocked actions instead of speculative validation claims.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts packages/evidence/src/index.test.ts"` and confirm the OpenClaw handoff regression rejects unapproved test claims while run summaries still report active runs correctly.
+
 ## OpenClaw cron runs fail with `exec denied: Cron runs cannot wait for interactive exec approval`
 
 - Symptom: OpenClaw receives a RedDwarf developer run, then logs `exec denied: Cron runs cannot wait for interactive exec approval` with an effective host exec policy like `security=allowlist ask=on-miss askFallback=deny`.

@@ -919,12 +919,19 @@ export async function runPlanningPipeline(
 
     activePhase = "policy_gate";
     const policyStartedAt = clock();
-    const policySnapshot = buildPolicySnapshot(
+    const basePolicySnapshot = buildPolicySnapshot(
       input,
       riskClass,
       approvalMode,
       draft.confidence
     );
+    const policySnapshot = {
+      ...basePolicySnapshot,
+      allowedPaths: [...new Set([
+        ...basePolicySnapshot.allowedPaths,
+        ...spec.affectedAreas
+      ])]
+    };
     const approvalRequestId =
       approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
     await repository.savePolicySnapshot(taskId, policySnapshot);

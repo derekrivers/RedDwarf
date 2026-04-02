@@ -104,6 +104,7 @@ export const failureClasses = [
   "execution_loop"
 ] as const;
 export const pipelineRunStatusesForSummary = [
+  "active",
   "completed",
   "blocked",
   "failed"

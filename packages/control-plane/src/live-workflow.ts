@@ -195,6 +195,30 @@ export function readWorkspaceRepoRoot(
   return (workspace as RepoAwareWorkspace).repoRoot ?? null;
 }
 
+export async function assertWorkspaceRepoChangesWithinAllowedPaths(
+  workspace: MaterializedManagedWorkspace,
+  logger?: PlanningPipelineLogger
+): Promise<void> {
+  const repoRoot = readWorkspaceRepoRoot(workspace);
+  if (!repoRoot) {
+    return;
+  }
+
+  const statusBefore = await runCommand(
+    "git",
+    ["status", "--porcelain", "--untracked-files=all"],
+    repoRoot,
+    logger
+  );
+  const changedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
+
+  assertChangedFilesWithinAllowedPaths({
+    workspaceId: workspace.workspaceId,
+    allowedPaths: workspace.descriptor.allowedPaths,
+    changedFiles
+  });
+}
+
 export async function enableWorkspaceCodeWriting(
   workspace: MaterializedManagedWorkspace
 ): Promise<void> {
@@ -400,6 +424,7 @@ export function createDeveloperHandoffAwaiter(
       let lastHeartbeatAt = Date.now();
       const heartbeatIntervalMs =
         input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
+      const codeWriteEnabled = input.workspace.descriptor.toolPolicy.codeWriteEnabled;
 
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
@@ -412,10 +437,24 @@ export function createDeveloperHandoffAwaiter(
             "## Next Actions"
           ];
           const hasAllHeadings = headings.every((heading) => handoff.includes(heading));
-          const codeWritingEnabled = handoff.includes("Code writing enabled: yes");
-          const repoReady = !repoRoot || (await repositoryHasChanges(repoRoot, input.logger));
+          const expectedCodeWritingDeclaration = handoff.includes(
+            `Code writing enabled: ${codeWriteEnabled ? "yes" : "no"}`
+          );
+          const repoHasChanges = repoRoot
+            ? await repositoryHasChanges(repoRoot, input.logger)
+            : false;
 
-          if (hasAllHeadings && codeWritingEnabled && repoReady) {
+          if (!codeWriteEnabled && repoHasChanges) {
+            throw new Error(
+              `Developer workspace ${input.workspace.workspaceId} produced repository changes while code writing was disabled.`
+            );
+          }
+
+          if (
+            hasAllHeadings &&
+            expectedCodeWritingDeclaration &&
+            (codeWriteEnabled ? repoHasChanges : true)
+          ) {
             return { handoffPath, repoRoot };
           }
         }
@@ -896,6 +935,3 @@ function globPatternToRegExp(pattern: string): RegExp {
 function buildGitHubRemoteUrl(repo: string): string {
   return `https://github.com/${repo}.git`;
 }
-
-
-

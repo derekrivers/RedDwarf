@@ -266,6 +266,11 @@ export function createWorkspaceContextBundle(input: {
   policySnapshot: PolicySnapshot;
   memoryContext?: import("@reddwarf/contracts").MemoryContext | null;
 }): WorkspaceContextBundle {
+  const allowedPaths = [...new Set([
+    ...input.policySnapshot.allowedPaths,
+    ...input.spec.affectedAreas
+  ])];
+
   return workspaceContextBundleSchema.parse({
     manifest: input.manifest,
     spec: input.spec,
@@ -274,7 +279,7 @@ export function createWorkspaceContextBundle(input: {
       ? { memoryContext: input.memoryContext }
       : {}),
     acceptanceCriteria: input.spec.acceptanceCriteria,
-    allowedPaths: input.policySnapshot.allowedPaths
+    allowedPaths
   });
 }
 
