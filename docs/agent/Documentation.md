@@ -2,6 +2,11 @@
 
 ## 2026-04-02
 
+- Diagnosed an OpenClaw RedDwarf MCP bridge regression where the gateway kept logging `failed to start server "reddwarf" ... connection timed out after 30000ms` even though the generated `openclaw.json` had the correct per-server `REDDWARF_API_URL=http://host.docker.internal:8080`.
+- Root cause: inside the container, the service-level `REDDWARF_API_URL` still defaulted to `http://127.0.0.1:8080`. Direct MCP handshake tests showed the bridge worked when forced to use `host.docker.internal`, but real bundled launches could still fall back to the container-wide env instead of the `mcp.servers.reddwarf.env` override.
+- Updated `infra/docker/docker-compose.yml` so the OpenClaw service now exports `REDDWARF_API_URL=${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}` alongside the existing plugin/MCP-specific operator API URL setting.
+- Added a troubleshooting note documenting the fallback-env failure mode and the service-level `REDDWARF_API_URL` fix for future OpenClaw MCP debugging.
+
 - Diagnosed an OpenClaw Control UI recovery path that was not yet captured in repo memory: a healthy gateway with real auth tokens can still keep returning `pairing required` until the pending operator-device request is explicitly approved inside the running container.
 - Added a troubleshooting entry with the working recovery flow: `docker exec -it docker-openclaw-1 node dist/index.js devices list` to find the pending operator request, then `docker exec -it docker-openclaw-1 node dist/index.js devices approve <request-id>` to approve it before retrying the browser UI.
 

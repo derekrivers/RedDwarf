@@ -20,6 +20,7 @@ services:
       REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
+      REDDWARF_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
       REDDWARF_OPENCLAW_OPERATOR_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
       DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
