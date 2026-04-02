@@ -143,6 +143,10 @@ export async function applyOperatorRuntimeConfig(options = {}) {
     return result.rows.length;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : null;
 
     if (
       message.includes('relation "operator_config" does not exist') ||
@@ -150,6 +154,23 @@ export async function applyOperatorRuntimeConfig(options = {}) {
     ) {
       if (typeof log === "function") {
         log("Operator config table not found yet; using .env runtime values.");
+      }
+      refreshDerivedConfig();
+      return 0;
+    }
+
+    if (
+      code === "ECONNREFUSED" ||
+      code === "ENOTFOUND" ||
+      code === "ETIMEDOUT" ||
+      message.includes("ECONNREFUSED") ||
+      message.includes("connect ETIMEDOUT") ||
+      message.includes("Connection terminated unexpectedly")
+    ) {
+      if (typeof log === "function") {
+        log(
+          "Operator config database is not reachable yet; using .env runtime values for bootstrap."
+        );
       }
       refreshDerivedConfig();
       return 0;
@@ -261,6 +282,10 @@ export async function resolveOpenClawConfig(options) {
       process.env.REDDWARF_OPENCLAW_WORKSPACE_ROOT ?? "runtime-data/openclaw-workspaces"
     ),
     policyRoot: process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf",
+    gatewayAuthToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+    hookToken: process.env.OPENCLAW_HOOK_TOKEN,
+    operatorApiToken: process.env.REDDWARF_OPERATOR_TOKEN,
+    operatorApiBaseUrl: process.env.REDDWARF_OPENCLAW_OPERATOR_API_URL,
     browser: {
       enabled: readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true)
     },

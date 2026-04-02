@@ -65,6 +65,10 @@ const resolvedOutputPath = resolve(outputPath);
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
   policyRoot,
+  gatewayAuthToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+  hookToken: process.env.OPENCLAW_HOOK_TOKEN,
+  operatorApiToken: process.env.REDDWARF_OPERATOR_TOKEN,
+  operatorApiBaseUrl: process.env.REDDWARF_OPENCLAW_OPERATOR_API_URL,
   ...(modelProvider ? { modelProvider } : {}),
   browser: {
     enabled: browserEnabled

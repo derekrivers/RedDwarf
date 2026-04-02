@@ -29,7 +29,7 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { readdir, stat, rm } from "node:fs/promises";
+import { readdir, stat, rm, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
 
@@ -43,6 +43,7 @@ import {
   ensureRepoSecretsFile,
   formatError,
   loadRepoEnv,
+  openClawConfigRuntimePath,
   refreshDerivedConfig,
   resolveOpenClawConfig
 } from "./lib/config.mjs";
@@ -54,6 +55,8 @@ const COMPOSE_FILE = join(repoRoot, "infra", "docker", "docker-compose.yml");
 const POLL_INTERVAL_MS = 2_000;
 const MAX_WAIT_MS = 60_000;
 const WORKSPACE_MAX_AGE_MS = 24 * 60 * 60_000;
+const OPENCLAW_WAIT_MAX_MS = 60_000;
+const OPENCLAW_POLL_INTERVAL_MS = 2_000;
 
 await loadRepoEnv();
 refreshDerivedConfig();
@@ -83,6 +86,67 @@ if (dryRun) {
   log("[DRY RUN MODE] SCM and follow-up GitHub mutations will be suppressed.");
 }
 
+function hasUnresolvedOpenClawPlaceholder(input) {
+  return /\$\{(?:OPENCLAW_|REDDWARF_)[A-Z0-9_]+\}/.test(input);
+}
+
+async function assertResolvedOpenClawRuntimeConfig() {
+  const config = await readFile(openClawConfigRuntimePath, "utf8");
+
+  if (hasUnresolvedOpenClawPlaceholder(config)) {
+    throw new Error(
+      `Resolved OpenClaw runtime config still contains placeholders: ${openClawConfigRuntimePath}`
+    );
+  }
+}
+
+async function waitForOpenClawGateway(hostPort) {
+  const deadline = Date.now() + OPENCLAW_WAIT_MAX_MS;
+  let lastError = "OpenClaw gateway did not respond yet.";
+  const url = `http://127.0.0.1:${hostPort}/health`;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return;
+      }
+      lastError = `OpenClaw /health returned ${response.status}.`;
+    } catch (error) {
+      lastError = formatError(error);
+    }
+
+    await new Promise((resolveDelay) =>
+      setTimeout(resolveDelay, OPENCLAW_POLL_INTERVAL_MS)
+    );
+  }
+
+  throw new Error(lastError);
+}
+
+function readPendingOpenClawPairingSummary() {
+  try {
+    const output = execSync(
+      `docker compose -f "${COMPOSE_FILE}" --profile openclaw exec -T openclaw sh -lc 'node dist/index.js devices list'`,
+      { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
+    );
+
+    if (!/Pending \((?!0\))/m.test(output) || !/\boperator\b/m.test(output)) {
+      return null;
+    }
+
+    const requestMatch = output.match(
+      /│\s*([0-9a-f-]{36})\s*│[^\n]*│\s*operator\s*│/i
+    );
+
+    return {
+      requestId: requestMatch?.[1] ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 1 — Infrastructure
 // ══════════════════════════════════════════════════════════════════════════
@@ -95,9 +159,13 @@ await ensureRepoSecretsFile();
 if (!skipOpenClaw) {
   try {
     await resolveOpenClawConfig({ log });
+    await assertResolvedOpenClawRuntimeConfig();
   } catch (err) {
     logError(`Failed to resolve OpenClaw config: ${formatError(err)}`);
-    logError("OpenClaw will fall back to the template with unresolved placeholders.");
+    logError(
+      "OpenClaw startup cannot continue safely with an unresolved runtime config. Rebuild the repo outputs and retry."
+    );
+    process.exit(1);
   }
 }
 
@@ -193,25 +261,31 @@ try {
 // ── 1e: Check OpenClaw ────────────────────────────────────────────────
 
 let openClawAvailable = false;
+let openClawStatusSummary = "not requested";
+let openClawPairingRequestId = null;
 if (!skipOpenClaw) {
   log("Checking OpenClaw gateway...");
   try {
-    const status = execSync(
-      `docker compose -f "${COMPOSE_FILE}" ps --format json openclaw 2>/dev/null`,
-      { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
-    ).trim();
-    if (status) {
-      const parsed = JSON.parse(status);
-      if (parsed.State === "running") {
-        openClawAvailable = true;
-        log("OpenClaw gateway is running.");
-      } else {
-        log(`OpenClaw container is ${parsed.State}.`);
-      }
+    await waitForOpenClawGateway(process.env.OPENCLAW_HOST_PORT ?? "3578");
+    openClawAvailable = true;
+    openClawStatusSummary = `running (port ${process.env.OPENCLAW_HOST_PORT ?? "3578"})`;
+    const pairingSummary = readPendingOpenClawPairingSummary();
+    if (pairingSummary?.requestId) {
+      openClawPairingRequestId = pairingSummary.requestId;
+      log(
+        `OpenClaw gateway is healthy, but an operator pairing approval is pending (${pairingSummary.requestId}).`
+      );
+    } else {
+      log("OpenClaw gateway is healthy.");
     }
-  } catch {
-    log("OpenClaw not available — deterministic fallback will be used.");
+  } catch (err) {
+    openClawStatusSummary = `unavailable (${formatError(err)})`;
+    log(
+      `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
+    );
   }
+} else {
+  openClawStatusSummary = "disabled by REDDWARF_SKIP_OPENCLAW";
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -435,7 +509,13 @@ log("  RedDwarf stack is live.");
 log("══════════════════════════════════════════════════════════════════");
 log("");
 log(`  Postgres:     running (port ${process.env.POSTGRES_HOST_PORT ?? "55532"})`);
-log(`  OpenClaw:     ${openClawAvailable ? "running (port " + (process.env.OPENCLAW_HOST_PORT ?? "3578") + ")" : "not running (deterministic fallback)"}`);
+log(
+  `  OpenClaw:     ${
+    openClawAvailable
+      ? openClawStatusSummary
+      : `${openClawStatusSummary} (deterministic fallback)`
+  }`
+);
 log(`  Operator API: http://127.0.0.1:${server.port}`);
 log("  Operator Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 log(`  Dispatcher:   ${dispatcher ? "running (every " + (dispatchIntervalMs / 1_000) + "s)" : "disabled (requires OpenClaw)"}`);
@@ -461,6 +541,13 @@ log(`    GET  http://127.0.0.1:${server.port}/approvals`);
 log(`    GET  http://127.0.0.1:${server.port}/runs`);
 if (dispatcher) {
   log(`    POST http://127.0.0.1:${server.port}/tasks/:taskId/dispatch`);
+}
+if (openClawPairingRequestId) {
+  log("");
+  log("  OpenClaw pairing:");
+  log(
+    `    docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'node dist/index.js devices approve ${openClawPairingRequestId}'`
+  );
 }
 log("");
 log("  Press Ctrl+C to shut down gracefully.");

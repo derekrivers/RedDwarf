@@ -23,7 +23,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { readdir, stat, rm } from "node:fs/promises";
+import { readdir, stat, rm, readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -48,6 +48,8 @@ const { log, logError } = createScriptLogger("teardown");
 
 const COMPOSE_FILE = join(repoRoot, "infra", "docker", "docker-compose.yml");
 const WORKSPACE_MAX_AGE_MS = 24 * 60 * 60_000;
+const DOCKER_WAIT_MAX_MS = 20_000;
+const DOCKER_WAIT_INTERVAL_MS = 1_000;
 
 // ── Parse arguments ───────────────────────────────────────────────────────
 
@@ -81,8 +83,51 @@ const summary = {
   servicesDown: false,
   workspacesRemoved: 0,
   evidenceRemoved: 0,
-  volumesDestroyed: false
+  volumesDestroyed: false,
+  dockerServicesSeen: [],
+  openClawRuntimeConfigResolved: null
 };
+
+function listComposeServices() {
+  try {
+    const output = execSync(
+      `docker compose -f "${COMPOSE_FILE}" --profile openclaw ps --format json 2>/dev/null`,
+      { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
+    ).trim();
+
+    if (!output) {
+      return [];
+    }
+
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
+async function waitForComposeDown() {
+  const deadline = Date.now() + DOCKER_WAIT_MAX_MS;
+
+  while (Date.now() < deadline) {
+    if (listComposeServices().length === 0) {
+      return true;
+    }
+
+    await new Promise((resolveDelay) =>
+      setTimeout(resolveDelay, DOCKER_WAIT_INTERVAL_MS)
+    );
+  }
+
+  return listComposeServices().length === 0;
+}
+
+function hasUnresolvedOpenClawPlaceholder(input) {
+  return /\$\{(?:OPENCLAW_|REDDWARF_)[A-Z0-9_]+\}/.test(input);
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Step 1 — Sweep stale pipeline runs
@@ -143,25 +188,33 @@ if (dbReachable) {
 log("Step 2/5: Stopping Docker Compose services...");
 
 try {
+  const runningServices = listComposeServices();
+  summary.dockerServicesSeen = runningServices.map((service) => ({
+    service: service.Service ?? service.Name ?? "unknown",
+    state: service.State ?? "unknown",
+    health: service.Health ?? null
+  }));
+
   if (dryRun) {
-    // Check what's running
-    const ps = execSync(
-      `docker compose -f "${COMPOSE_FILE}" ps --format json 2>/dev/null`,
-      { encoding: "utf8", cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
-    ).trim();
-    const running = ps ? ps.split("\n").filter((l) => l.trim()).length : 0;
-    log(`  Would stop ${running} container(s).`);
+    log(`  Would stop ${runningServices.length} container(s).`);
+    for (const service of summary.dockerServicesSeen) {
+      log(
+        `    - ${service.service} (${service.state}${service.health ? `, health=${service.health}` : ""})`
+      );
+    }
   } else {
     const downCmd = destroyVolumes
       ? `docker compose -f "${COMPOSE_FILE}" --profile openclaw down -v`
       : `docker compose -f "${COMPOSE_FILE}" --profile openclaw down`;
     execSync(downCmd, { stdio: "inherit", cwd: repoRoot });
-    summary.servicesDown = true;
+    summary.servicesDown = await waitForComposeDown();
     summary.volumesDestroyed = destroyVolumes;
-    if (destroyVolumes) {
+    if (summary.servicesDown && destroyVolumes) {
       log("  Services stopped and volumes removed.");
-    } else {
+    } else if (summary.servicesDown) {
       log("  Services stopped. Database volume preserved.");
+    } else {
+      logError("  Docker Compose returned, but some services still appear to be running.");
     }
   }
 } catch (err) {
@@ -261,6 +314,23 @@ log("Step 5/5: Checking OpenClaw runtime state...");
 
 const openClawHome = resolve(repoRoot, "runtime-data", "openclaw-home");
 try {
+  const runtimeConfigPath = join(openClawHome, "openclaw.json");
+  try {
+    const runtimeConfig = await readFile(runtimeConfigPath, "utf8");
+    summary.openClawRuntimeConfigResolved = !hasUnresolvedOpenClawPlaceholder(
+      runtimeConfig
+    );
+    log(
+      `  Runtime config status: ${
+        summary.openClawRuntimeConfigResolved
+          ? "resolved values present"
+          : "contains unresolved placeholders"
+      }.`
+    );
+  } catch {
+    log("  No runtime openclaw.json found.");
+  }
+
   const entries = await readdir(openClawHome).catch(() => []);
   const clobbered = entries.filter((e) => e.includes(".clobbered."));
 
@@ -279,19 +349,14 @@ try {
 
   // Reset device pairing state to prevent stale token mismatches on next boot
   const devicesDir = join(openClawHome, "devices");
-  const { writeFile } = await import("node:fs/promises");
   try {
-    const deviceEntries = await readdir(devicesDir).catch(() => []);
-    if (deviceEntries.length > 0) {
-      if (dryRun) {
-        log("  Would reset device pairing state (paired.json, pending.json).");
-      } else {
-        await writeFile(join(devicesDir, "paired.json"), "{}", "utf8");
-        await writeFile(join(devicesDir, "pending.json"), "{}", "utf8");
-        log("  Device pairing state reset.");
-      }
+    if (dryRun) {
+      log("  Would reset device pairing state (paired.json, pending.json).");
     } else {
-      log("  No device pairing state to reset.");
+      await mkdir(devicesDir, { recursive: true });
+      await writeFile(join(devicesDir, "paired.json"), "{}", "utf8");
+      await writeFile(join(devicesDir, "pending.json"), "{}", "utf8");
+      log("  Device pairing state reset.");
     }
   } catch {
     log("  Device pairing directory not found — nothing to reset.");
@@ -311,9 +376,25 @@ log("═════════════════════════
 log("");
 log(`  Stale runs swept:      ${summary.staleRunsSwept}`);
 log(`  Services stopped:      ${summary.servicesDown ? "yes" : dryRun ? "(dry run)" : "no"}`);
+if (summary.dockerServicesSeen.length > 0) {
+  log(
+    `  Compose services seen: ${summary.dockerServicesSeen
+      .map((service) => `${service.service}=${service.state}`)
+      .join(", ")}`
+  );
+}
 log(`  Workspaces removed:    ${summary.workspacesRemoved}`);
 log(`  Evidence removed:      ${cleanEvidence ? summary.evidenceRemoved : "skipped"}`);
 log(`  Volumes destroyed:     ${summary.volumesDestroyed ? "YES — database state deleted" : "no — database preserved"}`);
+if (summary.openClawRuntimeConfigResolved !== null) {
+  log(
+    `  OpenClaw config:       ${
+      summary.openClawRuntimeConfigResolved
+        ? "resolved runtime file preserved"
+        : "runtime file still has placeholders"
+    }`
+  );
+}
 log("");
 
 if (!dryRun && !destroyVolumes) {

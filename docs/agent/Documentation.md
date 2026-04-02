@@ -1,5 +1,10 @@
 # Agent Documentation
 
+## 2026-04-02
+
+- Diagnosed an OpenClaw Control UI recovery path that was not yet captured in repo memory: a healthy gateway with real auth tokens can still keep returning `pairing required` until the pending operator-device request is explicitly approved inside the running container.
+- Added a troubleshooting entry with the working recovery flow: `docker exec -it docker-openclaw-1 node dist/index.js devices list` to find the pending operator request, then `docker exec -it docker-openclaw-1 node dist/index.js devices approve <request-id>` to approve it before retrying the browser UI.
+
 ## 2026-04-01
 
 - Fixed a GitHub Actions regression where `docker compose -f infra/docker/docker-compose.yml config` failed on clean runners because `.secrets` was missing even though Compose now references it for both services.

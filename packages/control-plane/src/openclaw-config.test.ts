@@ -70,6 +70,28 @@ describe("generateOpenClawConfig", () => {
     expect(config.agents.list[0]?.default).toBe(true);
   });
 
+  it("uses explicit runtime tokens when provided", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/workspaces",
+      gatewayAuthToken: "gateway-token-live",
+      hookToken: "hook-token-live",
+      operatorApiToken: "operator-token-live",
+      operatorApiBaseUrl: "http://host.docker.internal:8080"
+    });
+
+    expect(config.gateway.auth.token).toBe("gateway-token-live");
+    expect(config.hooks.token).toBe("hook-token-live");
+    expect(config.mcp?.servers.reddwarf?.env?.REDDWARF_API_URL).toBe(
+      "http://host.docker.internal:8080"
+    );
+    expect(config.mcp?.servers.reddwarf?.env?.REDDWARF_OPERATOR_TOKEN).toBe(
+      "operator-token-live"
+    );
+    expect(config.plugins?.entries?.["reddwarf-operator"]?.config).toEqual({
+      operatorApiBaseUrl: "http://host.docker.internal:8080"
+    });
+  });
+
   it("sets the shared workspace root and per-agent state paths under the provided root", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/data/workspaces" });
 

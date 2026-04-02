@@ -72,6 +72,18 @@
 - Working workaround: seed [infra/docker/openclaw.json](/c:/Dev/RedDwarf/infra/docker/openclaw.json) into the writable host-backed runtime directory at `runtime-data/openclaw-home/openclaw.json`, reference the repo-root `.env` directly from `infra/docker/docker-compose.yml` with `env_file: ../../.env`, and do not also override `OPENCLAW_HOOK_TOKEN` or `OPENCLAW_GATEWAY_TOKEN` under the service `environment:` block. Then recreate the `openclaw` service. Use `http://127.0.0.1:3578/` for the Control UI and `http://127.0.0.1:8080/` only for the separate RedDwarf operator API.
 - Verification: `docker compose -f infra/docker/docker-compose.yml logs openclaw` should show `ws://0.0.0.0:18789` without any `EACCES` around `openclaw.json`; host requests to `http://127.0.0.1:3578/` should return `200`, and `runtime-data/openclaw-home` should contain `openclaw.json`, `canvas/`, and `logs/`.
 
+## OpenClaw Control UI keeps saying `pairing required` after pasting the gateway token
+
+- Symptom: the OpenClaw container is healthy, `/health` works, the runtime `openclaw.json` contains real token values, but the browser still loops between `token_missing`, `connect failed`, and `pairing required`.
+- Root cause: the browser is creating a pending operator-device pairing request on the gateway WebSocket, but that request has not been approved inside the running OpenClaw container yet. Resetting browser storage or `runtime-data/openclaw-home/devices` alone does not clear the requirement once a new pending request has been issued.
+- Failing approach: repeatedly pasting `OPENCLAW_GATEWAY_TOKEN`, wiping browser state, or recreating `runtime-data/openclaw-home` without approving the newly pending device request.
+- Working workaround:
+  - list pending requests inside the running container with `docker exec -it docker-openclaw-1 node dist/index.js devices list`
+  - note the pending request id for the `operator` role
+  - approve it with `docker exec -it docker-openclaw-1 node dist/index.js devices approve <request-id>`
+  - reload the Control UI in the same browser session and reconnect
+- Verification: rerun `docker exec -it docker-openclaw-1 node dist/index.js devices list` and confirm the request is no longer pending, then reload `http://127.0.0.1:3578/` and verify the UI connects without emitting new `pairing required` websocket closures.
+
 ## `pnpm e2e` fails with `ECONNREFUSED 127.0.0.1:55532`
 
 - Symptom: `corepack pnpm e2e` creates or starts processing a live GitHub issue, then fails during planning with `connect ECONNREFUSED 127.0.0.1:55532` from `PostgresPlanningRepository.listPipelineRuns(...)`.

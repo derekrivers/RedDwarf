@@ -187,6 +187,30 @@ export interface GenerateOpenClawConfigOptions {
    * the architect phase can consult live docs and API references.
    */
   browser?: OpenClawBrowserConfig;
+
+  /**
+   * Optional gateway auth token for a fully resolved runtime config.
+   * When omitted, the generated config keeps the template placeholder.
+   */
+  gatewayAuthToken?: string;
+
+  /**
+   * Optional hook ingress token for a fully resolved runtime config.
+   * When omitted, the generated config keeps the template placeholder.
+   */
+  hookToken?: string;
+
+  /**
+   * Optional operator API token for the in-container MCP bridge.
+   * When omitted, the generated config keeps the template placeholder.
+   */
+  operatorApiToken?: string;
+
+  /**
+   * Optional operator API base URL for in-container plugin and MCP access.
+   * When omitted, the generated config keeps the template placeholder.
+   */
+  operatorApiBaseUrl?: string;
 }
 
 /**
@@ -258,13 +282,20 @@ export function generateOpenClawConfig(
     "scripts",
     "start-operator-mcp.mjs"
   ).replace(/\\/g, "/");
+  const gatewayAuthToken =
+    options.gatewayAuthToken ?? "${OPENCLAW_GATEWAY_TOKEN}";
+  const hookToken = options.hookToken ?? "${OPENCLAW_HOOK_TOKEN}";
+  const operatorApiToken =
+    options.operatorApiToken ?? "${REDDWARF_OPERATOR_TOKEN}";
+  const operatorApiBaseUrl =
+    options.operatorApiBaseUrl ?? "${REDDWARF_OPENCLAW_OPERATOR_API_URL}";
 
   const config: OpenClawConfig = {
     gateway: {
       bind: "lan",
       auth: {
         mode: "token",
-        token: "${OPENCLAW_GATEWAY_TOKEN}"
+        token: gatewayAuthToken
       },
       controlUi: {
         allowedOrigins: [
@@ -275,7 +306,7 @@ export function generateOpenClawConfig(
     },
     hooks: {
       enabled: true,
-      token: "${OPENCLAW_HOOK_TOKEN}",
+      token: hookToken,
       path: "/hooks",
       defaultSessionKey: "hook:ingress",
       allowedAgentIds: roles.map((role) => role.agentId),
@@ -429,8 +460,8 @@ export function generateOpenClawConfig(
           command: "node",
           args: [reddwarfOperatorMcpScriptPath],
           env: {
-            REDDWARF_API_URL: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}",
-            REDDWARF_OPERATOR_TOKEN: "${REDDWARF_OPERATOR_TOKEN}"
+            REDDWARF_API_URL: operatorApiBaseUrl,
+            REDDWARF_OPERATOR_TOKEN: operatorApiToken
           }
         }
       }
@@ -445,7 +476,7 @@ export function generateOpenClawConfig(
         "reddwarf-operator": {
           enabled: true,
           config: {
-            operatorApiBaseUrl: "${REDDWARF_OPENCLAW_OPERATOR_API_URL}"
+            operatorApiBaseUrl
           }
         }
       }
