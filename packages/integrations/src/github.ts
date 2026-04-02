@@ -930,7 +930,7 @@ function parseIssueBodySections(body: string): {
       continue;
     }
 
-    if (normalizedHeading === "affected paths") {
+    if (normalizedHeading === "affected paths" || normalizedHeading === "affected areas") {
       current = "affectedPaths";
       continue;
     }

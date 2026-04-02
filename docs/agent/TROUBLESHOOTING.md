@@ -190,3 +190,11 @@
 - Failing approach: configuring the MCP bridge to inherit the host-default `REDDWARF_API_URL=http://127.0.0.1:8080` without overriding it for the container runtime.
 - Working workaround: set `REDDWARF_OPENCLAW_OPERATOR_API_URL=http://host.docker.internal:8080` in the OpenClaw service environment, map `host.docker.internal:host-gateway` in Docker Compose, and inject that value into `mcp.servers.reddwarf.env.REDDWARF_API_URL` when generating `openclaw.json`.
 - Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate OpenClaw, and run `docker compose -f infra/docker/docker-compose.yml exec -T openclaw sh -lc "node openclaw.mjs config get mcp.servers"`; the `reddwarf` entry should show `REDDWARF_API_URL` pointing at `http://host.docker.internal:8080`.
+
+## GitHub AI Task issues using the checked-in template still get rejected as under-specified
+
+- Symptom: a GitHub issue created from `.github/ISSUE_TEMPLATE/ai-task.yml` is ingested, but pre-screening blocks planning with `under_specified` and says no affected paths were provided even though the issue includes an `Affected Areas` section.
+- Root cause: the issue template labels the section `Affected Areas`, but `packages/integrations/src/github.ts` originally only parsed the heading `Affected Paths` when converting issue bodies into planning input.
+- Failing approach: resubmitting the same issue body with the template's `Affected Areas` heading and expecting the intake parser to populate `affectedPaths`.
+- Working workaround: intake now accepts both `Affected Paths` and `Affected Areas`. Before this fix, the temporary workaround was to hand-edit the issue body to use `Affected Paths`.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"` and confirm the parser test covering `Affected Areas` passes.

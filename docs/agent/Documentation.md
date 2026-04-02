@@ -602,3 +602,9 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Extended run-report export so prompt snapshots now appear automatically once captured, and added focused contract, evidence, planning, and operator API regression coverage around snapshot persistence and report surfacing.
 - Verification for feature 111: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/evidence/src/index.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/operator-api.test.ts packages/execution-plane/src/index.test.ts"`.
 - Likely next board item: feature 112, phase retry budget.
+
+## 2026-04-02
+
+- Fixed GitHub issue intake so the parser now accepts both `Affected Paths` and `Affected Areas` headings when converting issue bodies into planning input, matching the checked-in `.github/ISSUE_TEMPLATE/ai-task.yml` wording instead of rejecting otherwise valid issues as under-specified.
+- Added a focused regression test in `packages/integrations/src/github.test.ts` that uses the template's `Affected Areas` heading and asserts the resulting planning input still populates `affectedPaths`.
+- Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"`.

@@ -48,6 +48,28 @@ describe("createPlanningInputFromGitHubIssue", () => {
     );
     expect(input.acceptanceCriteria).toEqual(["Custom fallback"]);
   });
+
+  it("accepts affected areas from the GitHub issue template", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "Overview of feature X.",
+        "",
+        "Acceptance Criteria:",
+        "- Feature X is implemented",
+        "- Tests pass",
+        "",
+        "Affected Areas:",
+        "- src/feature-x.ts",
+        "- tests/feature-x.test.ts"
+      ].join("\n")
+    });
+
+    expect(input.affectedPaths).toEqual([
+      "src/feature-x.ts",
+      "tests/feature-x.test.ts"
+    ]);
+  });
 });
 
 describe("FixtureGitHubAdapter", () => {
