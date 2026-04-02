@@ -104,6 +104,67 @@ describe("createPlanningInputFromGitHubIssue", () => {
       "tests/app.test.ts"
     ]);
   });
+
+  it("stops affected paths at the next markdown heading", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Summary",
+        "",
+        "Build a React to-do list app called Rimmers List.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Create `src/main.tsx` as the application entry point.",
+        "",
+        "## Affected Paths",
+        "",
+        "- src/main.tsx",
+        "- src/App.tsx",
+        "",
+        "## Constraints",
+        "",
+        "- Use React as the frontend framework.",
+        "",
+        "## Risk Class",
+        "",
+        "low"
+      ].join("\n")
+    });
+
+    expect(input.affectedPaths).toEqual(["src/main.tsx", "src/App.tsx"]);
+  });
+
+  it("builds summary text from narrative sections without appending later headings", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Summary",
+        "",
+        "Build a React to-do list app called Rimmers List.",
+        "",
+        "## Why",
+        "",
+        "We want a simple but realistic end-to-end feature to validate the pipeline.",
+        "",
+        "## Desired Outcome",
+        "",
+        "A user can manage tasks in a Bootstrap-styled React interface.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Create `src/main.tsx` as the application entry point.",
+        "",
+        "## Risk Class",
+        "",
+        "low"
+      ].join("\n")
+    });
+
+    expect(input.summary).toBe(
+      "Build a React to-do list app called Rimmers List. We want a simple but realistic end-to-end feature to validate the pipeline. A user can manage tasks in a Bootstrap-styled React interface."
+    );
+  });
 });
 
 describe("FixtureGitHubAdapter", () => {

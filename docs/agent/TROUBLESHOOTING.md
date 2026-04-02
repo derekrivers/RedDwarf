@@ -198,6 +198,7 @@
 - Failing approach: resubmitting the same issue body with either `Affected Areas` or `Affected Paths` while relying on the original parser to preserve section context across blank lines.
 - Working workaround: intake now accepts both `Affected Paths` and `Affected Areas`, and it keeps the current section active across blank lines so standard GitHub markdown sections still populate `acceptanceCriteria` and `affectedPaths`.
 - Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/integrations/src/github.test.ts"` and confirm the parser test covering blank lines after headings passes.
+- Additional note: a second follow-up bug let `Affected Paths` continue absorbing later sections like `## Constraints` and `## Risk Class`, which polluted `allowedPaths` and appended `low` to the manifest summary. The parser now drops the active section when any new markdown heading starts, and summary text is built only from the narrative `Summary`, `Why`, and `Desired Outcome` sections.
 
 ## OpenClaw developer runs time out with `EACCES: permission denied, mkdir '/home/derek'`
 

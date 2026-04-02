@@ -939,6 +939,11 @@ function parseIssueBodySections(body: string): {
       continue;
     }
 
+    if (isMarkdownHeading(line)) {
+      current = null;
+      continue;
+    }
+
     if (!current) {
       continue;
     }
@@ -963,6 +968,12 @@ function parseIssueBodySections(body: string): {
 }
 
 function buildSummary(body: string): string {
+  const sectionSummary = buildSummaryFromIssueSections(body);
+
+  if (sectionSummary.length >= 20) {
+    return sectionSummary;
+  }
+
   const normalized = body
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -974,6 +985,58 @@ function buildSummary(body: string): string {
   }
 
   return `${summary} This task was ingested from GitHub and requires a deterministic planning pass.`.trim();
+}
+
+function buildSummaryFromIssueSections(body: string): string {
+  const lines = body.split(/\r?\n/);
+  const sections: string[] = [];
+  let current: "summary" | "why" | "desiredOutcome" | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line.length === 0) {
+      continue;
+    }
+
+    const normalizedHeading = line.toLowerCase().replace(/[:#]/g, "").trim();
+
+    if (normalizedHeading === "summary") {
+      current = "summary";
+      continue;
+    }
+
+    if (normalizedHeading === "why") {
+      current = "why";
+      continue;
+    }
+
+    if (normalizedHeading === "desired outcome") {
+      current = "desiredOutcome";
+      continue;
+    }
+
+    if (isMarkdownHeading(line)) {
+      current = null;
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      continue;
+    }
+
+    sections.push(line);
+  }
+
+  return sections.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function isMarkdownHeading(line: string): boolean {
+  return /^#{1,6}\s+/.test(line);
 }
 
 function parsePriority(labels: string[], fallback: number): number {
