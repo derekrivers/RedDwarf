@@ -215,3 +215,11 @@
 - Failing approach: approving the policy gate and assuming the OpenClaw developer agent will infer write access from the phase alone.
 - Working workaround: when enabling OpenClaw code writing, update the workspace descriptor to `development_readwrite`, add `can_write_code` to the allowed capabilities, and rewrite `TOOLS.md`, `SOUL.md`, and the task skill file so the runtime contract matches the approved development run.
 - Verification: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/contracts/src/index.test.ts packages/control-plane/src/index.test.ts"` and confirm the OpenClaw development test sees `development_readwrite` plus `can_write_code`.
+
+## OpenClaw cron runs fail with `exec denied: Cron runs cannot wait for interactive exec approval`
+
+- Symptom: OpenClaw receives a RedDwarf developer run, then logs `exec denied: Cron runs cannot wait for interactive exec approval` with an effective host exec policy like `security=allowlist ask=on-miss askFallback=deny`.
+- Root cause: the gateway's `/home/node/.openclaw/exec-approvals.json` still has empty defaults, so unattended cron-style runs cannot pause for interactive host exec approval.
+- Failing approach: only generating `openclaw.json` and assuming that file controls host exec approval policy, or fixing the gateway once with `openclaw approvals set` and expecting the change to survive future local bootstrap resets.
+- Working workaround: set `REDDWARF_OPENCLAW_TRUSTED_AUTOMATION=true` in `.env` and restart through the standard `setup` / `start` flows. RedDwarf now seeds `runtime-data/openclaw-home/exec-approvals.json` with `defaults: { security: "full", ask: "off" }` while preserving any existing OpenClaw `socket` metadata.
+- Verification: restart the stack, then run `docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'cat /home/node/.openclaw/exec-approvals.json'` and confirm the defaults block contains `security: "full"` and `ask: "off"`; rerun the approved task and confirm the `exec denied` log line no longer appears.

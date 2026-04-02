@@ -146,6 +146,7 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `REDDWARF_OPENCLAW_WORKSPACE_ROOT` | `runtime-data/openclaw-workspaces` | Host-mounted OpenClaw session workspace root |
 | `REDDWARF_OPENCLAW_CONFIG_PATH` | `runtime-data/openclaw-home/openclaw.json` | Live OpenClaw runtime config path used by `generate:openclaw-config` and the standard `setup` / `start` flows |
 | `REDDWARF_OPENCLAW_OPERATOR_API_URL` | `http://host.docker.internal:8080` | Container-reachable Operator API base URL used by the OpenClaw command plugin and the RedDwarf MCP bridge |
+| `REDDWARF_OPENCLAW_TRUSTED_AUTOMATION` | `false` | When `true`, `setup` / `start` also seed `runtime-data/openclaw-home/exec-approvals.json` with `security: "full"` and `ask: "off"` so unattended OpenClaw cron runs can execute trusted local automation without interactive exec prompts |
 
 **Runtime-configurable**
 

@@ -210,10 +210,12 @@ export async function enableWorkspaceCodeWriting(
   workspace.descriptor.toolPolicy.mode = "development_readwrite";
   workspace.descriptor.toolPolicy.codeWriteEnabled = true;
   workspace.descriptor.toolPolicy.allowedCapabilities = allowedCapabilities;
-  workspace.descriptor.allowedCapabilities = [...new Set([
-    ...workspace.descriptor.allowedCapabilities,
-    "can_write_code"
-  ])];
+  workspace.descriptor.allowedCapabilities = [
+    ...new Set<import("@reddwarf/contracts").Capability>([
+      ...workspace.descriptor.allowedCapabilities,
+      "can_write_code"
+    ])
+  ];
   workspace.descriptor.toolPolicy.notes = workspace.descriptor.toolPolicy.notes.map((note) =>
     note.includes("product code writes remain disabled by default")
       ? "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task."
@@ -894,11 +896,6 @@ function globPatternToRegExp(pattern: string): RegExp {
 function buildGitHubRemoteUrl(repo: string): string {
   return `https://github.com/${repo}.git`;
 }
-
-
-
-
-
 
 
 

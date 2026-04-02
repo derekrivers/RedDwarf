@@ -217,6 +217,14 @@ export const openClawConfigTemplatePath = resolve(repoRoot, "infra", "docker", "
 /** Path to the resolved OpenClaw runtime config (host-mounted into the container). */
 export const openClawConfigRuntimePath = resolve(repoRoot, "runtime-data", "openclaw-home", "openclaw.json");
 
+/** Path to the OpenClaw exec approvals runtime config (host-mounted into the container). */
+export const openClawExecApprovalsRuntimePath = resolve(
+  repoRoot,
+  "runtime-data",
+  "openclaw-home",
+  "exec-approvals.json"
+);
+
 function readBooleanEnv(name, fallback = false) {
   const raw = process.env[name];
   if (raw === undefined || raw.trim().length === 0) {
@@ -247,6 +255,30 @@ function readPositiveIntegerEnv(name) {
 
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function readJsonFileIfExists(path) {
+  const { readFile } = await import("node:fs/promises");
+
+  try {
+    const raw = await readFile(path, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : null;
+
+    if (code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function normalizeExecApprovalObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 /**
@@ -395,9 +427,43 @@ export async function resolveOpenClawConfig(options) {
       : {})
   });
   const resolved = serializeOpenClawConfig(config);
-  await mkdir(resolve(repoRoot, "runtime-data", "openclaw-home"), { recursive: true });
+  const openClawHomeDir = resolve(repoRoot, "runtime-data", "openclaw-home");
+  await mkdir(openClawHomeDir, { recursive: true });
   await writeFile(openClawConfigRuntimePath, resolved, "utf8");
   options?.log?.("OpenClaw config resolved and written to runtime-data/openclaw-home/openclaw.json");
+
+  const trustedAutomationEnabled = readBooleanEnv(
+    "REDDWARF_OPENCLAW_TRUSTED_AUTOMATION"
+  );
+  const existingExecApprovals = normalizeExecApprovalObject(
+    await readJsonFileIfExists(openClawExecApprovalsRuntimePath)
+  );
+  const socketConfig = normalizeExecApprovalObject(existingExecApprovals.socket);
+  const execApprovalsConfig = {
+    version:
+      typeof existingExecApprovals.version === "number"
+        ? existingExecApprovals.version
+        : 1,
+    ...(Object.keys(socketConfig).length > 0 ? { socket: socketConfig } : {}),
+    defaults: trustedAutomationEnabled
+      ? {
+          security: "full",
+          ask: "off"
+        }
+      : normalizeExecApprovalObject(existingExecApprovals.defaults),
+    agents: normalizeExecApprovalObject(existingExecApprovals.agents)
+  };
+
+  await writeFile(
+    openClawExecApprovalsRuntimePath,
+    JSON.stringify(execApprovalsConfig, null, 2),
+    "utf8"
+  );
+  options?.log?.(
+    trustedAutomationEnabled
+      ? "OpenClaw exec approvals resolved for trusted automation."
+      : "OpenClaw exec approvals preserved in interactive mode."
+  );
 }
 
 // ── Error formatting ─────────────────────────────────────────────────────────
