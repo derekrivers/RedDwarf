@@ -30,3 +30,21 @@ body {
   border-width: 1px;
   border-style: solid;
 }
+
+.dashboard-code-block {
+  max-height: 28rem;
+  overflow: auto;
+  margin-bottom: 0;
+  padding: 1rem;
+  border-radius: var(--tblr-border-radius-lg);
+  background: var(--tblr-bg-surface-secondary);
+}
+
+.dashboard-sticky-stack {
+  position: sticky;
+  top: 1.5rem;
+}
+
+.dashboard-evidence-details summary {
+  list-style: none;
+}

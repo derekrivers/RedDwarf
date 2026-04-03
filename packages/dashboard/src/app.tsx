@@ -22,6 +22,7 @@ import {
 import { LoginScreen } from "./components/login-screen";
 import { PagePlaceholder } from "./components/page-placeholder";
 import { ToastProvider } from "./components/toast-provider";
+import { ApprovalDetailPage } from "./pages/approval-detail-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import {
   createApiClient,
@@ -296,12 +297,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               />
               <Route
                 path="/approvals/:approvalId"
-                element={
-                  <PagePlaceholder
-                    title="Approval Detail"
-                    description="The approval review and decision surface will render here."
-                  />
-                }
+                element={<ApprovalDetailPage apiClient={apiClient} />}
               />
               <Route
                 path="/pipeline"

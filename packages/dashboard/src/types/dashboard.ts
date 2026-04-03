@@ -1,7 +1,12 @@
 import type {
   ApprovalRequest,
   ApprovalRequestStatus,
-  PipelineRun
+  MemoryRecord,
+  PhaseRecord,
+  PipelineRun,
+  PlanningSpec,
+  PolicySnapshot,
+  RunSummary
 } from "@reddwarf/contracts";
 import type {
   ApprovalResponse,
@@ -35,6 +40,14 @@ export interface TaskDetailResponse {
       issueNumber?: number;
     };
   };
+  spec: PlanningSpec | null;
+  policySnapshot: PolicySnapshot | null;
+  phaseRecords: PhaseRecord[];
+  approvalRequests: ApprovalRequest[];
+  pipelineRuns: PipelineRun[];
+  runSummaries: RunSummary[];
+  evidenceTotal: number;
+  memoryRecords: MemoryRecord[];
 }
 
 export interface DashboardApiClient {

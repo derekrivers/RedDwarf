@@ -190,7 +190,11 @@ export function ApprovalsPage(props: { apiClient: DashboardApiClient }) {
                   </td>
                   <td>
                     {approval.status === "pending" ? (
-                      <Link className="btn btn-sm btn-primary" to={`/approvals/${approval.requestId}`}>
+                      <Link
+                        className="btn btn-sm btn-primary"
+                        state={{ runId: approval.runId, taskId: approval.taskId }}
+                        to={`/approvals/${approval.requestId}`}
+                      >
                         Review
                       </Link>
                     ) : (
