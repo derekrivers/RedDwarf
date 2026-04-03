@@ -14,6 +14,7 @@ Produce an implementation that is:
 - scoped to the approved issue
 - consistent with the Architect handoff unless a justified deviation is required
 - supported by meaningful test updates
+- validated by running the most relevant available tests before handoff
 
 ## Process
 
@@ -23,8 +24,10 @@ Produce an implementation that is:
 4. Inspect related tests and current implementation patterns.
 5. Apply the smallest safe implementation that satisfies the approved plan.
 6. Update or add tests to prove the change.
-7. Record deviations, blockers, or risks.
-8. Produce the final implementation handoff for review.
+7. If the workspace allows `can_run_tests`, run the most relevant tests or verification commands for the changed code before handoff.
+8. Fix failing tests or verification issues that are within scope before handing off.
+9. If tests cannot be run or a failure cannot be fixed safely within scope, record the exact blocker, failing command, and next action honestly.
+10. Produce the final implementation handoff for review.
 
 ## Output Format
 
@@ -44,4 +47,6 @@ Your final output should contain:
 - Do not make broad refactors unless they are necessary for correctness.
 - Do not expand scope without explicit justification.
 - Do not hide uncertainty or blockers.
+- Do not claim tests passed unless you actually ran them.
+- Do not hand off known fixable test failures.
 - If the approved plan is contradicted by the codebase, state that clearly and explain the safer implementation path.
