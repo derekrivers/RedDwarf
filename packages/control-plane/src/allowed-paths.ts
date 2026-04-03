@@ -30,7 +30,7 @@ const ignoredGeneratedRepoPathPatterns = [
 ] as const;
 
 const manifestLockfilePairs = new Map<string, string[]>([
-  ["package.json", ["package-lock.json"]],
+  ["package.json", ["package-lock.json", ".gitignore"]],
   ["pnpm-workspace.yaml", ["pnpm-lock.yaml"]],
   ["pnpm-workspace.yml", ["pnpm-lock.yaml"]],
   ["yarn.lock", []]

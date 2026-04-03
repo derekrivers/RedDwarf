@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## SCM stalls after frontend scaffolding because `git add --all` tries to stage `node_modules`
+
+- Symptom: a React/Vite/npm task completes development, but the SCM phase slows dramatically, times out, or appears stuck while preparing the commit. The workspace repo has a generated `node_modules/` tree and no `.gitignore`.
+- Root cause: allowed-path enforcement already ignores `node_modules/**`, but the SCM publisher still stages repo changes with `git add --all`. Without a repo-level `.gitignore`, that command tries to stage the entire dependency tree even though those files are not meaningful product changes.
+- Failing approach: relying on allowed-path filtering alone and assuming install artifacts will stay out of the commit without also creating a `.gitignore`.
+- Working workaround: when `package.json` is in the approved scope, treat `.gitignore` as an approved companion file and create it during package-managed scaffolding so `node_modules/`, build output, and similar local artifacts remain untracked.
+- Verification: inspect the generated workspace repo with `git status --short --untracked-files=all` before and after adding `.gitignore`; `node_modules/` should disappear from normal status output while intended source files and `package-lock.json` remain visible.
+
 ## Allowed-path enforcement fails after `npm install` because `node_modules` or a lockfile appears in the workspace
 
 - Symptom: a development run finishes real code and test work, but the phase still fails with `ALLOWED_PATHS_VIOLATED` after `npm install` or similar dependency setup commands. Evidence shows install-generated paths such as `node_modules/...` or `package-lock.json` in `changedFiles`.

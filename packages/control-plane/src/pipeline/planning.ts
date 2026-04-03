@@ -30,7 +30,10 @@ import {
 import {
   createArchitectHandoffAwaiter
 } from "../live-workflow.js";
-import { normalizeAllowedPaths } from "../allowed-paths.js";
+import {
+  expandAllowedPathsForGeneratedArtifacts,
+  normalizeAllowedPaths
+} from "../allowed-paths.js";
 import { defaultLogger } from "../logger.js";
 import {
   createApprovalRequestSummary,
@@ -928,10 +931,12 @@ export async function runPlanningPipeline(
     );
     const policySnapshot = {
       ...basePolicySnapshot,
-      allowedPaths: normalizeAllowedPaths([
-        ...basePolicySnapshot.allowedPaths,
-        ...spec.affectedAreas
-      ])
+      allowedPaths: expandAllowedPathsForGeneratedArtifacts(
+        normalizeAllowedPaths([
+          ...basePolicySnapshot.allowedPaths,
+          ...spec.affectedAreas
+        ])
+      )
     };
     const approvalRequestId =
       approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;

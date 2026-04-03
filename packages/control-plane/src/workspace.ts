@@ -50,7 +50,10 @@ import {
   validationCapabilities as validationWorkspaceCapabilities,
   scmCapabilities as scmWorkspaceCapabilities
 } from "@reddwarf/policy";
-import { normalizeAllowedPaths } from "./allowed-paths.js";
+import {
+  expandAllowedPathsForGeneratedArtifacts,
+  normalizeAllowedPaths
+} from "./allowed-paths.js";
 
 // ============================================================
 // Workspace interfaces
@@ -267,10 +270,12 @@ export function createWorkspaceContextBundle(input: {
   policySnapshot: PolicySnapshot;
   memoryContext?: import("@reddwarf/contracts").MemoryContext | null;
 }): WorkspaceContextBundle {
-  const allowedPaths = normalizeAllowedPaths([
-    ...input.policySnapshot.allowedPaths,
-    ...input.spec.affectedAreas
-  ]);
+  const allowedPaths = expandAllowedPathsForGeneratedArtifacts(
+    normalizeAllowedPaths([
+      ...input.policySnapshot.allowedPaths,
+      ...input.spec.affectedAreas
+    ])
+  );
 
   return workspaceContextBundleSchema.parse({
     manifest: input.manifest,

@@ -1,5 +1,12 @@
 # Agent Documentation
 
+## 2026-04-03
+
+- Investigated the live stall on GitHub issue 37 (`derekrivers-firstvoyage-37`) and confirmed the blocker was not the allowed-path gate itself: the generated React workspace had no `.gitignore`, so `git add --all` in the SCM phase would try to stage the full `node_modules/` tree after `npm install`.
+- Updated RedDwarf's generated-artifact path expansion so `package.json` now auto-allows both `package-lock.json` and `.gitignore`, and extended workspace/context materialization so the developer-facing allowed-path list includes that companion file instead of implicitly discouraging it.
+- Tightened the OpenClaw developer prompt to explicitly say `.gitignore` is approved when `package.json` is in scope, keeping install/build artifacts like `node_modules/` out of version control during package-managed scaffolds.
+- Added regression coverage for generated package companion files in allowed-path enforcement, planning snapshots/approval requests, and developer prompt guidance.
+
 ## 2026-04-02
 
 - Changed the downstream policy contract so development workspaces are expected to run local verification instead of deferring all execution to validation. `buildPolicySnapshot(...)` now always includes `can_run_tests`, development capabilities in `@reddwarf/policy` explicitly include `can_run_tests`, and the workspace guidance/prompting now tells OpenClaw developers to run the most relevant local checks before handing off.
