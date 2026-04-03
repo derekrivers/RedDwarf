@@ -504,8 +504,27 @@ export function serializeOpenClawConfig(config: OpenClawConfig): string {
   return JSON.stringify(config, null, 2) + "\n";
 }
 
+/**
+ * Map a RedDwarf sandboxMode declaration to an OpenClaw sandbox config entry.
+ *
+ * IMPORTANT — sandbox is currently disabled (`mode: "off"`) for all agents.
+ * The design decision: RedDwarf runs inside a dedicated Docker container whose
+ * outer boundary provides the workspace isolation layer. Enabling nested OpenClaw
+ * sandboxing requires an inner `docker` binary inside the container, which is not
+ * available in the standard deployment.
+ *
+ * Consequence: the `sandboxMode` fields in agent role definitions (`read_only`,
+ * `workspace_write`) express security intent but are NOT currently enforced by
+ * OpenClaw at runtime. Enforcement relies entirely on the Docker container
+ * boundary and the per-agent tool allow/deny groups.
+ *
+ * When moving to a VPS or sandbox-capable host (FEATURE_BOARD Feature 105),
+ * replace this function with a real mapping so the role definitions take effect.
+ */
 function mapSandboxConfig(
   _sandboxMode: OpenClawAgentRoleDefinition["runtimePolicy"]["sandboxMode"]
 ): OpenClawSandboxConfig {
+  // sandboxMode is intentionally not forwarded until Feature 105 (Docker
+  // sandboxing) is unblocked. See function comment above.
   return { mode: "off" };
 }
