@@ -70,7 +70,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
     map: (e, _phase, taskId, runId) => {
       const err = e as PlanningPipelineFailure;
       return new PlanningPipelineFailure({
-        message: sanitizeSecretBearingTextLocal(err.message),
+        message: sanitizeSecretBearingText(err.message),
         failureClass: err.failureClass,
         phase: err.phase,
         code: err.code,
@@ -86,7 +86,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
     map: (e, phase, taskId, runId) => {
       const err = e as OpenClawCompletionTimeoutError;
       return new PlanningPipelineFailure({
-        message: sanitizeSecretBearingTextLocal(err.message),
+        message: sanitizeSecretBearingText(err.message),
         failureClass: phaseRegistry[phase].failureClass,
         phase,
         code: EventCodes.OPENCLAW_COMPLETION_TIMED_OUT,
@@ -105,7 +105,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
     map: (e, phase, taskId, runId) => {
       const err = e as ExternalCommandTimeoutError;
       return new PlanningPipelineFailure({
-        message: sanitizeSecretBearingTextLocal(err.message),
+        message: sanitizeSecretBearingText(err.message),
         failureClass: phaseRegistry[phase].failureClass,
         phase,
         code: EventCodes.GIT_COMMAND_TIMED_OUT,
@@ -114,8 +114,8 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
           args: err.args,
           cwd: err.cwd,
           timeoutMs: err.timeoutMs,
-          stdout: sanitizeSecretBearingTextLocal(err.stdout),
-          stderr: sanitizeSecretBearingTextLocal(err.stderr)
+          stdout: sanitizeSecretBearingText(err.stdout),
+          stderr: sanitizeSecretBearingText(err.stderr)
         },
         cause: err,
         taskId,
@@ -128,7 +128,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
     map: (e, phase, taskId, runId) => {
       const err = e as AllowedPathViolationError;
       return new PlanningPipelineFailure({
-        message: sanitizeSecretBearingTextLocal(err.message),
+        message: sanitizeSecretBearingText(err.message),
         failureClass: "policy_violation",
         phase,
         code: EventCodes.ALLOWED_PATHS_VIOLATED,
@@ -161,7 +161,7 @@ export function normalizePipelineFailure(
   return new PlanningPipelineFailure({
     message:
       error instanceof Error
-        ? sanitizeSecretBearingTextLocal(error.message)
+        ? sanitizeSecretBearingText(error.message)
         : `Unexpected failure while running ${phase}.`,
     failureClass: phaseRegistry[phase].failureClass,
     phase,
@@ -173,12 +173,8 @@ export function normalizePipelineFailure(
   });
 }
 
-function sanitizeSecretBearingTextLocal(text: string): string {
-  return sanitizeSecretBearingText(text);
-}
-
 export function formatDispatchError(error: unknown): string {
-  return sanitizeSecretBearingTextLocal(
+  return sanitizeSecretBearingText(
     error instanceof Error ? error.message : String(error)
   );
 }
