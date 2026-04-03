@@ -40,6 +40,14 @@
 - Working workaround: rerun Vitest commands with escalated permissions when the spawn error appears. For DB-backed coverage, prefer `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, `corepack pnpm verify:development`, `corepack pnpm verify:validation`, `corepack pnpm verify:evidence`, and `corepack pnpm verify:scm` when `test:postgres` is skipped by missing env vars.
 - Verification: `corepack pnpm typecheck`, `corepack pnpm test`, focused `corepack pnpm test -- ...` suites, `corepack pnpm verify:postgres`, `corepack pnpm verify:approvals`, `corepack pnpm verify:workspace-manager`, `corepack pnpm verify:development`, `corepack pnpm verify:validation`, `corepack pnpm verify:evidence`, and `corepack pnpm verify:scm`.
 
+## Dashboard Vite dev server fails with `EACCES` under `packages/dashboard/node_modules/.vite`
+
+- Symptom: `corepack pnpm start` or `corepack pnpm --filter @reddwarf/dashboard dev` prints the local Vite URL, then fails with `EACCES: permission denied, mkdir '/home/.../packages/dashboard/node_modules/.vite/deps_temp_*'`.
+- Root cause: Vite defaults its dependency cache under the package-local `node_modules/.vite` directory, which may be unwritable in this environment even though the repo itself is writable.
+- Failing approach: relying on the default Vite cache location for the dashboard package.
+- Working workaround: configure `packages/dashboard/vite.config.ts` to use `runtime-data/dashboard-vite-cache` instead of `packages/dashboard/node_modules/.vite`. Override with `REDDWARF_DASHBOARD_CACHE_DIR` only when a different writable cache path is required.
+- Verification: restart `corepack pnpm start` or `corepack pnpm --filter @reddwarf/dashboard dev`, confirm Vite no longer attempts to create `packages/dashboard/node_modules/.vite/deps_temp_*`, and rerun `corepack pnpm --filter @reddwarf/dashboard build`.
+
 ## Workspace-local validation commands hit `spawn EPERM` in the sandbox
 
 - Symptom: `corepack pnpm verify:validation`, `corepack pnpm verify:secrets`, `corepack pnpm verify:evidence`, `corepack pnpm verify:scm`, or direct `runValidationPhase(...)` executions fail with a `PlanningPipelineFailure` whose root cause is `spawn EPERM` when the validation runner launches workspace-local commands.

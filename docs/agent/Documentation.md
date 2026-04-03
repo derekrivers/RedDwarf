@@ -2,6 +2,10 @@
 
 ## 2026-04-02
 
+- Fixed a dashboard startup regression where Vite tried to create `packages/dashboard/node_modules/.vite/deps_temp_*` and failed with `EACCES` on this machine.
+- Updated `packages/dashboard/vite.config.ts` so the dashboard now uses `runtime-data/dashboard-vite-cache` by default, with `REDDWARF_DASHBOARD_CACHE_DIR` available as an override when a different writable cache path is needed.
+- Added a troubleshooting entry documenting the failing default cache path and the runtime-data workaround for future dashboard startup issues.
+
 - Diagnosed an OpenClaw RedDwarf MCP bridge regression where the gateway kept logging `failed to start server "reddwarf" ... connection timed out after 30000ms` even though the generated `openclaw.json` had the correct per-server `REDDWARF_API_URL=http://host.docker.internal:8080`.
 - Root cause: inside the container, the service-level `REDDWARF_API_URL` still defaulted to `http://127.0.0.1:8080`. Direct MCP handshake tests showed the bridge worked when forced to use `host.docker.internal`, but real bundled launches could still fall back to the container-wide env instead of the `mcp.servers.reddwarf.env` override.
 - Updated `infra/docker/docker-compose.yml` so the OpenClaw service now exports `REDDWARF_API_URL=${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}` alongside the existing plugin/MCP-specific operator API URL setting.
