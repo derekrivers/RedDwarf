@@ -2,6 +2,9 @@
 
 ## 2026-04-02
 
+- Fixed an operator API bug affecting the new dashboard approval-detail route: encoded approval request IDs like `task:approval:uuid` were being decoded on the client but not on the `/approvals/:requestId` and `/approvals/:requestId/resolve` server routes.
+- Updated `packages/control-plane/src/operator-api.ts` to decode approval IDs before lookup and added regression coverage in `packages/control-plane/src/operator-api.test.ts` for URL-encoded approval IDs on both detail and resolve endpoints.
+
 - Fixed a dashboard startup regression where Vite tried to create `packages/dashboard/node_modules/.vite/deps_temp_*` and failed with `EACCES` on this machine.
 - Updated `packages/dashboard/vite.config.ts` so the dashboard now uses `runtime-data/dashboard-vite-cache` by default, with `REDDWARF_DASHBOARD_CACHE_DIR` available as an override when a different writable cache path is needed.
 - Added a troubleshooting entry documenting the failing default cache path and the runtime-data workaround for future dashboard startup issues.

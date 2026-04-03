@@ -1128,6 +1128,65 @@ describe("operator API server", () => {
     }
   });
 
+  it("supports URL-encoded approval IDs for detail and resolve routes", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-encoded-approval"
+      }
+    );
+
+    const requestId = planResult.approvalRequest!.requestId;
+    const encodedRequestId = encodeURIComponent(requestId);
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const getApproval = await operatorGet(port, `/approvals/${encodedRequestId}`);
+      expect(getApproval.status).toBe(200);
+      expect(
+        (
+          (getApproval.body as Record<string, unknown>)[
+            "approval"
+          ] as Record<string, unknown>
+        )["requestId"]
+      ).toBe(requestId);
+
+      const resolved = await operatorPost(
+        port,
+        `/approvals/${encodedRequestId}/resolve`,
+        {
+          decision: "approve",
+          decidedBy: "operator-test",
+          decisionSummary: "Approved via encoded operator API route."
+        }
+      );
+      expect(resolved.status).toBe(200);
+      expect(
+        (
+          (resolved.body as Record<string, unknown>)[
+            "approval"
+          ] as Record<string, unknown>
+        )["status"]
+      ).toBe("approved");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("rejects oversized operator JSON bodies", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(

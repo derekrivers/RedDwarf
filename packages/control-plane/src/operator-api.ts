@@ -1875,7 +1875,7 @@ async function handleOperatorRequest(
   // POST /approvals/:requestId/resolve  (must be checked before GET /approvals/:requestId)
   const resolveMatch = /^\/approvals\/([^/]+)\/resolve$/.exec(path);
   if (method === "POST" && resolveMatch) {
-    const requestId = resolveMatch[1]!;
+    const requestId = decodeURIComponent(resolveMatch[1]!);
     const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<
       string,
       unknown
@@ -1913,7 +1913,7 @@ async function handleOperatorRequest(
   // GET /approvals/:requestId
   const approvalMatch = /^\/approvals\/([^/]+)$/.exec(path);
   if (method === "GET" && approvalMatch) {
-    const requestId = approvalMatch[1]!;
+    const requestId = decodeURIComponent(approvalMatch[1]!);
     const approval = await repository.getApprovalRequest(requestId);
     if (!approval) {
       writeOperatorJsonResponse(res, 404, {
