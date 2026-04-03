@@ -16,7 +16,7 @@ export function clearOperatorToken(): void {
 }
 
 export function readTheme(): DashboardTheme {
-  return window.sessionStorage.getItem(themeStorageKey) === "dark" ? "dark" : "light";
+  return window.sessionStorage.getItem(themeStorageKey) === "light" ? "light" : "dark";
 }
 
 export function writeTheme(theme: DashboardTheme): void {
