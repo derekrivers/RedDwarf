@@ -23,6 +23,7 @@ import { LoginScreen } from "./components/login-screen";
 import { PagePlaceholder } from "./components/page-placeholder";
 import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
+import { AgentsPage } from "./pages/agents-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
@@ -307,12 +308,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               />
               <Route
                 path="/agents"
-                element={
-                  <PagePlaceholder
-                    title="Agent Status"
-                    description="Agent cards and health status will render here."
-                  />
-                }
+                element={<AgentsPage apiClient={apiClient} />}
               />
               {/* <Route path="/logs" element={<LogsPage />} /> */}
               <Route path="*" element={<Navigate replace to="/dashboard" />} />

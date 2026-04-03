@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./dashboard-agent-roles": {
+      "types": "./dist/dashboard-agent-roles.d.ts",
+      "default": "./dist/dashboard-agent-roles.js"
     }
   },
   "dependencies": {

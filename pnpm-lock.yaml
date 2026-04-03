@@ -86,6 +86,9 @@ importers:
       '@reddwarf/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@reddwarf/execution-plane':
+        specifier: workspace:*
+        version: link:../execution-plane
       '@tabler/core':
         specifier: ^1.4.0
         version: 1.4.0

@@ -9,8 +9,15 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@reddwarf/contracts": ["../contracts/dist/index.d.ts"],
+      "@reddwarf/execution-plane": ["../execution-plane/dist/index.d.ts"],
+      "@reddwarf/execution-plane/dashboard-agent-roles": [
+        "../execution-plane/dist/dashboard-agent-roles.d.ts"
+      ]
+    }
   },
-  "references": [{ "path": "../contracts" }],
+  "references": [{ "path": "../contracts" }, { "path": "../execution-plane" }],
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

@@ -117,12 +117,12 @@ describe("generateOpenClawConfig", () => {
     expect(reviewer?.tools.profile).toBe("full");
     expect(reviewer?.tools.allow).toEqual([
       "group:fs",
-      "group:runtime",
       "group:openclaw"
     ]);
     expect(reviewer?.tools.deny).toEqual([
       "group:automation",
-      "group:messaging"
+      "group:messaging",
+      "group:runtime"
     ]);
     expect(reviewer?.sandbox).toEqual({
       mode: "off"

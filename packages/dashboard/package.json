@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@reddwarf/contracts": "workspace:*",
+    "@reddwarf/execution-plane": "workspace:*",
     "@tabler/core": "^1.4.0",
     "@tabler/icons-react": "^3.34.1",
     "@tanstack/react-query": "^5.90.5",
