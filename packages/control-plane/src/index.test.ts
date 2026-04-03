@@ -194,6 +194,28 @@ describe("control-plane", () => {
     expect(sanitized).not.toContain(encodedCredential);
   });
 
+  it("ignores generated install artifacts while still enforcing approved repo paths", () => {
+    expect(
+      findDisallowedChangedFiles(
+        [
+          "package.json",
+          "package-lock.json",
+          "node_modules/.bin/vitest",
+          "node_modules/react/index.js",
+          "src/main.tsx"
+        ],
+        ["package.json", "src/main.tsx"]
+      )
+    ).toEqual([]);
+
+    expect(
+      findDisallowedChangedFiles(
+        ["package.json", "yarn.lock", "src/main.tsx"],
+        ["package.json", "src/main.tsx"]
+      )
+    ).toEqual(["yarn.lock"]);
+  });
+
   it("completes the planning pipeline and records structured observability output", async () => {
     const repository = new InMemoryPlanningRepository();
     const bufferedLogger = createBufferedPlanningLogger();

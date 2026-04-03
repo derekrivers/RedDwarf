@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Allowed-path enforcement fails after `npm install` because `node_modules` or a lockfile appears in the workspace
+
+- Symptom: a development run finishes real code and test work, but the phase still fails with `ALLOWED_PATHS_VIOLATED` after `npm install` or similar dependency setup commands. Evidence shows install-generated paths such as `node_modules/...` or `package-lock.json` in `changedFiles`.
+- Root cause: strict repo path enforcement was treating generated package-manager artifacts as authored repo changes. That is too literal for `node_modules/**`, which is local install output rather than source-of-truth product code. Lockfiles are different: they are repo artifacts, but when `package.json` is explicitly approved, the matching lockfile is usually part of the same dependency edit.
+- Failing approach: enforcing allowed paths over raw `git status --porcelain --untracked-files=all` output without filtering install artifacts, or requiring an explicit lockfile path even when the corresponding manifest is already approved.
+- Working workaround: ignore `node_modules/**` in allowed-path enforcement, and auto-allow `package-lock.json` when `package.json` is approved (similarly `pnpm-lock.yaml` when `pnpm-workspace.yaml` or `pnpm-workspace.yml` is approved). Keep enforcement strict for other out-of-scope authored files.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts"`.
+
 ## Developer workspace says tests are not allowed even after policy was changed
 
 - Symptom: developer runs or tests still fail with `Developer handoff ... claimed test execution even though the development workspace did not allow can_run_tests`, even after `@reddwarf/policy` has been updated so development capabilities include `can_run_tests`.

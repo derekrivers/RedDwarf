@@ -24,3 +24,39 @@ export function normalizeAllowedPaths(values: readonly string[]): string[] {
 export function normalizeChangedRepoPath(value: string): string {
   return normalizeRepoRelativePath(value);
 }
+
+const ignoredGeneratedRepoPathPatterns = [
+  /^node_modules(?:\/|$)/i
+] as const;
+
+const manifestLockfilePairs = new Map<string, string[]>([
+  ["package.json", ["package-lock.json"]],
+  ["pnpm-workspace.yaml", ["pnpm-lock.yaml"]],
+  ["pnpm-workspace.yml", ["pnpm-lock.yaml"]],
+  ["yarn.lock", []]
+]);
+
+export function isIgnoredGeneratedRepoPath(value: string): boolean {
+  const normalized = normalizeChangedRepoPath(value);
+  return ignoredGeneratedRepoPathPatterns.some((pattern) => pattern.test(normalized));
+}
+
+export function expandAllowedPathsForGeneratedArtifacts(
+  allowedPaths: readonly string[]
+): string[] {
+  const normalizedAllowedPaths = normalizeAllowedPaths(allowedPaths);
+  const expanded = new Set(normalizedAllowedPaths);
+
+  for (const allowedPath of normalizedAllowedPaths) {
+    const pairedLockfiles = manifestLockfilePairs.get(allowedPath);
+    if (!pairedLockfiles) {
+      continue;
+    }
+
+    for (const lockfile of pairedLockfiles) {
+      expanded.add(lockfile);
+    }
+  }
+
+  return [...expanded];
+}

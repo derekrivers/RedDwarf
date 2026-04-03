@@ -14,6 +14,8 @@ import type {
   OpenClawDispatchResult
 } from "@reddwarf/integrations";
 import {
+  expandAllowedPathsForGeneratedArtifacts,
+  isIgnoredGeneratedRepoPath,
   normalizeAllowedPaths,
   normalizeChangedRepoPath
 } from "./allowed-paths.js";
@@ -169,12 +171,14 @@ export function findDisallowedChangedFiles(
   changedFiles: string[],
   allowedPaths: string[]
 ): string[] {
-  const normalizedAllowedPaths = normalizeAllowedPaths(allowedPaths);
+  const normalizedAllowedPaths =
+    expandAllowedPathsForGeneratedArtifacts(allowedPaths);
 
   return [...new Set(
     changedFiles
       .map((value) => normalizeChangedRepoPath(value))
       .filter((value) => value.length > 0)
+      .filter((value) => !isIgnoredGeneratedRepoPath(value))
       .filter(
         (changedFile) =>
           !normalizedAllowedPaths.some((allowedPath) =>
