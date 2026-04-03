@@ -392,11 +392,11 @@ export async function dispatchReadyTask(
         targetRoot: input.targetRoot,
         evidenceRoot: input.evidenceRoot
       },
-        {
-          repository,
-          scm: dependencies.scm,
-          memoryContext,
-          github: dependencies.github,
+      {
+        repository,
+        scm: dependencies.scm,
+        memoryContext,
+        github: dependencies.github,
         ...(dependencies.workspaceRepoBootstrapper ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper } : {}),
         ...(dependencies.workspaceCommitPublisher ? { workspaceCommitPublisher: dependencies.workspaceCommitPublisher } : {}),
         ...(dependencies.logger ? { logger: dependencies.logger } : {}),
