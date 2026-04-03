@@ -9,6 +9,7 @@ import {
   createApprovalRequest,
   createEvidenceRecord,
   createMemoryRecord,
+  createPipelineRun,
   deriveOrganizationId,
   type PersistedTaskSnapshot,
   type PlanningRepository
@@ -767,7 +768,6 @@ export async function persistConcurrencyBlock(
       : ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1);
 
   return ctx.repository.runInTransaction(async (repository) => {
-    const { createPipelineRun, createEvidenceRecord } = await import("@reddwarf/evidence");
     await repository.savePipelineRun(
       createPipelineRun({
         ...ctx.trackedRun,
