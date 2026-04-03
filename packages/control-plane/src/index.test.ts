@@ -4147,6 +4147,103 @@ describe("developer phase with OpenClaw dispatch", () => {
     }
   });
 
+  it("warns OpenClaw developer runs when test setup helpers are not explicitly approved", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-scope-risk-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/main.tsx", "src/App.tsx", "src/styles.css", "tests/app.test.ts"]
+        },
+        {
+          repository,
+          planner: {
+            async createSpec() {
+              return {
+                summary: "Plan a Vite React to-do app with Testing Library coverage.",
+                assumptions: ["Vitest will be configured through vite.config.ts."],
+                affectedAreas: [
+                  "src/main.tsx",
+                  "src/App.tsx",
+                  "src/styles.css",
+                  "tests/app.test.ts",
+                  "package.json",
+                  "vite.config.ts — configure Vite and Vitest",
+                  "tsconfig.json — configure TypeScript",
+                  "index.html — mount the app shell"
+                ],
+                constraints: ["Keep the implementation inside the enumerated files."],
+                testExpectations: ["Cover add, toggle, and delete behavior."],
+                confidence: {
+                  level: "high",
+                  reason: "The file scope is explicit and sufficient."
+                }
+              };
+            }
+          },
+          clock: () => new Date("2026-04-03T10:00:00.000Z"),
+          idGenerator: () => "run-scope-risk-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for scope-risk warning coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-04-03T10:01:00.000Z")
+        }
+      );
+
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-scope-risk-001"
+      });
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-scope-risk"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: createFixtureOpenClawCompletionAwaiter(),
+          clock: () => new Date("2026-04-03T10:02:00.000Z"),
+          idGenerator: () => "run-scope-risk-dev"
+        }
+      );
+
+      const developerPrompt = dispatchAdapter.dispatches[0]?.prompt ?? "";
+
+      expect(developerPrompt).toContain("## Scope Risk Checks");
+      expect(developerPrompt).toContain(
+        "No standalone test setup helper file is approved."
+      );
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.code === "SCOPE_RISK_DETECTED" &&
+            String((event.data as { warnings?: string[] }).warnings?.[0] ?? "").includes(
+              "test setup helper file"
+            )
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps OpenClaw developer workspaces readonly when approval did not grant code writing", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-readonly-"));

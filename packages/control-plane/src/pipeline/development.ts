@@ -74,6 +74,7 @@ import {
   renderDevelopmentHandoffMarkdown
 } from "./prompts.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
+import { detectPreDispatchScopeRisks } from "../scope-risks.js";
 import {
   materializeWorkspaceCiTool,
   processWorkspaceCiRequests
@@ -295,6 +296,7 @@ export async function runDeveloperPhase(
       policySnapshot: validatedPolicySnapshot,
       memoryContext
     });
+    const scopeRiskWarnings = detectPreDispatchScopeRisks(bundle.allowedPaths);
     const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
     secretLease = await issueWorkspaceSecretLease({
       bundle,
@@ -439,7 +441,32 @@ export async function runDeveloperPhase(
       assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
       const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
-      const prompt = buildOpenClawDeveloperPrompt(bundle, currentManifest, workspace, dependencies.hollyHandoffMarkdown, dependencies.runtimeConfig);
+      if (scopeRiskWarnings.length > 0) {
+        await recordRunEvent({
+          repository,
+          logger: runLogger,
+          eventId: nextEventId("development", EventCodes.SCOPE_RISK_DETECTED),
+          taskId,
+          runId,
+          phase: "development",
+          level: "warn",
+          code: EventCodes.SCOPE_RISK_DETECTED,
+          message: "Pre-dispatch scope-risk checks found likely helper-file pressure outside the approved path list.",
+          data: {
+            workspaceId: workspace.workspaceId,
+            warnings: scopeRiskWarnings
+          },
+          createdAt: asIsoTimestamp(clock())
+        });
+      }
+      const prompt = buildOpenClawDeveloperPrompt(
+        bundle,
+        currentManifest,
+        workspace,
+        dependencies.hollyHandoffMarkdown,
+        dependencies.runtimeConfig,
+        scopeRiskWarnings
+      );
       await capturePromptSnapshot({
         repository,
         logger: runLogger,

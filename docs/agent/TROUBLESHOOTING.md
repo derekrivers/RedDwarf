@@ -56,6 +56,14 @@
 - Working workaround: normalize allowed-path entries before persisting and enforcing them so `path — description` becomes just `path`. Keep the enforcement strict for genuinely unapproved files such as extra helper files that were never listed.
 - Verification: rerun the focused control-plane tests and confirm annotated entries like `tsconfig.json — ...` match real file changes while unrelated files such as `tests/setup.ts` still appear in the violation list.
 
+## Developer runs still invent `tests/setup.ts` even after allowed-path normalization
+
+- Symptom: a frontend/Vite task no longer false-fails on `index.html`, `tsconfig.json`, or `vite.config.ts`, but the developer phase still fails on a real `ALLOWED_PATHS_VIOLATED` for `tests/setup.ts`.
+- Root cause: the model can follow a common Vitest pattern that creates a standalone setup helper file for `@testing-library/jest-dom` even when only `tests/app.test.ts` is approved.
+- Failing approach: relying on generic allowed-path reminders alone and expecting the model not to invent a setup helper file.
+- Working workaround: run pre-dispatch scope-risk checks before the OpenClaw developer handoff. When the approved scope includes a Vite config plus test files but no explicit test setup helper path, add a prompt warning that setup must stay inside the approved test file instead of creating `tests/setup.ts` or `test/setup.ts`.
+- Verification: rerun the focused control-plane developer prompt tests and confirm the OpenClaw developer prompt contains the scope-risk warning plus a recorded `SCOPE_RISK_DETECTED` run event.
+
 ## OpenClaw logs `failed to start server "reddwarf" ... connection timed out after 30000ms`
 
 - Symptom: the OpenClaw container starts and the gateway is otherwise healthy, but logs show `bundle-mcp failed to start server "reddwarf" ... connection timed out after 30000ms`.

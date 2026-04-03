@@ -340,7 +340,8 @@ export function buildOpenClawDeveloperPrompt(
   manifest: TaskManifest,
   workspace: MaterializedManagedWorkspace,
   hollyHandoffMarkdown?: string | null,
-  runtimeConfig?: WorkspaceRuntimeConfig
+  runtimeConfig?: WorkspaceRuntimeConfig,
+  scopeRiskWarnings: readonly string[] = []
 ): string {
   const runtimeWorkspacePath = buildRuntimeWorkspacePath(workspace, runtimeConfig);
   const runtimeRepoPath = join(runtimeWorkspacePath, "repo").replace(/\\/g, "/");
@@ -387,6 +388,14 @@ export function buildOpenClawDeveloperPrompt(
       requestedCapabilities: manifest.requestedCapabilities
     }),
     "",
+    ...(scopeRiskWarnings.length > 0
+      ? [
+          "## Scope Risk Checks",
+          "",
+          ...scopeRiskWarnings.map((item) => `- ${item}`),
+          ""
+        ]
+      : []),
     "## Instructions",
     "",
     codeWriteEnabled

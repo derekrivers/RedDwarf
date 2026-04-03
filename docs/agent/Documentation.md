@@ -2,6 +2,10 @@
 
 ## 2026-04-02
 
+- Added a second layer of hardening for the issue-32 frontend workflow after confirming the remaining violation was a genuinely unapproved helper file: the developer agent chose the common Vitest pattern of creating `tests/setup.ts` and wiring it through `vite.config.ts`.
+- Added `packages/control-plane/src/scope-risks.ts` plus a pre-dispatch scope-risk check in the development phase. When the approved scope includes Vite config and test files but no standalone setup helper path, the pipeline now records a `SCOPE_RISK_DETECTED` warning and injects prompt guidance telling the developer to keep setup inside the approved test file instead of creating `tests/setup.ts`.
+- Added regression coverage proving the OpenClaw developer prompt includes the new scope-risk warning before dispatch for the same class of Vite-plus-test tasks that triggered the live issue-32 failure.
+
 - Hardened the approved-path workflow after a live issue-32 failure exposed two separate problems: planning `affectedAreas` entries could include human-readable descriptions after an em dash, and runtime enforcement was treating those full strings as literal paths.
 - Added a shared allowed-path normalizer, updated planning/workspace bundling/runtime enforcement to collapse annotated entries such as `tsconfig.json — create or update ...` down to `tsconfig.json`, and added regression coverage proving those annotated entries pass while genuinely extra files like `tests/setup.ts` still fail policy enforcement.
 - Tightened the OpenClaw developer prompt so agents are told not to invent helper/setup/config files outside the exact allowed-path list, and to report those needs as blocked instead.
