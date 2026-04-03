@@ -2,6 +2,11 @@
 
 ## 2026-04-02
 
+- Hardened the developer-handoff test-claim guardrail after a live issue-34 failure showed the old detector was too broad: it could reject honest deferred-validation wording merely because the handoff mentioned `Vitest` or `pnpm test`.
+- Updated the OpenClaw developer prompt so non-test-capable workspaces explicitly say tests must not be described as run, passed, failed, executed, validated, or verified in development, while still allowing honest deferred wording about future validation work.
+- Tightened `handoffClaimsTestExecution(...)` so it now flags affirmative execution claims only, while allowing phrases like `Tests were not run in development because can_run_tests is denied` and `Validation should run pnpm test later`.
+- Added regression coverage proving the bad `pnpm test completed successfully` handoff still fails while deferred-validation wording now passes.
+
 - Added a second layer of hardening for the issue-32 frontend workflow after confirming the remaining violation was a genuinely unapproved helper file: the developer agent chose the common Vitest pattern of creating `tests/setup.ts` and wiring it through `vite.config.ts`.
 - Added `packages/control-plane/src/scope-risks.ts` plus a pre-dispatch scope-risk check in the development phase. When the approved scope includes Vite config and test files but no standalone setup helper path, the pipeline now records a `SCOPE_RISK_DETECTED` warning and injects prompt guidance telling the developer to keep setup inside the approved test file instead of creating `tests/setup.ts`.
 - Added regression coverage proving the OpenClaw developer prompt includes the new scope-risk warning before dispatch for the same class of Vite-plus-test tasks that triggered the live issue-32 failure.

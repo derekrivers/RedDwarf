@@ -4455,6 +4455,113 @@ describe("developer phase with OpenClaw dispatch", () => {
     }
   });
 
+  it("allows deferred test references in OpenClaw developer handoffs when tests were not run", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-tests-deferred-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_open_pr"],
+          affectedPaths: ["docs/release-notes.md"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-04-02T10:30:00.000Z")
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved without test execution."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-04-02T10:32:00.000Z")
+        }
+      );
+
+      const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+        fixedSessionId: "session-deferred-tests-001"
+      });
+      const completionAwaiter = {
+        async waitForCompletion(input: {
+          workspace: { artifactsDir: string; workspaceId: string; workspaceRoot: string };
+          manifest: { taskId: string };
+        }) {
+          const handoffPath = join(input.workspace.artifactsDir, "developer-handoff.md");
+          await writeFile(
+            handoffPath,
+            [
+              "# Development Handoff",
+              "",
+              `- Task ID: ${input.manifest.taskId}`,
+              "- Run ID: fixture-openclaw-deferred-tests",
+              `- Workspace ID: ${input.workspace.workspaceId}`,
+              "- Tool policy mode: development_readonly",
+              "- Credential policy mode: none",
+              "- Approved secret scopes: none",
+              "- Code writing enabled: no",
+              "",
+              "## Summary",
+              "",
+              "Prepared a handoff and documented the unexecuted Vitest coverage plan for validation.",
+              "",
+              "## Implementation Notes",
+              "",
+              "- Added notes describing the Vitest coverage expected for the change.",
+              "- Tests were not run in development because can_run_tests is denied in this workspace.",
+              "",
+              "## Blocked Actions",
+              "",
+              "- pnpm test was not run here; validation should execute it later.",
+              "",
+              "## Next Actions",
+              "",
+              "- Validation should run pnpm test and confirm the expected coverage."
+            ].join("\n"),
+            "utf8"
+          );
+          return {
+            handoffPath,
+            repoRoot: join(input.workspace.workspaceRoot, "repo")
+          };
+        }
+      };
+
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-deferred-tests"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-04-02T10:35:00.000Z"),
+          idGenerator: () => "run-dispatch-deferred-tests"
+        }
+      );
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(development.handoff?.blockedActions[0]).toContain("pnpm test was not run");
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "The development workspace does not allow `can_run_tests`."
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("materializes CI tooling for OpenClaw developer workspaces and processes queued workflow requests", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-ci-"));

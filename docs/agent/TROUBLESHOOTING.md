@@ -64,6 +64,14 @@
 - Working workaround: run pre-dispatch scope-risk checks before the OpenClaw developer handoff. When the approved scope includes a Vite config plus test files but no explicit test setup helper path, add a prompt warning that setup must stay inside the approved test file instead of creating `tests/setup.ts` or `test/setup.ts`.
 - Verification: rerun the focused control-plane developer prompt tests and confirm the OpenClaw developer prompt contains the scope-risk warning plus a recorded `SCOPE_RISK_DETECTED` run event.
 
+## Developer handoff gets rejected for mentioning deferred test work
+
+- Symptom: the development phase fails with `DEVELOPMENT_FAILED` and a message like `Developer handoff ... claimed test execution even though the development workspace did not allow can_run_tests`, even though the handoff only meant to say tests were deferred to validation.
+- Root cause: the old detector treated almost any mention of `vitest`, `jest`, `pnpm test`, or `tests` as proof that tests had been executed, which could falsely flag honest deferred-validation wording.
+- Failing approach: broad regex matching on tool names alone without distinguishing past execution claims from `not run` / `run later in validation` language.
+- Working workaround: tighten both sides of the contract. The developer prompt now explicitly forbids implying test execution when `can_run_tests` is denied, and the detector only flags affirmative execution claims while allowing deferred or negative wording such as `Tests were not run in development because can_run_tests is denied` and `Validation should run pnpm test later`.
+- Verification: rerun the focused control-plane tests and confirm handoffs that say tests were deferred now pass, while handoffs claiming `pnpm test completed successfully` still fail.
+
 ## OpenClaw logs `failed to start server "reddwarf" ... connection timed out after 30000ms`
 
 - Symptom: the OpenClaw container starts and the gateway is otherwise healthy, but logs show `bundle-mcp failed to start server "reddwarf" ... connection timed out after 30000ms`.

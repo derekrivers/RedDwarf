@@ -217,11 +217,25 @@ export async function runDeveloperPhase(
       ...handoff.implementationNotes,
       ...handoff.blockedActions,
       ...handoff.nextActions
-    ].join("\n");
+    ];
 
-    return /\b(vitest|jest|npm test|pnpm test|tests?\s+(pass|passed|run|ran)|all\s+\d+\s+.*tests?\s+pass)\b/i.test(
-      combined
-    );
+    const testContextPattern =
+      /\b(vitest|jest|testing library|npm test|pnpm test|npx vitest|test suite|tests?)\b/i;
+    const explicitExecutionPattern =
+      /\b(all\s+\d+\s+tests?\s+passed|tests?\s+(?:passed|pass|ran|run|executed|succeeded)|(?:npm|pnpm)\s+test(?:\s+\S+)*\s+(?:passed|completed|succeeded|ran|run|executed)|vitest(?:\s+\S+)*\s+(?:passed|completed|succeeded|ran|run|executed)|jest(?:\s+\S+)*\s+(?:passed|completed|succeeded|ran|run|executed)|validated\s+by\s+running\s+tests?)\b/i;
+    const deferredOrNegativePattern =
+      /\b(?:did not run|didn't run|not run|not ran|have not run|haven't run|has not run|were not run|was not run|have not been run|has not been run|not executed|have not executed|have not been executed|has not been executed|were not executed|was not executed|deferred|defer|deferred to validation|validation should run|validation must run|next action|follow-up|should run|can run later|run .* later|to be run|awaiting validation|unverified|not yet verified)\b/i;
+
+    return combined.some((entry) => {
+      const text = entry.trim();
+      if (!testContextPattern.test(text)) {
+        return false;
+      }
+      if (deferredOrNegativePattern.test(text)) {
+        return false;
+      }
+      return explicitExecutionPattern.test(text);
+    });
   }
 
   try {

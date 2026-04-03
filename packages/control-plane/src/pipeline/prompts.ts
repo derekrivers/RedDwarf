@@ -408,6 +408,13 @@ export function buildOpenClawDeveloperPrompt(
     "Keep edits inside the allowed paths and leave unrelated files untouched.",
     "Do not create helper, setup, config, or support files unless their exact repo-relative paths appear in the allowed paths list.",
     "If a needed file is not explicitly allowed, avoid the extra file when possible by using an approved path instead; otherwise record it as blocked in the handoff rather than creating it.",
+    ...(workspace.descriptor.toolPolicy.allowedCapabilities.includes("can_run_tests")
+      ? []
+      : [
+          "The development workspace does not allow `can_run_tests`.",
+          "Do not say or imply that tests were run, passed, failed, executed, validated, or verified in this phase.",
+          "It is allowed to mention unexecuted test coverage or future validation work, for example: `Tests were not run in development because can_run_tests is denied.` and `Validation should run pnpm test later.`"
+        ]),
     "Write the handoff file to the handoff path above using the exact headings below.",
     `The handoff must include the line \`- Code writing enabled: ${codeWriteEnabled ? "yes" : "no"}\` before the section headings.`,
     codeWriteEnabled
