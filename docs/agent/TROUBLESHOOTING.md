@@ -48,6 +48,22 @@
 - Working workaround: configure `packages/dashboard/vite.config.ts` to use `runtime-data/dashboard-vite-cache` instead of `packages/dashboard/node_modules/.vite`. Override with `REDDWARF_DASHBOARD_CACHE_DIR` only when a different writable cache path is required.
 - Verification: restart `corepack pnpm start` or `corepack pnpm --filter @reddwarf/dashboard dev`, confirm Vite no longer attempts to create `packages/dashboard/node_modules/.vite/deps_temp_*`, and rerun `corepack pnpm --filter @reddwarf/dashboard build`.
 
+## Approved frontend files get blocked by `ALLOWED_PATHS_VIOLATED`
+
+- Symptom: a development or SCM run fails with `ALLOWED_PATHS_VIOLATED` even though the changed files look like they were explicitly listed in the planning spec or approval scope. Evidence metadata shows allowed-path entries like `tsconfig.json — create or update TypeScript configuration ...`.
+- Root cause: the planner can emit annotated `affectedAreas` entries that combine the repo-relative path with human-readable description text after an em dash. If those entries are enforced literally, files such as `tsconfig.json`, `vite.config.ts`, or `index.html` are incorrectly treated as out of scope.
+- Failing approach: comparing changed files against the raw annotated strings from planning output without first stripping the descriptive suffix.
+- Working workaround: normalize allowed-path entries before persisting and enforcing them so `path — description` becomes just `path`. Keep the enforcement strict for genuinely unapproved files such as extra helper files that were never listed.
+- Verification: rerun the focused control-plane tests and confirm annotated entries like `tsconfig.json — ...` match real file changes while unrelated files such as `tests/setup.ts` still appear in the violation list.
+
+## OpenClaw logs `failed to start server "reddwarf" ... connection timed out after 30000ms`
+
+- Symptom: the OpenClaw container starts and the gateway is otherwise healthy, but logs show `bundle-mcp failed to start server "reddwarf" ... connection timed out after 30000ms`.
+- Root cause: starting OpenClaw before the host-side operator API is listening can leave the bundled RedDwarf MCP bridge racing a missing dependency during gateway bootstrap.
+- Failing approach: bringing the full Docker profile up before the operator API is ready, then assuming the MCP bridge will recover cleanly on its own.
+- Working workaround: start Postgres first, bring the operator API up, then start or recreate OpenClaw so the RedDwarf MCP bridge boots against a live `REDDWARF_API_URL`. In this repo, `scripts/start-stack.mjs` now follows that order.
+- Verification: after recreating OpenClaw, watch `docker compose -f infra/docker/docker-compose.yml --profile openclaw logs openclaw --tail 260` past the old 30-second timeout window and confirm the RedDwarf MCP timeout does not reappear.
+
 ## Workspace-local validation commands hit `spawn EPERM` in the sandbox
 
 - Symptom: `corepack pnpm verify:validation`, `corepack pnpm verify:secrets`, `corepack pnpm verify:evidence`, `corepack pnpm verify:scm`, or direct `runValidationPhase(...)` executions fail with a `PlanningPipelineFailure` whose root cause is `spawn EPERM` when the validation runner launches workspace-local commands.

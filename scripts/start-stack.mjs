@@ -194,15 +194,13 @@ if (!skipOpenClaw) {
   }
 }
 
-// ── 1b: Docker Compose (Postgres + optional OpenClaw) ─────────────────
+// ── 1b: Docker Compose (Postgres first; OpenClaw after operator API) ─────────────────
 
-log("Starting Docker Compose stack...");
+log("Starting Docker Compose Postgres service...");
 try {
-  const composeCmd = skipOpenClaw
-    ? `docker compose -f "${COMPOSE_FILE}" up -d`
-    : `docker compose -f "${COMPOSE_FILE}" --profile openclaw up -d`;
+  const composeCmd = `docker compose -f "${COMPOSE_FILE}" up -d postgres`;
   execSync(composeCmd, { stdio: "inherit", cwd: repoRoot });
-  log("Docker Compose stack started.");
+  log("Postgres service started.");
 } catch (err) {
   logError(`Docker Compose failed: ${formatError(err)}`);
   logError("Ensure Docker Desktop (or Docker Engine) is running.");
@@ -266,35 +264,13 @@ try {
   process.exit(1);
 }
 
-// ── 1e: Check OpenClaw ────────────────────────────────────────────────
+// ── 1e: Track OpenClaw startup status ─────────────────────────────────
 
 let openClawAvailable = false;
-let openClawStatusSummary = "not requested";
+let openClawStatusSummary = skipOpenClaw
+  ? "disabled by REDDWARF_SKIP_OPENCLAW"
+  : "pending startup";
 let openClawPairingRequestId = null;
-if (!skipOpenClaw) {
-  log("Checking OpenClaw gateway...");
-  try {
-    await waitForOpenClawGateway(process.env.OPENCLAW_HOST_PORT ?? "3578");
-    openClawAvailable = true;
-    openClawStatusSummary = `running (port ${process.env.OPENCLAW_HOST_PORT ?? "3578"})`;
-    const pairingSummary = readPendingOpenClawPairingSummary();
-    if (pairingSummary?.requestId) {
-      openClawPairingRequestId = pairingSummary.requestId;
-      log(
-        `OpenClaw gateway is healthy, but an operator pairing approval is pending (${pairingSummary.requestId}).`
-      );
-    } else {
-      log("OpenClaw gateway is healthy.");
-    }
-  } catch (err) {
-    openClawStatusSummary = `unavailable (${formatError(err)})`;
-    log(
-      `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
-    );
-  }
-} else {
-  openClawStatusSummary = "disabled by REDDWARF_SKIP_OPENCLAW";
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 2 — Stale-run sweep and workspace cleanup
@@ -416,7 +392,7 @@ if (pollRepos.length > 0) {
 let dispatcher = null;
 let dispatchDeps = null;
 
-if (openClawAvailable) {
+if (!skipOpenClaw) {
   const openClawDispatch = createHttpOpenClawDispatchAdapter();
 
   dispatchDeps = {
@@ -476,6 +452,33 @@ const server = createOperatorApiServer(
 );
 await server.start();
 log(`Operator API listening on http://127.0.0.1:${server.port}`);
+
+if (!skipOpenClaw) {
+  log("Starting OpenClaw after operator API is ready...");
+  try {
+    execSync(`docker compose -f "${COMPOSE_FILE}" --profile openclaw up -d openclaw`, {
+      stdio: "inherit",
+      cwd: repoRoot
+    });
+    await waitForOpenClawGateway(process.env.OPENCLAW_HOST_PORT ?? "3578");
+    openClawAvailable = true;
+    openClawStatusSummary = `running (port ${process.env.OPENCLAW_HOST_PORT ?? "3578"})`;
+    const pairingSummary = readPendingOpenClawPairingSummary();
+    if (pairingSummary?.requestId) {
+      openClawPairingRequestId = pairingSummary.requestId;
+      log(
+        `OpenClaw gateway is healthy, but an operator pairing approval is pending (${pairingSummary.requestId}).`
+      );
+    } else {
+      log("OpenClaw gateway is healthy.");
+    }
+  } catch (err) {
+    openClawStatusSummary = `unavailable (${formatError(err)})`;
+    log(
+      `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
+    );
+  }
+}
 
 let shuttingDown = false;
 let dashboardProcess = null;

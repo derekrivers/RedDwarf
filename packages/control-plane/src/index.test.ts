@@ -449,9 +449,9 @@ describe("control-plane", () => {
           affectedAreas: [
             "src/main.tsx",
             "src/App.tsx",
-            "vite.config.ts",
-            "tsconfig.json",
-            "index.html"
+            "vite.config.ts — create Vite configuration referencing the React plugin",
+            "tsconfig.json — create or update TypeScript configuration",
+            "index.html — root HTML shell required by Vite"
           ]
         }),
         policySnapshot: policySnapshotSchema.parse({
@@ -467,6 +467,29 @@ describe("control-plane", () => {
         "tsconfig.json",
         "index.html"
       ]);
+    });
+
+    it("treats annotated allowed-path entries as valid repo paths during enforcement", () => {
+      expect(
+        findDisallowedChangedFiles(
+          ["tsconfig.json", "vite.config.ts", "index.html"],
+          [
+            "tsconfig.json — create or update TypeScript configuration",
+            "vite.config.ts — create Vite configuration referencing the React plugin",
+            "index.html — root HTML shell required by Vite"
+          ]
+        )
+      ).toEqual([]);
+
+      expect(
+        findDisallowedChangedFiles(
+          ["tsconfig.json", "tests/setup.ts"],
+          [
+            "tsconfig.json — create or update TypeScript configuration",
+            "tests/app.test.ts — unit/integration tests covering add, toggle complete, and delete behaviours"
+          ]
+        )
+      ).toEqual(["tests/setup.ts"]);
     });
 
     it("materializes only the scoped context files for the validation role", async () => {
@@ -799,6 +822,55 @@ describe("control-plane", () => {
     expect(result.policySnapshot?.approvalMode).toBe("human_signoff_required");
     expect(result.approvalRequest?.confidenceLevel).toBe("low");
     expect(result.approvalRequest?.confidenceReason).toContain("not confident");
+  });
+
+  it("normalizes annotated planning affected areas before persisting approval scope", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/main.tsx"]
+      },
+      {
+        repository,
+        planner: {
+          async createSpec() {
+            return {
+              summary: "Plan a frontend bootstrap with explicit file scope.",
+              assumptions: ["The repo will use Vite and TypeScript."],
+              affectedAreas: [
+                "src/main.tsx",
+                "tsconfig.json — create or update TypeScript configuration",
+                "vite.config.ts — create Vite configuration referencing the React plugin",
+                "index.html — root HTML shell required by Vite"
+              ],
+              constraints: ["Keep the implementation inside the enumerated files."],
+              testExpectations: ["Validation will execute the configured test runner."],
+              confidence: {
+                level: "high",
+                reason: "The required file scope is explicit."
+              }
+            };
+          }
+        },
+        clock: () => new Date("2026-04-03T09:00:00.000Z"),
+        idGenerator: () => "run-normalized-allowed-paths"
+      }
+    );
+
+    expect(result.policySnapshot?.allowedPaths).toEqual([
+      "src/main.tsx",
+      "tsconfig.json",
+      "vite.config.ts",
+      "index.html"
+    ]);
+    expect(result.approvalRequest?.allowedPaths).toEqual([
+      "src/main.tsx",
+      "tsconfig.json",
+      "vite.config.ts",
+      "index.html"
+    ]);
   });
 
   it("rolls back approval resolution when transactional persistence fails", async () => {

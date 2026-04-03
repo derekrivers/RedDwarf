@@ -13,6 +13,10 @@ import type {
   GitHubBranchSummary,
   OpenClawDispatchResult
 } from "@reddwarf/integrations";
+import {
+  normalizeAllowedPaths,
+  normalizeChangedRepoPath
+} from "./allowed-paths.js";
 import type { PlanningPipelineLogger } from "./logger.js";
 import { formatLiteralList } from "./workspace.js";
 
@@ -165,13 +169,11 @@ export function findDisallowedChangedFiles(
   changedFiles: string[],
   allowedPaths: string[]
 ): string[] {
-  const normalizedAllowedPaths = allowedPaths
-    .map((value) => normalizeRepoRelativePath(value))
-    .filter((value) => value.length > 0);
+  const normalizedAllowedPaths = normalizeAllowedPaths(allowedPaths);
 
   return [...new Set(
     changedFiles
-      .map((value) => normalizeRepoRelativePath(value))
+      .map((value) => normalizeChangedRepoPath(value))
       .filter((value) => value.length > 0)
       .filter(
         (changedFile) =>
@@ -884,15 +886,6 @@ function assertChangedFilesWithinAllowedPaths(input: {
     changedFiles: input.changedFiles,
     violatingFiles
   });
-}
-
-function normalizeRepoRelativePath(value: string): string {
-  return value
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\//, "")
-    .replace(/^\/+/, "")
-    .replace(/\/+/g, "/");
 }
 
 function repoPathMatchesAllowedPattern(

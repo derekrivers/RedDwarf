@@ -2,6 +2,12 @@
 
 ## 2026-04-02
 
+- Hardened the approved-path workflow after a live issue-32 failure exposed two separate problems: planning `affectedAreas` entries could include human-readable descriptions after an em dash, and runtime enforcement was treating those full strings as literal paths.
+- Added a shared allowed-path normalizer, updated planning/workspace bundling/runtime enforcement to collapse annotated entries such as `tsconfig.json — create or update ...` down to `tsconfig.json`, and added regression coverage proving those annotated entries pass while genuinely extra files like `tests/setup.ts` still fail policy enforcement.
+- Tightened the OpenClaw developer prompt so agents are told not to invent helper/setup/config files outside the exact allowed-path list, and to report those needs as blocked instead.
+- Reworked `scripts/start-stack.mjs` so Postgres starts first, the operator API comes up next, and OpenClaw starts only after the API is listening; a live OpenClaw recreate after this change stayed clean past the previous `failed to start server "reddwarf" ... connection timed out after 30000ms` failure window.
+- Added troubleshooting entries for both the annotated allowed-path false-positive and the OpenClaw MCP startup-order race.
+
 - Fixed an operator API bug affecting the new dashboard approval-detail route: encoded approval request IDs like `task:approval:uuid` were being decoded on the client but not on the `/approvals/:requestId` and `/approvals/:requestId/resolve` server routes.
 - Updated `packages/control-plane/src/operator-api.ts` to decode approval IDs before lookup and added regression coverage in `packages/control-plane/src/operator-api.test.ts` for URL-encoded approval IDs on both detail and resolve endpoints.
 
