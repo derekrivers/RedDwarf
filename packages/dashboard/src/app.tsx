@@ -25,6 +25,7 @@ import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
+import { EvidencePage } from "./pages/evidence-page";
 import { PipelinePage } from "./pages/pipeline-page";
 import {
   createApiClient,
@@ -302,12 +303,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               />
               <Route
                 path="/evidence"
-                element={
-                  <PagePlaceholder
-                    title="Evidence Browser"
-                    description="Evidence search and JSON export will render here."
-                  />
-                }
+                element={<EvidencePage apiClient={apiClient} />}
               />
               <Route
                 path="/agents"
