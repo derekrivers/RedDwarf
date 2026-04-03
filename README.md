@@ -329,9 +329,28 @@ corepack pnpm exec reddwarf submit \
 
 The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1:${REDDWARF_API_PORT:-8080}`. Add `--json` if you want the raw planning response back for scripting.
 
-### Operator panel
+### Operator dashboard
 
-The operator API now also serves a single-file panel at `http://127.0.0.1:8080/ui`. It is intentionally lightweight: the page stores the bearer token only in the current browser tab, reads live data from the existing operator endpoints, and gives you grouped controls for polling, DB pool tuning, logging, repo management, paths, status, and secret rotation.
+RedDwarf now ships a browser SPA dashboard in `packages/dashboard` for the main operator workflow. Run it in a separate terminal:
+
+```bash
+corepack pnpm --filter @reddwarf/dashboard dev
+```
+
+Then open `http://localhost:5173` and paste `REDDWARF_OPERATOR_TOKEN` into the login screen. The dashboard stores the bearer token only in `sessionStorage` for the current tab and talks to the operator API through the Vite dev proxy on `http://127.0.0.1:8080`.
+
+During local development, CORS is controlled by `REDDWARF_DASHBOARD_ORIGIN`, which defaults to `http://localhost:5173`. If you serve the dashboard from another origin, update that env var before starting the operator API.
+
+The dashboard currently includes:
+- `/dashboard` for summary cards, recent runs, and pending approvals
+- `/approvals` and `/approvals/:id` for the full human-approval workflow
+- `/pipeline` for run history and expandable run detail
+- `/evidence` for run-scoped evidence browsing and JSON export
+- `/agents` for OpenClaw agent-role status and last-seen activity
+
+### Legacy operator panel
+
+The operator API still also serves the earlier single-file panel at `http://127.0.0.1:8080/ui`. It remains useful for lightweight configuration work: the page stores the bearer token only in the current browser tab, reads live data from the existing operator endpoints, and gives you grouped controls for polling, DB pool tuning, logging, repo management, paths, status, and secret rotation.
 
 The shell itself is public so a browser can load it without custom headers, but the live bootstrap data and all mutations still require `REDDWARF_OPERATOR_TOKEN`. Paste the token into the panel after load or keep using `curl` for the same operations.
 
@@ -367,7 +386,8 @@ All six tools are read-only and authenticate to the operator API with `REDDWARF_
 | Postgres | `pg_isready` via Docker health check | Automatic |
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
 | Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...},"dispatcher":{...}}` |
-| Operator Panel | `http://127.0.0.1:8080/ui` | HTML page with grouped operator controls |
+| Operator Dashboard | `http://localhost:5173` | Tabler SPA for approvals, runs, evidence, and agent status |
+| Operator Panel | `http://127.0.0.1:8080/ui` | Legacy HTML page with grouped operator controls |
 
 ### Teardown
 

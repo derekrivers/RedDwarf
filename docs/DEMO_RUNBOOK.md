@@ -318,7 +318,15 @@ curl -X POST http://127.0.0.1:8080/secrets/GITHUB_TOKEN/rotate \
 
 The response confirms the key and whether a restart is required, but it never returns the secret value. Rotated OpenClaw-facing secrets still require a service restart before the running container sees the new token.
 
-For a browser-first workflow, open `http://127.0.0.1:8080/ui`. The page is a single-file operator panel that groups Polling & Dispatch, DB Pool, Logging, Paths, Status, repo management, and secret rotation. Paste `REDDWARF_OPERATOR_TOKEN` into the page after load; it keeps the token only in the current tab.
+For the main browser workflow, start the dashboard SPA in another terminal:
+
+```bash
+corepack pnpm --filter @reddwarf/dashboard dev
+```
+
+Then open `http://localhost:5173`. The dashboard stores `REDDWARF_OPERATOR_TOKEN` only in the current tab's `sessionStorage` and proxies API requests back to `http://127.0.0.1:8080`.
+
+The older single-file panel still exists at `http://127.0.0.1:8080/ui` for configuration-heavy tasks such as repo management, runtime config edits, and secret rotation.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -343,7 +351,7 @@ For a browser-first workflow, open `http://127.0.0.1:8080/ui`. The page is a sin
 | GET | `/tasks/:taskId/snapshot` | Full task snapshot |
 | GET | `/blocked` | Summary of blocked runs and pending approvals |
 
-> **Note:** This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API is on port 8080; OpenClaw is on port 3578.
+> **Note:** This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API is on port 8080, the dashboard dev server is on 5173, and OpenClaw is on port 3578.
 
 ### 4.2 File a GitHub Issue
 
@@ -373,7 +381,14 @@ Add the label **`ai-eligible`** to the issue. Note the issue number (e.g., `#1`)
 
 If `corepack pnpm start` is already running, the polling daemon is already live. The only thing you need to do is tell RedDwarf which GitHub repo to watch.
 
-The friendliest option is the operator panel:
+The friendliest option is the dashboard or the legacy operator panel:
+
+1. Start `corepack pnpm --filter @reddwarf/dashboard dev`
+2. Open `http://localhost:5173`
+3. Paste `REDDWARF_OPERATOR_TOKEN`
+4. Review approvals, runs, evidence, and agent status there
+
+For repo-management, runtime config edits, or secret rotation, use the legacy panel:
 
 1. Open `http://127.0.0.1:8080/ui`
 2. Paste `REDDWARF_OPERATOR_TOKEN`
@@ -406,7 +421,7 @@ After that, the running polling daemon will:
 4. Persist polling cursors so restarts do not reprocess old issues
 5. Back off automatically if GitHub is temporarily unreachable
 
-You can confirm the roster with `GET /repos`, then watch `/tasks`, `/runs`, or the operator panel for the new issue to appear.
+You can confirm the roster with `GET /repos`, then watch `/tasks`, `/runs`, the dashboard, or the operator panel for the new issue to appear.
 
 ### 4.4 Approve the Plan
 
@@ -449,7 +464,7 @@ curl -X POST "http://localhost:8080/approvals/<request-id>/resolve" \
 
 ### 4.5 Run Downstream Phases
 
-After approval, the rest of the pipeline continues automatically as long as the full stack is running. Use the operator panel, `GET /tasks`, or `GET /runs` to watch the task move through development, validation, and SCM.
+After approval, the rest of the pipeline continues automatically as long as the full stack is running. Use the dashboard, the operator panel, `GET /tasks`, or `GET /runs` to watch the task move through development, validation, and SCM.
 
 ---
 
@@ -560,6 +575,7 @@ The database volume is **preserved by default** so you can restart without losin
 | `corepack pnpm e2e` | Run full E2E integration test against a real GitHub repo |
 | `corepack pnpm e2e:cleanup` | Clean up GitHub resources from a prior E2E run |
 | `corepack pnpm operator:api` | Start operator API on :8080 (standalone) |
+| `corepack pnpm --filter @reddwarf/dashboard dev` | Start the operator dashboard dev server on :5173 |
 | `corepack pnpm query:evidence` | Query Postgres evidence |
 | `corepack pnpm cleanup:evidence` | Remove old evidence (dry-run default) |
 | `corepack pnpm generate:openclaw-config` | Regenerate the live OpenClaw config at `runtime-data/openclaw-home/openclaw.json` |
