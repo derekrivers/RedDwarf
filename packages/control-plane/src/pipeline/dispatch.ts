@@ -109,41 +109,74 @@ export async function dispatchReadyTask(
     organizationId: deriveOrganizationId(manifest.source.repo)
   });
 
+  // Retrieve Holly's architect handoff from memory. The architecture plan is a
+  // required prerequisite for the developer phase — a missing or unreadable
+  // handoff blocks the run rather than silently degrading Lister's context.
   let hollyHandoffMarkdown: string | undefined;
-  try {
-    const architectMemory = snapshot.memoryRecords.find(
-      (memory) => memory.key === "architect.handoff"
-    );
-    if (
-      architectMemory &&
-      typeof architectMemory.value === "object" &&
-      architectMemory.value !== null
-    ) {
-      const val = architectMemory.value as Record<string, unknown>;
-      if (typeof val["summary"] === "string") {
-        const parts: string[] = [];
-        parts.push(`# Architecture Plan\n\n${val["summary"]}`);
-        if (Array.isArray(val["affectedAreas"]) && val["affectedAreas"].length > 0) {
-          parts.push(`\n## Affected Areas\n\n${(val["affectedAreas"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+  {
+    let architectMemoryError: unknown = null;
+
+    try {
+      const architectMemory = snapshot.memoryRecords.find(
+        (memory) => memory.key === "architect.handoff"
+      );
+      if (
+        architectMemory &&
+        typeof architectMemory.value === "object" &&
+        architectMemory.value !== null
+      ) {
+        const val = architectMemory.value as Record<string, unknown>;
+        if (typeof val["summary"] === "string") {
+          const parts: string[] = [];
+          parts.push(`# Architecture Plan\n\n${val["summary"]}`);
+          if (Array.isArray(val["affectedAreas"]) && val["affectedAreas"].length > 0) {
+            parts.push(`\n## Affected Areas\n\n${(val["affectedAreas"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+          }
+          if (Array.isArray(val["assumptions"]) && val["assumptions"].length > 0) {
+            parts.push(`\n## Assumptions\n\n${(val["assumptions"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+          }
+          if (Array.isArray(val["constraints"]) && val["constraints"].length > 0) {
+            parts.push(`\n## Constraints\n\n${(val["constraints"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+          }
+          if (Array.isArray(val["testExpectations"]) && val["testExpectations"].length > 0) {
+            parts.push(`\n## Test Expectations\n\n${(val["testExpectations"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
+          }
+          hollyHandoffMarkdown = parts.join("\n");
+          dispatchLogger.info("Retrieved Holly architect handoff from memory.", {
+            taskId,
+            contentLength: hollyHandoffMarkdown.length
+          });
         }
-        if (Array.isArray(val["assumptions"]) && val["assumptions"].length > 0) {
-          parts.push(`\n## Assumptions\n\n${(val["assumptions"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
-        }
-        if (Array.isArray(val["constraints"]) && val["constraints"].length > 0) {
-          parts.push(`\n## Constraints\n\n${(val["constraints"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
-        }
-        if (Array.isArray(val["testExpectations"]) && val["testExpectations"].length > 0) {
-          parts.push(`\n## Test Expectations\n\n${(val["testExpectations"] as string[]).map((a: string) => `- ${a}`).join("\n")}`);
-        }
-        hollyHandoffMarkdown = parts.join("\n");
-        dispatchLogger.info("Retrieved Holly architect handoff from memory.", {
-          taskId,
-          contentLength: hollyHandoffMarkdown.length
-        });
       }
+    } catch (err) {
+      architectMemoryError = err;
     }
-  } catch {
-    dispatchLogger.warn("Failed to retrieve Holly architect handoff from memory.", { taskId });
+
+    if (architectMemoryError !== null) {
+      // A thrown error during memory retrieval indicates a system-level problem
+      // (e.g., DB connectivity, deserialization failure) rather than a missing
+      // record. Block the task so operators can investigate rather than silently
+      // dispatching Lister without any architectural context.
+      dispatchLogger.error("Failed to retrieve Holly architect handoff from memory — blocking task.", {
+        taskId,
+        error: formatDispatchError(architectMemoryError)
+      });
+      return {
+        taskId,
+        outcome: "blocked",
+        phasesExecuted: [],
+        finalPhase: "development",
+        error: `Architect handoff retrieval failed: ${formatDispatchError(architectMemoryError)}`
+      };
+    }
+
+    if (hollyHandoffMarkdown === undefined) {
+      // No architect.handoff memory record exists yet. This is expected on the
+      // very first dispatch (the record is written after planning completes). Log
+      // it as a warning but do not block — the developer phase is designed to
+      // handle a missing handoff by running in readonly/no-plan mode.
+      dispatchLogger.warn("No Holly architect handoff found in memory — dispatching developer without architecture plan.", { taskId });
+    }
   }
 
   if (startPhase === "development") {
