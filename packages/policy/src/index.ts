@@ -196,8 +196,14 @@ export function buildPolicySnapshot(
   confidence?: ConfidenceSignal
 ): PolicySnapshot {
   const allowedSecretScopes = createAllowedSecretScopes(input, riskClass);
-  const allowedCapabilities = [
-    ...planningCapabilities,
+  // allowedCapabilities records the capabilities sanctioned by this policy
+  // snapshot. can_archive_evidence is always granted so all phases can persist
+  // evidence. can_use_secrets is added when secret scopes have been approved.
+  // can_plan is intentionally omitted: this snapshot is consulted by downstream
+  // phases (development, validation, scm) that must not see planning approval
+  // as a signal that they are themselves approved.
+  const allowedCapabilities: Capability[] = [
+    "can_archive_evidence",
     ...(allowedSecretScopes.length > 0
       ? (["can_use_secrets"] as Capability[])
       : [])
