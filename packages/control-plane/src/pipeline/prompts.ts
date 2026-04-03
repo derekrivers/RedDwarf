@@ -231,6 +231,8 @@ export function buildOpenClawArchitectPrompt(
     `- Task ID: ${manifest.taskId}`,
     `- Repository: ${manifest.source.repo}`,
     `- Architect: Holly (reddwarf-analyst)`,
+    "- Confidence: <low|medium|high>",
+    "- Confidence reason: <one sentence explaining your confidence level>",
     "",
     "## Summary",
     "",
@@ -254,7 +256,11 @@ export function buildOpenClawArchitectPrompt(
     "",
     "## Non-Goals",
     "",
-    "- Bullet list of things explicitly out of scope."
+    "- Bullet list of things explicitly out of scope.",
+    "",
+    "Use `- Confidence: low` when the codebase evidence is ambiguous, the scope is",
+    "unclear, or you cannot reliably bound the implementation. Low confidence triggers",
+    "mandatory human review before development begins."
   ].join("\n");
 }
 
@@ -272,11 +278,27 @@ export function parseArchitectHandoffMarkdown(markdown: string): PlanningDraft {
     affectedAreas: affectedSection,
     constraints: nonGoalsSection,
     testExpectations: testSection,
-    confidence: {
-      level: "medium",
-      reason: "Holly produced a structured architecture handoff with bounded implementation notes."
-    }
+    confidence: parseArchitectConfidence(markdown)
   };
+}
+
+/**
+ * Extract the confidence signal from architect handoff frontmatter lines.
+ * Looks for:
+ *   - Confidence: low|medium|high
+ *   - Confidence reason: <text>
+ *
+ * Defaults to "medium" if the field is absent or unparseable so that handoffs
+ * from older Holly sessions degrade gracefully rather than failing hard.
+ */
+export function parseArchitectConfidence(markdown: string): { level: "low" | "medium" | "high"; reason: string } {
+  const levelMatch = /^-\s+Confidence:\s+(low|medium|high)\s*$/im.exec(markdown);
+  const reasonMatch = /^-\s+Confidence reason:\s+(.+)$/im.exec(markdown);
+
+  const level = (levelMatch?.[1] ?? "medium") as "low" | "medium" | "high";
+  const reason = reasonMatch?.[1]?.trim() ?? "Holly produced a structured architecture handoff.";
+
+  return { level, reason };
 }
 
 export function readMarkdownSectionSafe(markdown: string, heading: string): string {
