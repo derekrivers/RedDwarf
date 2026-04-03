@@ -273,6 +273,69 @@ function buildFollowUpIssueBody(input: {
   ].join("\n");
 }
 
+// ── Shared memory / evidence persistence helper ──────────────────────────────
+
+/**
+ * Persist the two memory records and one evidence record that are written
+ * identically in both the retry and escalate paths of handleAutomatedPhaseFailure.
+ */
+async function persistRecoveryMemoryRecords(
+  repository: { saveMemoryRecord(r: ReturnType<typeof createMemoryRecord>): Promise<void>; saveEvidenceRecord(r: ReturnType<typeof createEvidenceRecord>): Promise<void> },
+  opts: {
+    taskId: string;
+    phase: RecoverablePhase;
+    runId: string;
+    organizationId: string | null;
+    repo: string;
+    retryBudgetState: Record<string, unknown>;
+    recoveryMetadata: Record<string, unknown>;
+    createdAt: string;
+  }
+): Promise<void> {
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${opts.taskId}:memory:task:retry-budget:${opts.phase}`,
+      taskId: opts.taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: getPhaseRetryBudgetMemoryKey(opts.phase),
+      title: `${formatPhaseLabel(opts.phase)} retry budget state`,
+      value: opts.retryBudgetState,
+      repo: opts.repo,
+      organizationId: opts.organizationId,
+      tags: ["failure", "retry-budget", opts.phase],
+      createdAt: opts.createdAt,
+      updatedAt: opts.createdAt
+    })
+  );
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${opts.taskId}:memory:task:failure-recovery`,
+      taskId: opts.taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: failureRecoveryMemoryKey,
+      title: "Automated failure recovery plan",
+      value: opts.recoveryMetadata,
+      repo: opts.repo,
+      organizationId: opts.organizationId,
+      tags: ["failure", "recovery", opts.phase],
+      createdAt: opts.createdAt,
+      updatedAt: opts.createdAt
+    })
+  );
+  await repository.saveEvidenceRecord(
+    createEvidenceRecord({
+      recordId: `${opts.taskId}:recovery:${opts.phase}:${opts.runId}`,
+      taskId: opts.taskId,
+      kind: "gate_decision",
+      title: "Failure recovery decision",
+      metadata: opts.recoveryMetadata,
+      createdAt: opts.createdAt
+    })
+  );
+}
+
 export async function handleAutomatedPhaseFailure(input: {
   repository: PlanningRepository;
   snapshot: PersistedTaskSnapshot;
@@ -450,48 +513,16 @@ export async function handleAutomatedPhaseFailure(input: {
         retryLimit
       };
 
-      await transactionalRepository.saveMemoryRecord(
-        createMemoryRecord({
-          memoryId: `${manifest.taskId}:memory:task:retry-budget:${phase}`,
-          taskId: manifest.taskId,
-          scope: "task",
-          provenance: "pipeline_derived",
-          key: getPhaseRetryBudgetMemoryKey(phase),
-          title: `${formatPhaseLabel(phase)} retry budget state`,
-          value: retryBudgetState,
-          repo: manifest.source.repo,
-          organizationId,
-          tags: ["failure", "retry-budget", phase],
-          createdAt: input.failedAtIso,
-          updatedAt: input.failedAtIso
-        })
-      );
-      await transactionalRepository.saveMemoryRecord(
-        createMemoryRecord({
-          memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
-          taskId: manifest.taskId,
-          scope: "task",
-          provenance: "pipeline_derived",
-          key: failureRecoveryMemoryKey,
-          title: "Automated failure recovery plan",
-          value: recoveryMetadata,
-          repo: manifest.source.repo,
-          organizationId,
-          tags: ["failure", "recovery", phase],
-          createdAt: input.failedAtIso,
-          updatedAt: input.failedAtIso
-        })
-      );
-      await transactionalRepository.saveEvidenceRecord(
-        createEvidenceRecord({
-          recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
-          taskId: manifest.taskId,
-          kind: "gate_decision",
-          title: "Failure recovery decision",
-          metadata: recoveryMetadata,
-          createdAt: input.failedAtIso
-        })
-      );
+      await persistRecoveryMemoryRecords(transactionalRepository, {
+        taskId: manifest.taskId,
+        phase,
+        runId,
+        organizationId,
+        repo: manifest.source.repo,
+        retryBudgetState,
+        recoveryMetadata,
+        createdAt: input.failedAtIso
+      });
       await recordRunEvent({
         repository: transactionalRepository,
         logger: input.runLogger,
@@ -648,48 +679,16 @@ export async function handleAutomatedPhaseFailure(input: {
         createdAt: input.failedAtIso
       })
     );
-    await transactionalRepository.saveMemoryRecord(
-      createMemoryRecord({
-        memoryId: `${manifest.taskId}:memory:task:retry-budget:${phase}`,
-        taskId: manifest.taskId,
-        scope: "task",
-        provenance: "pipeline_derived",
-        key: getPhaseRetryBudgetMemoryKey(phase),
-        title: `${formatPhaseLabel(phase)} retry budget state`,
-        value: retryBudgetState,
-        repo: manifest.source.repo,
-        organizationId,
-        tags: ["failure", "retry-budget", phase],
-        createdAt: input.failedAtIso,
-        updatedAt: input.failedAtIso
-      })
-    );
-    await transactionalRepository.saveMemoryRecord(
-      createMemoryRecord({
-        memoryId: `${manifest.taskId}:memory:task:failure-recovery`,
-        taskId: manifest.taskId,
-        scope: "task",
-        provenance: "pipeline_derived",
-        key: failureRecoveryMemoryKey,
-        title: "Automated failure recovery plan",
-        value: recoveryMetadata,
-        repo: manifest.source.repo,
-        organizationId,
-        tags: ["failure", "recovery", phase],
-        createdAt: input.failedAtIso,
-        updatedAt: input.failedAtIso
-      })
-    );
-    await transactionalRepository.saveEvidenceRecord(
-      createEvidenceRecord({
-        recordId: `${manifest.taskId}:recovery:${phase}:${runId}`,
-        taskId: manifest.taskId,
-        kind: "gate_decision",
-        title: "Failure recovery decision",
-        metadata: recoveryMetadata,
-        createdAt: input.failedAtIso
-      })
-    );
+    await persistRecoveryMemoryRecords(transactionalRepository, {
+      taskId: manifest.taskId,
+      phase,
+      runId,
+      organizationId,
+      repo: manifest.source.repo,
+      retryBudgetState,
+      recoveryMetadata,
+      createdAt: input.failedAtIso
+    });
     await recordRunEvent({
       repository: transactionalRepository,
       logger: input.runLogger,
