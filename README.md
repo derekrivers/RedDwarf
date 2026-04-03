@@ -331,15 +331,17 @@ The CLI uses `REDDWARF_API_URL` when set, otherwise it targets `http://127.0.0.1
 
 ### Operator dashboard
 
-RedDwarf now ships a browser SPA dashboard in `packages/dashboard` for the main operator workflow. Run it in a separate terminal:
+RedDwarf now ships a browser SPA dashboard in `packages/dashboard` for the main operator workflow. The normal `corepack pnpm start` flow now boots it automatically alongside the operator API on `http://127.0.0.1:5173` by default.
+
+If you want to run the dashboard on its own during UI work, use:
 
 ```bash
 corepack pnpm --filter @reddwarf/dashboard dev
 ```
 
-Then open `http://localhost:5173` and paste `REDDWARF_OPERATOR_TOKEN` into the login screen. The dashboard stores the bearer token only in `sessionStorage` for the current tab and talks to the operator API through the Vite dev proxy on `http://127.0.0.1:8080`.
+Then open `http://127.0.0.1:5173` and paste `REDDWARF_OPERATOR_TOKEN` into the login screen. The dashboard stores the bearer token only in `sessionStorage` for the current tab and talks to the operator API through the Vite dev proxy on `http://127.0.0.1:8080`.
 
-During local development, CORS is controlled by `REDDWARF_DASHBOARD_ORIGIN`, which defaults to `http://localhost:5173`. If you serve the dashboard from another origin, update that env var before starting the operator API.
+During local development, CORS is controlled by `REDDWARF_DASHBOARD_ORIGIN`, and the stack-managed dashboard port defaults to `REDDWARF_DASHBOARD_PORT=5173`. If you do not want `pnpm start` to launch the dashboard, set `REDDWARF_SKIP_DASHBOARD=true`.
 
 The dashboard currently includes:
 - `/dashboard` for summary cards, recent runs, and pending approvals
@@ -386,7 +388,7 @@ All six tools are read-only and authenticate to the operator API with `REDDWARF_
 | Postgres | `pg_isready` via Docker health check | Automatic |
 | OpenClaw | `http://127.0.0.1:3578/health` | `200 OK` |
 | Operator API | `http://127.0.0.1:8080/health` | `{"status":"ok","repository":{...},"polling":{...},"dispatcher":{...}}` |
-| Operator Dashboard | `http://localhost:5173` | Tabler SPA for approvals, runs, evidence, and agent status |
+| Operator Dashboard | `http://127.0.0.1:5173` | Tabler SPA for approvals, runs, evidence, and agent status |
 | Operator Panel | `http://127.0.0.1:8080/ui` | Legacy HTML page with grouped operator controls |
 
 ### Teardown

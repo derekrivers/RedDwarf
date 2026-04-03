@@ -318,13 +318,19 @@ curl -X POST http://127.0.0.1:8080/secrets/GITHUB_TOKEN/rotate \
 
 The response confirms the key and whether a restart is required, but it never returns the secret value. Rotated OpenClaw-facing secrets still require a service restart before the running container sees the new token.
 
-For the main browser workflow, start the dashboard SPA in another terminal:
+For the main browser workflow, `corepack pnpm start` now also launches the dashboard SPA automatically. Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+If you want to run the dashboard separately during frontend work, start it in another terminal:
 
 ```bash
 corepack pnpm --filter @reddwarf/dashboard dev
 ```
 
-Then open `http://localhost:5173`. The dashboard stores `REDDWARF_OPERATOR_TOKEN` only in the current tab's `sessionStorage` and proxies API requests back to `http://127.0.0.1:8080`.
+The dashboard stores `REDDWARF_OPERATOR_TOKEN` only in the current tab's `sessionStorage` and proxies API requests back to `http://127.0.0.1:8080`.
 
 The older single-file panel still exists at `http://127.0.0.1:8080/ui` for configuration-heavy tasks such as repo management, runtime config edits, and secret rotation.
 
@@ -351,7 +357,7 @@ The older single-file panel still exists at `http://127.0.0.1:8080/ui` for confi
 | GET | `/tasks/:taskId/snapshot` | Full task snapshot |
 | GET | `/blocked` | Summary of blocked runs and pending approvals |
 
-> **Note:** This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API is on port 8080, the dashboard dev server is on 5173, and OpenClaw is on port 3578.
+> **Note:** This is the RedDwarf operator API, not the OpenClaw Control UI. The operator API is on port 8080, the stack-managed dashboard dev server is on 5173 by default, and OpenClaw is on port 3578.
 
 ### 4.2 File a GitHub Issue
 
@@ -383,8 +389,8 @@ If `corepack pnpm start` is already running, the polling daemon is already live.
 
 The friendliest option is the dashboard or the legacy operator panel:
 
-1. Start `corepack pnpm --filter @reddwarf/dashboard dev`
-2. Open `http://localhost:5173`
+1. Run `corepack pnpm start`
+2. Open `http://127.0.0.1:5173`
 3. Paste `REDDWARF_OPERATOR_TOKEN`
 4. Review approvals, runs, evidence, and agent status there
 

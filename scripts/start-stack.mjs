@@ -8,7 +8,8 @@
  *   2. Stale-run sweep — marks orphaned active pipeline runs from prior crashes
  *   3. Stale workspace cleanup — removes workspace directories older than 24h
  *   4. Operator API — HTTP server for approvals, evidence, and monitoring
- *   5. Polling daemon — watches GitHub for ai-eligible issues (optional)
+ *   5. Operator dashboard — Vite dev server for the browser SPA
+ *   6. Polling daemon — watches GitHub for ai-eligible issues (optional)
  *
  * Required environment (in .env or exported):
  *   GITHUB_TOKEN        — GitHub PAT with repo scope
@@ -18,6 +19,8 @@
  *   REDDWARF_POLL_REPOS       — deprecated bootstrap seed for poll repos when the DB repo list is empty
  *   REDDWARF_POLL_INTERVAL_MS — polling interval in ms (default: 30000)
  *   REDDWARF_API_PORT         — operator API port (default: 8080)
+ *   REDDWARF_DASHBOARD_PORT   — dashboard dev-server port (default: 5173)
+ *   REDDWARF_SKIP_DASHBOARD   — set to "true" to skip the dashboard dev server
  *   REDDWARF_SKIP_OPENCLAW    — set to "true" to skip OpenClaw startup
  *   HOST_DATABASE_URL         — Postgres connection string
  *
@@ -73,6 +76,11 @@ const pollIntervalMs = parseInt(
   process.env.REDDWARF_POLL_INTERVAL_MS ?? "30000",
   10
 );
+const dashboardPort = parseInt(
+  process.env.REDDWARF_DASHBOARD_PORT ?? "5173",
+  10
+);
+const skipDashboard = process.env.REDDWARF_SKIP_DASHBOARD === "true";
 const skipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW === "true";
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
 const dryRun = process.env.REDDWARF_DRY_RUN === "true";
@@ -469,6 +477,38 @@ const server = createOperatorApiServer(
 await server.start();
 log(`Operator API listening on http://127.0.0.1:${server.port}`);
 
+let shuttingDown = false;
+let dashboardProcess = null;
+
+if (!skipDashboard) {
+  const corepackCommand = process.platform === "win32" ? "corepack.cmd" : "corepack";
+  const dashboardArgs = [
+    "pnpm",
+    "--filter",
+    "@reddwarf/dashboard",
+    "dev",
+    "--",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(dashboardPort)
+  ];
+
+  log(`Starting operator dashboard on http://127.0.0.1:${dashboardPort}...`);
+  dashboardProcess = spawn(corepackCommand, dashboardArgs, {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      REDDWARF_DASHBOARD_ORIGIN:
+        process.env.REDDWARF_DASHBOARD_ORIGIN ??
+        `http://127.0.0.1:${dashboardPort}`
+    },
+    stdio: "inherit"
+  });
+} else {
+  log("Operator dashboard not started - disabled by REDDWARF_SKIP_DASHBOARD.");
+}
+
 if (dispatcher) {
   log(`Starting ready-task dispatcher (every ${dispatchIntervalMs / 1_000}s)...`);
   await dispatcher.start();
@@ -517,6 +557,13 @@ log(
   }`
 );
 log(`  Operator API: http://127.0.0.1:${server.port}`);
+log(
+  `  Dashboard:    ${
+    skipDashboard
+      ? "disabled by REDDWARF_SKIP_DASHBOARD"
+      : `http://127.0.0.1:${dashboardPort}`
+  }`
+);
 log("  Operator Auth: Authorization: Bearer <REDDWARF_OPERATOR_TOKEN>");
 log(`  Dispatcher:   ${dispatcher ? "running (every " + (dispatchIntervalMs / 1_000) + "s)" : "disabled (requires OpenClaw)"}`);
 const configuredPollRepos = daemon
@@ -539,6 +586,9 @@ log(`    GET  http://127.0.0.1:${server.port}/health`);
 log(`    GET  http://127.0.0.1:${server.port}/blocked`);
 log(`    GET  http://127.0.0.1:${server.port}/approvals`);
 log(`    GET  http://127.0.0.1:${server.port}/runs`);
+if (!skipDashboard) {
+  log(`    UI   http://127.0.0.1:${dashboardPort}`);
+}
 if (dispatcher) {
   log(`    POST http://127.0.0.1:${server.port}/tasks/:taskId/dispatch`);
 }
@@ -555,9 +605,7 @@ log("═════════════════════════
 
 // ── Graceful shutdown ─────────────────────────────────────────────────
 
-let shuttingDown = false;
-
-async function shutdown() {
+async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
 
@@ -577,11 +625,38 @@ async function shutdown() {
   await server.stop();
   log("  Operator API stopped.");
 
+  if (dashboardProcess && dashboardProcess.exitCode === null) {
+    dashboardProcess.kill("SIGTERM");
+    log("  Operator dashboard stopped.");
+  }
+
   await repository.close();
   log("  Database pool closed.");
 
   log("Shutdown complete.");
-  process.exit(0);
+  process.exit(exitCode);
+}
+
+if (dashboardProcess) {
+  dashboardProcess.on("exit", (code, signal) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    logError(
+      `Operator dashboard exited unexpectedly (${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}).`
+    );
+    void shutdown(1);
+  });
+
+  dashboardProcess.on("error", (error) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    logError(`Operator dashboard failed to start: ${formatError(error)}`);
+    void shutdown(1);
+  });
 }
 
 process.on("SIGINT", shutdown);
