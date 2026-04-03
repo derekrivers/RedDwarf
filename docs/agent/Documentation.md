@@ -2,6 +2,10 @@
 
 ## 2026-04-02
 
+- Changed the downstream policy contract so development workspaces are expected to run local verification instead of deferring all execution to validation. `buildPolicySnapshot(...)` now always includes `can_run_tests`, development capabilities in `@reddwarf/policy` explicitly include `can_run_tests`, and the workspace guidance/prompting now tells OpenClaw developers to run the most relevant local checks before handing off.
+- Fixed a control-plane bug that still rejected honest developer test runs after the policy change: the OpenClaw developer path was checking `codeWriteEnabled` instead of `toolPolicy.allowedCapabilities.includes("can_run_tests")` when deciding whether test execution claims were legal. The guard now keys off the actual `can_run_tests` capability, so read-only developer workspaces can still run tests while remaining unable to write code unless separately approved.
+- Added regression coverage proving: planning snapshots include `can_run_tests`; readonly OpenClaw developer workspaces surface `can_run_tests`; developer handoffs that report executed tests now pass when the capability is present; and prompt text now instructs developers to run tests in development rather than only mentioning deferred validation.
+
 - Hardened the developer-handoff test-claim guardrail after a live issue-34 failure showed the old detector was too broad: it could reject honest deferred-validation wording merely because the handoff mentioned `Vitest` or `pnpm test`.
 - Updated the OpenClaw developer prompt so non-test-capable workspaces explicitly say tests must not be described as run, passed, failed, executed, validated, or verified in development, while still allowing honest deferred wording about future validation work.
 - Tightened `handoffClaimsTestExecution(...)` so it now flags affirmative execution claims only, while allowing phrases like `Tests were not run in development because can_run_tests is denied` and `Validation should run pnpm test later`.

@@ -60,6 +60,7 @@ describe("policy", () => {
     expect(
       capabilitiesAllowedForPhase("development", [
         "can_archive_evidence",
+        "can_run_tests",
         "can_use_secrets"
       ])
     ).toBe(true);
@@ -108,6 +109,7 @@ describe("policy", () => {
   it("builds a policy snapshot with only the post-validation review phase still blocked", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
     expect(snapshot.blockedPhases).toEqual(["review"]);
+    expect(snapshot.allowedCapabilities).toContain("can_run_tests");
   });
 
   it("describes architecture review in the human-approval policy reason", () => {

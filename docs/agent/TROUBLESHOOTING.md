@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Developer workspace says tests are not allowed even after policy was changed
+
+- Symptom: developer runs or tests still fail with `Developer handoff ... claimed test execution even though the development workspace did not allow can_run_tests`, even after `@reddwarf/policy` has been updated so development capabilities include `can_run_tests`.
+- Root cause: there are two places to keep aligned. First, the planning-time policy snapshot must actually include `can_run_tests` in `allowedCapabilities`; changing the phase capability constant alone is not enough because downstream workspaces are materialized from the persisted snapshot. Second, the OpenClaw developer guard must check `toolPolicy.allowedCapabilities.includes("can_run_tests")`, not `codeWriteEnabled`, because development workspaces can be read-only for code writes while still being allowed to run tests.
+- Failing approach: updating only `developmentCapabilities` in `packages/policy/src/index.ts`, or using `codeWriteEnabled === false` as shorthand for `tests are forbidden`.
+- Working workaround: ensure `buildPolicySnapshot(...)` always grants `can_run_tests` for downstream phases, and keep the development-phase handoff guard keyed to the explicit `can_run_tests` capability.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts packages/policy/src/index.test.ts"`.
+
 ## GitHub Actions `docker compose ... config` fails because `.secrets` is missing
 
 - Symptom: CI fails on `docker compose -f infra/docker/docker-compose.yml config` with `env file .../.secrets not found`.

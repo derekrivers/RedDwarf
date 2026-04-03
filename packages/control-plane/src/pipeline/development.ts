@@ -574,10 +574,7 @@ export async function runDeveloperPhase(
       handoff = parseDevelopmentHandoffMarkdown(
         await readFile(completion.handoffPath, "utf8")
       );
-      if (
-        !workspace.descriptor.toolPolicy.codeWriteEnabled &&
-        handoffClaimsTestExecution(handoff)
-      ) {
+      if (!workspaceAllowsTests(workspace) && handoffClaimsTestExecution(handoff)) {
         throw new Error(
           `Developer handoff for ${taskId} claimed test execution even though the development workspace did not allow can_run_tests.`
         );

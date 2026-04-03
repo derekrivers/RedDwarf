@@ -210,7 +210,7 @@ const capabilityGuidance: Record<Capability, string> = {
   can_write_code:
     "Write or modify product code only after the development phase is enabled and policy grants it.",
   can_run_tests:
-    "Run validation commands only when the validation phase and policy both allow test execution.",
+    "Run relevant verification commands during development or validation only when the workspace policy grants test execution.",
   can_open_pr:
     "Create branches, commits, or pull requests only behind explicit SCM approval gates.",
   can_modify_schema:

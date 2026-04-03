@@ -25,6 +25,7 @@ const disabledPhases: readonly TaskPhase[] = v1DisabledPhases;
 export const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
 export const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
+  "can_run_tests",
   "can_use_secrets"
 ];
 export const architectureReviewCapabilities: Capability[] = [
@@ -196,14 +197,16 @@ export function buildPolicySnapshot(
   confidence?: ConfidenceSignal
 ): PolicySnapshot {
   const allowedSecretScopes = createAllowedSecretScopes(input, riskClass);
-  // allowedCapabilities records the capabilities sanctioned by this policy
-  // snapshot. can_archive_evidence is always granted so all phases can persist
-  // evidence. can_use_secrets is added when secret scopes have been approved.
+  // allowedCapabilities records the downstream capabilities sanctioned by this
+  // policy snapshot. can_archive_evidence and can_run_tests are always granted
+  // so development and validation can both persist evidence and verify changes
+  // locally. can_use_secrets is added when secret scopes have been approved.
   // can_plan is intentionally omitted: this snapshot is consulted by downstream
   // phases (development, validation, scm) that must not see planning approval
   // as a signal that they are themselves approved.
   const allowedCapabilities: Capability[] = [
     "can_archive_evidence",
+    "can_run_tests",
     ...(allowedSecretScopes.length > 0
       ? (["can_use_secrets"] as Capability[])
       : [])

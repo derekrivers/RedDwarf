@@ -409,7 +409,11 @@ export function buildOpenClawDeveloperPrompt(
     "Do not create helper, setup, config, or support files unless their exact repo-relative paths appear in the allowed paths list.",
     "If a needed file is not explicitly allowed, avoid the extra file when possible by using an approved path instead; otherwise record it as blocked in the handoff rather than creating it.",
     ...(workspace.descriptor.toolPolicy.allowedCapabilities.includes("can_run_tests")
-      ? []
+      ? [
+          "The development workspace allows `can_run_tests`.",
+          "Run the most relevant local tests or verification commands for your changes before finalizing the handoff unless you are concretely blocked.",
+          "If you run tests, name the exact commands and report the real result. If you cannot run them, say exactly what blocked execution."
+        ]
       : [
           "The development workspace does not allow `can_run_tests`.",
           "Do not say or imply that tests were run, passed, failed, executed, validated, or verified in this phase.",

@@ -4347,13 +4347,16 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(
         development.workspace?.descriptor.toolPolicy.allowedCapabilities
       ).not.toContain("can_write_code");
+      expect(
+        development.workspace?.descriptor.toolPolicy.allowedCapabilities
+      ).toContain("can_run_tests");
       expect(development.handoff?.summary).toContain("without repository changes");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("rejects OpenClaw developer handoffs that claim tests ran without test capability", async () => {
+  it("allows OpenClaw developer handoffs to report executed tests when test capability is available", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-tests-"));
 
@@ -4429,33 +4432,36 @@ describe("developer phase with OpenClaw dispatch", () => {
         }
       };
 
-      await expect(
-        runDeveloperPhase(
-          {
-            taskId: planningResult.manifest.taskId,
-            targetRoot: tempRoot,
-            workspaceId: "workspace-invalid-tests"
-          },
-          {
-            repository,
-            developer: new DeterministicDeveloperAgent(),
-            openClawDispatch: new FixtureOpenClawDispatchAdapter({
-              fixedSessionId: "session-invalid-tests-001"
-            }),
-            openClawAgentId: "reddwarf-developer",
-            workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
-            openClawCompletionAwaiter: completionAwaiter,
-            clock: () => new Date("2026-04-02T10:05:00.000Z"),
-            idGenerator: () => "run-dispatch-invalid-tests"
-          }
-        )
-      ).rejects.toThrow(/test execution/i);
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-invalid-tests"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({
+            fixedSessionId: "session-invalid-tests-001"
+          }),
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: completionAwaiter,
+          clock: () => new Date("2026-04-02T10:05:00.000Z"),
+          idGenerator: () => "run-dispatch-invalid-tests"
+        }
+      );
+
+      expect(development.nextAction).toBe("await_validation");
+      expect(
+        development.workspace?.descriptor.toolPolicy.allowedCapabilities
+      ).toContain("can_run_tests");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("allows deferred test references in OpenClaw developer handoffs when tests were not run", async () => {
+  it("instructs OpenClaw developers to run tests during development when capability is available", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-tests-deferred-"));
 
@@ -4555,7 +4561,10 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(development.nextAction).toBe("await_validation");
       expect(development.handoff?.blockedActions[0]).toContain("pnpm test was not run");
       expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
-        "The development workspace does not allow `can_run_tests`."
+        "The development workspace allows `can_run_tests`."
+      );
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "Run the most relevant local tests or verification commands"
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
