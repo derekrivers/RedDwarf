@@ -219,17 +219,15 @@ export function findExistingFollowUpIssue(
   };
 }
 
+const phaseLabels: Record<RecoverablePhase, string> = {
+  development: "Development",
+  architecture_review: "Architecture review",
+  validation: "Validation",
+  scm: "SCM"
+};
+
 function formatPhaseLabel(phase: RecoverablePhase): string {
-  switch (phase) {
-    case "development":
-      return "Development";
-    case "architecture_review":
-      return "Architecture review";
-    case "validation":
-      return "Validation";
-    case "scm":
-      return "SCM";
-  }
+  return phaseLabels[phase];
 }
 
 function buildFailureEscalationSummary(input: {
