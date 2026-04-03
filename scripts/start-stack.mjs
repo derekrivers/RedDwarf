@@ -31,7 +31,7 @@
  * Press Ctrl+C to shut down gracefully.
  */
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import { readdir, stat, rm, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
