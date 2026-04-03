@@ -265,12 +265,12 @@ export function buildOpenClawArchitectPrompt(
 }
 
 export function parseArchitectHandoffMarkdown(markdown: string): PlanningDraft {
-  const summarySection = readMarkdownSectionSafe(markdown, "## Summary");
-  const approachSection = readMarkdownSectionSafe(markdown, "## Implementation Approach");
-  const affectedSection = readMarkdownBulletSectionSafe(markdown, "## Affected Files");
-  const risksSection = readMarkdownBulletSectionSafe(markdown, "## Risks and Assumptions");
-  const testSection = readMarkdownBulletSectionSafe(markdown, "## Test Strategy");
-  const nonGoalsSection = readMarkdownBulletSectionSafe(markdown, "## Non-Goals");
+  const summarySection = readMarkdownSection(markdown, "## Summary");
+  const approachSection = readMarkdownSection(markdown, "## Implementation Approach");
+  const affectedSection = readMarkdownBulletSection(markdown, "## Affected Files");
+  const risksSection = readMarkdownBulletSection(markdown, "## Risks and Assumptions");
+  const testSection = readMarkdownBulletSection(markdown, "## Test Strategy");
+  const nonGoalsSection = readMarkdownBulletSection(markdown, "## Non-Goals");
 
   return {
     summary: [summarySection, approachSection].filter((s) => s.length > 0).join("\n\n"),
@@ -301,14 +301,30 @@ export function parseArchitectConfidence(markdown: string): { level: "low" | "me
   return { level, reason };
 }
 
-export function readMarkdownSectionSafe(markdown: string, heading: string): string {
+/**
+ * Extract the content of a markdown section identified by its heading.
+ *
+ * @param required - When true (default false) throws if the section is absent.
+ *   Use required=true for sections that are mandatory in the handoff contract;
+ *   use the default for optional sections where an empty result is acceptable.
+ */
+export function readMarkdownSection(markdown: string, heading: string, options?: { required?: boolean }): string {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = markdown.match(new RegExp(`${escapedHeading}\\n\\n([\\s\\S]*?)(?:\\n## |$)`));
-  return match ? match[1]!.trim() : "";
+
+  if (!match) {
+    if (options?.required) {
+      throw new Error(`Missing section ${heading} in developer handoff.`);
+    }
+    return "";
+  }
+
+  return match[1]!.trim();
 }
 
-export function readMarkdownBulletSectionSafe(markdown: string, heading: string): string[] {
-  const section = readMarkdownSectionSafe(markdown, heading);
+/** Extract bullet list items from a markdown section. Returns [] when absent. */
+export function readMarkdownBulletSection(markdown: string, heading: string, options?: { required?: boolean }): string[] {
+  const section = readMarkdownSection(markdown, heading, options);
   if (section.length === 0) return [];
   return section
     .split(/\r?\n/)
@@ -317,6 +333,7 @@ export function readMarkdownBulletSectionSafe(markdown: string, heading: string)
     .map((line) => line.slice(2).trim())
     .filter((line) => line.length > 0);
 }
+
 
 export function buildOpenClawDeveloperPrompt(
   bundle: WorkspaceContextBundle,
@@ -416,33 +433,13 @@ export function buildOpenClawDeveloperPrompt(
 
 export function parseDevelopmentHandoffMarkdown(markdown: string): DevelopmentDraft {
   return {
-    summary: readMarkdownSection(markdown, "## Summary"),
-    implementationNotes: readMarkdownBulletSection(markdown, "## Implementation Notes"),
-    blockedActions: readMarkdownBulletSection(markdown, "## Blocked Actions"),
-    nextActions: readMarkdownBulletSection(markdown, "## Next Actions")
+    summary: readMarkdownSection(markdown, "## Summary", { required: true }),
+    implementationNotes: readMarkdownBulletSection(markdown, "## Implementation Notes", { required: true }),
+    blockedActions: readMarkdownBulletSection(markdown, "## Blocked Actions", { required: true }),
+    nextActions: readMarkdownBulletSection(markdown, "## Next Actions", { required: true })
   };
 }
 
-export function readMarkdownSection(markdown: string, heading: string): string {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = markdown.match(new RegExp(`${escapedHeading}\\n\\n([\\s\\S]*?)(?:\\n## |$)`));
-
-  if (!match) {
-    throw new Error(`Missing section ${heading} in developer handoff.`);
-  }
-
-  return match[1]!.trim();
-}
-
-export function readMarkdownBulletSection(markdown: string, heading: string): string[] {
-  const section = readMarkdownSection(markdown, heading);
-  return section
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => line.slice(2).trim())
-    .filter((line) => line.length > 0);
-}
 
 export function renderDevelopmentHandoffMarkdown(input: {
   bundle: WorkspaceContextBundle;
