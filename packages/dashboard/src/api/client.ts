@@ -9,6 +9,7 @@ import type {
   ApprovalListFilters,
   ApprovalListResponse,
   DashboardApiClient,
+  RunDetailResponse,
   TaskDetailResponse
 } from "../types/dashboard";
 
@@ -171,6 +172,9 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
     },
     getEvidenceForRun(runId: string) {
       return request<RunEvidenceResponse>(`/runs/${encodeURIComponent(runId)}/evidence`);
+    },
+    getRunDetail(runId: string) {
+      return request<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`);
     },
     getTask(taskId: string) {
       return request<TaskDetailResponse>(`/tasks/${encodeURIComponent(taskId)}`);

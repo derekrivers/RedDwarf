@@ -3,9 +3,11 @@ import type {
   ApprovalRequestStatus,
   MemoryRecord,
   PhaseRecord,
+  RunEvent,
   PipelineRun,
   PlanningSpec,
   PolicySnapshot,
+  TaskManifest,
   RunSummary
 } from "@reddwarf/contracts";
 import type {
@@ -30,16 +32,7 @@ export interface ApprovalListFilters {
 }
 
 export interface TaskDetailResponse {
-  manifest: {
-    taskId: string;
-    title: string;
-    source: {
-      provider: "github";
-      repo: string;
-      issueId?: number;
-      issueNumber?: number;
-    };
-  };
+  manifest: TaskManifest;
   spec: PlanningSpec | null;
   policySnapshot: PolicySnapshot | null;
   phaseRecords: PhaseRecord[];
@@ -48,6 +41,17 @@ export interface TaskDetailResponse {
   runSummaries: RunSummary[];
   evidenceTotal: number;
   memoryRecords: MemoryRecord[];
+}
+
+export interface RunDetailResponse {
+  run: PipelineRun;
+  summary: RunSummary | null;
+  events: RunEvent[];
+  totalEvents: number;
+  tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+  };
 }
 
 export interface DashboardApiClient {
@@ -62,6 +66,7 @@ export interface DashboardApiClient {
   listApprovals(filters?: ApprovalListFilters): Promise<ApprovalListResponse>;
   getApproval(id: string): Promise<ApprovalResponse>;
   getEvidenceForRun(runId: string): Promise<RunEvidenceResponse>;
+  getRunDetail(runId: string): Promise<RunDetailResponse>;
   getTask(taskId: string): Promise<TaskDetailResponse>;
   resolveApproval(
     id: string,

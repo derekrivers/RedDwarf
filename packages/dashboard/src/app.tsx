@@ -25,6 +25,7 @@ import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
+import { PipelinePage } from "./pages/pipeline-page";
 import {
   createApiClient,
   getPendingApprovalCount,
@@ -297,12 +298,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               />
               <Route
                 path="/pipeline"
-                element={
-                  <PagePlaceholder
-                    title="Pipeline Runs"
-                    description="Pipeline run history, filters, and row details will render here."
-                  />
-                }
+                element={<PipelinePage apiClient={apiClient} />}
               />
               <Route
                 path="/evidence"
