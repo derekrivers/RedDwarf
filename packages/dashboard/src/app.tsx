@@ -24,6 +24,7 @@ import { PagePlaceholder } from "./components/page-placeholder";
 import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
 import { ApprovalsPage } from "./pages/approvals-page";
+import { DashboardHomePage } from "./pages/dashboard-home-page";
 import {
   createApiClient,
   getPendingApprovalCount,
@@ -284,12 +285,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route path="/" element={<Navigate replace to="/dashboard" />} />
               <Route
                 path="/dashboard"
-                element={
-                  <PagePlaceholder
-                    title="Dashboard"
-                    description="Pipeline summary cards and recent activity land here next."
-                  />
-                }
+                element={<DashboardHomePage apiClient={apiClient} />}
               />
               <Route
                 path="/approvals"
