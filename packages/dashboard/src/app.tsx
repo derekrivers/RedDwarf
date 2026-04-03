@@ -21,6 +21,8 @@ import {
 } from "@tabler/icons-react";
 import { LoginScreen } from "./components/login-screen";
 import { PagePlaceholder } from "./components/page-placeholder";
+import { ToastProvider } from "./components/toast-provider";
+import { ApprovalsPage } from "./pages/approvals-page";
 import {
   createApiClient,
   getPendingApprovalCount,
@@ -134,7 +136,11 @@ export function App() {
     return <LoginScreen onAuthenticate={setToken} />;
   }
 
-  return <DashboardShell token={token} onLogout={() => setToken("")} />;
+  return (
+    <ToastProvider>
+      <DashboardShell token={token} onLogout={() => setToken("")} />
+    </ToastProvider>
+  );
 }
 
 function DashboardShell(props: { token: string; onLogout: () => void }) {
@@ -286,12 +292,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               />
               <Route
                 path="/approvals"
-                element={
-                  <PagePlaceholder
-                    title="Approvals"
-                    description="The approval queue will render here with live polling."
-                  />
-                }
+                element={<ApprovalsPage apiClient={apiClient} />}
               />
               <Route
                 path="/approvals/:approvalId"

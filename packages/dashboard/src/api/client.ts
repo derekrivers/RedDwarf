@@ -5,6 +5,12 @@ import type {
   EvidenceRecord,
   PipelineRun
 } from "@reddwarf/contracts";
+import type {
+  ApprovalListFilters,
+  ApprovalListResponse,
+  DashboardApiClient,
+  TaskDetailResponse
+} from "../types/dashboard";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -102,7 +108,7 @@ function buildQueryString(params: Record<string, string | number | string[] | un
   return queryString ? `?${queryString}` : "";
 }
 
-export function createApiClient(options: ApiClientOptions) {
+export function createApiClient(options: ApiClientOptions): DashboardApiClient {
   const baseUrl = options.baseUrl ?? "/api";
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -150,11 +156,24 @@ export function createApiClient(options: ApiClientOptions) {
     getBlockedApprovals() {
       return request<BlockedApprovalsResponse>("/blocked");
     },
+    listApprovals(filters: ApprovalListFilters = {}) {
+      return request<ApprovalListResponse>(
+        `/approvals${buildQueryString({
+          ...(filters.taskId !== undefined ? { taskId: filters.taskId } : {}),
+          ...(filters.runId !== undefined ? { runId: filters.runId } : {}),
+          ...(filters.limit !== undefined ? { limit: filters.limit } : {}),
+          ...(filters.statuses !== undefined ? { statuses: filters.statuses } : {})
+        })}`
+      );
+    },
     getApproval(id: string) {
       return request<ApprovalResponse>(`/approvals/${encodeURIComponent(id)}`);
     },
     getEvidenceForRun(runId: string) {
       return request<RunEvidenceResponse>(`/runs/${encodeURIComponent(runId)}/evidence`);
+    },
+    getTask(taskId: string) {
+      return request<TaskDetailResponse>(`/tasks/${encodeURIComponent(taskId)}`);
     },
     resolveApproval(
       id: string,
