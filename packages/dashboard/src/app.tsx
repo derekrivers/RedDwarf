@@ -19,32 +19,23 @@ import {
   IconRobot,
   IconSun
 } from "@tabler/icons-react";
-import type { ApprovalRequestStatus } from "@reddwarf/contracts";
 import { LoginScreen } from "./components/login-screen";
 import { PagePlaceholder } from "./components/page-placeholder";
+import {
+  createApiClient,
+  getPendingApprovalCount,
+  type HealthResponse
+} from "./api/client";
+import {
+  clearOperatorToken,
+  readOperatorToken,
+  readTheme,
+  writeOperatorToken,
+  writeTheme,
+  type DashboardTheme
+} from "./lib/session";
 
-const tokenStorageKey = "reddwarf-operator-token";
-const themeStorageKey = "reddwarf-dashboard-theme";
-
-type DashboardTheme = "light" | "dark";
 type ShellHealthTone = "green" | "yellow" | "red" | "secondary";
-
-interface HealthSummary {
-  status: "ok";
-  repository?: {
-    status?: "healthy" | "degraded";
-  };
-  polling?: {
-    status?: "idle" | "healthy" | "degraded";
-  };
-}
-
-interface ApprovalsResponse {
-  approvals: Array<{
-    status: ApprovalRequestStatus;
-  }>;
-  total: number;
-}
 
 interface NavItem {
   to: string;
@@ -60,38 +51,7 @@ const navItems: NavItem[] = [
   { to: "/agents", label: "Agents", icon: IconRobot }
 ];
 
-function getStoredTheme(): DashboardTheme {
-  const storedTheme = window.sessionStorage.getItem(themeStorageKey);
-  return storedTheme === "dark" ? "dark" : "light";
-}
-
-function readStoredToken(): string {
-  return window.sessionStorage.getItem(tokenStorageKey) ?? "";
-}
-
-async function fetchShellJson<T>(token: string, path: string): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
-
-  if (response.status === 401) {
-    window.sessionStorage.removeItem(tokenStorageKey);
-    throw new Error("Operator token is no longer valid.");
-  }
-
-  if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { message?: string }
-      | null;
-    throw new Error(payload?.message ?? `Request failed with status ${response.status}.`);
-  }
-
-  return (await response.json()) as T;
-}
-
-function getHealthTone(health: HealthSummary | undefined): ShellHealthTone {
+function getHealthTone(health: HealthResponse | undefined): ShellHealthTone {
   if (!health) {
     return "secondary";
   }
@@ -106,7 +66,7 @@ function getHealthTone(health: HealthSummary | undefined): ShellHealthTone {
   return health.status === "ok" ? "green" : "red";
 }
 
-function getHealthLabel(health: HealthSummary | undefined): string {
+function getHealthLabel(health: HealthResponse | undefined): string {
   if (!health) {
     return "Connecting";
   }
@@ -122,11 +82,11 @@ function getHealthLabel(health: HealthSummary | undefined): string {
 }
 
 function useShellTheme(): [DashboardTheme, () => void] {
-  const [theme, setTheme] = useState<DashboardTheme>(() => getStoredTheme());
+  const [theme, setTheme] = useState<DashboardTheme>(() => readTheme());
 
   useEffect(() => {
     document.documentElement.setAttribute("data-bs-theme", theme);
-    window.sessionStorage.setItem(themeStorageKey, theme);
+    writeTheme(theme);
   }, [theme]);
 
   return [theme, () => setTheme((current) => (current === "light" ? "dark" : "light"))];
@@ -160,14 +120,14 @@ function useTooltipBootstrap(): void {
 }
 
 export function App() {
-  const [token, setToken] = useState<string>(() => readStoredToken());
+  const [token, setToken] = useState<string>(() => readOperatorToken());
 
   useEffect(() => {
     if (!token) {
       return;
     }
 
-    window.sessionStorage.setItem(tokenStorageKey, token);
+    writeOperatorToken(token);
   }, [token]);
 
   if (!token) {
@@ -183,17 +143,27 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   useTooltipBootstrap();
+  const apiClient = useMemo(
+    () =>
+      createApiClient({
+        token,
+        onUnauthorized: () => {
+          clearOperatorToken();
+          onLogout();
+        }
+      }),
+    [onLogout, token]
+  );
 
   const healthQuery = useQuery({
     queryKey: ["shell-health", token],
-    queryFn: () => fetchShellJson<HealthSummary>(token, "/health"),
+    queryFn: () => apiClient.getHealth(),
     refetchInterval: 15000
   });
 
   const approvalsQuery = useQuery({
     queryKey: ["shell-approvals", token],
-    queryFn: () =>
-      fetchShellJson<ApprovalsResponse>(token, "/approvals?statuses=pending&limit=100"),
+    queryFn: () => apiClient.getBlockedApprovals(),
     refetchInterval: 10000
   });
 
@@ -209,9 +179,7 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
     }
   }, [approvalsQuery.error, healthQuery.error, navigate, onLogout]);
 
-  const approvalCount = approvalsQuery.data?.approvals.filter(
-    (approval) => approval.status === "pending"
-  ).length ?? 0;
+  const approvalCount = getPendingApprovalCount(approvalsQuery.data?.pendingApprovals ?? []);
   const healthTone = getHealthTone(healthQuery.data);
   const healthLabel = getHealthLabel(healthQuery.data);
   const pageTitle = useMemo(() => {
