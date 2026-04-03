@@ -1,0 +1,26 @@
+{
+  "name": "@reddwarf/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@reddwarf/contracts": "workspace:*",
+    "@tabler/core": "^1.4.0",
+    "@tabler/icons-react": "^3.34.1",
+    "@tanstack/react-query": "^5.90.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.24",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^7.1.12"
+  }
+}

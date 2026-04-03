@@ -1,0 +1,22 @@
+:root {
+  --rd-shell-accent: #d63939;
+}
+
+body {
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.dashboard-login-shell {
+  background:
+    radial-gradient(circle at top left, rgb(214 57 57 / 0.14), transparent 32%),
+    radial-gradient(circle at bottom right, rgb(32 107 196 / 0.16), transparent 28%),
+    var(--tblr-bg-surface);
+}
+
+.cursor-help {
+  cursor: help;
+}

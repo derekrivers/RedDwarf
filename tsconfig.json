@@ -6,6 +6,7 @@
     { "path": "./packages/control-plane" },
     { "path": "./packages/execution-plane" },
     { "path": "./packages/evidence" },
-    { "path": "./packages/integrations" }
+    { "path": "./packages/integrations" },
+    { "path": "./packages/dashboard" }
   ]
 }
