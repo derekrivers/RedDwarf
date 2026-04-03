@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
+import cors from "cors";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   buildOperatorConfigJsonSchema,
@@ -224,6 +225,11 @@ export function createOperatorApiServer(
   const server = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
       try {
+        await runCorsMiddleware(req, res);
+        if (res.writableEnded) {
+          return;
+        }
+
         await handleOperatorRequest(
           req,
           res,
@@ -257,6 +263,8 @@ export function createOperatorApiServer(
     }
   );
 
+  const runCorsMiddleware = createCorsMiddlewareRunner();
+
   return {
     get port() {
       return boundPort;
@@ -281,6 +289,29 @@ export function createOperatorApiServer(
       });
     }
   };
+}
+
+function createCorsMiddlewareRunner(): (
+  req: IncomingMessage,
+  res: ServerResponse
+) => Promise<void> {
+  const middleware = cors({
+    origin: process.env.REDDWARF_DASHBOARD_ORIGIN ?? "http://localhost:5173",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Authorization", "Content-Type"]
+  });
+
+  return (req, res) =>
+    new Promise<void>((resolve, reject) => {
+      middleware(req, res, (error?: unknown) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
 }
 
 // ============================================================
