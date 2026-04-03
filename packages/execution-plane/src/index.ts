@@ -222,8 +222,11 @@ export function createOpenClawAgentRoleDefinitions(
       "Checks implementation against the approved planning spec, flags structural drift, and emits a structured conformance verdict without rewriting code.",
     runtimePolicy: {
       toolProfile: "full",
-      allow: ["group:fs", "group:runtime", "group:openclaw"],
-      deny: ["group:automation", "group:messaging"],
+      // group:runtime is intentionally excluded: the reviewer only reads workspace
+      // files and writes a single architecture-review.json verdict. Process
+      // execution is not required and would over-permission a read+write-JSON role.
+      allow: ["group:fs", "group:openclaw"],
+      deny: ["group:automation", "group:messaging", "group:runtime"],
       sandboxMode: "workspace_write",
       model: createOpenClawModelBinding("reviewer", provider)
     },
@@ -271,7 +274,10 @@ export function createOpenClawAgentRoleDefinitions(
     runtimePolicy: {
       toolProfile: "full",
       allow: ["group:fs", "group:runtime", "group:openclaw"],
-      deny: ["group:messaging"],
+      // group:automation is denied consistently with all other agents. The validator
+      // requires group:runtime to execute test commands but must not automate
+      // actions outside the workspace boundary.
+      deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
       model: createOpenClawModelBinding("validator", provider)
     },
