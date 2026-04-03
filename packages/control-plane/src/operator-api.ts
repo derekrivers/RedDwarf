@@ -39,7 +39,7 @@ import {
 } from "@reddwarf/contracts";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   createGitHubIssuePollingCursor,
   type PlanningRepository,
@@ -384,11 +384,6 @@ function readOperatorAuthToken(req: IncomingMessage): string | null {
     }
   }
 
-  const tokenHeader = req.headers["x-reddwarf-operator-token"];
-  if (typeof tokenHeader === "string" && tokenHeader.trim().length > 0) {
-    return tokenHeader.trim();
-  }
-
   return null;
 }
 
@@ -398,7 +393,16 @@ function assertOperatorAuthorized(
 ): void {
   const suppliedToken = readOperatorAuthToken(req);
 
-  if (suppliedToken !== authToken) {
+  // Use a timing-safe comparison to prevent token enumeration via response-time
+  // side-channels. Buffers must be the same byte length for timingSafeEqual, so
+  // we derive equality from both the length guard and the buffer comparison.
+  const suppliedBuf = Buffer.from(suppliedToken ?? "");
+  const expectedBuf = Buffer.from(authToken);
+  const authorized =
+    suppliedBuf.length === expectedBuf.length &&
+    timingSafeEqual(suppliedBuf, expectedBuf);
+
+  if (!authorized) {
     throw new OperatorApiRequestError(
       401,
       "unauthorized",
