@@ -605,7 +605,25 @@ export interface DeveloperHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  /**
+   * How long transcript silence triggers a stall error when the session is
+   * NOT currently executing a tool call. Defaults to 2 minutes.
+   *
+   * Keep this short — it catches sessions that have genuinely gone quiet
+   * between turns (e.g. the provider stopped responding mid-conversation).
+   */
   sessionIdleTimeoutMs?: number;
+  /**
+   * How long transcript silence is tolerated when the last assistant entry
+   * has `stopReason: "toolUse"` (i.e. a tool call is in flight). Defaults to
+   * 8 minutes.
+   *
+   * This should be large enough to cover slow but legitimate operations such
+   * as `npm install`, a full test suite run, or a large file-system scan.
+   * The agent itself will produce a new transcript entry the moment the tool
+   * result arrives, which resets the sliding deadline automatically.
+   */
+  toolExecutionGracePeriodMs?: number;
   openClawHomePath?: string;
   maxRuntimeMs?: number;
 }
@@ -618,6 +636,7 @@ export function createDeveloperHandoffAwaiter(
   const defaultHeartbeatIntervalMs =
     options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
   const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? 2 * 60 * 1000;
+  const toolExecutionGracePeriodMs = options.toolExecutionGracePeriodMs ?? 8 * 60 * 1000;
   const openClawHomePath = resolveOpenClawHomePath(options.openClawHomePath);
   const maxRuntimeMs = options.maxRuntimeMs ?? null;
 
@@ -640,6 +659,7 @@ export function createDeveloperHandoffAwaiter(
       let lastTranscriptSignature: string | null = null;
       let lastTranscriptGrowthAt: number | null = null;
       let lastRepoSignature: string | null = null;
+      let lastWriteOperationsCount = 0;
 
       while (
         Date.now() < progressDeadline &&
@@ -701,6 +721,14 @@ export function createDeveloperHandoffAwaiter(
             progressDeadline = Date.now() + timeoutMs;
           }
 
+          // Write-activity is a strong progress signal independent of overall
+          // transcript growth. Each new file-write or edit resets the sliding
+          // deadline so long-running write sessions are never killed mid-commit.
+          if (transcriptStatus.writeOperationsCount > lastWriteOperationsCount) {
+            lastWriteOperationsCount = transcriptStatus.writeOperationsCount;
+            progressDeadline = Date.now() + timeoutMs;
+          }
+
           if (transcriptStatus.lastAssistantStopReason !== null) {
             throw new OpenClawSessionTerminatedError({
               sessionKey: input.sessionKey,
@@ -725,9 +753,18 @@ export function createDeveloperHandoffAwaiter(
             });
           }
 
+          // Use a longer idle tolerance when the agent is in the middle of a
+          // tool call. npm install, a full test suite, or a large file scan can
+          // all take several minutes without producing transcript output.
+          // The short sessionIdleTimeoutMs is reserved for truly idle sessions
+          // where no tool call is in flight.
+          const activeIdleTimeoutMs = transcriptStatus.isWaitingForToolResult
+            ? toolExecutionGracePeriodMs
+            : sessionIdleTimeoutMs;
+
           if (
             lastTranscriptGrowthAt !== null &&
-            Date.now() - lastTranscriptGrowthAt >= sessionIdleTimeoutMs
+            Date.now() - lastTranscriptGrowthAt >= activeIdleTimeoutMs
           ) {
             throw new OpenClawSessionStalledError({
               sessionKey: input.sessionKey,
@@ -786,6 +823,14 @@ function resolveOpenClawSessionTranscriptPath(input: {
   );
 }
 
+/**
+ * Tool names that indicate a write/mutation operation. When the agent is
+ * executing one of these tools the transcript may be silent for an extended
+ * period (e.g. npm install, running a test suite) without the session being
+ * stalled.
+ */
+const WRITE_TOOL_PATTERN = /write|edit|patch|create|str_replace/i;
+
 async function inspectOpenClawSessionTranscript(
   transcriptPath: string,
   input: { sessionKey: string; agentId: string }
@@ -796,24 +841,46 @@ async function inspectOpenClawSessionTranscript(
   lastEntryTimestamp: string | null;
   lastAssistantStopReason: string | null;
   lastTerminalErrorMessage: string | null;
+  /** True when the last assistant entry has stopReason "toolUse" — the agent is
+   *  mid-tool-call and the transcript will be silent until the tool responds. */
+  isWaitingForToolResult: boolean;
+  /** Number of tool calls whose name matches a write/mutation pattern.
+   *  Increases to this counter reset the progress deadline even when the
+   *  overall transcript signature has not changed. */
+  writeOperationsCount: number;
 }> {
   const [stats, transcript] = await Promise.all([
     stat(transcriptPath),
     readSessionTranscript(transcriptPath, input.sessionKey, input.agentId)
   ]);
   const lastEntry = transcript.entries[transcript.entries.length - 1] ?? null;
+
+  // Find the last assistant entry specifically (may differ from lastEntry when
+  // a tool result entry appears after the last assistant turn).
+  const lastAssistantEntry =
+    [...transcript.entries].reverse().find((e) => e.role === "assistant") ?? null;
+
   const terminalAssistantStopReason =
-    lastEntry?.role === "assistant" &&
-    typeof lastEntry.stopReason === "string" &&
-    lastEntry.stopReason !== "toolUse"
-      ? lastEntry.stopReason
+    lastAssistantEntry !== null &&
+    typeof lastAssistantEntry.stopReason === "string" &&
+    lastAssistantEntry.stopReason !== "toolUse"
+      ? lastAssistantEntry.stopReason
       : null;
+
   const terminalErrorMessage =
-    lastEntry?.role === "assistant" &&
-    typeof lastEntry.errorMessage === "string" &&
-    lastEntry.errorMessage.trim().length > 0
-      ? lastEntry.errorMessage
+    lastAssistantEntry !== null &&
+    typeof lastAssistantEntry.errorMessage === "string" &&
+    lastAssistantEntry.errorMessage.trim().length > 0
+      ? lastAssistantEntry.errorMessage
       : null;
+
+  const isWaitingForToolResult =
+    lastAssistantEntry !== null && lastAssistantEntry.stopReason === "toolUse";
+
+  const writeOperationsCount = transcript.entries.filter(
+    (e) =>
+      typeof e.toolName === "string" && WRITE_TOOL_PATTERN.test(e.toolName)
+  ).length;
 
   return {
     size: stats.size,
@@ -821,7 +888,9 @@ async function inspectOpenClawSessionTranscript(
     totalEntries: transcript.totalEntries,
     lastEntryTimestamp: lastEntry?.timestamp ?? null,
     lastAssistantStopReason: terminalAssistantStopReason,
-    lastTerminalErrorMessage: terminalErrorMessage
+    lastTerminalErrorMessage: terminalErrorMessage,
+    isWaitingForToolResult,
+    writeOperationsCount
   };
 }
 

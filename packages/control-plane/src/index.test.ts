@@ -31,6 +31,7 @@ import {
   extractSessionSummary,
   findDisallowedChangedFiles,
   findDeniedChangedFiles,
+  OpenClawSessionStalledError,
   OpenClawSessionTerminatedError,
   sanitizeSecretBearingText,
   parseSessionJsonl,
@@ -4560,6 +4561,191 @@ describe("createDeveloperHandoffAwaiter", () => {
       ).resolves.toMatchObject({
         handoffPath: join(artifactsDir, "developer-handoff.md")
       });
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not stall during tool execution grace period when agent has a pending tool call", async () => {
+    // The sessionIdleTimeoutMs is very short (50ms), but toolExecutionGracePeriodMs
+    // is much longer (500ms). The transcript is frozen at stopReason "toolUse" —
+    // the agent is mid-tool-call. The handoff arrives at 80ms (after the idle
+    // timeout would have fired without the grace period). The awaiter must not
+    // raise a stall error before the handoff is present.
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-grace-period-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-grace.jsonl"
+      );
+      const artifactsDir = join(tempRoot, "artifacts");
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await mkdir(artifactsDir, { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Running npm install..." }],
+              stopReason: "toolUse"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      // Write the handoff after sessionIdleTimeoutMs (50ms) has passed but well
+      // within toolExecutionGracePeriodMs (500ms). Without the grace period the
+      // awaiter would throw OpenClawSessionStalledError at ~50ms.
+      setTimeout(() => {
+        void writeFile(
+          join(artifactsDir, "developer-handoff.md"),
+          [
+            "# Development Handoff",
+            "",
+            "- Code writing enabled: no",
+            "",
+            "## Summary",
+            "",
+            "npm install completed successfully.",
+            "",
+            "## Implementation Notes",
+            "",
+            "- none",
+            "",
+            "## Blocked Actions",
+            "",
+            "- none",
+            "",
+            "## Next Actions",
+            "",
+            "- Review."
+          ].join("\n"),
+          "utf8"
+        );
+      }, 80);
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 20,
+        sessionIdleTimeoutMs: 50,
+        toolExecutionGracePeriodMs: 500
+      });
+
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-50" } as never,
+          workspace: {
+            workspaceId: "workspace-grace",
+            workspaceRoot: tempRoot,
+            artifactsDir,
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: false }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:50",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:50",
+            agentId: "reddwarf-developer",
+            sessionId: "session-grace",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          onHeartbeat: undefined
+        })
+      ).resolves.toMatchObject({
+        handoffPath: join(artifactsDir, "developer-handoff.md")
+      });
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("throws OpenClawSessionStalledError after toolExecutionGracePeriodMs elapses with a pending tool call", async () => {
+    // The agent is stuck mid-tool-call (stopReason "toolUse") and never produces
+    // any further transcript output or handoff. toolExecutionGracePeriodMs is short
+    // so the stall detection fires well before the overall timeoutMs.
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-grace-stall-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-grace-stall.jsonl"
+      );
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Running a very long test suite..." }],
+              stopReason: "toolUse"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 20,
+        sessionIdleTimeoutMs: 5_000,
+        toolExecutionGracePeriodMs: 80
+      });
+
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-51" } as never,
+          workspace: {
+            workspaceId: "workspace-grace-stall",
+            workspaceRoot: tempRoot,
+            artifactsDir: join(tempRoot, "artifacts"),
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: false }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:51",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:51",
+            agentId: "reddwarf-developer",
+            sessionId: "session-grace-stall",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          onHeartbeat: undefined
+        })
+      ).rejects.toBeInstanceOf(OpenClawSessionStalledError);
     } finally {
       if (previousConfigPath === undefined) {
         delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;

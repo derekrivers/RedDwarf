@@ -150,6 +150,10 @@ export interface PlanningConcurrencyOptions {
 export interface PhaseTimingOptions {
   heartbeatIntervalMs?: number;
   openClawCompletionTimeoutMs?: number;
+  /** Grace period (ms) applied to idle-stall detection when the agent has a
+   *  pending tool call (stopReason "toolUse").  Defaults to 8 minutes inside
+   *  createDeveloperHandoffAwaiter when not supplied. */
+  toolExecutionGracePeriodMs?: number;
   gitCommandTimeoutMs?: number;
   validationCommandTimeoutMs?: number;
 }

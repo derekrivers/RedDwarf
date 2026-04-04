@@ -130,6 +130,9 @@ export async function runDeveloperPhase(
       ),
       ...(dependencies.timing?.heartbeatIntervalMs !== undefined
         ? { heartbeatIntervalMs: dependencies.timing.heartbeatIntervalMs }
+        : {}),
+      ...(dependencies.timing?.toolExecutionGracePeriodMs !== undefined
+        ? { toolExecutionGracePeriodMs: dependencies.timing.toolExecutionGracePeriodMs }
         : {})
     });
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "development");
