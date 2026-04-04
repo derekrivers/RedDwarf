@@ -19,6 +19,8 @@
 - Expanded `packages/control-plane/src/openclaw-session.ts` to parse real OpenClaw `type: "message"` JSONL records, including nested content arrays, `stopReason`, and tool-result errors, so session evidence and runtime diagnostics share the same transcript shape.
 - Tightened the OpenClaw developer prompt in `packages/control-plane/src/pipeline/prompts.ts` to explicitly avoid broad repo-wide enumeration and `.git` inspection, steering the agent toward narrow reads of likely task paths before implementation.
 - Added focused regression coverage in `packages/control-plane/src/index.test.ts` for the real JSONL transcript shape, awaiter fast-fail on terminal sessions, and development-phase classification of `OPENCLAW_SESSION_TERMINATED`.
+- Added complexity-scaled development budgets in `packages/control-plane/src/pipeline/token-budget.ts` and `packages/control-plane/src/pipeline/development.ts`. RedDwarf now derives a developer complexity profile from the persisted planning spec and requested capabilities, then scales both the development token budget and the OpenClaw completion timeout for elevated/high-complexity tasks instead of treating every code-writing task as flat-cost work.
+- Added regression coverage proving straightforward tasks stay on the standard budget tier, broad multi-surface tasks promote into higher tiers, and the development phase records the scaled budget limit in evidence for complex tasks.
 
 ## 2026-04-03
 

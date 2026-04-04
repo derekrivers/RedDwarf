@@ -28,6 +28,7 @@ import {
   assertWorkspaceRepoChangesWithinAllowedPaths,
   assignWorkspaceRepoRoot,
   createDeveloperHandoffAwaiter,
+  DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
   createGitHubWorkspaceRepoBootstrapper,
   enableWorkspaceCodeWriting
 } from "../live-workflow.js";
@@ -67,7 +68,13 @@ import {
   persistConcurrencyBlock,
   persistPhaseFailure
 } from "./failure.js";
-import { enforceTokenBudget } from "./token-budget.js";
+import {
+  buildDevelopmentComplexityProfile,
+  enforceTokenBudget,
+  resolveTokenBudgetConfig,
+  scaleTimeoutBudgetMs,
+  scaleTokenBudgetConfig
+} from "./token-budget.js";
 import {
   buildOpenClawDeveloperPrompt,
   parseDevelopmentHandoffMarkdown,
@@ -102,18 +109,29 @@ export async function runDeveloperPhase(
         ? { commandTimeoutMs: dependencies.timing.gitCommandTimeoutMs }
         : {})
     });
+  const rawSnapshot = await repository.getTaskSnapshot(taskId);
+  const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
+  const developmentComplexity = buildDevelopmentComplexityProfile(
+    validatedManifest,
+    validatedSpec
+  );
+  const developmentTokenBudgetConfig = scaleTokenBudgetConfig(
+    resolveTokenBudgetConfig(),
+    "development",
+    developmentComplexity.budgetMultiplier
+  );
   const openClawCompletionAwaiter =
     dependencies.openClawCompletionAwaiter ??
     createDeveloperHandoffAwaiter({
-      ...(dependencies.timing?.openClawCompletionTimeoutMs !== undefined
-        ? { timeoutMs: dependencies.timing.openClawCompletionTimeoutMs }
-        : {}),
+      timeoutMs: scaleTimeoutBudgetMs(
+        dependencies.timing?.openClawCompletionTimeoutMs ??
+          DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
+        developmentComplexity.timeoutMultiplier
+      ),
       ...(dependencies.timing?.heartbeatIntervalMs !== undefined
         ? { heartbeatIntervalMs: dependencies.timing.heartbeatIntervalMs }
         : {})
     });
-  const rawSnapshot = await repository.getTaskSnapshot(taskId);
-  const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "development");
   requireNoFailureEscalation(snapshot, taskId, "development");
 
@@ -534,8 +552,10 @@ export async function runDeveloperPhase(
         detailLabel: "Developer prompt",
         eventData: {
           workspaceId: workspace.workspaceId,
-          mode: "openclaw"
-        }
+          mode: "openclaw",
+          complexity: developmentComplexity
+        },
+        config: developmentTokenBudgetConfig
       });
 
       dispatchResult = await dependencies.openClawDispatch.dispatch({
@@ -641,8 +661,10 @@ export async function runDeveloperPhase(
         detailLabel: "Developer handoff",
         eventData: {
           workspaceId: workspace.workspaceId,
-          mode: "deterministic"
-        }
+          mode: "deterministic",
+          complexity: developmentComplexity
+        },
+        config: developmentTokenBudgetConfig
       });
       handoff = await developer.createHandoff(bundle, {
         manifest: currentManifest,

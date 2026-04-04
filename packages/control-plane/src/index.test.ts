@@ -16,6 +16,7 @@ import {
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
   buildRuntimeWorkspacePath,
+  buildDevelopmentComplexityProfile,
   buildSessionSummaryMarkdown,
   captureSessionEvidence,
   createBufferedPlanningLogger,
@@ -39,6 +40,8 @@ import {
   runPlanningPipeline,
   runArchitectureReviewPhase,
   runScmPhase,
+  scaleTimeoutBudgetMs,
+  scaleTokenBudgetConfig,
   runValidationPhase,
   sweepOrphanedDispatcherState,
   sweepStaleRuns
@@ -1232,6 +1235,105 @@ describe("control-plane", () => {
             event.code === "TOKEN_BUDGET_EXCEEDED"
         )
       ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+      if (previousBudget === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER = previousBudget;
+      }
+      if (previousAction === undefined) {
+        delete process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+      } else {
+        process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = previousAction;
+      }
+    }
+  });
+
+  it("scales the recorded developer token budget for complex tasks", async () => {
+    const previousBudget = process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER;
+    const previousAction = process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION;
+    process.env.REDDWARF_TOKEN_BUDGET_DEVELOPER = "1000";
+    process.env.REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION = "warn";
+
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-development-budget-scale-")
+    );
+
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        summary:
+          "Build a broad browser game with rendering, state machines, scoring, and restart flows.",
+        requestedCapabilities: ["can_write_code", "can_archive_evidence", "can_plan"],
+        acceptanceCriteria: [
+          "Render the game",
+          "Track pellets",
+          "Handle movement",
+          "Handle enemies",
+          "Handle power pellets",
+          "Track score",
+          "Track lives",
+          "Support restart"
+        ],
+        affectedPaths: [
+          "games/pacman/index.html",
+          "games/pacman/assets/**",
+          "docs/games.md",
+          "tests/pacman.test.ts",
+          "package.json"
+        ]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-04T14:00:00.000Z"),
+        idGenerator: () => "run-dev-budget-scale-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for complexity-scaled developer budget coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-04-04T14:02:00.000Z")
+      }
+    );
+
+    try {
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-dev-budget-scale"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-04-04T14:05:00.000Z"),
+          idGenerator: () => "run-dev-budget-scale-phase"
+        }
+      );
+
+      expect(development.nextAction).toBe("await_validation");
+      const budgetRecord = repository.evidenceRecords.find(
+        (record) =>
+          record.recordId ===
+          `${planningResult.manifest.taskId}:token-budget:development:run-dev-budget-scale-phase`
+      );
+      expect(
+        ((budgetRecord?.metadata["tokenBudget"] as Record<string, unknown>)?.["budgetLimit"] as number)
+      ).toBe(2000);
+      expect(
+        ((budgetRecord?.metadata["complexity"] as Record<string, unknown>)?.["level"] as string) ??
+          ((budgetRecord?.metadata["tokenBudget"] as Record<string, unknown>)?.["level"] as string)
+      ).toBe("high");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       if (previousBudget === undefined) {
@@ -3896,6 +3998,141 @@ describe("buildRuntimeWorkspacePath", () => {
         process.env.REDDWARF_HOST_WORKSPACE_ROOT = previousHostRoot;
       }
     }
+  });
+});
+
+describe("development complexity budgets", () => {
+  it("keeps straightforward tasks on the standard budget tier", () => {
+    const manifest = taskManifestSchema.parse({
+      taskId: "acme-platform-simple",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 1 },
+      title: "Update one docs page",
+      summary: "Make a focused docs-only edit.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_plan", "can_write_code"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const spec = planningSpecSchema.parse({
+      specId: "simple-spec",
+      taskId: manifest.taskId,
+      summary: "Docs-only edit.",
+      assumptions: [],
+      affectedAreas: ["docs/guide.md"],
+      constraints: [],
+      acceptanceCriteria: ["One docs page is updated."],
+      testExpectations: [],
+      recommendedAgentType: "developer",
+      riskClass: "low",
+      confidenceLevel: "high",
+      confidenceReason: "The task is narrowly scoped.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const profile = buildDevelopmentComplexityProfile(manifest, spec);
+    const scaledBudget = scaleTokenBudgetConfig(
+      {
+        limits: { development: 1000 },
+        overageAction: "warn"
+      },
+      "development",
+      profile.budgetMultiplier
+    );
+
+    expect(profile.level).toBe("standard");
+    expect(profile.budgetMultiplier).toBe(1);
+    expect(profile.timeoutMultiplier).toBe(1);
+    expect(scaledBudget.limits.development).toBe(1000);
+    expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBe(600_000);
+  });
+
+  it("raises the budget tier for broad multi-surface implementation tasks", () => {
+    const manifest = taskManifestSchema.parse({
+      taskId: "acme-platform-complex",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 45 },
+      title: "Implement a browser game",
+      summary: "Build a broad multi-surface feature.",
+      priority: 50,
+      dryRun: false,
+      riskClass: "high",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_plan", "can_write_code", "can_archive_evidence"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const spec = planningSpecSchema.parse({
+      specId: "complex-spec",
+      taskId: manifest.taskId,
+      summary: "Implement a game with rendering, input, scoring, AI, and end states.",
+      assumptions: ["A new app surface may be created."],
+      affectedAreas: [
+        "games/pacman/index.html",
+        "games/pacman/assets",
+        "docs/games.md",
+        "tests/pacman.test.ts",
+        "package.json"
+      ],
+      constraints: ["No external dependencies."],
+      acceptanceCriteria: [
+        "Game renders.",
+        "Maze has pellets.",
+        "Player movement works.",
+        "Ghosts move.",
+        "Power pellets work.",
+        "Score is tracked.",
+        "Lives are tracked.",
+        "Win and loss states work."
+      ],
+      testExpectations: [
+        "Manual play test",
+        "State-machine checks",
+        "Collision checks",
+        "Restart flow check"
+      ],
+      recommendedAgentType: "developer",
+      riskClass: "high",
+      confidenceLevel: "low",
+      confidenceReason: "The task spans UI, game state, and algorithmic behavior.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const profile = buildDevelopmentComplexityProfile(manifest, spec);
+    const scaledBudget = scaleTokenBudgetConfig(
+      {
+        limits: { development: 1000 },
+        overageAction: "warn"
+      },
+      "development",
+      profile.budgetMultiplier
+    );
+
+    expect(profile.level).toBe("high");
+    expect(profile.budgetMultiplier).toBe(2);
+    expect(profile.timeoutMultiplier).toBe(2);
+    expect(profile.reasons).toContain("risk class: high");
+    expect(scaledBudget.limits.development).toBe(2000);
+    expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBe(1_200_000);
   });
 });
 

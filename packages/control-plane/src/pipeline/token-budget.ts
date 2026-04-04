@@ -1,4 +1,5 @@
 import {
+  type PlanningSpec,
   tokenBudgetResultSchema,
   type TaskManifest,
   type TaskPhase,
@@ -15,6 +16,14 @@ import { EventCodes, PlanningPipelineFailure } from "./types.js";
 export interface TokenBudgetConfig {
   limits: Partial<Record<TaskPhase, number>>;
   overageAction: TokenBudgetOverageAction;
+}
+
+export interface PhaseComplexityProfile {
+  level: "standard" | "elevated" | "high";
+  score: number;
+  budgetMultiplier: number;
+  timeoutMultiplier: number;
+  reasons: string[];
 }
 
 export interface RunTokenUsageSummary {
@@ -85,6 +94,107 @@ export function resolveTokenBudgetConfig(
     },
     overageAction
   };
+}
+
+export function buildDevelopmentComplexityProfile(
+  manifest: TaskManifest,
+  spec: PlanningSpec
+): PhaseComplexityProfile {
+  let score = 0;
+  const reasons: string[] = [];
+
+  if (spec.acceptanceCriteria.length >= 8) {
+    score += 2;
+    reasons.push(`acceptance criteria: ${spec.acceptanceCriteria.length}`);
+  } else if (spec.acceptanceCriteria.length >= 5) {
+    score += 1;
+    reasons.push(`acceptance criteria: ${spec.acceptanceCriteria.length}`);
+  }
+
+  if (spec.affectedAreas.length >= 5) {
+    score += 2;
+    reasons.push(`affected areas: ${spec.affectedAreas.length}`);
+  } else if (spec.affectedAreas.length >= 3) {
+    score += 1;
+    reasons.push(`affected areas: ${spec.affectedAreas.length}`);
+  }
+
+  if (spec.testExpectations.length >= 4) {
+    score += 1;
+    reasons.push(`test expectations: ${spec.testExpectations.length}`);
+  }
+
+  if (manifest.requestedCapabilities.length >= 3) {
+    score += 1;
+    reasons.push(`requested capabilities: ${manifest.requestedCapabilities.length}`);
+  }
+
+  if (spec.riskClass === "high") {
+    score += 2;
+    reasons.push("risk class: high");
+  } else if (spec.riskClass === "medium") {
+    score += 1;
+    reasons.push("risk class: medium");
+  }
+
+  if (spec.confidenceLevel === "low") {
+    score += 1;
+    reasons.push("planner confidence: low");
+  }
+
+  if (score >= 6) {
+    return {
+      level: "high",
+      score,
+      budgetMultiplier: 2,
+      timeoutMultiplier: 2,
+      reasons
+    };
+  }
+
+  if (score >= 3) {
+    return {
+      level: "elevated",
+      score,
+      budgetMultiplier: 1.5,
+      timeoutMultiplier: 1.5,
+      reasons
+    };
+  }
+
+  return {
+    level: "standard",
+    score,
+    budgetMultiplier: 1,
+    timeoutMultiplier: 1,
+    reasons
+  };
+}
+
+export function scaleTokenBudgetConfig(
+  config: TokenBudgetConfig,
+  phase: TaskPhase,
+  multiplier: number
+): TokenBudgetConfig {
+  const currentLimit = config.limits[phase];
+  if (currentLimit === undefined || currentLimit === 0 || multiplier === 1) {
+    return config;
+  }
+
+  return {
+    ...config,
+    limits: {
+      ...config.limits,
+      [phase]: Math.ceil(currentLimit * multiplier)
+    }
+  };
+}
+
+export function scaleTimeoutBudgetMs(
+  timeoutMs: number,
+  multiplier: number
+): number {
+  return Math.ceil(timeoutMs * multiplier);
 }
 
 export function estimateTokens(value: unknown): number {
