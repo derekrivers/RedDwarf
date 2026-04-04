@@ -155,6 +155,96 @@ describe("createPlanningInputFromGitHubIssue", () => {
     ]);
   });
 
+  it("parses requested capabilities from a fenced markdown body field", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "### Body",
+        "",
+        "```md",
+        "## Summary",
+        "",
+        "Create a browser-based Pac-Man shell.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Render the maze on a canvas.",
+        "- Show score and lives HUD.",
+        "",
+        "## Affected Paths",
+        "",
+        "- games/pacman/index.html",
+        "",
+        "## Requested Capabilities",
+        "",
+        "- can_write_code",
+        "- can_run_tests",
+        "- can_open_pr",
+        "```"
+      ].join("\n")
+    });
+
+    expect(input.summary).toBe("Create a browser-based Pac-Man shell.");
+    expect(input.acceptanceCriteria).toEqual([
+      "Render the maze on a canvas.",
+      "Show score and lives HUD."
+    ]);
+    expect(input.affectedPaths).toEqual(["games/pacman/index.html"]);
+    expect(input.requestedCapabilities).toEqual([
+      "can_write_code",
+      "can_run_tests",
+      "can_open_pr"
+    ]);
+  });
+
+  it("parses fenced textarea sections from GitHub issue forms", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "### Summary",
+        "",
+        "Add rate limiting to the operator API.",
+        "",
+        "### Acceptance Criteria",
+        "",
+        "```text",
+        "requests above 100/min return 429",
+        "authenticated routes keep existing behavior",
+        "```",
+        "",
+        "### Affected Areas",
+        "",
+        "```text",
+        "packages/control-plane/src/**",
+        "packages/control-plane/src/index.test.ts",
+        "```",
+        "",
+        "### Requested Capabilities",
+        "",
+        "```text",
+        "can_write_code",
+        "can_run_tests",
+        "can_open_pr",
+        "```"
+      ].join("\n")
+    });
+
+    expect(input.summary).toBe("Add rate limiting to the operator API.");
+    expect(input.acceptanceCriteria).toEqual([
+      "requests above 100/min return 429",
+      "authenticated routes keep existing behavior"
+    ]);
+    expect(input.affectedPaths).toEqual([
+      "packages/control-plane/src/**",
+      "packages/control-plane/src/index.test.ts"
+    ]);
+    expect(input.requestedCapabilities).toEqual([
+      "can_write_code",
+      "can_run_tests",
+      "can_open_pr"
+    ]);
+  });
+
   it("stops affected paths at the next markdown heading", () => {
     const input = createPlanningInputFromGitHubIssue({
       ...candidate,

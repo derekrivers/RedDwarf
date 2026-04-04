@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## GitHub issue intake drops `can_open_pr` or `can_run_tests` even though the issue body requested them
+
+- Symptom: a GitHub issue clearly lists capabilities such as `can_run_tests` and `can_open_pr`, but the resulting RedDwarf task manifest only contains the fallback capability set, often `can_plan`, `can_write_code`, and `can_archive_evidence`. Validation then stops at `await_review` instead of continuing to SCM.
+- Root cause: GitHub issue forms often render textarea values inside fenced code blocks, either as a single `### Body` section with a ```md block or as multiple `### Heading` sections with fenced `text` blocks. The intake parser was reading the fence markers as literal content instead of normalizing them away before section parsing, so `Requested Capabilities` could be missed entirely.
+- Failing approach: trusting the visible GitHub issue body alone without comparing it to the stored task manifest, or assuming a missing `can_open_pr` in the manifest means the issue author forgot to request it.
+- Working workaround: normalize GitHub issue bodies for parsing by stripping standalone fence-delimiter lines before extracting sections; then verify the resulting task manifest includes the requested capabilities.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/integrations/src/github.test.ts`; `corepack pnpm typecheck`.
+
 ## Dashboard login immediately clears the pasted token and returns to the login screen
 
 - Symptom: the React dashboard accepts a valid `REDDWARF_OPERATOR_TOKEN`, then instantly bounces back to the login screen with `{"error":"unauthorized","message":"Valid operator token required. Supply Authorization: Bearer <token>."}`. Looking in `sessionStorage` after the failure often shows no `reddwarf-operator-token` entry.

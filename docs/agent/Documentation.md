@@ -2,6 +2,9 @@
 
 ## 2026-04-04
 
+- Fixed GitHub issue intake so requested capabilities survive GitHub issue-form fencing. Some issues, including `derekrivers/FirstVoyage#53`, arrived from GitHub as `### Body` plus a fenced ```md block or as per-field `### Heading` sections with fenced `text` blocks. The intake parser was treating the fence markers as content, which caused section parsing to miss `Requested Capabilities` and fall back to the default capability set.
+- Normalized GitHub issue bodies before parsing by stripping standalone code-fence delimiter lines, then added regression coverage for both the single fenced-body shape and the standard multi-field issue-form shape.
+
 - Fixed a dashboard first-login auth race introduced when the API client switched to reading bearer auth from `sessionStorage`. After the login form sets React state, the dashboard shell mounts and immediately fires authenticated queries; those requests could beat the `writeOperatorToken(...)` effect and go out without `Authorization`, causing an immediate `401` and clearing the just-entered token.
 - Updated the dashboard shell to pass its in-memory token directly into `createApiClient(...)` during the first authenticated render, while still persisting the session token for later requests and reloads.
 - Added dashboard API client regression coverage proving an explicit token is preferred when `sessionStorage` is still empty, which protects the first post-login `/health` and `/blocked` fetches.

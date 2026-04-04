@@ -358,7 +358,8 @@ export function createPlanningInputFromGitHubIssue(
   candidate: GitHubIssueCandidate,
   defaults: PlanningInputDefaults = {}
 ): PlanningTaskInput {
-  const sections = parseIssueBodySections(candidate.body);
+  const normalizedBody = normalizeIssueBodyForParsing(candidate.body);
+  const sections = parseIssueBodySections(normalizedBody);
   const priority = parsePriority(candidate.labels, defaults.priority ?? 50);
   const acceptanceCriteria = dedupeStrings(
     sections.acceptanceCriteria.length > 0
@@ -380,7 +381,7 @@ export function createPlanningInputFromGitHubIssue(
       issueUrl: candidate.url
     },
     title: candidate.title,
-    summary: buildSummary(candidate.body),
+    summary: buildSummary(normalizedBody),
     priority,
     dryRun: false,
     labels: dedupeStrings(candidate.labels),
@@ -896,6 +897,13 @@ function matchesIssueDraft(
 
 function isGitHubNotFoundError(error: unknown): boolean {
   return error instanceof Error && /returned 404:/i.test(error.message);
+}
+
+function normalizeIssueBodyForParsing(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .filter((line) => !/^```[\w-]*\s*$/.test(line.trim()))
+    .join("\n");
 }
 
 function parseIssueBodySections(body: string): {
