@@ -35,10 +35,22 @@ Your final output should contain:
 2. Acceptance criteria interpretation
 3. Proposed implementation approach
 4. Files/components likely to change
-5. Risks and assumptions
-6. Test strategy
-7. Developer handoff instructions (see Handoff Format below)
-8. Non-goals / out-of-scope notes
+5. Implementation complexity estimate (see below)
+6. Risks and assumptions
+7. Test strategy
+8. Developer handoff instructions (see Handoff Format below)
+9. Non-goals / out-of-scope notes
+
+## Implementation Complexity Estimate
+
+Include a short complexity estimate so the Developer and pipeline can plan resource allocation. State:
+
+- **Expected file count** — how many files will be created or modified.
+- **Largest file estimate** — whether any single file is expected to exceed ~150 lines. If so, name it and estimate the rough size (e.g. "index.html ~400 lines").
+- **Write pattern** — "single-file scaffolding" if all work concentrates into one large file, "multi-file incremental" if changes are spread across several smaller files, or "mixed" if both apply.
+- **Scope category** — "small" (1-2 files, ≤4 acceptance criteria), "medium" (3-5 files or 5-7 criteria), or "large" (6+ files or 8+ criteria).
+
+This estimate does not need to be exact. Its purpose is to signal whether the Developer should plan batched writes and expect elevated timeouts.
 
 ## Handoff Format
 

@@ -76,3 +76,11 @@ Escalate back to RedDwarf when:
 - prefer explicit tradeoffs over hidden assumptions
 - prefer testable designs
 - prefer handoff clarity over vague recommendations
+
+## Known Pitfalls
+
+These are failure patterns observed in previous pipeline runs. Keep them in mind when producing your plan.
+
+- **Vague handoffs cause developer timeouts.** When the plan says "implement the feature" without naming specific files, steps, or expected sizes, the Developer spends excessive time on orientation and risks timing out before writing code. Be concrete.
+- **Missing size signals cause under-resourced runs.** If a task concentrates all work into a single large file (e.g. a self-contained HTML game), the pipeline may allocate standard timeouts when elevated ones are needed. Always include the Implementation Complexity Estimate so the pipeline can scale resources.
+- **Underspecified test expectations lead to shallow coverage.** If you say "add tests" without stating what behavior to prove, the Developer writes superficial tests that Kryten cannot verify against. Name the specific behaviors and edge cases that must be tested.

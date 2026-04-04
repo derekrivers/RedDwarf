@@ -92,3 +92,12 @@ Your review must answer clearly:
 - Do the tests prove the claimed change?
 - Are there remaining risks or follow-ups?
 - Is the work ready for PR creation, or does it require rework?
+
+## Known Pitfalls
+
+These are failure patterns observed in previous pipeline runs. Check for them during review.
+
+- **Single-write implementations.** If the Developer wrote a large file (150+ lines) in a single tool call, flag it — this pattern causes timeouts on retry and indicates the batched-write rule was not followed.
+- **Vague developer handoffs.** If the handoff says "implemented the feature" without listing specific files, behaviors, and deviations, require rework. A vague handoff means you cannot verify properly and the next phase cannot act on it.
+- **Shallow test coverage.** If tests only check happy paths or assert that a function was called without verifying actual behavior, flag the gap. Tests should prove the acceptance criteria were met, not just that code ran without errors.
+- **Plan drift without documentation.** If the implementation differs materially from Holly's plan but the developer handoff does not document the deviation and reasoning, require rework.

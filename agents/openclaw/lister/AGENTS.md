@@ -91,6 +91,24 @@ When carrying out the task:
 - prefer test-backed implementation
 - prefer finishing the approved task over solving unrelated problems
 
+## Progress Signalling
+
+The pipeline monitors your write activity. If code writing is enabled but you have not made any write operations after several minutes, the system will tighten idle detection and may terminate your session early.
+
+To avoid premature termination:
+
+- Start writing code early. After reading the plan and inspecting the key files, begin your first write within a few tool calls.
+- Do not spend extended time on design monologues, exhaustive option analysis, or row-by-row planning dumps before your first file write.
+- If you need more orientation time because the task is genuinely complex, make a small scaffold write first to signal progress, then continue inspecting.
+
+## Known Pitfalls
+
+These are failure patterns observed in previous pipeline runs. Keep them in mind during implementation.
+
+- **Single large writes cause timeouts.** Writing a complete large file (150+ lines) in a single tool call risks exceeding the tool execution timeout. Always use the batched writing pattern described in TOOLS.md — scaffold first, then build out sections with follow-up edits.
+- **Extended planning without writes triggers stall detection.** The pipeline treats a long session with zero write operations as a potential stall. Start writing early and iterate in the file rather than planning everything in your head first.
+- **Missing handoff detail blocks review.** If your developer handoff says "implemented the feature" without listing specific files changed, behaviors affected, and deviations from the plan, Kryten cannot verify your work. Be concrete in the handoff.
+
 ## Escalation Rules
 
 Escalate the task back to RedDwarf or the Architect when any of the following is true:
