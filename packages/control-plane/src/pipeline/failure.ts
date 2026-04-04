@@ -21,6 +21,8 @@ import {
 import {
   AllowedPathViolationError,
   ExternalCommandTimeoutError,
+  OpenClawSessionStalledError,
+  OpenClawSessionTerminatedError,
   OpenClawCompletionTimeoutError
 } from "../live-workflow.js";
 import { type PlanningPipelineLogger } from "../logger.js";
@@ -94,6 +96,53 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
         details: {
           sessionKey: err.sessionKey,
           timeoutMs: err.timeoutMs
+        },
+        cause: err,
+        taskId,
+        runId
+      });
+    }
+  },
+  {
+    test: (e): e is OpenClawSessionTerminatedError => e instanceof OpenClawSessionTerminatedError,
+    map: (e, phase, taskId, runId) => {
+      const err = e as OpenClawSessionTerminatedError;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingText(err.message),
+        failureClass: phaseRegistry[phase].failureClass,
+        phase,
+        code: EventCodes.OPENCLAW_SESSION_TERMINATED,
+        details: {
+          sessionKey: err.sessionKey,
+          sessionId: err.sessionId,
+          agentId: err.agentId,
+          transcriptPath: err.transcriptPath,
+          stopReason: err.stopReason,
+          totalEntries: err.totalEntries
+        },
+        cause: err,
+        taskId,
+        runId
+      });
+    }
+  },
+  {
+    test: (e): e is OpenClawSessionStalledError => e instanceof OpenClawSessionStalledError,
+    map: (e, phase, taskId, runId) => {
+      const err = e as OpenClawSessionStalledError;
+      return new PlanningPipelineFailure({
+        message: sanitizeSecretBearingText(err.message),
+        failureClass: phaseRegistry[phase].failureClass,
+        phase,
+        code: EventCodes.OPENCLAW_SESSION_STALLED,
+        details: {
+          sessionKey: err.sessionKey,
+          sessionId: err.sessionId,
+          agentId: err.agentId,
+          transcriptPath: err.transcriptPath,
+          idleMs: err.idleMs,
+          totalEntries: err.totalEntries,
+          lastUpdatedAt: err.lastUpdatedAt
         },
         cause: err,
         taskId,

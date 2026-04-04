@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
-import { access, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import {
   architectureReviewReportSchema,
   asIsoTimestamp,
@@ -20,6 +20,7 @@ import {
   normalizeChangedRepoPath
 } from "./allowed-paths.js";
 import type { PlanningPipelineLogger } from "./logger.js";
+import { readSessionTranscript } from "./openclaw-session.js";
 import { formatLiteralList } from "./workspace.js";
 
 export interface WorkspaceRepoBootstrapResult {
@@ -107,6 +108,68 @@ export class OpenClawCompletionTimeoutError extends Error {
     this.name = "OpenClawCompletionTimeoutError";
     this.sessionKey = input.sessionKey;
     this.timeoutMs = input.timeoutMs;
+  }
+}
+
+export class OpenClawSessionTerminatedError extends Error {
+  readonly sessionKey: string;
+  readonly sessionId: string | null;
+  readonly agentId: string | null;
+  readonly transcriptPath: string;
+  readonly stopReason: string | null;
+  readonly totalEntries: number;
+
+  constructor(input: {
+    sessionKey: string;
+    sessionId?: string | null;
+    agentId?: string | null;
+    transcriptPath: string;
+    stopReason?: string | null;
+    totalEntries: number;
+  }) {
+    super(
+      `OpenClaw session ${input.sessionKey} terminated before producing the required handoff` +
+        `${input.stopReason ? ` (stopReason=${input.stopReason})` : ""}.`
+    );
+    this.name = "OpenClawSessionTerminatedError";
+    this.sessionKey = input.sessionKey;
+    this.sessionId = input.sessionId ?? null;
+    this.agentId = input.agentId ?? null;
+    this.transcriptPath = input.transcriptPath;
+    this.stopReason = input.stopReason ?? null;
+    this.totalEntries = input.totalEntries;
+  }
+}
+
+export class OpenClawSessionStalledError extends Error {
+  readonly sessionKey: string;
+  readonly sessionId: string | null;
+  readonly agentId: string | null;
+  readonly transcriptPath: string;
+  readonly idleMs: number;
+  readonly totalEntries: number;
+  readonly lastUpdatedAt: string;
+
+  constructor(input: {
+    sessionKey: string;
+    sessionId?: string | null;
+    agentId?: string | null;
+    transcriptPath: string;
+    idleMs: number;
+    totalEntries: number;
+    lastUpdatedAt: string;
+  }) {
+    super(
+      `OpenClaw session ${input.sessionKey} stalled before producing the required handoff after ${input.idleMs}ms without transcript growth.`
+    );
+    this.name = "OpenClawSessionStalledError";
+    this.sessionKey = input.sessionKey;
+    this.sessionId = input.sessionId ?? null;
+    this.agentId = input.agentId ?? null;
+    this.transcriptPath = input.transcriptPath;
+    this.idleMs = input.idleMs;
+    this.totalEntries = input.totalEntries;
+    this.lastUpdatedAt = input.lastUpdatedAt;
   }
 }
 
@@ -538,6 +601,8 @@ export interface DeveloperHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  sessionIdleTimeoutMs?: number;
+  openClawHomePath?: string;
 }
 
 export function createDeveloperHandoffAwaiter(
@@ -547,6 +612,8 @@ export function createDeveloperHandoffAwaiter(
   const pollIntervalMs = options.pollIntervalMs ?? 2000;
   const defaultHeartbeatIntervalMs =
     options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
+  const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? 2 * 60 * 1000;
+  const openClawHomePath = resolveOpenClawHomePath(options.openClawHomePath);
 
   return {
     async waitForCompletion(input) {
@@ -557,6 +624,13 @@ export function createDeveloperHandoffAwaiter(
       const heartbeatIntervalMs =
         input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
       const codeWriteEnabled = input.workspace.descriptor.toolPolicy.codeWriteEnabled;
+      const sessionTranscriptPath = resolveOpenClawSessionTranscriptPath({
+        openClawHomePath,
+        sessionId: input.dispatchResult.sessionId ?? null,
+        agentId: input.dispatchResult.agentId ?? null
+      });
+      let lastTranscriptSignature: string | null = null;
+      let lastTranscriptGrowthAt: number | null = null;
 
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
@@ -591,6 +665,45 @@ export function createDeveloperHandoffAwaiter(
           }
         }
 
+        if (sessionTranscriptPath !== null && await pathExists(sessionTranscriptPath)) {
+          const transcriptStatus = await inspectOpenClawSessionTranscript(sessionTranscriptPath, {
+            sessionKey: input.sessionKey,
+            agentId: input.dispatchResult.agentId ?? "unknown-agent"
+          });
+          const signature = `${transcriptStatus.size}:${transcriptStatus.totalEntries}:${transcriptStatus.lastEntryTimestamp ?? ""}:${transcriptStatus.lastAssistantStopReason ?? ""}`;
+
+          if (signature !== lastTranscriptSignature) {
+            lastTranscriptSignature = signature;
+            lastTranscriptGrowthAt = Date.now();
+          }
+
+          if (transcriptStatus.lastAssistantStopReason !== null) {
+            throw new OpenClawSessionTerminatedError({
+              sessionKey: input.sessionKey,
+              sessionId: input.dispatchResult.sessionId ?? null,
+              agentId: input.dispatchResult.agentId ?? null,
+              transcriptPath: sessionTranscriptPath,
+              stopReason: transcriptStatus.lastAssistantStopReason,
+              totalEntries: transcriptStatus.totalEntries
+            });
+          }
+
+          if (
+            lastTranscriptGrowthAt !== null &&
+            Date.now() - lastTranscriptGrowthAt >= sessionIdleTimeoutMs
+          ) {
+            throw new OpenClawSessionStalledError({
+              sessionKey: input.sessionKey,
+              sessionId: input.dispatchResult.sessionId ?? null,
+              agentId: input.dispatchResult.agentId ?? null,
+              transcriptPath: sessionTranscriptPath,
+              idleMs: Date.now() - lastTranscriptGrowthAt,
+              totalEntries: transcriptStatus.totalEntries,
+              lastUpdatedAt: new Date(transcriptStatus.modifiedAtMs).toISOString()
+            });
+          }
+        }
+
         lastHeartbeatAt = await emitHeartbeatIfDue({
           lastHeartbeatAt,
           heartbeatIntervalMs,
@@ -605,6 +718,65 @@ export function createDeveloperHandoffAwaiter(
         phase: "developer"
       });
     }
+  };
+}
+
+function resolveOpenClawHomePath(explicitHomePath?: string): string {
+  if (explicitHomePath && explicitHomePath.trim().length > 0) {
+    return resolve(explicitHomePath);
+  }
+
+  const configPath =
+    process.env.REDDWARF_OPENCLAW_CONFIG_PATH ?? "runtime-data/openclaw-home/openclaw.json";
+  return dirname(resolve(configPath));
+}
+
+function resolveOpenClawSessionTranscriptPath(input: {
+  openClawHomePath: string;
+  sessionId: string | null;
+  agentId: string | null;
+}): string | null {
+  if (!input.sessionId || !input.agentId) {
+    return null;
+  }
+
+  return join(
+    input.openClawHomePath,
+    "agents",
+    input.agentId,
+    "sessions",
+    `${input.sessionId}.jsonl`
+  );
+}
+
+async function inspectOpenClawSessionTranscript(
+  transcriptPath: string,
+  input: { sessionKey: string; agentId: string }
+): Promise<{
+  size: number;
+  modifiedAtMs: number;
+  totalEntries: number;
+  lastEntryTimestamp: string | null;
+  lastAssistantStopReason: string | null;
+}> {
+  const [stats, transcript] = await Promise.all([
+    stat(transcriptPath),
+    readSessionTranscript(transcriptPath, input.sessionKey, input.agentId)
+  ]);
+  const lastEntry = transcript.entries[transcript.entries.length - 1] ?? null;
+  const terminalAssistantStopReason =
+    lastEntry?.role === "assistant" &&
+    typeof lastEntry.stopReason === "string" &&
+    lastEntry.stopReason !== "toolUse"
+      ? lastEntry.stopReason
+      : null;
+
+  return {
+    size: stats.size,
+    modifiedAtMs: stats.mtimeMs,
+    totalEntries: transcript.totalEntries,
+    lastEntryTimestamp: lastEntry?.timestamp ?? null,
+    lastAssistantStopReason: terminalAssistantStopReason
   };
 }
 

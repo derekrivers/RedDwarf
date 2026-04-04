@@ -20,6 +20,7 @@ import {
   captureSessionEvidence,
   createBufferedPlanningLogger,
   createArchitectHandoffAwaiter,
+  createDeveloperHandoffAwaiter,
   createReadyTaskDispatcher,
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
@@ -29,6 +30,7 @@ import {
   extractSessionSummary,
   findDisallowedChangedFiles,
   findDeniedChangedFiles,
+  OpenClawSessionTerminatedError,
   sanitizeSecretBearingText,
   parseSessionJsonl,
   provisionTaskWorkspace,
@@ -3897,6 +3899,78 @@ describe("buildRuntimeWorkspacePath", () => {
   });
 });
 
+describe("createDeveloperHandoffAwaiter", () => {
+  it("fails fast when the OpenClaw transcript ends with a terminal stop reason before handoff output", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-awaiter-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-length.jsonl"
+      );
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "I explored enough context." }],
+              stopReason: "length"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 25,
+        sessionIdleTimeoutMs: 250
+      });
+
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-45" } as never,
+          workspace: {
+            workspaceId: "workspace-length",
+            workspaceRoot: tempRoot,
+            artifactsDir: join(tempRoot, "artifacts"),
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: true }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:45",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:45",
+            agentId: "reddwarf-developer",
+            sessionId: "session-length",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          onHeartbeat: undefined
+        })
+      ).rejects.toBeInstanceOf(OpenClawSessionTerminatedError);
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parseSessionJsonl", () => {
   it("parses valid JSONL lines into session entries", () => {
     const jsonl = [
@@ -3954,6 +4028,55 @@ describe("parseSessionJsonl", () => {
     expect(entry.toolCallId).toBe("tc_123");
     expect(entry.timestamp).toBe("2026-03-27T10:00:00Z");
     expect(entry.metadata).toEqual({ lineCount: 42 });
+  });
+
+  it("parses real OpenClaw message events with stop reasons and tool errors", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-04T12:48:53.726Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "Inspecting likely target files." },
+            { type: "toolCall", name: "read" }
+          ],
+          stopReason: "toolUse"
+        }
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-04T12:48:53.740Z",
+        message: {
+          role: "toolResult",
+          toolName: "exec",
+          toolCallId: "toolu_123",
+          isError: true,
+          content: [{ type: "text", text: "command failed" }]
+        }
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-04T12:48:59.985Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "I ran out of room." }],
+          stopReason: "length"
+        }
+      })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+
+    expect(transcript.totalEntries).toBe(3);
+    expect(transcript.errors).toHaveLength(0);
+    expect(transcript.entries[0]?.role).toBe("assistant");
+    expect(transcript.entries[0]?.stopReason).toBe("toolUse");
+    expect(transcript.entries[1]?.role).toBe("tool");
+    expect(transcript.entries[1]?.toolName).toBe("exec");
+    expect(transcript.entries[1]?.isError).toBe(true);
+    expect(transcript.entries[2]?.stopReason).toBe("length");
+    expect(transcript.entries[2]?.content).toContain("I ran out of room.");
   });
 });
 
@@ -5006,6 +5129,107 @@ describe("developer phase with OpenClaw dispatch", () => {
         expect.arrayContaining([
           expect.objectContaining({ workflow: "ci.yml", status: "triggered" })
         ])
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies terminal OpenClaw developer sessions before the generic completion timeout", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-terminal-"));
+    const openClawHome = join(tempRoot, "openclaw-home");
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["games/pacman/index.html"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-04-04T12:40:00.000Z"),
+          idGenerator: () => "dev-terminal-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for terminal session coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-04-04T12:41:00.000Z")
+        }
+      );
+
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-terminal-001.jsonl"
+      );
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "I consumed the output budget." }],
+              stopReason: "length"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+
+      await expect(
+        runDeveloperPhase(
+          {
+            taskId: planningResult.manifest.taskId,
+            targetRoot: tempRoot,
+            workspaceId: "workspace-terminal-001"
+          },
+          {
+            repository,
+            developer: new DeterministicDeveloperAgent(),
+            openClawDispatch: new FixtureOpenClawDispatchAdapter({
+              fixedSessionId: "session-terminal-001"
+            }),
+            openClawAgentId: "reddwarf-developer",
+            workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+            openClawCompletionAwaiter: createDeveloperHandoffAwaiter({
+              timeoutMs: 60_000,
+              pollIntervalMs: 25,
+              sessionIdleTimeoutMs: 250,
+              openClawHomePath: openClawHome
+            }),
+            clock: () => new Date("2026-04-04T12:49:00.000Z"),
+            idGenerator: () => "dev-terminal-run"
+          }
+        )
+      ).rejects.toMatchObject({
+        code: "OPENCLAW_SESSION_TERMINATED",
+        phase: "development"
+      });
+
+      const failedRecord = repository.phaseRecords.find(
+        (record) =>
+          record.taskId === planningResult.manifest.taskId &&
+          record.phase === "development" &&
+          record.status === "failed"
+      );
+      expect((failedRecord?.details as Record<string, unknown>)?.code).toBe(
+        "OPENCLAW_SESSION_TERMINATED"
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

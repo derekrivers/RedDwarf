@@ -18,6 +18,9 @@ export interface OpenClawSessionEntry {
   toolName?: string;
   toolCallId?: string;
   metadata?: Record<string, unknown>;
+  stopReason?: string;
+  isError?: boolean;
+  eventType?: string;
 }
 
 /**
@@ -61,20 +64,12 @@ export function parseSessionJsonl(
   for (let i = 0; i < lines.length; i++) {
     try {
       const parsed = JSON.parse(lines[i]!) as Record<string, unknown>;
-      if (typeof parsed["role"] !== "string" || typeof parsed["content"] !== "string") {
+      const normalized = normalizeSessionEntry(parsed);
+      if (normalized === null) {
         errors.push(`Line ${i + 1}: missing role or content field`);
         continue;
       }
-      entries.push({
-        role: parsed["role"] as OpenClawSessionEntry["role"],
-        content: parsed["content"],
-        ...(typeof parsed["timestamp"] === "string" ? { timestamp: parsed["timestamp"] } : {}),
-        ...(typeof parsed["toolName"] === "string" ? { toolName: parsed["toolName"] } : {}),
-        ...(typeof parsed["toolCallId"] === "string" ? { toolCallId: parsed["toolCallId"] } : {}),
-        ...(typeof parsed["metadata"] === "object" && parsed["metadata"] !== null
-          ? { metadata: parsed["metadata"] as Record<string, unknown> }
-          : {})
-      });
+      entries.push(normalized);
     } catch {
       errors.push(`Line ${i + 1}: invalid JSON`);
     }
@@ -88,6 +83,94 @@ export function parseSessionJsonl(
     parsedAt: asIsoTimestamp(),
     errors
   };
+}
+
+function normalizeSessionEntry(parsed: Record<string, unknown>): OpenClawSessionEntry | null {
+  if (typeof parsed["role"] === "string" && typeof parsed["content"] === "string") {
+    return {
+      role: parsed["role"] as OpenClawSessionEntry["role"],
+      content: parsed["content"],
+      ...(typeof parsed["timestamp"] === "string" ? { timestamp: parsed["timestamp"] } : {}),
+      ...(typeof parsed["toolName"] === "string" ? { toolName: parsed["toolName"] } : {}),
+      ...(typeof parsed["toolCallId"] === "string" ? { toolCallId: parsed["toolCallId"] } : {}),
+      ...(typeof parsed["metadata"] === "object" && parsed["metadata"] !== null
+        ? { metadata: parsed["metadata"] as Record<string, unknown> }
+        : {}),
+      ...(typeof parsed["stopReason"] === "string" ? { stopReason: parsed["stopReason"] } : {}),
+      ...(typeof parsed["isError"] === "boolean" ? { isError: parsed["isError"] } : {}),
+      ...(typeof parsed["type"] === "string" ? { eventType: parsed["type"] } : {})
+    };
+  }
+
+  if (parsed["type"] !== "message") {
+    return null;
+  }
+
+  const message = parsed["message"];
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return null;
+  }
+
+  const messageRecord = message as Record<string, unknown>;
+  if (typeof messageRecord["role"] !== "string") {
+    return null;
+  }
+
+  const normalizedRole =
+    messageRecord["role"] === "toolResult"
+      ? "tool"
+      : messageRecord["role"];
+  if (
+    normalizedRole !== "system" &&
+    normalizedRole !== "user" &&
+    normalizedRole !== "assistant" &&
+    normalizedRole !== "tool"
+  ) {
+    return null;
+  }
+
+  const content = normalizeMessageContent(messageRecord["content"]);
+  return {
+    role: normalizedRole,
+    content,
+    ...(typeof parsed["timestamp"] === "string" ? { timestamp: parsed["timestamp"] } : {}),
+    ...(typeof messageRecord["toolName"] === "string" ? { toolName: messageRecord["toolName"] } : {}),
+    ...(typeof messageRecord["toolCallId"] === "string" ? { toolCallId: messageRecord["toolCallId"] } : {}),
+    ...(typeof messageRecord["stopReason"] === "string" ? { stopReason: messageRecord["stopReason"] } : {}),
+    ...(typeof messageRecord["isError"] === "boolean" ? { isError: messageRecord["isError"] } : {}),
+    ...(typeof parsed["type"] === "string" ? { eventType: parsed["type"] } : {})
+  };
+}
+
+function normalizeMessageContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return "";
+      }
+      const record = item as Record<string, unknown>;
+      if (record["type"] === "text" && typeof record["text"] === "string") {
+        return record["text"];
+      }
+      if (record["type"] === "thinking" && typeof record["thinking"] === "string") {
+        return record["thinking"];
+      }
+      if (record["type"] === "toolCall") {
+        const name = typeof record["name"] === "string" ? record["name"] : "unknown";
+        return `[toolCall:${name}]`;
+      }
+      return "";
+    })
+    .filter((value) => value.length > 0)
+    .join("\n\n");
 }
 
 /**

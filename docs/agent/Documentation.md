@@ -14,6 +14,11 @@
 - Investigated live development failure issue 40 (`derekrivers-firstvoyage-40`) and traced the retry exhaustion to RedDwarf’s own workspace write-enablement step, not the GitHub task: `enableWorkspaceCodeWriting(...)` was failing before OpenClaw dispatch with `required patch "product code writes guardrail line" could not be applied`.
 - Hardened `packages/control-plane/src/live-workflow.ts` so write-enablement patching is idempotent for already-upgraded runtime files and matches the `SOUL.md` product-code-write guardrail by pattern instead of one brittle literal string. This lets retries survive partially upgraded workspace instruction files.
 - Added a troubleshooting entry documenting the development-phase symptom, the telltale partially upgraded workspace state (`TOOLS.md` / `workspace.json` advanced while `SOUL.md` stays readonly), and the working verification path.
+- Investigated live development timeout issue 45 (`derekrivers-firstvoyage-45`) and confirmed the generic `OPENCLAW_COMPLETION_TIMED_OUT` was hiding a more specific dead-session failure: the developer session transcript ended with `stopReason: "length"` after broad repo inspection and never wrote `developer-handoff.md`.
+- Hardened `createDeveloperHandoffAwaiter(...)` in `packages/control-plane/src/live-workflow.ts` so development now inspects the real OpenClaw JSONL session transcript, fails fast on terminal assistant stop reasons, and raises a distinct stalled-session error when transcript growth stops before the handoff appears.
+- Expanded `packages/control-plane/src/openclaw-session.ts` to parse real OpenClaw `type: "message"` JSONL records, including nested content arrays, `stopReason`, and tool-result errors, so session evidence and runtime diagnostics share the same transcript shape.
+- Tightened the OpenClaw developer prompt in `packages/control-plane/src/pipeline/prompts.ts` to explicitly avoid broad repo-wide enumeration and `.git` inspection, steering the agent toward narrow reads of likely task paths before implementation.
+- Added focused regression coverage in `packages/control-plane/src/index.test.ts` for the real JSONL transcript shape, awaiter fast-fail on terminal sessions, and development-phase classification of `OPENCLAW_SESSION_TERMINATED`.
 
 ## 2026-04-03
 

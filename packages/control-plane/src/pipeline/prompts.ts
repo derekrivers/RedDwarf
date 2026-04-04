@@ -408,6 +408,8 @@ export function buildOpenClawDeveloperPrompt(
     "Use the preferred path list as guidance for the likely implementation surface, but treat the blocked path list as the hard rule.",
     "Leave unrelated files untouched and do not modify any repo path that appears in the blocked list.",
     "You may create adjacent helper, setup, config, or support files when needed unless the repo-relative path falls under a blocked pattern.",
+    "Do not recursively enumerate the whole repository or inspect `.git` internals. Avoid broad repo-wide `find`, `ls -R`, or similar sweeps unless you are concretely blocked without them.",
+    "Start with the trusted task contract, planning spec, and the most likely target paths. Use narrow reads/listings against likely files or directories, then move into implementation once you have enough context.",
     "When `package.json` is in the preferred implementation paths, `.gitignore` is also approved as a companion file so install and build artifacts such as `node_modules/` stay out of version control.",
     "If the change appears to require a blocked repo path, do not touch it; record the blocker clearly in the handoff instead.",
     ...(workspace.descriptor.toolPolicy.allowedCapabilities.includes("can_run_tests")
