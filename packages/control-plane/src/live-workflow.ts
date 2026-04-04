@@ -20,6 +20,7 @@ import {
   normalizeChangedRepoPath
 } from "./allowed-paths.js";
 import type { PlanningPipelineLogger } from "./logger.js";
+import { normalizeOpenClawSessionKey } from "./openclaw-session-key.js";
 import { readSessionTranscript } from "./openclaw-session.js";
 import { formatLiteralList } from "./workspace.js";
 
@@ -651,8 +652,9 @@ export function createDeveloperHandoffAwaiter(
       const heartbeatIntervalMs =
         input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
       const codeWriteEnabled = input.workspace.descriptor.toolPolicy.codeWriteEnabled;
-      const sessionTranscriptPath = resolveOpenClawSessionTranscriptPath({
+      const sessionTranscriptPath = await resolveOpenClawSessionTranscriptPath({
         openClawHomePath,
+        sessionKey: input.sessionKey,
         sessionId: input.dispatchResult.sessionId ?? null,
         agentId: input.dispatchResult.agentId ?? null
       });
@@ -805,22 +807,108 @@ function resolveOpenClawHomePath(explicitHomePath?: string): string {
   return dirname(resolve(configPath));
 }
 
-function resolveOpenClawSessionTranscriptPath(input: {
+async function resolveOpenClawSessionTranscriptPath(input: {
   openClawHomePath: string;
+  sessionKey: string;
   sessionId: string | null;
   agentId: string | null;
-}): string | null {
-  if (!input.sessionId || !input.agentId) {
+}): Promise<string | null> {
+  const agentId = input.agentId;
+  if (!agentId) {
+    return null;
+  }
+
+  if (input.sessionId) {
+    const directTranscriptPath = join(
+      input.openClawHomePath,
+      "agents",
+      agentId,
+      "sessions",
+      `${input.sessionId}.jsonl`
+    );
+    if (await pathExists(directTranscriptPath)) {
+      return directTranscriptPath;
+    }
+  }
+
+  const resolvedSessionId = await resolveOpenClawSessionIdFromRegistry({
+    openClawHomePath: input.openClawHomePath,
+    sessionKey: input.sessionKey,
+    agentId
+  });
+  if (!resolvedSessionId) {
     return null;
   }
 
   return join(
     input.openClawHomePath,
     "agents",
+    agentId,
+    "sessions",
+    `${resolvedSessionId}.jsonl`
+  );
+}
+
+async function resolveOpenClawSessionIdFromRegistry(input: {
+  openClawHomePath: string;
+  sessionKey: string;
+  agentId: string;
+}): Promise<string | null> {
+  const sessionsRegistryPath = join(
+    input.openClawHomePath,
+    "agents",
     input.agentId,
     "sessions",
-    `${input.sessionId}.jsonl`
+    "sessions.json"
   );
+
+  if (!(await pathExists(sessionsRegistryPath))) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(sessionsRegistryPath, "utf8"));
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const expectedNormalizedKey = `agent:${input.agentId}:${normalizeOpenClawSessionKey(input.sessionKey)}`;
+  const expectedRawKey = `agent:${input.agentId}:${input.sessionKey}`;
+
+  for (const [entryKey, entryValue] of Object.entries(parsed)) {
+    if (
+      entryKey !== expectedRawKey &&
+      normalizeOpenClawRegistrySessionKey(entryKey, input.agentId) !== expectedNormalizedKey
+    ) {
+      continue;
+    }
+
+    if (!entryValue || typeof entryValue !== "object" || Array.isArray(entryValue)) {
+      continue;
+    }
+
+    const sessionId = (entryValue as Record<string, unknown>)["sessionId"];
+    if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+      return sessionId;
+    }
+  }
+
+  return null;
+}
+
+function normalizeOpenClawRegistrySessionKey(entryKey: string, agentId: string): string {
+  const prefix = `agent:${agentId}:`;
+  if (!entryKey.startsWith(prefix)) {
+    return entryKey;
+  }
+
+  const sessionKey = entryKey.slice(prefix.length);
+  return `${prefix}${normalizeOpenClawSessionKey(sessionKey)}`;
 }
 
 /**

@@ -63,6 +63,7 @@ import {
   renderArchitectureReviewReportMarkdown
 } from "./prompts.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
+import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
 
 export async function runArchitectureReviewPhase(
   input: RunArchitectureReviewPhaseInput,
@@ -439,7 +440,7 @@ export async function runArchitectureReviewPhase(
 
       const openClawReviewAgentId =
         dependencies.openClawReviewAgentId ?? "reddwarf-arch-reviewer";
-      const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
+      const sessionKey = buildOpenClawIssueSessionKeyFromManifest(currentManifest);
       const prompt = buildOpenClawArchitectureReviewPrompt(
         bundle,
         currentManifest,

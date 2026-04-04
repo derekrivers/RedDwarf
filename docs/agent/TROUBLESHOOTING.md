@@ -8,6 +8,14 @@
 - Working workaround: run Vitest directly with `corepack pnpm exec vitest run --configLoader runner` so Vite does not bundle the config to `.vite-temp`, and run that command outside the sandbox when the suite needs localhost listeners.
 - Verification: `corepack pnpm exec vitest run --configLoader runner`; `corepack pnpm typecheck`.
 
+## Mixed-case GitHub repos can break OpenClaw `sessions_history` and transcript lookup unless session keys are normalized
+
+- Symptom: a developer run on a mixed-case GitHub repo such as `derekrivers/FirstVoyage` reports that `sessions_history` returned `No session found: github:issue:derekrivers/FirstVoyage:51`, even though the session exists on disk, and the development failure can fall back to a generic timeout instead of classifying the terminal transcript.
+- Root cause: OpenClaw persists agent session registry keys with the repo portion lowercased (`github:issue:derekrivers/firstvoyage:51`). If RedDwarf constructs prompt lookups or transcript correlation keys from the original repo casing, cross-agent history lookup misses. If the webhook response also omits `sessionId`, the awaiter cannot find the transcript without consulting `agents/<agent>/sessions/sessions.json`.
+- Failing approach: reusing `manifest.source.repo` verbatim in OpenClaw `github:issue:` session keys or assuming the hook response always contains a trustworthy `sessionId`.
+- Working workaround: normalize the repo segment to lowercase for every generated `github:issue:` session key, and when `sessionId` is missing or does not map to a transcript file, recover it from the agent `sessions.json` registry by normalized session key.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts`; `corepack pnpm typecheck`.
+
 ## SCM stalls after frontend scaffolding because `git add --all` tries to stage `node_modules`
 
 - Symptom: a React/Vite/npm task completes development, but the SCM phase slows dramatically, times out, or appears stuck while preparing the commit. The workspace repo has a generated `node_modules/` tree and no `.gitignore`.

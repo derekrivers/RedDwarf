@@ -86,6 +86,7 @@ import {
   materializeWorkspaceCiTool,
   processWorkspaceCiRequests
 } from "../ci-tool.js";
+import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
 
 export async function runDeveloperPhase(
   input: RunDeveloperPhaseInput,
@@ -475,7 +476,7 @@ export async function runDeveloperPhase(
       });
       assignWorkspaceRepoRoot(workspace, repoBootstrap.repoRoot);
       const openClawAgentId = dependencies.openClawAgentId ?? "reddwarf-developer";
-      const sessionKey = `github:issue:${currentManifest.source.repo}:${currentManifest.source.issueNumber ?? taskId}`;
+      const sessionKey = buildOpenClawIssueSessionKeyFromManifest(currentManifest);
       if (scopeRiskWarnings.length > 0) {
         await recordRunEvent({
           repository,
