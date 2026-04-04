@@ -1,7 +1,7 @@
 # Holly → Lister Sessions Relay
 
-**Status:** Planned — infrastructure complete, implementation pending  
-**Depends on:** agentToAgent config commit (`1d6feff`) — merged to master
+**Status:** Complete  
+**Commits:** `1d6feff` (agentToAgent infrastructure), `e74c604` (relay implementation)
 
 ---
 
