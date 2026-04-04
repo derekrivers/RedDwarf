@@ -4418,6 +4418,141 @@ describe("createDeveloperHandoffAwaiter", () => {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("extends the developer deadline while the transcript keeps making progress", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-progress-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-progress.jsonl"
+      );
+      const artifactsDir = join(tempRoot, "artifacts");
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await mkdir(artifactsDir, { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Starting implementation." }],
+              stopReason: "toolUse"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      setTimeout(() => {
+        void writeFile(
+          sessionPath,
+          [
+            JSON.stringify({
+              type: "message",
+              timestamp: "2026-04-04T12:48:53.726Z",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Starting implementation." }],
+                stopReason: "toolUse"
+              }
+            }),
+            JSON.stringify({
+              type: "message",
+              timestamp: "2026-04-04T12:48:54.050Z",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Still making progress." }],
+                stopReason: "toolUse"
+              }
+            })
+          ].join("\n"),
+          "utf8"
+        );
+      }, 60);
+
+      setTimeout(() => {
+        void writeFile(
+          join(artifactsDir, "developer-handoff.md"),
+          [
+            "# Development Handoff",
+            "",
+            "- Task ID: acme-platform-48",
+            "- Run ID: test-run",
+            "- Workspace ID: workspace-progress",
+            "- Tool policy mode: development_readonly",
+            "- Credential policy mode: none",
+            "- Approved secret scopes: none",
+            "- Code writing enabled: no",
+            "",
+            "## Summary",
+            "",
+            "Completed enough work to produce a handoff.",
+            "",
+            "## Implementation Notes",
+            "",
+            "- none",
+            "",
+            "## Blocked Actions",
+            "",
+            "- none",
+            "",
+            "## Next Actions",
+            "",
+            "- Review the work."
+          ].join("\n"),
+          "utf8"
+        );
+      }, 140);
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 100,
+        pollIntervalMs: 20,
+        sessionIdleTimeoutMs: 500
+      });
+
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-48" } as never,
+          workspace: {
+            workspaceId: "workspace-progress",
+            workspaceRoot: tempRoot,
+            artifactsDir,
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: false }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:48",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:48",
+            agentId: "reddwarf-developer",
+            sessionId: "session-progress",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          onHeartbeat: undefined
+        })
+      ).resolves.toMatchObject({
+        handoffPath: join(artifactsDir, "developer-handoff.md")
+      });
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("parseSessionJsonl", () => {

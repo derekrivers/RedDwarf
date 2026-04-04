@@ -607,6 +607,7 @@ export interface DeveloperHandoffAwaiterOptions {
   heartbeatIntervalMs?: number;
   sessionIdleTimeoutMs?: number;
   openClawHomePath?: string;
+  maxRuntimeMs?: number;
 }
 
 export function createDeveloperHandoffAwaiter(
@@ -618,12 +619,15 @@ export function createDeveloperHandoffAwaiter(
     options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
   const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? 2 * 60 * 1000;
   const openClawHomePath = resolveOpenClawHomePath(options.openClawHomePath);
+  const maxRuntimeMs = options.maxRuntimeMs ?? null;
 
   return {
     async waitForCompletion(input) {
       const handoffPath = join(input.workspace.artifactsDir, "developer-handoff.md");
       const repoRoot = readWorkspaceRepoRoot(input.workspace);
-      const deadline = Date.now() + timeoutMs;
+      const startedAt = Date.now();
+      let progressDeadline = startedAt + timeoutMs;
+      const hardDeadline = maxRuntimeMs === null ? null : startedAt + maxRuntimeMs;
       let lastHeartbeatAt = Date.now();
       const heartbeatIntervalMs =
         input.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
@@ -635,8 +639,12 @@ export function createDeveloperHandoffAwaiter(
       });
       let lastTranscriptSignature: string | null = null;
       let lastTranscriptGrowthAt: number | null = null;
+      let lastRepoSignature: string | null = null;
 
-      while (Date.now() < deadline) {
+      while (
+        Date.now() < progressDeadline &&
+        (hardDeadline === null || Date.now() < hardDeadline)
+      ) {
         if (await pathExists(handoffPath)) {
           const handoff = await readFile(handoffPath, "utf8");
           const headings = [
@@ -669,6 +677,17 @@ export function createDeveloperHandoffAwaiter(
           }
         }
 
+        if (repoRoot !== null) {
+          const repoSignature = await inspectRepositoryProgressSignature(
+            repoRoot,
+            input.logger
+          );
+          if (repoSignature !== null && repoSignature !== lastRepoSignature) {
+            lastRepoSignature = repoSignature;
+            progressDeadline = Date.now() + timeoutMs;
+          }
+        }
+
         if (sessionTranscriptPath !== null && await pathExists(sessionTranscriptPath)) {
           const transcriptStatus = await inspectOpenClawSessionTranscript(sessionTranscriptPath, {
             sessionKey: input.sessionKey,
@@ -679,6 +698,7 @@ export function createDeveloperHandoffAwaiter(
           if (signature !== lastTranscriptSignature) {
             lastTranscriptSignature = signature;
             lastTranscriptGrowthAt = Date.now();
+            progressDeadline = Date.now() + timeoutMs;
           }
 
           if (transcriptStatus.lastAssistantStopReason !== null) {
@@ -1052,6 +1072,25 @@ async function repositoryHasChanges(
     return parseInt(revCount.stdout.trim(), 10) > 1;
   } catch {
     return false;
+  }
+}
+
+async function inspectRepositoryProgressSignature(
+  repoRoot: string,
+  logger?: PlanningPipelineLogger
+): Promise<string | null> {
+  if (!(await pathExists(join(repoRoot, ".git")))) {
+    return null;
+  }
+
+  try {
+    const [status, revCount] = await Promise.all([
+      runCommand("git", ["status", "--porcelain"], repoRoot, logger),
+      runCommand("git", ["rev-list", "--count", "HEAD"], repoRoot, logger)
+    ]);
+    return `${status.stdout.trim()}::${revCount.stdout.trim()}`;
+  } catch {
+    return null;
   }
 }
 

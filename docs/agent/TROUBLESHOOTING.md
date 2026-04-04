@@ -88,6 +88,14 @@
 - Working workaround: preserve `errorMessage` on parsed session entries and treat terminal provider errors as `OPENCLAW_SESSION_TERMINATED` immediately. The failure evidence should carry both `stopReason` and the provider error text so operators can distinguish policy/content-filter blocks from genuine runtime slowness.
 - Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'preserves terminal provider error messages from OpenClaw assistant events|fails fast when the OpenClaw transcript ends with a provider error message before handoff output'"`.
 
+## Large OpenClaw development tasks hit the wall-clock timeout even though work is still progressing
+
+- Symptom: long development tasks appear healthy and keep producing transcript updates or repo changes, but they still die once the original development timeout window expires.
+- Root cause: a fixed completion deadline treats active progress and inactivity the same way. Even when the agent is still writing files or advancing the transcript, the old wall-clock cutoff would eventually fire.
+- Failing approach: increasing the timeout globally and hoping one larger static number fits every task.
+- Working workaround: use a sliding no-progress window for development completion. Transcript growth or repo-state movement should renew the deadline, while dead/error sessions and stalled transcripts still fail fast through the existing terminal/stall checks.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'extends the developer deadline while the transcript keeps making progress|fails fast when the OpenClaw transcript ends with a provider error message before handoff output|fails fast when the OpenClaw transcript ends with a terminal stop reason before handoff output'"`.
+
 ## Architecture review blocks a task at `await_human_review`, but there is no pending approval to continue
 
 - Symptom: a task reaches architecture review, returns `verdict: "escalate"` or `verdict: "fail"`, and the manifest becomes `blocked` in `architecture_review` with `nextAction: "await_human_review"`. Older builds still show only the original `policy_gate` approval row, so there is nothing pending to approve in `/approvals`.

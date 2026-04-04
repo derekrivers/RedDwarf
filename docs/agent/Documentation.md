@@ -29,6 +29,7 @@
 - Hardened `packages/integrations/src/github.ts` so requested capability lines now accept comma-separated capability lists inside a single bullet or plain line, and added regression coverage in `packages/integrations/src/github.test.ts` for the exact mixed-bullet format that hit issue 47.
 - Investigated the next live task-47 development failure and confirmed the reported `OPENCLAW_COMPLETION_TIMED_OUT` was actually a provider-side terminal session error. The OpenClaw transcript ended with assistant `stopReason: "error"` plus `errorMessage: "Output blocked by content filtering policy"` before any handoff was written.
 - Hardened the OpenClaw transcript parser and developer awaiter so provider error messages are preserved from session JSONL and treated as terminal session failures immediately, rather than waiting the full handoff timeout. Failure evidence for `OPENCLAW_SESSION_TERMINATED` now includes the provider error message alongside the stop reason.
+- Reworked the developer awaiter timeout model so it now behaves like a sliding no-progress window rather than a fixed wall-clock cutoff. Ongoing transcript growth or repo-state movement renews the development deadline, allowing large tasks to keep building while they continue making observable progress.
 
 ## 2026-04-03
 
