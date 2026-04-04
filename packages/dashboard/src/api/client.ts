@@ -13,6 +13,7 @@ import type {
   RunDetailResponse,
   TaskDetailResponse
 } from "../types/dashboard";
+import { clearOperatorToken, readOperatorToken } from "../lib/session";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -109,8 +110,7 @@ export interface SubmitIssueResponse {
 
 interface ApiClientOptions {
   baseUrl?: string;
-  token: string;
-  onUnauthorized: () => void;
+  onUnauthorized?: () => void;
 }
 
 function buildQueryString(params: Record<string, string | number | string[] | undefined>): string {
@@ -137,17 +137,23 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
   const baseUrl = options.baseUrl ?? "/api";
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const token = readOperatorToken();
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {
-        Authorization: `Bearer ${options.token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init.body ? { "Content-Type": "application/json" } : {}),
         ...init.headers
       }
     });
 
     if (response.status === 401) {
-      options.onUnauthorized();
+      clearOperatorToken();
+      if (options.onUnauthorized) {
+        options.onUnauthorized();
+      } else {
+        window.location.assign("/");
+      }
       throw new ApiError(401, "Operator token is no longer valid.");
     }
 

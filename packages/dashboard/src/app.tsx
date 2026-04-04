@@ -160,13 +160,9 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
   const apiClient = useMemo(
     () =>
       createApiClient({
-        token,
-        onUnauthorized: () => {
-          clearOperatorToken();
-          onLogout();
-        }
+        onUnauthorized: onLogout
       }),
-    [onLogout, token]
+    [onLogout]
   );
 
   const healthQuery = useQuery({
