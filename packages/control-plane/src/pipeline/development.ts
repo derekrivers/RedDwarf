@@ -81,7 +81,7 @@ import {
   renderDevelopmentHandoffMarkdown
 } from "./prompts.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
-import { detectArchitectHandoffPathViolations, detectPreDispatchScopeRisks } from "../scope-risks.js";
+import { detectArchitectAffectedPathViolations, detectPreDispatchScopeRisks } from "../scope-risks.js";
 import {
   materializeWorkspaceCiTool,
   processWorkspaceCiRequests
@@ -494,9 +494,9 @@ export async function runDeveloperPhase(
           createdAt: asIsoTimestamp(clock())
         });
       }
-      if (dependencies.hollyHandoffMarkdown) {
-        const architectViolations = detectArchitectHandoffPathViolations(
-          dependencies.hollyHandoffMarkdown,
+      if ((dependencies.architectAffectedAreas?.length ?? 0) > 0) {
+        const architectViolations = detectArchitectAffectedPathViolations(
+          dependencies.architectAffectedAreas ?? [],
           bundle.deniedPaths
         );
         if (architectViolations.length > 0) {
@@ -523,7 +523,6 @@ export async function runDeveloperPhase(
         bundle,
         currentManifest,
         workspace,
-        dependencies.hollyHandoffMarkdown,
         dependencies.runtimeConfig,
         scopeRiskWarnings
       );

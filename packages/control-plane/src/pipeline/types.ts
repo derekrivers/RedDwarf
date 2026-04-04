@@ -226,7 +226,7 @@ export interface DevelopmentPhaseDependencies {
   workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   openClawCompletionAwaiter?: OpenClawCompletionAwaiter;
   openClawAgentId?: string;
-  hollyHandoffMarkdown?: string;
+  architectAffectedAreas?: string[];
   environment?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;

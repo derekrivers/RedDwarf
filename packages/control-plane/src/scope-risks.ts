@@ -9,6 +9,16 @@ const viteConfigPattern = /^(?:vite|vitest)\.config\.[^/]+$/i;
  * Strips parenthetical notes such as `(new)` and em-dash annotations so that
  * the extracted strings are bare repo-relative paths suitable for path enforcement.
  */
+function normalizeArchitectAffectedPath(path: string): string {
+  let normalized = path.trim();
+  normalized = normalized.replace(/\s+\([^)]*\)\s*$/, "").trim();
+  const emDashIndex = normalized.indexOf(" \u2014 ");
+  if (emDashIndex > 0) {
+    normalized = normalized.slice(0, emDashIndex).trim();
+  }
+  return normalized;
+}
+
 function extractArchitectAffectedPaths(hollyHandoffMarkdown: string): string[] {
   const sectionMatch = hollyHandoffMarkdown.match(
     /## Affected Files\n\n([\s\S]*?)(?:\n## |$)/
@@ -21,18 +31,21 @@ function extractArchitectAffectedPaths(hollyHandoffMarkdown: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
-    .map((line) => {
-      let path = line.slice(2).trim();
-      // Strip trailing parenthetical notes like "(new)" or "(modified)".
-      path = path.replace(/\s+\([^)]*\)\s*$/, "").trim();
-      // Strip em-dash annotations like "— description text".
-      const emDashIndex = path.indexOf(" \u2014 ");
-      if (emDashIndex > 0) {
-        path = path.slice(0, emDashIndex).trim();
-      }
-      return path;
-    })
+    .map((line) => normalizeArchitectAffectedPath(line.slice(2)))
     .filter((path) => path.length > 0 && !path.startsWith("#"));
+}
+
+export function detectArchitectAffectedPathViolations(
+  affectedAreas: readonly string[],
+  deniedPaths: readonly string[]
+): string[] {
+  const affectedPaths = affectedAreas
+    .map((item) => normalizeArchitectAffectedPath(item))
+    .filter((path) => path.length > 0 && !path.startsWith("#"));
+  if (affectedPaths.length === 0) {
+    return [];
+  }
+  return findDeniedChangedFiles(affectedPaths, [...deniedPaths]);
 }
 
 /**
@@ -45,11 +58,10 @@ export function detectArchitectHandoffPathViolations(
   hollyHandoffMarkdown: string,
   deniedPaths: readonly string[]
 ): string[] {
-  const affectedPaths = extractArchitectAffectedPaths(hollyHandoffMarkdown);
-  if (affectedPaths.length === 0) {
-    return [];
-  }
-  return findDeniedChangedFiles(affectedPaths, [...deniedPaths]);
+  return detectArchitectAffectedPathViolations(
+    extractArchitectAffectedPaths(hollyHandoffMarkdown),
+    deniedPaths
+  );
 }
 
 export function detectPreDispatchScopeRisks(

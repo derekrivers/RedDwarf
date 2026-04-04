@@ -152,18 +152,14 @@ export async function dispatchReadyTask(
     organizationId: deriveOrganizationId(manifest.source.repo)
   });
 
-  // Retrieve Holly's architect handoff from memory. The architecture plan is a
-  // required prerequisite for the developer phase — a missing or unreadable
-  // handoff blocks the run rather than silently degrading Lister's context.
+  // Retrieve Holly's affected-file list from memory so development can still
+  // warn about denied-path pressure without injecting the full handoff into
+  // Lister's opening prompt.
   const architectHandoffSchema = z.object({
-    summary: z.string(),
-    affectedAreas: z.array(z.string()).default([]),
-    assumptions: z.array(z.string()).default([]),
-    constraints: z.array(z.string()).default([]),
-    testExpectations: z.array(z.string()).default([])
+    affectedAreas: z.array(z.string()).default([])
   });
 
-  let hollyHandoffMarkdown: string | undefined;
+  let architectAffectedAreas: string[] | undefined;
   {
     let architectMemoryError: unknown = null;
 
@@ -173,26 +169,11 @@ export async function dispatchReadyTask(
       );
       if (architectMemory?.value !== undefined && architectMemory.value !== null) {
         const parsed = architectHandoffSchema.safeParse(architectMemory.value);
-        if (parsed.success) {
-          const handoff = parsed.data;
-          const parts: string[] = [];
-          parts.push(`# Architecture Plan\n\n${handoff.summary}`);
-          if (handoff.affectedAreas.length > 0) {
-            parts.push(`\n## Affected Areas\n\n${handoff.affectedAreas.map((a) => `- ${a}`).join("\n")}`);
-          }
-          if (handoff.assumptions.length > 0) {
-            parts.push(`\n## Assumptions\n\n${handoff.assumptions.map((a) => `- ${a}`).join("\n")}`);
-          }
-          if (handoff.constraints.length > 0) {
-            parts.push(`\n## Constraints\n\n${handoff.constraints.map((a) => `- ${a}`).join("\n")}`);
-          }
-          if (handoff.testExpectations.length > 0) {
-            parts.push(`\n## Test Expectations\n\n${handoff.testExpectations.map((a) => `- ${a}`).join("\n")}`);
-          }
-          hollyHandoffMarkdown = parts.join("\n");
-          dispatchLogger.info("Retrieved Holly architect handoff from memory.", {
+        if (parsed.success && parsed.data.affectedAreas.length > 0) {
+          architectAffectedAreas = parsed.data.affectedAreas;
+          dispatchLogger.info("Retrieved Holly architect affected-file list from memory.", {
             taskId,
-            contentLength: hollyHandoffMarkdown.length
+            affectedAreaCount: architectAffectedAreas.length
           });
         }
       }
@@ -218,12 +199,8 @@ export async function dispatchReadyTask(
       };
     }
 
-    if (hollyHandoffMarkdown === undefined) {
-      // No architect.handoff memory record exists yet. This is expected on the
-      // very first dispatch (the record is written after planning completes). Log
-      // it as a warning but do not block — the developer phase is designed to
-      // handle a missing handoff by running in readonly/no-plan mode.
-      dispatchLogger.warn("No Holly architect handoff found in memory — dispatching developer without architecture plan.", { taskId });
+    if (architectAffectedAreas === undefined) {
+      dispatchLogger.warn("No Holly architect affected-file list found in memory — dispatching developer without architect path warnings.", { taskId });
     }
   }
 
@@ -257,7 +234,7 @@ export async function dispatchReadyTask(
           workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper,
           openClawCompletionAwaiter: dependencies.openClawCompletionAwaiter
         }),
-        ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
+        ...(architectAffectedAreas ? { architectAffectedAreas } : {}),
         ...sharedDeps
       });
       phasesExecuted.push("development");
