@@ -116,6 +116,26 @@ export interface OpenClawAgentConfig {
   default?: boolean;
 }
 
+/**
+ * Gateway-level tool settings that control cross-agent session access.
+ * These live at the top level of openclaw.json under `tools`, not inside
+ * individual agent entries.
+ */
+export interface OpenClawGlobalToolsConfig {
+  /** Controls cross-agent session messaging via sessions_send. */
+  agentToAgent?: {
+    /** Master switch for cross-agent session sends. Defaults to false in OpenClaw. */
+    enabled: boolean;
+    /** Allowlist of agent IDs that can be targeted by sessions_send / sessions_history. */
+    allow?: string[];
+  };
+  /** Controls which sessions are visible to sessions_list/history/send tools. */
+  sessions?: {
+    /** "tree" (default) | "agent" | "all". Use "all" for cross-agent visibility. */
+    visibility: "self" | "tree" | "agent" | "all";
+  };
+}
+
 export interface OpenClawConfig {
   gateway: OpenClawGatewayConfig;
   hooks: OpenClawHooksConfig;
@@ -123,6 +143,8 @@ export interface OpenClawConfig {
     text?: boolean;
     native?: boolean | "auto";
   };
+  /** Gateway-level tool settings, including cross-agent session access. */
+  tools?: OpenClawGlobalToolsConfig;
   channels?: OpenClawChannelsConfig;
   browser?: OpenClawBrowserConfig;
   mcp?: {
@@ -211,6 +233,20 @@ export interface GenerateOpenClawConfigOptions {
    * When omitted, the generated config keeps the template placeholder.
    */
   operatorApiBaseUrl?: string;
+
+  /**
+   * Whether to enable cross-agent session messaging via sessions_send /
+   * sessions_history. When true, the generated config emits a top-level
+   * `tools.agentToAgent` block that allows any agent in the roster to
+   * target any other, and sets `tools.sessions.visibility: "all"` so
+   * sessions are discoverable across agent boundaries.
+   *
+   * Defaults to true — this is the intended RedDwarf production posture.
+   * The gateway-level allow list is automatically scoped to the generated
+   * agent roster so cross-agent sends cannot target agents outside the
+   * RedDwarf set.
+   */
+  enableAgentToAgent?: boolean;
 }
 
 /**
@@ -290,6 +326,9 @@ export function generateOpenClawConfig(
   const operatorApiBaseUrl =
     options.operatorApiBaseUrl ?? "${REDDWARF_OPENCLAW_OPERATOR_API_URL}";
 
+  const enableAgentToAgent = options.enableAgentToAgent ?? true;
+  const agentIds = roles.map((role) => role.agentId);
+
   const config: OpenClawConfig = {
     gateway: {
       bind: "lan",
@@ -309,7 +348,7 @@ export function generateOpenClawConfig(
       token: hookToken,
       path: "/hooks",
       defaultSessionKey: "hook:ingress",
-      allowedAgentIds: roles.map((role) => role.agentId),
+      allowedAgentIds: agentIds,
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
     },
@@ -317,6 +356,19 @@ export function generateOpenClawConfig(
       text: true,
       native: "auto"
     },
+    ...(enableAgentToAgent
+      ? {
+          tools: {
+            agentToAgent: {
+              enabled: true,
+              allow: [...agentIds]
+            },
+            sessions: {
+              visibility: "all"
+            }
+          }
+        }
+      : {}),
     ...(options.discord
       ? {
           channels: {

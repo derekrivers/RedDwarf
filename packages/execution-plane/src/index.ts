@@ -174,7 +174,10 @@ export function createOpenClawAgentRoleDefinitions(
       "Performs read-only codebase analysis, planning support, and evidence-friendly synthesis inside the approved task boundary.",
     runtimePolicy: {
       toolProfile: "full",
-      allow: ["group:fs", "group:web", "group:openclaw"],
+      // group:sessions enables sessions_send so Holly can deliver her
+      // architecture plan directly into Lister's session once agentToAgent
+      // is enabled at the gateway level.
+      allow: ["group:fs", "group:web", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
       model: createOpenClawModelBinding("analyst", provider)
@@ -225,8 +228,12 @@ export function createOpenClawAgentRoleDefinitions(
       // group:runtime is intentionally excluded: the reviewer only reads workspace
       // files and writes a single architecture-review.json verdict. Process
       // execution is not required and would over-permission a read+write-JSON role.
-      allow: ["group:fs", "group:openclaw"],
-      deny: ["group:automation", "group:messaging", "group:runtime"],
+      // group:sessions enables sessions_history so Kryten can read Lister's
+      // transcript when forming the architecture review verdict.
+      // sessions_spawn/yield/subagents are denied to prevent Kryten from
+      // spawning autonomous sub-agents during review.
+      allow: ["group:fs", "group:sessions", "group:openclaw"],
+      deny: ["group:automation", "group:messaging", "group:runtime", "sessions_spawn", "sessions_yield", "subagents"],
       sandboxMode: "workspace_write",
       model: createOpenClawModelBinding("reviewer", provider)
     },
@@ -319,8 +326,12 @@ export function createOpenClawAgentRoleDefinitions(
       "Implements approved architecture plans safely and within scope, producing code changes, test updates, and a clear review handoff.",
     runtimePolicy: {
       toolProfile: "full",
-      allow: ["group:fs", "group:runtime", "group:openclaw"],
-      deny: ["group:automation", "group:messaging"],
+      // group:sessions enables sessions_history so Lister can read Holly's
+      // architecture plan from session context rather than from an injected
+      // markdown string. sessions_spawn/yield/subagents are denied to prevent
+      // Lister from spawning autonomous sub-agents during implementation.
+      allow: ["group:fs", "group:runtime", "group:sessions", "group:openclaw"],
+      deny: ["group:automation", "group:messaging", "sessions_spawn", "sessions_yield", "subagents"],
       sandboxMode: "workspace_write",
       model: createOpenClawModelBinding("developer", provider)
     },

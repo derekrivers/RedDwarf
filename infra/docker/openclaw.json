@@ -34,6 +34,21 @@
     "text": true,
     "native": "auto"
   },
+  "tools": {
+    "agentToAgent": {
+      "enabled": true,
+      "allow": [
+        "reddwarf-coordinator",
+        "reddwarf-analyst",
+        "reddwarf-arch-reviewer",
+        "reddwarf-validator",
+        "reddwarf-developer"
+      ]
+    },
+    "sessions": {
+      "visibility": "all"
+    }
+  },
   "channels": {
     "discord": {
       "enabled": false,
@@ -136,6 +151,7 @@
           "allow": [
             "group:fs",
             "group:web",
+            "group:sessions",
             "group:openclaw"
           ],
           "deny": [
@@ -157,12 +173,16 @@
           "profile": "full",
           "allow": [
             "group:fs",
-            "group:runtime",
+            "group:sessions",
             "group:openclaw"
           ],
           "deny": [
             "group:automation",
-            "group:messaging"
+            "group:messaging",
+            "group:runtime",
+            "sessions_spawn",
+            "sessions_yield",
+            "subagents"
           ]
         },
         "sandbox": {
@@ -201,11 +221,15 @@
           "allow": [
             "group:fs",
             "group:runtime",
+            "group:sessions",
             "group:openclaw"
           ],
           "deny": [
             "group:automation",
-            "group:messaging"
+            "group:messaging",
+            "sessions_spawn",
+            "sessions_yield",
+            "subagents"
           ]
         },
         "sandbox": {

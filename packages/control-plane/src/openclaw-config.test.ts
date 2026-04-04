@@ -117,16 +117,57 @@ describe("generateOpenClawConfig", () => {
     expect(reviewer?.tools.profile).toBe("full");
     expect(reviewer?.tools.allow).toEqual([
       "group:fs",
+      "group:sessions",
       "group:openclaw"
     ]);
     expect(reviewer?.tools.deny).toEqual([
       "group:automation",
       "group:messaging",
-      "group:runtime"
+      "group:runtime",
+      "sessions_spawn",
+      "sessions_yield",
+      "subagents"
     ]);
     expect(reviewer?.sandbox).toEqual({
       mode: "off"
     });
+  });
+
+  it("emits agentToAgent and sessions visibility in the global tools block by default", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    expect(config.tools?.agentToAgent?.enabled).toBe(true);
+    expect(config.tools?.sessions?.visibility).toBe("all");
+    // All agent IDs must be in the agentToAgent allow list
+    const agentIds = config.agents.list.map((a) => a.id);
+    for (const id of agentIds) {
+      expect(config.tools?.agentToAgent?.allow).toContain(id);
+    }
+  });
+
+  it("omits the agentToAgent tools block when enableAgentToAgent is false", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableAgentToAgent: false
+    });
+
+    expect(config.tools).toBeUndefined();
+  });
+
+  it("includes group:sessions in allow for analyst, developer, and arch-reviewer", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    const analyst = config.agents.list.find((a) => a.id === "reddwarf-analyst");
+    const developer = config.agents.list.find((a) => a.id === "reddwarf-developer");
+    const reviewer = config.agents.list.find((a) => a.id === "reddwarf-arch-reviewer");
+
+    expect(analyst?.tools.allow).toContain("group:sessions");
+    expect(developer?.tools.allow).toContain("group:sessions");
+    expect(reviewer?.tools.allow).toContain("group:sessions");
+
+    // Developer and reviewer must not be able to spawn sub-agents
+    expect(developer?.tools.deny).toContain("sessions_spawn");
+    expect(reviewer?.tools.deny).toContain("sessions_spawn");
   });
 
   it("maps model binding from runtime policy", () => {
