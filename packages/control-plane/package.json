@@ -16,6 +16,7 @@
     "@reddwarf/execution-plane": "workspace:*",
     "@reddwarf/integrations": "workspace:*",
     "@reddwarf/policy": "workspace:*",
+    "cors": "^2.8.6",
     "pino": "^9.6.0"
   }
 }

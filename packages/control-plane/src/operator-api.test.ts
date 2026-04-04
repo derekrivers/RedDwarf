@@ -1,5 +1,8 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import {
+  request as httpRequest,
+  type IncomingHttpHeaders
+} from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -228,7 +231,84 @@ function operatorDelete(
   });
 }
 
+function operatorOptions(
+  port: number,
+  path: string,
+  headers: Record<string, string>
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "OPTIONS",
+        headers
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: res.headers,
+            body: raw
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("operator API server", () => {
+  it("serves CORS preflight responses before auth and route handling", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const previousDashboardOrigin = process.env.REDDWARF_DASHBOARD_ORIGIN;
+    process.env.REDDWARF_DASHBOARD_ORIGIN = "http://localhost:4173";
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-04T19:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorOptions(port, "/runs", {
+        Origin: "http://localhost:4173",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization, Content-Type"
+      });
+
+      expect(response.status).toBe(204);
+      expect(response.body).toBe("");
+      expect(response.headers["access-control-allow-origin"]).toBe(
+        "http://localhost:4173"
+      );
+      expect(response.headers["access-control-allow-methods"]).toContain("GET");
+      expect(response.headers["access-control-allow-methods"]).toContain("POST");
+      expect(response.headers["access-control-allow-methods"]).toContain(
+        "OPTIONS"
+      );
+      expect(response.headers["access-control-allow-headers"]).toContain(
+        "Authorization"
+      );
+      expect(response.headers["access-control-allow-headers"]).toContain(
+        "Content-Type"
+      );
+    } finally {
+      await apiServer.stop();
+      if (previousDashboardOrigin === undefined) {
+        delete process.env.REDDWARF_DASHBOARD_ORIGIN;
+      } else {
+        process.env.REDDWARF_DASHBOARD_ORIGIN = previousDashboardOrigin;
+      }
+    }
+  });
+
   it("serves health, runs, and blocked endpoints with an empty repository", async () => {
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(
