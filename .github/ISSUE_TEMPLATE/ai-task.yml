@@ -47,9 +47,13 @@ body:
     id: affected-areas
     attributes:
       label: Affected Areas
-      description: Files, directories, or surfaces likely to change. One per line.
+      description: >
+        Files, directories, or glob patterns the developer is allowed to change. One per line.
+        Use directory globs (e.g. `packages/foo/src/**`) when the change spans multiple files —
+        exact file paths narrow the scope too much and often cause path violations.
+        The architect will refine this list; you only need to identify the rough surface.
       placeholder: |
-        packages/control-plane/src/operator-api.ts
+        packages/control-plane/src/**
         packages/control-plane/src/index.test.ts
       render: text
     validations:
@@ -67,9 +71,10 @@ body:
     id: requested-capabilities
     attributes:
       label: Requested Capabilities
-      description: Optional pipeline capabilities. One per line. Leave blank to use the default task-execution set.
-      placeholder: |
-        can_plan
+      description: >
+        Pipeline capabilities for this task. `can_write_code` is required for the developer to make
+        code changes — omitting it leaves the developer workspace read-only and no changes will be committed.
+      value: |
         can_write_code
         can_archive_evidence
       render: text

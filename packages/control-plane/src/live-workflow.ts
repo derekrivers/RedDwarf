@@ -225,9 +225,34 @@ export async function assertWorkspaceRepoChangesWithinAllowedPaths(
   });
 }
 
+const CAN_WRITE_CODE_GUIDANCE =
+  "Write or modify product code only after the development phase is enabled and policy grants it.";
+
+function applyRequiredPatch(
+  content: string,
+  search: string | RegExp,
+  replacement: string,
+  description: string
+): string {
+  const patched = content.replace(search as string, replacement);
+
+  if (patched === content) {
+    throw new Error(
+      `enableWorkspaceCodeWriting: required patch "${description}" could not be applied — the expected string was not found. The workspace instruction files may be out of sync with the current runtime.`
+    );
+  }
+
+  return patched;
+}
+
 export async function enableWorkspaceCodeWriting(
   workspace: MaterializedManagedWorkspace
 ): Promise<void> {
+  // Idempotency guard: if already upgraded in memory, the files are already patched.
+  if (workspace.descriptor.toolPolicy.codeWriteEnabled) {
+    return;
+  }
+
   const allowedCapabilities = capabilities.filter(
     (capability) =>
       capability === "can_write_code" ||
@@ -262,49 +287,104 @@ export async function enableWorkspaceCodeWriting(
   const soulPath = workspace.instructions.files.soulMd;
   const taskSkillPath = workspace.instructions.files.taskSkillMd;
 
-  const toolsContent = await readFile(toolsPath, "utf8");
-  await writeFile(
-    toolsPath,
-    toolsContent
-      .replace(
-        /- Tool policy mode: `[^`]+`/,
-        "- Tool policy mode: `development_readwrite`"
-      )
-      .replace(/- Code writing enabled: no/, "- Code writing enabled: yes")
-      .replace(
-        /- Allowed capabilities now: .*/,
-        `- Allowed capabilities now: ${formatLiteralList(allowedCapabilities)}`
-      )
-      .replace(
-        /- Currently denied capabilities: .*/,
-        `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`
-      )
-      .replace(
-        /Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default\./,
-        "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task."
-      ),
-    "utf8"
+  // --- TOOLS.md patches ---
+  let toolsContent = await readFile(toolsPath, "utf8");
+
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    /- Tool policy mode: `[^`]+`/,
+    "- Tool policy mode: `development_readwrite`",
+    "tool policy mode line"
+  );
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    "- Code writing enabled: no",
+    "- Code writing enabled: yes",
+    "code writing enabled line"
+  );
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    /- Allowed capabilities now: .*/,
+    `- Allowed capabilities now: ${formatLiteralList(allowedCapabilities)}`,
+    "allowed capabilities now line"
+  );
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    /- Currently denied capabilities: .*/,
+    `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
+    "currently denied capabilities line"
+  );
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    /Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default\./,
+    "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task.",
+    "tool policy note"
   );
 
-  const soulContent = await readFile(soulPath, "utf8");
-  await writeFile(
-    soulPath,
-    soulContent.replace(
-      "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
-      "- Product code writes are enabled for this approved development task; stay inside the approved workspace and path scope."
-    ),
-    "utf8"
+  // Remove can_write_code from "Requested but denied" — it is now granted.
+  toolsContent = toolsContent.replace(
+    /^(- Requested but denied: )(`[^`]+`(?:, `[^`]+`)*)$/m,
+    (_, prefix: string, list: string) => {
+      const items = list.split(", ").filter((item) => item !== "`can_write_code`");
+      return items.length === 0 ? `${prefix}none` : `${prefix}${items.join(", ")}`;
+    }
   );
 
-  const taskSkillContent = await readFile(taskSkillPath, "utf8");
-  await writeFile(
-    taskSkillPath,
-    taskSkillContent.replace(
-      "6. Escalate whenever the task would require code-writing, secrets outside approved scopes, or a blocked phase in v1.",
-      "6. Escalate whenever the task would require secrets outside approved scopes or a blocked phase in v1."
-    ),
-    "utf8"
+  // Remove "writing product code" from Escalate Instead Of — writes are now approved.
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    "\n- writing product code\n",
+    "\n",
+    "Escalate Instead Of / writing product code line"
   );
+
+  // Insert can_write_code guidance so developers understand its scope.
+  toolsContent = applyRequiredPatch(
+    toolsContent,
+    "## Allowed Capability Guidance\n\n",
+    `## Allowed Capability Guidance\n\n### \`can_write_code\`\n\n${CAN_WRITE_CODE_GUIDANCE}\n\n`,
+    "Allowed Capability Guidance section header"
+  );
+
+  await writeFile(toolsPath, toolsContent, "utf8");
+
+  // --- SOUL.md patches ---
+  let soulContent = await readFile(soulPath, "utf8");
+
+  soulContent = applyRequiredPatch(
+    soulContent,
+    "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
+    "- Product code writes are enabled for this approved development task; stay inside the approved workspace and path scope.",
+    "product code writes guardrail line"
+  );
+
+  // Add can_write_code to the Allowed capabilities list.
+  soulContent = soulContent.replace(
+    /^(- Allowed capabilities: )(`[^`]+`(?:, `[^`]+`)*)$/m,
+    (_, prefix: string, list: string) => {
+      const items = list.split(", ");
+      if (!items.includes("`can_write_code`")) {
+        items.unshift("`can_write_code`");
+      }
+      return `${prefix}${items.join(", ")}`;
+    }
+  );
+
+  await writeFile(soulPath, soulContent, "utf8");
+
+  // --- Task skill patches ---
+  // Two variants exist depending on whether can_open_pr is in the policy. Both list
+  // "code-writing" as something to escalate for; strip it from whichever variant is present.
+  let taskSkillContent = await readFile(taskSkillPath, "utf8");
+
+  taskSkillContent = applyRequiredPatch(
+    taskSkillContent,
+    /6\. Escalate whenever the task would require code-writing, (secrets[^.]+\.)/,
+    "6. Escalate whenever the task would require $1",
+    "escalation rule in task skill"
+  );
+
+  await writeFile(taskSkillPath, taskSkillContent, "utf8");
 }
 
 export interface GitHubWorkspaceRepoBootstrapperOptions {

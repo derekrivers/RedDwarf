@@ -74,7 +74,7 @@ import {
   renderDevelopmentHandoffMarkdown
 } from "./prompts.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
-import { detectPreDispatchScopeRisks } from "../scope-risks.js";
+import { detectArchitectHandoffPathViolations, detectPreDispatchScopeRisks } from "../scope-risks.js";
 import {
   materializeWorkspaceCiTool,
   processWorkspaceCiRequests
@@ -472,6 +472,31 @@ export async function runDeveloperPhase(
           },
           createdAt: asIsoTimestamp(clock())
         });
+      }
+      if (dependencies.hollyHandoffMarkdown) {
+        const architectViolations = detectArchitectHandoffPathViolations(
+          dependencies.hollyHandoffMarkdown,
+          bundle.allowedPaths
+        );
+        if (architectViolations.length > 0) {
+          await recordRunEvent({
+            repository,
+            logger: runLogger,
+            eventId: nextEventId("development", EventCodes.SCOPE_RISK_DETECTED),
+            taskId,
+            runId,
+            phase: "development",
+            level: "warn",
+            code: EventCodes.SCOPE_RISK_DETECTED,
+            message: "Architect handoff references files outside the approved path scope. The developer may produce allowed-path violations at publish time.",
+            data: {
+              workspaceId: workspace.workspaceId,
+              violatingFiles: architectViolations,
+              allowedPaths: bundle.allowedPaths
+            },
+            createdAt: asIsoTimestamp(clock())
+          });
+        }
       }
       const prompt = buildOpenClawDeveloperPrompt(
         bundle,

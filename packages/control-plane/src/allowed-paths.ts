@@ -36,6 +36,14 @@ const manifestLockfilePairs = new Map<string, string[]>([
   ["yarn.lock", []]
 ]);
 
+// tsconfig.json at any path implies its sub-tsconfig variants are also needed.
+const tsConfigSubPattern = "tsconfig.*.json";
+
+// vite.config.* and vitest.config.* are always deployment companions; Vite
+// also needs index.html as the entry point HTML shell.
+const viteConfigPattern = /^(.*\/)?vite\.config\.[^/]+$/;
+const vitestConfigPattern = /^(.*\/)?vitest\.config\.[^/]+$/;
+
 export function isIgnoredGeneratedRepoPath(value: string): boolean {
   const normalized = normalizeChangedRepoPath(value);
   return ignoredGeneratedRepoPathPatterns.some((pattern) => pattern.test(normalized));
@@ -48,13 +56,34 @@ export function expandAllowedPathsForGeneratedArtifacts(
   const expanded = new Set(normalizedAllowedPaths);
 
   for (const allowedPath of normalizedAllowedPaths) {
+    // Manifest → lockfile companions (package.json, pnpm-workspace, etc.)
     const pairedLockfiles = manifestLockfilePairs.get(allowedPath);
-    if (!pairedLockfiles) {
-      continue;
+    if (pairedLockfiles) {
+      for (const lockfile of pairedLockfiles) {
+        expanded.add(lockfile);
+      }
     }
 
-    for (const lockfile of pairedLockfiles) {
-      expanded.add(lockfile);
+    // tsconfig.json at any depth → tsconfig.*.json sub-configs at the same level.
+    // Matches both root-level "tsconfig.json" and package-rooted "packages/foo/tsconfig.json".
+    if (allowedPath === "tsconfig.json" || allowedPath.endsWith("/tsconfig.json")) {
+      const prefix = allowedPath.slice(0, allowedPath.lastIndexOf("tsconfig.json"));
+      expanded.add(`${prefix}${tsConfigSubPattern}`);
+    }
+
+    // vite.config.* → vitest.config.* companion and index.html entry shell.
+    const viteMatch = viteConfigPattern.exec(allowedPath);
+    if (viteMatch) {
+      const prefix = viteMatch[1] ?? "";
+      expanded.add(`${prefix}vitest.config.*`);
+      expanded.add(`${prefix}index.html`);
+    }
+
+    // vitest.config.* → vite.config.* companion (the two always ship together).
+    const vitestMatch = vitestConfigPattern.exec(allowedPath);
+    if (vitestMatch) {
+      const prefix = vitestMatch[1] ?? "";
+      expanded.add(`${prefix}vite.config.*`);
     }
   }
 

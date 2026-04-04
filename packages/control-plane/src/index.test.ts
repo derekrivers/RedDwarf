@@ -483,13 +483,68 @@ describe("control-plane", () => {
         })
       });
 
+      // vite.config.ts → vitest.config.* companion auto-expanded.
+      // tsconfig.json → tsconfig.*.json sub-configs auto-expanded.
+      // index.html is already explicit; no duplicates.
       expect(bundle.allowedPaths).toEqual([
         "src/main.tsx",
         "src/App.tsx",
         "vite.config.ts",
         "tsconfig.json",
-        "index.html"
+        "index.html",
+        "vitest.config.*",
+        "tsconfig.*.json"
       ]);
+    });
+
+    it("auto-expands tsconfig sub-configs when tsconfig.json is approved", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "developer" }),
+        spec: planningSpecSchema.parse({
+          ...baseSpec,
+          affectedAreas: ["packages/api/src/server.ts", "packages/api/tsconfig.json"]
+        }),
+        policySnapshot: policySnapshotSchema.parse({
+          ...basePolicySnapshot,
+          allowedPaths: []
+        })
+      });
+
+      expect(bundle.allowedPaths).toContain("packages/api/tsconfig.json");
+      expect(bundle.allowedPaths).toContain("packages/api/tsconfig.*.json");
+    });
+
+    it("auto-expands vitest companion and index.html when vite.config.* is approved", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "developer" }),
+        spec: planningSpecSchema.parse({
+          ...baseSpec,
+          affectedAreas: ["src/main.ts", "vite.config.ts"]
+        }),
+        policySnapshot: policySnapshotSchema.parse({
+          ...basePolicySnapshot,
+          allowedPaths: []
+        })
+      });
+
+      expect(bundle.allowedPaths).toContain("vitest.config.*");
+      expect(bundle.allowedPaths).toContain("index.html");
+    });
+
+    it("auto-expands vite companion when vitest.config.* is approved standalone", () => {
+      const bundle = createWorkspaceContextBundle({
+        manifest: taskManifestSchema.parse({ ...baseManifest, assignedAgentType: "developer" }),
+        spec: planningSpecSchema.parse({
+          ...baseSpec,
+          affectedAreas: ["src/server.ts", "vitest.config.ts"]
+        }),
+        policySnapshot: policySnapshotSchema.parse({
+          ...basePolicySnapshot,
+          allowedPaths: []
+        })
+      });
+
+      expect(bundle.allowedPaths).toContain("vite.config.*");
     });
 
     it("auto-allows package scaffold companion files when package.json is approved", () => {
@@ -911,7 +966,9 @@ describe("control-plane", () => {
       "vite.config.ts",
       "index.html",
       "package-lock.json",
-      ".gitignore"
+      ".gitignore",
+      "tsconfig.*.json",
+      "vitest.config.*"
     ]);
     expect(result.approvalRequest?.allowedPaths).toEqual([
       "src/main.tsx",
@@ -920,7 +977,9 @@ describe("control-plane", () => {
       "vite.config.ts",
       "index.html",
       "package-lock.json",
-      ".gitignore"
+      ".gitignore",
+      "tsconfig.*.json",
+      "vitest.config.*"
     ]);
   });
 
@@ -4192,10 +4251,131 @@ describe("developer phase with OpenClaw dispatch", () => {
         development.workspace?.descriptor.toolPolicy.allowedCapabilities
       ).toContain("can_write_code");
 
+      // Verify TOOLS.md was fully patched: no legacy read-only escalation rule,
+      // can_write_code appears in the capability guidance, and it is no longer in
+      // the "Requested but denied" list.
+      const toolsMdContent = await readFile(
+        development.workspace!.instructions.files.toolsMd,
+        "utf8"
+      );
+      expect(toolsMdContent).not.toContain("- writing product code");
+      expect(toolsMdContent).toContain("### `can_write_code`");
+      expect(toolsMdContent).toContain("- Code writing enabled: yes");
+      expect(toolsMdContent).not.toMatch(/Requested but denied:.*can_write_code/);
+
+      // Verify SOUL.md was fully patched: writes enabled and can_write_code in capabilities.
+      const soulMdContent = await readFile(
+        development.workspace!.instructions.files.soulMd,
+        "utf8"
+      );
+      expect(soulMdContent).toContain("Product code writes are enabled");
+      expect(soulMdContent).toContain("`can_write_code`");
+      expect(soulMdContent).not.toContain("Product code writes remain disabled");
+
       // Verify OPENCLAW_DISPATCH event was recorded
       expect(
         repository.runEvents.some((e) => e.code === "OPENCLAW_DISPATCH")
       ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("warns before dispatch when architect handoff references paths outside the approved scope", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-arch-paths-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/main.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-04-03T11:00:00.000Z")
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for architect path violation test."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-04-03T11:01:00.000Z")
+        }
+      );
+
+      // Architect handoff references a file outside the approved scope.
+      const hollyHandoffMarkdown = [
+        "# Architecture Handoff",
+        "",
+        "- Task ID: fixture",
+        "- Repository: acme/platform",
+        "- Architect: Holly (reddwarf-analyst)",
+        "- Confidence: high",
+        "- Confidence reason: Scope is clear.",
+        "",
+        "## Summary",
+        "",
+        "Plan summary.",
+        "",
+        "## Implementation Approach",
+        "",
+        "Approach details.",
+        "",
+        "## Affected Files",
+        "",
+        "- src/main.ts",
+        "- src/helper.ts (new)",
+        "- scripts/migrate.ts — new migration script outside approved scope",
+        "",
+        "## Risks and Assumptions",
+        "",
+        "- None.",
+        "",
+        "## Test Strategy",
+        "",
+        "- Run unit tests."
+      ].join("\n");
+
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-arch-paths"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({ fixedSessionId: "session-arch-paths" }),
+          openClawAgentId: "reddwarf-developer",
+          hollyHandoffMarkdown,
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: createFixtureOpenClawCompletionAwaiter(),
+          clock: () => new Date("2026-04-03T11:02:00.000Z"),
+          idGenerator: () => "run-arch-paths"
+        }
+      );
+
+      const scopeRiskEvents = repository.runEvents.filter(
+        (e) => e.code === "SCOPE_RISK_DETECTED"
+      );
+      expect(scopeRiskEvents.length).toBeGreaterThanOrEqual(1);
+
+      const archPathEvent = scopeRiskEvents.find(
+        (e) => (e.data as { violatingFiles?: string[] }).violatingFiles !== undefined
+      );
+      expect(archPathEvent).toBeDefined();
+      expect(
+        (archPathEvent!.data as { violatingFiles: string[] }).violatingFiles
+      ).toContain("scripts/migrate.ts");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
