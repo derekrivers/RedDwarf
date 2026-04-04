@@ -25,6 +25,8 @@
 - Added regression coverage proving architecture-review failures now emit a pending override approval request and that approving the override resumes dispatch at validation without rerunning development or architecture review.
 - Follow-up fix: `runValidationPhase(...)` now accepts the approved architecture-review override state (`lifecycleStatus = ready`, `currentPhase = validation`, approved request phase `architecture_review`) so the resumed dispatch path works in live state instead of erroring with `cannot enter validation`.
 - Updated the dashboard approvals UI so `architecture_review` requests are visible as explicit override actions instead of generic planning/developer approvals. The approvals list, home dashboard pending-approvals card, and approval detail view now explain that approving these requests continues the task at validation.
+- Investigated live task 47 and confirmed the missing `can_write_code` capability was caused by GitHub issue intake, not policy gating. The source issue requested `- can_plan, can_write_code` on a single bullet, but `parseIssueBodySections(...)` only accepted one exact capability token per line, so intake silently dropped `can_write_code` before planning persisted the task.
+- Hardened `packages/integrations/src/github.ts` so requested capability lines now accept comma-separated capability lists inside a single bullet or plain line, and added regression coverage in `packages/integrations/src/github.test.ts` for the exact mixed-bullet format that hit issue 47.
 
 ## 2026-04-03
 

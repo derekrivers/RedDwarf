@@ -127,6 +127,34 @@ describe("createPlanningInputFromGitHubIssue", () => {
     ]);
   });
 
+  it("parses comma-separated capabilities on a single bullet line", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Summary",
+        "",
+        "Create a browser game.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- The game runs in a browser.",
+        "",
+        "## Requested Capabilities",
+        "",
+        "- can_plan, can_write_code",
+        "- can_run_tests",
+        "- can_open_pr"
+      ].join("\n")
+    });
+
+    expect(input.requestedCapabilities).toEqual([
+      "can_plan",
+      "can_write_code",
+      "can_run_tests",
+      "can_open_pr"
+    ]);
+  });
+
   it("stops affected paths at the next markdown heading", () => {
     const input = createPlanningInputFromGitHubIssue({
       ...candidate,

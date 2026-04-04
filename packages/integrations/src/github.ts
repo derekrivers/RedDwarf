@@ -955,9 +955,7 @@ function parseIssueBodySections(body: string): {
     }
 
     if (current === "requestedCapabilities") {
-      if (isCapability(value)) {
-        sections.requestedCapabilities.push(value);
-      }
+      sections.requestedCapabilities.push(...extractCapabilityTokens(value));
       continue;
     }
 
@@ -1060,6 +1058,13 @@ function dedupeCapabilities(values: Capability[]): Capability[] {
 
 function isCapability(value: string): value is Capability {
   return (capabilities as readonly string[]).includes(value);
+}
+
+function extractCapabilityTokens(value: string): Capability[] {
+  return value
+    .split(",")
+    .map((token) => token.trim())
+    .filter(isCapability);
 }
 
 function normalizeFetchTimeoutError(

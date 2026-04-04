@@ -88,6 +88,14 @@
 - Working workaround: on current builds, non-pass architecture-review verdicts now create a pending `architecture_review` approval request. Approving that request advances the manifest to `ready` with `currentPhase = validation`, and dispatch resumes at validation instead of rerunning development. Validation also now accepts that approved override state directly. On older persisted tasks, seed a review approval row manually or rerun the phase on the updated build before trying to approve continuation.
 - Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'blocks validation when architecture review returns a failing verdict|continues at validation after approving an architecture review override'"`.
 
+## GitHub issue intake drops `can_write_code` when requested capabilities share one bullet
+
+- Symptom: a GitHub issue visibly asks for `can_write_code`, but the persisted task manifest and approval request omit it. Development then runs as `development_readonly`, later stages report `developerCodeWriteEnabled: false`, and the task can reach validation without any implementation.
+- Root cause: `parseIssueBodySections(...)` in `packages/integrations/src/github.ts` used to accept only one exact capability token per requested-capabilities line. A line like `- can_plan, can_write_code` therefore failed to capture the second token after the comma.
+- Failing approach: assuming each requested-capabilities bullet contains exactly one capability and ignoring comma-separated capability lists.
+- Working workaround: use the parser that splits requested-capability lines on commas and filters each token individually. On older builds, keep issue bodies to one capability per line or re-intake the task after upgrading.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/integrations/src/github.test.ts packages/integrations/src/index.test.ts"`.
+
 ## Vitest commands fail or skip in the sandbox
 
 - Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.
