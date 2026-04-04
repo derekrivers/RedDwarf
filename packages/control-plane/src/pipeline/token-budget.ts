@@ -142,6 +142,20 @@ export function buildDevelopmentComplexityProfile(
     reasons.push("planner confidence: low");
   }
 
+  // Single-file frontend scaffolding tasks (e.g. a self-contained HTML game)
+  // concentrate all implementation into one large file write. These are
+  // systematically underscored by the area-count heuristic because there is
+  // only one affected area, yet the actual work volume is high. Bump the
+  // score so the timeout and token budget reflect the real write pressure.
+  if (
+    spec.affectedAreas.length === 1 &&
+    /\.(html?|tsx|jsx|vue|svelte)$/i.test(spec.affectedAreas[0]!) &&
+    spec.acceptanceCriteria.length >= 3
+  ) {
+    score += 2;
+    reasons.push("single-file frontend scaffolding");
+  }
+
   if (score >= 6) {
     return {
       level: "high",

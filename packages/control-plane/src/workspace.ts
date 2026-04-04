@@ -216,7 +216,11 @@ const capabilityGuidance: Record<Capability, string> = {
   can_plan:
     "Inspect task context, policy inputs, and mounted standards to produce deterministic planning output.",
   can_write_code:
-    "Write or modify product code only after the development phase is enabled and policy grants it.",
+    "Write or modify product code only after the development phase is enabled and policy grants it. " +
+    "When creating or replacing any file that is likely to exceed 150 lines, you must write it in multiple passes: " +
+    "write a minimal working scaffold first, then build out each logical section with separate follow-up edit calls. " +
+    "Do not attempt to produce a complete large file in a single write tool call. " +
+    "Each intermediate write should leave the file syntactically valid or clearly marked as in-progress.",
   can_run_tests:
     "Run relevant verification commands during development or validation only when the workspace policy grants test execution.",
   can_open_pr:

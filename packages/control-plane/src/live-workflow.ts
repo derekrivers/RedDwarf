@@ -300,7 +300,11 @@ export async function assertWorkspaceRepoChangesWithinAllowedPaths(
 }
 
 const CAN_WRITE_CODE_GUIDANCE =
-  "Write or modify product code only after the development phase is enabled and policy grants it.";
+  "Write or modify product code only after the development phase is enabled and policy grants it. " +
+  "When creating or replacing any file that is likely to exceed 150 lines, you must write it in multiple passes: " +
+  "write a minimal working scaffold first, then build out each logical section with separate follow-up edit calls. " +
+  "Do not attempt to produce a complete large file in a single write tool call. " +
+  "Each intermediate write should leave the file syntactically valid or clearly marked as in-progress.";
 
 function applyRequiredPatch(
   content: string,
@@ -627,6 +631,20 @@ export interface DeveloperHandoffAwaiterOptions {
   toolExecutionGracePeriodMs?: number;
   openClawHomePath?: string;
   maxRuntimeMs?: number;
+  /**
+   * How long to wait before flagging a code-write session that has produced
+   * zero write tool calls. When elapsed with no write operations and
+   * `codeWriteEnabled` is true, the effective idle timeout is tightened to
+   * catch sessions stuck in long planning or single-write attempts. Defaults
+   * to 4 minutes.
+   */
+  noWriteActivityWarningMs?: number;
+  /**
+   * Tightened idle timeout applied when `noWriteActivityWarningMs` has
+   * elapsed with zero write operations. Defaults to 60 seconds (versus the
+   * normal 2-minute sessionIdleTimeoutMs).
+   */
+  tightenedIdleTimeoutMs?: number;
 }
 
 export function createDeveloperHandoffAwaiter(
@@ -640,6 +658,8 @@ export function createDeveloperHandoffAwaiter(
   const toolExecutionGracePeriodMs = options.toolExecutionGracePeriodMs ?? 8 * 60 * 1000;
   const openClawHomePath = resolveOpenClawHomePath(options.openClawHomePath);
   const maxRuntimeMs = options.maxRuntimeMs ?? null;
+  const noWriteActivityWarningMs = options.noWriteActivityWarningMs ?? 4 * 60 * 1000;
+  const tightenedIdleTimeoutMs = options.tightenedIdleTimeoutMs ?? 60 * 1000;
 
   return {
     async waitForCompletion(input) {
@@ -662,6 +682,7 @@ export function createDeveloperHandoffAwaiter(
       let lastTranscriptGrowthAt: number | null = null;
       let lastRepoSignature: string | null = null;
       let lastWriteOperationsCount = 0;
+      let writeStallWarningEmitted = false;
 
       while (
         Date.now() < progressDeadline &&
@@ -755,14 +776,36 @@ export function createDeveloperHandoffAwaiter(
             });
           }
 
+          // Detect sessions that have been running for a while with code-write
+          // enabled but zero write tool calls. This catches agents stuck in
+          // extended planning or about to attempt one massive single-file write.
+          // When detected, tighten the idle timeout to surface stalls faster.
+          const elapsedMs = Date.now() - startedAt;
+          const inWriteStall =
+            codeWriteEnabled &&
+            elapsedMs >= noWriteActivityWarningMs &&
+            transcriptStatus.writeOperationsCount === 0;
+
+          if (inWriteStall && !writeStallWarningEmitted) {
+            writeStallWarningEmitted = true;
+            input.logger?.warn?.(
+              `Developer session ${input.sessionKey} has been running for ${Math.round(elapsedMs / 1000)}s with code writing enabled but zero write operations. ` +
+              `The agent may be stuck in extended planning or preparing a single large write. Tightening idle detection.`
+            );
+          }
+
           // Use a longer idle tolerance when the agent is in the middle of a
           // tool call. npm install, a full test suite, or a large file scan can
           // all take several minutes without producing transcript output.
           // The short sessionIdleTimeoutMs is reserved for truly idle sessions
-          // where no tool call is in flight.
+          // where no tool call is in flight. When a write-stall is detected,
+          // tighten the non-tool idle timeout to catch stalls faster.
+          const baseIdleTimeoutMs = inWriteStall
+            ? tightenedIdleTimeoutMs
+            : sessionIdleTimeoutMs;
           const activeIdleTimeoutMs = transcriptStatus.isWaitingForToolResult
             ? toolExecutionGracePeriodMs
-            : sessionIdleTimeoutMs;
+            : baseIdleTimeoutMs;
 
           if (
             lastTranscriptGrowthAt !== null &&

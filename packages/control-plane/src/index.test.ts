@@ -4287,6 +4287,59 @@ describe("development complexity budgets", () => {
     expect(scaledBudget.limits.development).toBe(2000);
     expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBe(1_200_000);
   });
+
+  it("promotes single-file frontend scaffolding tasks into a higher budget tier", () => {
+    const manifest = taskManifestSchema.parse({
+      taskId: "acme-platform-pacman-shell",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 51 },
+      title: "Create Pac-Man game shell with canvas maze renderer",
+      summary: "Add a single self-contained games/pacman/index.html with canvas rendering.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_write_code", "can_run_tests"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const spec = planningSpecSchema.parse({
+      specId: "pacman-shell-spec",
+      taskId: manifest.taskId,
+      summary: "Canvas-based maze renderer in a single HTML file.",
+      assumptions: ["New file creation."],
+      affectedAreas: ["games/pacman/index.html"],
+      constraints: ["No external dependencies."],
+      acceptanceCriteria: [
+        "index.html exists and opens in a browser.",
+        "Uses HTML5 Canvas and vanilla JavaScript.",
+        "A tile map is defined and rendered as walls, paths, pellets, and power pellets.",
+        "A HUD shows score and remaining lives.",
+        "No player or ghost movement yet."
+      ],
+      testExpectations: [],
+      recommendedAgentType: "developer",
+      riskClass: "low",
+      confidenceLevel: "high",
+      confidenceReason: "Simple scaffolding task.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const profile = buildDevelopmentComplexityProfile(manifest, spec);
+
+    expect(profile.level).not.toBe("standard");
+    expect(profile.timeoutMultiplier).toBeGreaterThan(1);
+    expect(profile.reasons).toContain("single-file frontend scaffolding");
+    expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBeGreaterThan(600_000);
+  });
 });
 
 describe("createDeveloperHandoffAwaiter", () => {
@@ -4841,6 +4894,108 @@ describe("createDeveloperHandoffAwaiter", () => {
         name: "OpenClawSessionTerminatedError",
         stopReason: "length"
       });
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("tightens idle detection when code-write session has zero write operations after warmup", async () => {
+    // The agent has codeWriteEnabled and produces transcript entries (reads,
+    // planning) but never makes a write tool call. After noWriteActivityWarningMs
+    // the idle timeout should tighten to tightenedIdleTimeoutMs, causing a stall
+    // error faster than the normal sessionIdleTimeoutMs would.
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-write-stall-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-write-stall.jsonl"
+      );
+      await mkdir(dirname(sessionPath), { recursive: true });
+      // Transcript has only a tool result from a read — no write tool calls
+      // and no terminal assistant stop reason.
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Let me read the spec." }],
+              stopReason: "toolUse"
+            }
+          }),
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:54.100Z",
+            message: {
+              role: "tool",
+              toolName: "read_file",
+              content: "spec content here"
+            }
+          }),
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:55.200Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Planning the implementation..." }]
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 20,
+        // Normal idle timeout is long — without tightening the test would hang.
+        sessionIdleTimeoutMs: 5_000,
+        // Write-stall warmup fires almost immediately in this test.
+        noWriteActivityWarningMs: 30,
+        // Tightened idle timeout is short enough to fire quickly.
+        tightenedIdleTimeoutMs: 50
+      });
+
+      const warnings: string[] = [];
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-52" } as never,
+          workspace: {
+            workspaceId: "workspace-write-stall",
+            workspaceRoot: tempRoot,
+            artifactsDir: join(tempRoot, "artifacts"),
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: true }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:52",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:52",
+            agentId: "reddwarf-developer",
+            sessionId: "session-write-stall",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          logger: { warn: (msg: string) => { warnings.push(msg); } } as never,
+          onHeartbeat: undefined
+        })
+      ).rejects.toBeInstanceOf(OpenClawSessionStalledError);
+
+      expect(warnings.some((w) => w.includes("zero write operations"))).toBe(true);
     } finally {
       if (previousConfigPath === undefined) {
         delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
@@ -5428,6 +5583,9 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(toolsMdContent).toContain("### `can_write_code`");
       expect(toolsMdContent).toContain("- Code writing enabled: yes");
       expect(toolsMdContent).not.toMatch(/Requested but denied:.*can_write_code/);
+      expect(toolsMdContent).toContain(
+        "you must write it in multiple passes"
+      );
 
       // Verify SOUL.md was fully patched: writes enabled and can_write_code in capabilities.
       const soulMdContent = await readFile(
