@@ -101,7 +101,6 @@ Key constraints that apply to every dashboard feature:
 
 | # | Feature | Milestone | Status | Depends On | Deployment | Notes |
 | - | ------- | --------- | ------ | ---------- | ---------- | ----- |
-| 133 | Dashboard home (`/dashboard`) | M19 | pending | 130 | Both | Stat cards row: total pipeline runs, active runs (status = running), pending approvals count (links to `/approvals`), failed runs last 24 h. Two columns below: left — last 10 pipeline runs with status badges; right — pending approvals list with "Review" buttons linking to `/approvals/:id`. Full spec in `docs/Dashboard.md` §PRIORITY 2. |
 | 134 | Pipeline runs page (`/pipeline`) | M19 | pending | 130 | Both | Full-page table: Run ID, Task Source, Status, Phase, Started At, Duration, Actions; status filter dropdown; sortable by `started_at`; pagination at page size 25; expandable row detail panel; auto-refresh every 15 s. Full spec in `docs/Dashboard.md` §PRIORITY 3. |
 | 135 | Evidence browser (`/evidence`) | M19 | pending | 130 | Both | Table: Run ID, Phase, Type, Recorded At, Size; client-side search/filter by run ID; expandable row showing raw JSON in `<pre>`; export row as `.json` file. Full spec in `docs/Dashboard.md` §PRIORITY 4. |
 | 136 | Agent status page (`/agents`) | M19 | pending | 130 | Both | Responsive 3-column card grid; one card per agent definition; each card shows name, role, permission scopes as Tabler badges, last-seen timestamp derived from evidence records, and a healthy/unconfigured status indicator. Full spec in `docs/Dashboard.md` §PRIORITY 5. |
