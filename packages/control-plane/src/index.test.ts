@@ -1983,6 +1983,22 @@ describe("control-plane", () => {
 
       expect(overrideDecision.manifest.lifecycleStatus).toBe("ready");
       expect(overrideDecision.manifest.currentPhase).toBe("validation");
+      expect(
+        repository.phaseRecords.some(
+          (record) =>
+            record.recordId ===
+              `${planningResult.manifest.taskId}:phase:architecture_review:approval:${review.approvalRequest!.requestId}` &&
+            record.phase === "architecture_review" &&
+            record.status === "passed"
+        )
+      ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.eventId === `${review.approvalRequest!.requestId}:APPROVAL_APPROVED` &&
+            event.phase === "architecture_review"
+        )
+      ).toBe(true);
 
       const dispatchResult = await dispatchReadyTask(
         { taskId: planningResult.manifest.taskId, targetRoot: tempRoot },
@@ -5054,6 +5070,91 @@ describe("developer phase with OpenClaw dispatch", () => {
     }
   });
 
+  it("prefers the approved policy-gate request over newer override approvals when enabling developer code writes", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-policy-approval-"));
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: ["src/main.ts"]
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          clock: () => new Date("2026-04-04T12:00:00.000Z"),
+          idGenerator: () => "run-policy-approval-priority-plan"
+        }
+      );
+
+      await resolveApprovalRequest(
+        {
+          requestId: planningResult.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Approved for policy approval precedence coverage."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-04-04T12:01:00.000Z")
+        }
+      );
+
+      await repository.saveApprovalRequest(
+        createApprovalRequest({
+          requestId: `${planningResult.manifest.taskId}:approval:architecture_review:override`,
+          taskId: planningResult.manifest.taskId,
+          runId: "run-architecture-override",
+          phase: "architecture_review",
+          approvalMode: "human_signoff_required",
+          status: "approved",
+          riskClass: "medium",
+          summary: "Approved architecture review override.",
+          requestedCapabilities: [],
+          allowedPaths: [],
+          blockedPhases: ["architecture_review"],
+          policyReasons: ["Human override for architecture review."],
+          requestedBy: "operator",
+          decidedBy: "operator",
+          decision: "approve",
+          decisionSummary: "Approved override after review.",
+          createdAt: "2026-04-04T12:02:00.000Z",
+          updatedAt: "2026-04-04T12:02:00.000Z",
+          resolvedAt: "2026-04-04T12:02:00.000Z"
+        })
+      );
+
+      const development = await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-policy-approval-priority"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({
+            fixedSessionId: "session-policy-approval-priority"
+          }),
+          openClawAgentId: "reddwarf-developer",
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          openClawCompletionAwaiter: createFixtureOpenClawCompletionAwaiter(),
+          clock: () => new Date("2026-04-04T12:03:00.000Z"),
+          idGenerator: () => "run-policy-approval-priority-dev"
+        }
+      );
+
+      expect(development.workspace?.descriptor.toolPolicy.codeWriteEnabled).toBe(true);
+      expect(development.workspace?.descriptor.toolPolicy.mode).toBe(
+        "development_readwrite"
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("warns before dispatch when architect handoff references paths outside the approved scope", async () => {
     const repository = new InMemoryPlanningRepository();
     const tempRoot = await mkdtemp(join(tmpdir(), "dispatch-dev-arch-paths-"));
@@ -7716,5 +7817,66 @@ describe("createReadyTaskDispatcher", () => {
     );
     expect(warnRecord).toBeDefined();
     expect(warnRecord?.bindings["taskId"]).toBe(manifest.taskId);
+  });
+
+  it("skips a ready manifest whose only approved rows are non-policy overrides", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({ taskId: "acme-platform-non-policy-approved" });
+    await repository.saveManifest(manifest);
+    await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
+    await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
+    await repository.saveApprovalRequest(
+      createApprovalRequest({
+        requestId: `${manifest.taskId}:approval:architecture_review:1`,
+        taskId: manifest.taskId,
+        runId: "run-architecture-review-1",
+        phase: "architecture_review",
+        approvalMode: "human_signoff_required",
+        status: "approved",
+        riskClass: "low",
+        summary: "Approved architecture review override",
+        requestedCapabilities: [],
+        allowedPaths: [],
+        blockedPhases: ["architecture_review"],
+        policyReasons: [],
+        requestedBy: "operator",
+        decidedBy: "operator",
+        decision: "approve",
+        decisionSummary: "Approved architecture override only.",
+        createdAt: orphanTs,
+        updatedAt: orphanTs,
+        resolvedAt: orphanTs
+      })
+    );
+
+    const buffered = createBufferedPlanningLogger();
+
+    const dispatcher = createReadyTaskDispatcher(
+      {
+        intervalMs: 5_000,
+        targetRoot: "/tmp",
+        runOnStart: false
+      },
+      {
+        repository,
+        developer: new DeterministicDeveloperAgent(),
+        reviewer: new DeterministicArchitectureReviewAgent(),
+        validator: new DeterministicValidationAgent(),
+        scm: new DeterministicScmAgent(),
+        github: new FixtureGitHubAdapter({ candidates: [] }),
+        openClawDispatch: new FixtureOpenClawDispatchAdapter(),
+        logger: buffered.logger
+      }
+    );
+
+    const result = await dispatcher.dispatchOnce();
+
+    expect(result.dispatchedCount).toBe(0);
+    expect(result.results).toHaveLength(0);
+    const warnRecord = buffered.records.find(
+      (r) => r.bindings["code"] === "DISPATCH_ORPHAN_SKIPPED"
+    );
+    expect(warnRecord).toBeDefined();
+    expect(warnRecord?.message).toContain("no approved policy-gate approval row found");
   });
 });

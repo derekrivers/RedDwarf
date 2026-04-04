@@ -168,9 +168,9 @@ export async function resolveApprovalRequest(
     }
     await transactionalRepository.savePhaseRecord(
       createPhaseRecord({
-        id: `${approvalRequest.taskId}:phase:policy_gate:approval:${approvalRequest.requestId}`,
+        id: `${approvalRequest.taskId}:phase:${approvalRequest.phase}:approval:${approvalRequest.requestId}`,
         taskId: approvalRequest.taskId,
-        phase: "policy_gate",
+        phase: approvalRequest.phase,
         status: phaseStatus,
         actor: decidedBy,
         summary: decisionSummary,
@@ -207,7 +207,7 @@ export async function resolveApprovalRequest(
       eventId: `${approvalRequest.requestId}:${decisionCode}`,
       taskId: approvalRequest.taskId,
       runId: approvalRequest.runId,
-      phase: "policy_gate",
+      phase: approvalRequest.phase,
       level: input.decision === "approve" ? "info" : "warn",
       code: decisionCode,
       message: decisionMessage,

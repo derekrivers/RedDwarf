@@ -28,6 +28,7 @@ import {
   createConcurrencyDecision,
   createPhaseRecord,
   createSourceConcurrencyKey,
+  findApprovedArchitectureReviewOverride,
   getDurationMs,
   heartbeatTrackedRun,
   issueWorkspaceSecretLease,
@@ -99,11 +100,17 @@ export async function runValidationPhase(
   const rawSnapshot = await repository.getTaskSnapshot(taskId);
   const { snapshot, manifest: validatedManifest, spec: validatedSpec, policySnapshot: validatedPolicySnapshot } = requirePhaseSnapshot(rawSnapshot, taskId);
   const approvedRequest = requireApprovedRequest(snapshot, validatedManifest, "validation");
+  const approvedArchitectureReviewOverride =
+    findApprovedArchitectureReviewOverride(snapshot);
   requireNoFailureEscalation(snapshot, taskId, "validation");
   const approvedFailureRetry = findApprovedFailureEscalationRequest(
     snapshot,
     "validation"
   );
+  const phaseApprovalRequest =
+    approvedFailureRetry ??
+    approvedArchitectureReviewOverride ??
+    approvedRequest;
 
   const lifecycleAllowsValidation =
     (validatedManifest.lifecycleStatus === "blocked" &&
@@ -112,7 +119,7 @@ export async function runValidationPhase(
       validatedManifest.currentPhase === "validation") ||
     (validatedManifest.lifecycleStatus === "ready" &&
       validatedManifest.currentPhase === "validation" &&
-      (approvedFailureRetry !== null || approvedRequest?.phase === "architecture_review"));
+      (approvedFailureRetry !== null || approvedArchitectureReviewOverride !== null));
 
   if (!lifecycleAllowsValidation) {
     throw new Error(
@@ -161,14 +168,14 @@ export async function runValidationPhase(
     status: "active",
     startedAt: runStartedAtIso,
     lastHeartbeatAt: runStartedAtIso,
-    metadata: {
-      sourceRepo: currentManifest.source.repo,
-      phase: "validation",
-      workspaceId,
-      ...(approvedRequest
-        ? { approvalRequestId: approvedRequest.requestId }
-        : {})
-    }
+      metadata: {
+        sourceRepo: currentManifest.source.repo,
+        phase: "validation",
+        workspaceId,
+        ...(phaseApprovalRequest
+          ? { approvalRequestId: phaseApprovalRequest.requestId }
+          : {})
+      }
   });
   const { runLogger, nextEventId, persistTrackedRun } = createPhaseRunContext({
     runId,
@@ -260,8 +267,8 @@ export async function runValidationPhase(
       data: {
         actor: "validation",
         workspaceId,
-        ...(approvedRequest
-          ? { approvalRequestId: approvedRequest.requestId }
+        ...(phaseApprovalRequest
+          ? { approvalRequestId: phaseApprovalRequest.requestId }
           : {})
       },
       createdAt: validationStartedAtIso
@@ -271,8 +278,8 @@ export async function runValidationPhase(
       metadata: {
         currentPhase: "validation",
         workspaceId,
-        ...(approvedRequest
-          ? { approvalRequestId: approvedRequest.requestId }
+        ...(phaseApprovalRequest
+          ? { approvalRequestId: phaseApprovalRequest.requestId }
           : {})
       }
     });

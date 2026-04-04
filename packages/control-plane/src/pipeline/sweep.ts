@@ -9,6 +9,7 @@ import {
   type PlanningRepository
 } from "@reddwarf/evidence";
 import {
+  findApprovedPolicyGateRequest,
   isPipelineRunStale,
   isRecoverablePhase,
   patchManifest,
@@ -79,7 +80,7 @@ const DEFAULT_ORPHAN_SCAN_LIMIT = 50;
  *
  * Two orphan types are repaired:
  *
- * 1. Ready manifests whose approved planning approval row was deleted.
+ * 1. Ready manifests whose approved policy-gate approval row was deleted.
  *    The dispatcher would pick these up, hit `requireApprovedRequest`, fail, and
  *    loop forever because the manifest lifecycle never advances.  These are
  *    transitioned to `failed` with an ORPHAN_MISSING_APPROVAL event.
@@ -102,7 +103,7 @@ export async function sweepOrphanedDispatcherState(
   const nowIso = asIsoTimestamp(now);
   const repairs: SweepOrphanedStateRepair[] = [];
 
-  // ── Scan ready manifests for missing planning approval ────────────────────
+  // ── Scan ready manifests for missing policy-gate approval ────────────────
 
   const readyManifests = await repository.listManifestsByLifecycleStatus(
     "ready",
@@ -115,18 +116,17 @@ export async function sweepOrphanedDispatcherState(
     }
 
     const snapshot = await repository.getTaskSnapshot(manifest.taskId);
-    const hasApprovedRequest = snapshot.approvalRequests.some(
-      (r) => r.status === "approved"
-    );
+    const hasApprovedRequest =
+      findApprovedPolicyGateRequest(snapshot) !== null;
 
     if (hasApprovedRequest) {
       continue;
     }
 
-    // Orphaned ready manifest: no approved approval row exists.
+    // Orphaned ready manifest: no approved policy-gate approval row exists.
     // Transition to failed so the dispatcher stops picking it up.
     logger?.warn(
-      "Orphaned ready manifest detected: no approved approval row found. Marking as failed.",
+      "Orphaned ready manifest detected: no approved policy-gate approval row found. Marking as failed.",
       {
         code: EventCodes.ORPHAN_MISSING_APPROVAL,
         taskId: manifest.taskId,
@@ -151,7 +151,7 @@ export async function sweepOrphanedDispatcherState(
           level: "error",
           code: EventCodes.ORPHAN_MISSING_APPROVAL,
           message:
-            "Ready manifest had no approved planning approval row. Task marked failed by orphan sweep.",
+            "Ready manifest had no approved policy-gate approval row. Task marked failed by orphan sweep.",
           data: {
             detectedAt: nowIso,
             lifecycleStatus: manifest.lifecycleStatus,

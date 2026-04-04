@@ -31,6 +31,8 @@
 - Hardened the OpenClaw transcript parser and developer awaiter so provider error messages are preserved from session JSONL and treated as terminal session failures immediately, rather than waiting the full handoff timeout. Failure evidence for `OPENCLAW_SESSION_TERMINATED` now includes the provider error message alongside the stop reason.
 - Reworked the developer awaiter timeout model so it now behaves like a sliding no-progress window rather than a fixed wall-clock cutoff. Ongoing transcript growth or repo-state movement renews the development deadline, allowing large tasks to keep building while they continue making observable progress.
 - Tightened the OpenClaw developer prompt for bounded implementation tasks so it explicitly switches into implementation-first mode: after reading the trusted task/spec/context, the agent is told to spend at most three orientation tool calls before its first repo write, keep planning terse, and avoid long design monologues or row-by-row dumps that burn output budget before coding begins.
+- Hardened approval resolution for multi-approval tasks. Downstream phases now anchor baseline capability checks to the approved `policy_gate` request instead of whichever approved row happens to sort first, validation separately recognizes approved `architecture_review` overrides when resuming at validation, and approval decision history now records the real request phase instead of hard-coding every approval under `policy_gate`.
+- Tightened the ready-dispatch/orphan checks to require an approved `policy_gate` request specifically, so a task with only later override/recovery approvals no longer masquerades as safely dispatchable.
 
 ## 2026-04-03
 

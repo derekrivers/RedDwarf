@@ -64,6 +64,14 @@
 - Working workaround: normalize the planning confidence reason at the control-plane boundary before schema parsing, trimming whitespace, filling in a fallback when blank, and truncating overlong values to 300 characters. To confirm an existing degraded badge is this specific issue, inspect `github_issue_polling_cursors.last_poll_error` for the affected repo.
 - Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`.
 
+## Multi-approval tasks can pick the wrong approved request and downgrade downstream behavior
+
+- Symptom: a task that has both an approved policy-gate request and a later approved override/recovery request behaves inconsistently. Examples include development unexpectedly staying readonly, validation resume logic depending on approval row ordering, or approval history showing the wrong phase.
+- Root cause: downstream code was previously treating `snapshot.approvalRequests.find(request => request.status === "approved")` as the canonical approval. Once tasks could accumulate multiple approved rows, that made behavior depend on repository ordering instead of approval purpose.
+- Failing approach: using “any approved request” as a substitute for the specific approved `policy_gate` request that carries baseline capabilities, or recording every approval decision under `policy_gate` even when the request phase was `architecture_review` or a downstream recovery phase.
+- Working workaround: resolve baseline downstream capabilities from the approved `policy_gate` request explicitly, detect approved `architecture_review` overrides separately for validation resume, and make orphan/dispatcher checks require an approved `policy_gate` row specifically.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'prefers the approved policy-gate request over newer override approvals when enabling developer code writes|continues at validation after approving an architecture review override|skips a ready manifest whose only approved rows are non-policy overrides|skips an orphaned ready manifest with no approved approval row and dispatches nothing'"`.
+
 ## Development retries fail immediately because `enableWorkspaceCodeWriting(...)` cannot patch `SOUL.md`
 
 - Symptom: a code-writing task reaches development, but both the initial attempt and the retry fail immediately with `DEVELOPMENT_FAILED` and a message like `enableWorkspaceCodeWriting: required patch "product code writes guardrail line" could not be applied`. The workspace may already show `TOOLS.md` or `.workspace/workspace.json` in read-write mode even though the run never dispatched to OpenClaw.

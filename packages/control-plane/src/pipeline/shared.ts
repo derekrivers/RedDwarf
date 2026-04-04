@@ -240,10 +240,7 @@ export function requireApprovedRequest(
   if (manifest.approvalMode === "auto") {
     return null;
   }
-  const approvedRequest =
-    snapshot.approvalRequests.find(
-      (request) => request.status === "approved"
-    ) ?? null;
+  const approvedRequest = findApprovedPolicyGateRequest(snapshot);
 
   if (!approvedRequest) {
     throw new Error(
@@ -251,6 +248,29 @@ export function requireApprovedRequest(
     );
   }
   return approvedRequest;
+}
+
+export function findApprovedRequestByPhase(
+  snapshot: PersistedTaskSnapshot,
+  phase: ApprovalRequest["phase"]
+): ApprovalRequest | null {
+  return (
+    snapshot.approvalRequests.find(
+      (request) => request.phase === phase && request.status === "approved"
+    ) ?? null
+  );
+}
+
+export function findApprovedPolicyGateRequest(
+  snapshot: PersistedTaskSnapshot
+): ApprovalRequest | null {
+  return findApprovedRequestByPhase(snapshot, "policy_gate");
+}
+
+export function findApprovedArchitectureReviewOverride(
+  snapshot: PersistedTaskSnapshot
+): ApprovalRequest | null {
+  return findApprovedRequestByPhase(snapshot, "architecture_review");
 }
 
 export function requireNoFailureEscalation(

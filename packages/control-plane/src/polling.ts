@@ -33,6 +33,7 @@ import {
   type DispatchReadyTaskResult,
   type PlanningConcurrencyOptions
 } from "./pipeline.js";
+import { findApprovedPolicyGateRequest } from "./pipeline/shared.js";
 import { resolveUnmetTaskGroupDependencies } from "./task-groups.js";
 
 export interface GitHubPollingRepoConfig {
@@ -777,20 +778,19 @@ async function findNextDispatchableManifest(
 
   for (const manifest of readyManifests) {
 
-    // Guard against orphaned ready manifests whose approved planning approval
+    // Guard against orphaned ready manifests whose approved policy-gate approval
     // row was deleted.  If we dispatched these they would fail inside
     // requireApprovedRequest and the manifest would stay ready, causing the
     // dispatcher to loop on it indefinitely.  Skip and log; the operator
     // should run the orphan sweep to mark these as failed.
     if (manifest.approvalMode !== "auto") {
       const snapshot = await repository.getTaskSnapshot(manifest.taskId);
-      const hasApprovedRequest = snapshot.approvalRequests.some(
-        (r) => r.status === "approved"
-      );
+      const hasApprovedRequest =
+        findApprovedPolicyGateRequest(snapshot) !== null;
 
       if (!hasApprovedRequest) {
         logger?.warn(
-          "Skipping orphaned ready manifest: no approved planning approval row found. " +
+          "Skipping orphaned ready manifest: no approved policy-gate approval row found. " +
           "Run POST /maintenance/reconcile-orphaned-state to repair.",
           {
             code: "DISPATCH_ORPHAN_SKIPPED",
