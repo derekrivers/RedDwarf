@@ -5,6 +5,7 @@ import type { Capability } from "@reddwarf/contracts";
 import { capabilities } from "@reddwarf/contracts";
 import type { SubmitIssueResponse } from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
+import { createDefaultIssueSubmissionCapabilitySet } from "../lib/issue-submission";
 
 const CAPABILITY_LABELS: Record<Capability, string> = {
   can_plan: "Planning",
@@ -47,7 +48,7 @@ export function SubmitIssuePage(props: { apiClient: DashboardApiClient }) {
   const [affectedPathsRaw, setAffectedPathsRaw] = useState("");
   const [constraintsRaw, setConstraintsRaw] = useState("");
   const [selectedCapabilities, setSelectedCapabilities] = useState<Set<Capability>>(
-    new Set(capabilities)
+    createDefaultIssueSubmissionCapabilitySet()
   );
   const [riskClassHint, setRiskClassHint] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -88,7 +89,7 @@ export function SubmitIssuePage(props: { apiClient: DashboardApiClient }) {
     setCriteria([""]);
     setAffectedPathsRaw("");
     setConstraintsRaw("");
-    setSelectedCapabilities(new Set(capabilities));
+    setSelectedCapabilities(createDefaultIssueSubmissionCapabilitySet());
     setRiskClassHint("");
     setSubmitError(null);
     setSuccessResult(null);
@@ -314,7 +315,7 @@ export function SubmitIssuePage(props: { apiClient: DashboardApiClient }) {
             </div>
             <div className="card-body">
               <p className="text-secondary small mb-3">
-                Select which agent capabilities this task may use. All are enabled by default.
+                Select which agent capabilities this task may use. Safe implementation defaults are enabled; add sensitive capabilities only when the task genuinely needs them.
               </p>
               <div className="divide-y">
                 {(capabilities as readonly Capability[]).map((cap) => (

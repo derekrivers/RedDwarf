@@ -5251,6 +5251,9 @@ describe("developer phase with OpenClaw dispatch", () => {
         "your next assistant turn should begin the repo write path with a write/edit tool call"
       );
       expect(developerPrompt).toContain(
+        "prefer a small scaffold first and then refine it with follow-up edits instead of one very large write payload"
+      );
+      expect(developerPrompt).toContain(
         "Do not produce long design monologues, exhaustive option lists, or row-by-row planning dumps."
       );
       expect(developerPrompt).not.toContain("## Architecture Plan (from Holly)");

@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## Dashboard-created issues request every capability unless the operator manually trims them
+
+- Symptom: a task created from the dashboard submit form lands in GitHub with unrelated capabilities such as `can_modify_schema`, `can_touch_sensitive_paths`, `can_use_secrets`, or `can_review`, even for straightforward frontend or docs work. That extra scope can make approvals noisier and can leak unnecessary capability names into downstream prompts.
+- Root cause: the dashboard issue form was initializing its capability picker with the full capability enum, so every checkbox started selected unless the operator opted out manually.
+- Failing approach: assuming the dashboard defaults mirror the GitHub issue template's safer subset, or pasting issue bodies forward without checking which capabilities were preselected in the form.
+- Working workaround: default dashboard submissions to a safe implementation-focused subset (`can_write_code`, `can_run_tests`, `can_open_pr`, `can_archive_evidence`) and require explicit opt-in for sensitive or specialized capabilities.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/dashboard/src/lib/issue-submission.test.ts`; `corepack pnpm typecheck`.
+
+## Bounded frontend tasks can still terminate mid-write if the developer sends one oversized file payload
+
+- Symptom: development starts correctly, then OpenClaw terminates the session during the first large file creation with `OPENCLAW_SESSION_TERMINATED` and a provider error such as `Output blocked by content filtering policy`, even though the task is ordinary product code.
+- Root cause: a bounded single-file task can still trigger provider-side false positives when the developer tries to emit a large HTML/CSS/JS file in one write tool call. The session dies before `developer-handoff.md` is written, so RedDwarf only sees a terminated session unless the transcript is inspected.
+- Failing approach: encouraging implementation-first mode without also nudging the developer to scaffold substantial files incrementally.
+- Working workaround: keep implementation-first mode, but explicitly instruct the developer to create a small scaffold first and refine it via follow-up edits instead of one very large write payload.
+- Verification: inspect the rendered developer prompt for the incremental-write guidance, then run `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts`; `corepack pnpm typecheck`.
+
 ## GitHub issue intake drops `can_open_pr` or `can_run_tests` even though the issue body requested them
 
 - Symptom: a GitHub issue clearly lists capabilities such as `can_run_tests` and `can_open_pr`, but the resulting RedDwarf task manifest only contains the fallback capability set, often `can_plan`, `can_write_code`, and `can_archive_evidence`. Validation then stops at `await_review` instead of continuing to SCM.

@@ -411,7 +411,8 @@ export function buildOpenClawDeveloperPrompt(
           "This is a bounded implementation task. Use implementation-first mode.",
           "After reading the trusted task/spec/TOOLS context, spend at most 3 tool calls on orientation before your first repo write unless you are concretely blocked.",
           "Do not produce long design monologues, exhaustive option lists, or row-by-row planning dumps. If structure is clear enough to start, start coding and refine in the file.",
-          "Once orientation is complete, your next assistant turn should begin the repo write path with a write/edit tool call unless you have a real blocker."
+          "Once orientation is complete, your next assistant turn should begin the repo write path with a write/edit tool call unless you have a real blocker.",
+          "When creating or replacing a substantial file, prefer a small scaffold first and then refine it with follow-up edits instead of one very large write payload."
         ]
       : []),
     "When `package.json` is in the preferred implementation paths, `.gitignore` is also approved as a companion file so install and build artifacts such as `node_modules/` stay out of version control.",

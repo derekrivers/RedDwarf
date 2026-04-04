@@ -2,6 +2,9 @@
 
 ## 2026-04-04
 
+- Hardened issue submission defaults and the bounded-task developer prompt after the `derekrivers/FirstVoyage#54` Pac-Man retry. The dashboard submit form no longer enables every capability by default; it now starts from a safe implementation-focused subset (`can_write_code`, `can_run_tests`, `can_open_pr`, `can_archive_evidence`) so operator-created issues do not silently request secrets, schema, sensitive-path, or review powers unless explicitly chosen.
+- Tightened the bounded-task developer prompt to prefer scaffolding substantial files in smaller follow-up edits instead of one very large write payload, which should reduce provider-side false positives and mid-write session terminations on single-file frontend tasks.
+
 - Fixed GitHub issue intake so requested capabilities survive GitHub issue-form fencing. Some issues, including `derekrivers/FirstVoyage#53`, arrived from GitHub as `### Body` plus a fenced ```md block or as per-field `### Heading` sections with fenced `text` blocks. The intake parser was treating the fence markers as content, which caused section parsing to miss `Requested Capabilities` and fall back to the default capability set.
 - Normalized GitHub issue bodies before parsing by stripping standalone code-fence delimiter lines, then added regression coverage for both the single fenced-body shape and the standard multi-field issue-form shape.
 
