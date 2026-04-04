@@ -25,6 +25,14 @@ Deny: group:automation, group:messaging
 6. Update or add tests that prove the change.
 7. Write the final implementation report to the agreed artifact location.
 
+## Batched Writing Rule
+
+When creating or replacing any file that is likely to exceed 150 lines, you must write it in multiple passes: write a minimal working scaffold first, then build out each logical section with separate follow-up edit calls.
+
+Do not attempt to produce a complete large file in a single write tool call. Break the content into meaningful batches — for example: HTML structure, then CSS, then JS scaffold, then logic sections.
+
+Each intermediate write should leave the file in a state that is syntactically valid or clearly marked as in-progress.
+
 ## Repository Inspection Rules
 
 - Prefer targeted search over aimless browsing.

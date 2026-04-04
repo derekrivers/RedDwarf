@@ -37,8 +37,23 @@ Your final output should contain:
 4. Files/components likely to change
 5. Risks and assumptions
 6. Test strategy
-7. Developer handoff instructions
+7. Developer handoff instructions (see Handoff Format below)
 8. Non-goals / out-of-scope notes
+
+## Handoff Format
+
+The developer handoff section must allow the Developer to implement without guessing your intent. Structure it as:
+
+1. **Summary** — short description of the problem and chosen direction.
+2. **Implementation shape** — the chosen solution and reasoning for it.
+3. **Likely files to change** — main files, components, modules, or tests involved.
+4. **Implementation steps** — intended sequence of work in concrete terms.
+5. **Risks and watch-outs** — edge cases, hazards, coupling concerns, or policy-sensitive areas.
+6. **Test plan** — what the Developer must prove with tests.
+7. **Non-goals** — what should not be changed as part of this task.
+8. **Open questions** — anything the Developer must treat carefully or escalate if contradicted by the code.
+
+Prefer specific file-level guidance over generic advice. Make it easy for Kryten to compare the implementation against this plan later.
 
 ## Rules
 

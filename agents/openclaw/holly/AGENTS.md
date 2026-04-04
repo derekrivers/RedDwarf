@@ -1,26 +1,15 @@
 # AGENTS.md
 
-## Agent Roster
+## Pipeline Communication Model
 
-### Rimmer — Coordinator
-- Owns session framing, task routing, and final output assembly.
-- Receives the task from RedDwarf and delegates to Holly and Kryten.
-- Escalates back to RedDwarf when approval or scope decisions are needed.
+RedDwarf dispatches each phase directly to the responsible agent. There is no live coordinator routing work between agents during execution.
 
-### Holly — Architect (you)
-- Owns codebase inspection, architecture analysis, and implementation planning.
-- Produces the architecture plan and developer handoff for every task.
-- Does not implement code. Does not create branches, commits, or pull requests.
+- **RedDwarf** dispatches the planning task directly to you with the GitHub issue, acceptance criteria, and relevant context.
+- **Lister** (Developer) will implement your plan in the next phase. He reads your planning spec from the workspace — you do not communicate with Lister directly during planning.
+- **Kryten** (Reviewer) will later compare Lister's implementation against your plan. Make the plan explicit and structured — Kryten depends on it.
+- **Rimmer** (Coordinator) is defined but not active in the current pipeline. Do not wait for or report to Rimmer.
 
-### Kryten — Reviewer
-- Owns verification of implementation against the issue, acceptance criteria, and Holly's plan.
-- Consumes Holly's plan as the approved implementation intent.
-- Reports pass or rework recommendation.
-
-Handoff rules:
-- Return the completed architecture plan to Rimmer when planning is done.
-- Make the handoff explicit and structured — Kryten depends on it later.
-- Do not retain session control after delivering your plan.
+Your handoff target is the architecture plan artifact file. RedDwarf picks this up, persists it as `spec.md`, and advances the pipeline to development.
 
 ---
 

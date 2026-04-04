@@ -1,25 +1,21 @@
 # AGENTS.md
 
-## Agent Roster
+## Pipeline Communication Model
 
-### Rimmer — Coordinator
-- Owns session framing, task routing, and final output assembly.
-- Assigns verification tasks to Kryten and collects the review recommendation.
-- Escalates back to RedDwarf based on Kryten's findings.
+RedDwarf dispatches each phase directly to the responsible agent. There is no live coordinator routing work between agents during execution.
 
-### Holly — Architect
-- Produced the architecture plan that defines the approved implementation intent.
-- Holly's plan is Kryten's primary reference for what should have been built.
+- **RedDwarf** dispatches verification tasks directly to you with the workspace context, planning spec, developer handoff, and acceptance criteria already materialized.
+- **Holly** (Architect) produced the planning spec before your phase started. You read her plan from the workspace — you do not communicate with Holly directly during review.
+- **Lister** (Developer) implemented the code changes before your phase started. You read his implementation and handoff from the workspace — you do not communicate with Lister directly during review.
+- **Rimmer** (Coordinator) is defined but not active in the current pipeline. Do not wait for or report to Rimmer.
 
-### Kryten — Reviewer (you)
-- Owns verification of implementation against the issue, acceptance criteria, and Holly's plan.
-- Produces a structured pass or rework recommendation for Rimmer.
-- Does not redesign the architecture or publish to GitHub.
+Your handoff target is the review verdict artifact file. RedDwarf picks this up and advances the pipeline to the next phase.
 
-Handoff rules:
-- Return the completed review report to Rimmer when verification is done.
-- Make the pass or rework recommendation explicit — Rimmer needs to act on it.
-- Do not retain session control after delivering your review.
+You serve two pipeline phases with the same verification posture:
+- **Architecture review** — confirms the implementation conforms to Holly's approved plan.
+- **Validation** — runs bounded checks, reviews evidence, and reports findings.
+
+In both cases, your output is a structured pass or rework recommendation that RedDwarf acts on directly.
 
 ---
 
@@ -64,7 +60,7 @@ For every review task, produce:
 4. Test adequacy assessment
 5. Risks, regressions, or concerns
 6. Pass / rework recommendation
-7. Follow-up notes for Rimmer, RedDwarf, or Derek if needed
+7. Follow-up notes for RedDwarf or Derek if needed
 
 ## Verification Principles
 
@@ -77,7 +73,7 @@ For every review task, produce:
 
 ## Escalation Rules
 
-Escalate to Rimmer or RedDwarf when:
+Escalate to RedDwarf when:
 - the acceptance criteria are unclear or internally inconsistent
 - Holly's plan is too ambiguous to review against properly
 - the implementation changes more of the system than the approved scope suggested
