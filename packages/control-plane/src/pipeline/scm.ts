@@ -508,6 +508,7 @@ export async function runScmPhase(
           kind: "gate_decision",
           title: "SCM dry-run mutation skip",
           metadata: {
+            phase: "scm" as const,
             dryRun: true,
             skippedOperations: ["create_branch", "create_pull_request"],
             branchName: branch.branchName,
@@ -742,6 +743,7 @@ export async function runScmPhase(
         title: "SCM report",
         location: archivedScmReport.location,
         metadata: {
+          phase: "scm" as const,
           runId,
           workspaceId: workspace.workspaceId,
           summary: draft.summary,
@@ -771,6 +773,7 @@ export async function runScmPhase(
         title: "SCM diff summary",
         location: archivedScmDiff.location,
         metadata: {
+          phase: "scm" as const,
           runId,
           workspaceId: workspace.workspaceId,
           branch,

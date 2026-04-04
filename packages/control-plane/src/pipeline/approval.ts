@@ -191,6 +191,7 @@ export async function resolveApprovalRequest(
         title:
           input.decision === "approve" ? "Approval granted" : "Approval rejected",
         metadata: {
+          phase: approvalRequest.phase,
           requestId: approvalRequest.requestId,
           decision: input.decision,
           decidedBy,

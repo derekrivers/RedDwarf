@@ -17,9 +17,16 @@ function formatDateTime(value: string): string {
 }
 
 function formatEvidencePhase(row: EvidenceRow): string {
-  return typeof row.record.metadata.phase === "string"
-    ? row.record.metadata.phase
-    : "unknown";
+  if (typeof row.record.metadata.phase === "string") {
+    return row.record.metadata.phase;
+  }
+
+  const prompt = row.record.metadata.prompt;
+  if (prompt && typeof prompt === "object" && typeof (prompt as Record<string, unknown>).phase === "string") {
+    return (prompt as Record<string, unknown>).phase as string;
+  }
+
+  return "unknown";
 }
 
 function exportEvidenceRow(row: EvidenceRow): void {

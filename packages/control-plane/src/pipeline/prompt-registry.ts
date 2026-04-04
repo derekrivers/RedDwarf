@@ -42,6 +42,7 @@ export async function capturePromptSnapshot(
       kind: "gate_decision",
       title: `${input.phase} prompt snapshot`,
       metadata: {
+        phase: input.phase,
         prompt: snapshot,
         ...(input.metadata ?? {})
       },

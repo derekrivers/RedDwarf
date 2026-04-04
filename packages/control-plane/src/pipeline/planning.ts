@@ -246,7 +246,7 @@ export async function runPlanningPipeline(
         taskId,
         kind: "gate_decision",
         title: "Concurrency gate decision",
-        metadata: concurrencyDecision,
+        metadata: { phase: "intake" as const, ...concurrencyDecision },
         createdAt: runStartedAtIso
       })
     );
@@ -344,6 +344,7 @@ export async function runPlanningPipeline(
         kind: "manifest",
         title: "Initial task manifest",
         metadata: {
+          phase: "intake" as const,
           approvalMode: initialApprovalMode,
           riskClass,
           concurrencyDecision,
@@ -440,7 +441,7 @@ export async function runPlanningPipeline(
           taskId,
           kind: "gate_decision",
           title: "Eligibility gate decision",
-          metadata: { reasons: eligibility.reasons },
+          metadata: { phase: "eligibility" as const, reasons: eligibility.reasons },
           createdAt: blockedAtIso
         })
       );
@@ -598,7 +599,7 @@ export async function runPlanningPipeline(
           taskId,
           kind: "gate_decision",
           title: "Pre-screen rejection",
-          metadata: preScreenAssessment,
+          metadata: { phase: "eligibility" as const, ...preScreenAssessment },
           createdAt: blockedAtIso
         })
       );
@@ -864,6 +865,7 @@ export async function runPlanningPipeline(
         kind: "planning_spec",
         title: "Planning specification",
         metadata: {
+          phase: "planning" as const,
           specId: spec.specId,
           confidenceLevel: spec.confidenceLevel,
           confidenceReason: spec.confidenceReason,
@@ -880,6 +882,7 @@ export async function runPlanningPipeline(
           kind: "file_artifact",
           title: "Holly architect handoff",
           metadata: {
+            phase: "planning" as const,
             source: "openclaw:reddwarf-analyst",
             contentLength: hollyHandoffMarkdown.length
           },
@@ -1054,6 +1057,7 @@ export async function runPlanningPipeline(
         kind: "gate_decision",
         title: "Policy gate decision",
         metadata: {
+          phase: "policy_gate" as const,
           approvalMode,
           blockedPhases: policySnapshot.blockedPhases,
           confidenceLevel: spec.confidenceLevel,
@@ -1074,6 +1078,7 @@ export async function runPlanningPipeline(
           kind: "gate_decision",
           title: "Approval request queued",
           metadata: {
+            phase: "policy_gate" as const,
             requestId: approvalRequest.requestId,
             dryRun: approvalRequest.dryRun,
             confidenceLevel: approvalRequest.confidenceLevel,

@@ -381,7 +381,7 @@ async function persistRecoveryMemoryRecords(
       taskId: opts.taskId,
       kind: "gate_decision",
       title: "Failure recovery decision",
-      metadata: opts.recoveryMetadata,
+      metadata: { phase: opts.phase, ...opts.recoveryMetadata },
       createdAt: opts.createdAt
     })
   );
@@ -520,6 +520,7 @@ export async function handleAutomatedPhaseFailure(input: {
         kind: "run_event",
         title: `${phase.charAt(0).toUpperCase() + phase.slice(1)} phase failure`,
         metadata: {
+          phase,
           runId,
           code: failure.code,
           failureClass: failure.failureClass,
@@ -837,7 +838,7 @@ export async function persistConcurrencyBlock(
         taskId: ctx.taskId,
         kind: "gate_decision",
         title: `${phaseLabel} concurrency gate decision`,
-        metadata: decision,
+        metadata: { phase: ctx.phase, ...decision },
         createdAt: ctx.runStartedAtIso
       })
     );
@@ -939,6 +940,7 @@ export async function persistPhaseFailure(
         kind: "run_event",
         title: `${ctx.phase.charAt(0).toUpperCase() + ctx.phase.slice(1)} phase failure`,
         metadata: {
+          phase: ctx.phase,
           runId: ctx.runId,
           code: ctx.failure.code,
           failureClass: ctx.failure.failureClass,
