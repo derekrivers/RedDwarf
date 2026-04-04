@@ -101,8 +101,8 @@ export interface GitHubReader {
 }
 
 export interface GitHubWriter {
-  addLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
-  removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never>;
+  addLabels(repo: string, issueNumber: number, labels: string[]): Promise<void>;
+  removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<void>;
   createIssue(input: GitHubIssueDraft): Promise<GitHubCreatedIssueSummary>;
   createBranch(
     repo: string,
@@ -110,7 +110,7 @@ export interface GitHubWriter {
     branchName: string
   ): Promise<GitHubBranchSummary>;
   createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary>;
-  commentOnIssue(comment: GitHubIssueComment): Promise<never>;
+  commentOnIssue(comment: GitHubIssueComment): Promise<void>;
 }
 
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
@@ -218,11 +218,11 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     return createPlanningInputFromGitHubIssue(candidate);
   }
 
-  async addLabels(repo: string, issueNumber: number, labels: string[]): Promise<never> {
+  async addLabels(repo: string, issueNumber: number, labels: string[]): Promise<void> {
     throw new V1MutationDisabledError(`Adding labels ${labels.join(", ")} to ${repo}#${issueNumber}`);
   }
 
-  async removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<never> {
+  async removeLabels(repo: string, issueNumber: number, labels: string[]): Promise<void> {
     throw new V1MutationDisabledError(`Removing labels ${labels.join(", ")} from ${repo}#${issueNumber}`);
   }
 
@@ -327,7 +327,7 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     return summary;
   }
 
-  async commentOnIssue(comment: GitHubIssueComment): Promise<never> {
+  async commentOnIssue(comment: GitHubIssueComment): Promise<void> {
     throw new V1MutationDisabledError(`Commenting on ${comment.repo}#${comment.issueNumber}`);
   }
 }
@@ -709,11 +709,11 @@ export class RestGitHubAdapter implements GitHubAdapter {
     return createPlanningInputFromGitHubIssue(candidate);
   }
 
-  async addLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<never> {
+  async addLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<void> {
     throw new V1MutationDisabledError(`Adding labels [${labels.join(", ")}] is disabled in RedDwarf v1`);
   }
 
-  async removeLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<never> {
+  async removeLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<void> {
     throw new V1MutationDisabledError(`Removing labels [${labels.join(", ")}] is disabled in RedDwarf v1`);
   }
 
@@ -738,7 +738,7 @@ export class RestGitHubAdapter implements GitHubAdapter {
     };
   }
 
-  async commentOnIssue(comment: GitHubIssueComment): Promise<never> {
+  async commentOnIssue(comment: GitHubIssueComment): Promise<void> {
     throw new V1MutationDisabledError(
       `Commenting on ${comment.repo}#${comment.issueNumber} is disabled in RedDwarf v1`
     );

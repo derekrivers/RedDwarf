@@ -6428,13 +6428,13 @@ describe("sweepOrphanedDispatcherState", () => {
     await repository.savePlanningSpec(makeOrphanSpec(manifest.taskId));
     await repository.savePolicySnapshot(manifest.taskId, makeOrphanPolicySnapshot(manifest.taskId));
 
-    // Save an approved approval row (not orphaned)
+    // Save an approved policy-gate approval row (not orphaned)
     await repository.saveApprovalRequest(
       createApprovalRequest({
         requestId: `${manifest.taskId}:approval:1`,
         taskId: manifest.taskId,
         runId: "run-1",
-        phase: "planning",
+        phase: "policy_gate",
         approvalMode: "human_signoff_required",
         status: "approved",
         riskClass: "low",

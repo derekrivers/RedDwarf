@@ -26,8 +26,11 @@ import {
   operatorUiBootstrapResponseSchema,
   parseOperatorConfigEnvValue,
   parseOperatorConfigValue,
+  pipelineRunStatusSchema,
   serializeOperatorConfigValue,
   taskGroupInjectionRequestSchema,
+  taskLifecycleStatusSchema,
+  taskPhaseSchema,
   directTaskInjectionRequestSchema,
   githubIssueSubmitSchema,
   type ApprovalDecision,
@@ -79,6 +82,41 @@ export interface OperatorApiConfig {
   managedTargetRoot?: string;
   managedEvidenceRoot?: string;
   localSecretsPath?: string;
+  /** Maximum requests per IP per window. Defaults to 120 req / 60 s. */
+  rateLimitMaxRequests?: number;
+  /** Rate-limit window duration in milliseconds. Defaults to 60_000 ms. */
+  rateLimitWindowMs?: number;
+}
+
+// ============================================================
+// In-memory rate limiter
+// ============================================================
+
+/**
+ * Simple sliding-window rate limiter keyed by IP address.
+ * Returns true when the request should be allowed, false when it exceeds the limit.
+ */
+export class OperatorRateLimiter {
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+  private readonly buckets = new Map<string, number[]>();
+
+  constructor(maxRequests: number, windowMs: number) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+  }
+
+  allow(ip: string, now = Date.now()): boolean {
+    const cutoff = now - this.windowMs;
+    const timestamps = (this.buckets.get(ip) ?? []).filter((t) => t > cutoff);
+    if (timestamps.length >= this.maxRequests) {
+      this.buckets.set(ip, timestamps);
+      return false;
+    }
+    timestamps.push(now);
+    this.buckets.set(ip, timestamps);
+    return true;
+  }
 }
 
 export interface OperatorApiDependencies {
@@ -187,6 +225,10 @@ export function createOperatorApiServer(
   const host = config.host ?? "127.0.0.1";
   const authToken = config.authToken.trim();
   const maxRequestBodyBytes = config.maxRequestBodyBytes ?? 64 * 1024;
+  const rateLimiter = new OperatorRateLimiter(
+    config.rateLimitMaxRequests ?? 120,
+    config.rateLimitWindowMs ?? 60_000
+  );
   const managedTargetRoot =
     config.managedTargetRoot !== undefined
       ? resolve(config.managedTargetRoot)
@@ -232,6 +274,15 @@ export function createOperatorApiServer(
       try {
         await runCorsMiddleware(req, res);
         if (res.writableEnded) {
+          return;
+        }
+
+        const clientIp = req.socket.remoteAddress ?? "unknown";
+        if (!rateLimiter.allow(clientIp)) {
+          writeOperatorJsonResponse(res, 429, {
+            error: "rate_limit_exceeded",
+            message: "Too many requests. Please slow down."
+          });
           return;
         }
 
@@ -364,6 +415,10 @@ async function readOperatorJsonBody(
 
       if (rawBytes > maxRequestBodyBytes) {
         tooLarge = true;
+        // Stop accumulating bytes — discard the rest of the stream in memory.
+        // The promise is already rejected on the first oversized chunk; we
+        // cannot destroy the socket here because the 413 response has not
+        // been written yet and destruction would prevent it from being sent.
         return;
       }
 
@@ -1699,16 +1754,24 @@ async function handleOperatorRequest(
   if (method === "GET" && path === "/runs") {
     const repo = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
     const taskId = typeof qp["taskId"] === "string" ? qp["taskId"] : undefined;
-    const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const rawLimit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const limit =
+      rawLimit !== undefined && !isNaN(rawLimit) && rawLimit > 0 && rawLimit <= 1000
+        ? rawLimit
+        : undefined;
     const rawStatuses = qp["statuses"] ?? qp["status"];
-    const statuses = rawStatuses
+    const rawStatusList = rawStatuses
       ? (Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses])
       : undefined;
+    const statuses = rawStatusList?.flatMap((s) => {
+      const parsed = pipelineRunStatusSchema.safeParse(s);
+      return parsed.success ? [parsed.data] : [];
+    });
     const runs = await repository.listPipelineRuns({
       ...(repo !== undefined ? { repo } : {}),
       ...(taskId !== undefined ? { taskId } : {}),
-      ...(limit !== undefined && !isNaN(limit) ? { limit } : {}),
-      ...(statuses !== undefined ? { statuses: statuses as PipelineRun["status"][] } : {})
+      ...(limit !== undefined ? { limit } : {}),
+      ...(statuses !== undefined && statuses.length > 0 ? { statuses } : {})
     });
     writeOperatorJsonResponse(res, 200, { runs, total: runs.length });
     return;
@@ -2129,29 +2192,32 @@ async function handleOperatorRequest(
 
   if (method === "GET" && path === "/tasks") {
     const repo = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
-    const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const rawLimit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
+    const limit =
+      rawLimit !== undefined && !isNaN(rawLimit) && rawLimit > 0 && rawLimit <= 1000
+        ? rawLimit
+        : undefined;
     const rawStatuses = qp["statuses"] ?? qp["status"];
     const rawPhases = qp["phases"] ?? qp["phase"];
     const lifecycleStatuses = rawStatuses
-      ? (Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses])
+      ? (Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses]).flatMap((s) => {
+          const parsed = taskLifecycleStatusSchema.safeParse(s);
+          return parsed.success ? [parsed.data] : [];
+        })
       : undefined;
     const phases = rawPhases
-      ? (Array.isArray(rawPhases) ? rawPhases : [rawPhases])
+      ? (Array.isArray(rawPhases) ? rawPhases : [rawPhases]).flatMap((p) => {
+          const parsed = taskPhaseSchema.safeParse(p);
+          return parsed.success ? [parsed.data] : [];
+        })
       : undefined;
     const manifests = await repository.listTaskManifests({
       ...(repo !== undefined ? { repo } : {}),
-      ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
-      ...(lifecycleStatuses !== undefined
-        ? {
-            lifecycleStatuses:
-              lifecycleStatuses as import("@reddwarf/contracts").TaskManifestQuery["lifecycleStatuses"]
-          }
+      ...(limit !== undefined ? { limit } : {}),
+      ...(lifecycleStatuses !== undefined && lifecycleStatuses.length > 0
+        ? { lifecycleStatuses }
         : {}),
-      ...(phases !== undefined
-        ? {
-            phases: phases as import("@reddwarf/contracts").TaskManifestQuery["phases"]
-          }
-        : {})
+      ...(phases !== undefined && phases.length > 0 ? { phases } : {})
     });
     const tasks = await Promise.all(
       manifests.map((manifest) => buildOperatorTaskSummary(repository, manifest))

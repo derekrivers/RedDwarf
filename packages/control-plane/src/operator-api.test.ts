@@ -9,6 +9,7 @@ import {
   DeterministicPlanningAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  OperatorRateLimiter,
   createOperatorApiServer,
   resolveApprovalRequest,
   runDeveloperPhase,
@@ -1743,5 +1744,225 @@ describe("operator API server", () => {
     } finally {
       await apiServer.stop();
     }
+  });
+
+  it("returns 429 when rate limit is exceeded", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        authToken: operatorApiToken,
+        rateLimitMaxRequests: 2,
+        rateLimitWindowMs: 60_000
+      },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const first = await operatorGet(port, "/health");
+      expect(first.status).toBe(200);
+      const second = await operatorGet(port, "/health");
+      expect(second.status).toBe(200);
+      const third = await operatorGet(port, "/health");
+      expect(third.status).toBe(429);
+      expect((third.body as Record<string, unknown>)["error"]).toBe("rate_limit_exceeded");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("updates config entries via PUT /config and reflects changes in GET /config", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const beforeUpdate = await operatorGet(port, "/config");
+      expect(beforeUpdate.status).toBe(200);
+
+      const updateResponse = await operatorPut(port, "/config", {
+        entries: [{ key: "REDDWARF_DRY_RUN", value: true }]
+      });
+      expect(updateResponse.status).toBe(200);
+      const config = (updateResponse.body as Record<string, unknown>)["config"] as Array<Record<string, unknown>>;
+      const dryRunEntry = config.find((e) => e["key"] === "REDDWARF_DRY_RUN");
+      expect(dryRunEntry).toBeDefined();
+
+      const afterUpdate = await operatorGet(port, "/config");
+      expect(afterUpdate.status).toBe(200);
+      const afterConfig = (afterUpdate.body as Record<string, unknown>)["config"] as Array<Record<string, unknown>>;
+      expect(afterConfig.some((e) => e["key"] === "REDDWARF_DRY_RUN")).toBe(true);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns 400 for PUT /config with an invalid payload", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPut(port, "/config", {
+        entries: [{ key: "NOT_A_VALID_KEY", value: "boom" }]
+      });
+      expect(response.status).toBe(400);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("bad_request");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns 404 for POST /secrets/:key/rotate with an unknown key", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/secrets/UNKNOWN_SECRET_KEY/rotate", {
+        value: "new-secret-value"
+      });
+      expect(response.status).toBe(404);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("not_found");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns 400 for POST /secrets/:key/rotate with a multi-line value", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/secrets/GITHUB_TOKEN/rotate", {
+        value: "line1\nline2"
+      });
+      expect(response.status).toBe(400);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("bad_request");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns an empty blocked summary from GET /blocked with an empty repository", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorGet(port, "/blocked");
+      expect(response.status).toBe(200);
+      const body = response.body as Record<string, unknown>;
+      expect(body["totalBlockedRuns"]).toBe(0);
+      expect(body["totalPendingApprovals"]).toBe(0);
+      expect(body["blockedRuns"]).toEqual([]);
+      expect(body["pendingApprovals"]).toEqual([]);
+      expect(body["retryExhaustedEntries"]).toEqual([]);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("filters GET /runs limit to a positive integer not exceeding 1000", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      // Negative limit is silently ignored (falls back to repository default)
+      const negative = await operatorGet(port, "/runs?limit=-1");
+      expect(negative.status).toBe(200);
+      // Over-limit is silently clamped (falls back to repository default)
+      const overlimit = await operatorGet(port, "/runs?limit=99999");
+      expect(overlimit.status).toBe(200);
+      // Valid limit is accepted
+      const valid = await operatorGet(port, "/runs?limit=10");
+      expect(valid.status).toBe(200);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("ignores unknown status values in GET /runs?statuses=", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:00:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorGet(port, "/runs?statuses=not_a_real_status&statuses=running");
+      expect(response.status).toBe(200);
+      // Unknown status is silently dropped; "running" is a valid status
+      expect(Array.isArray((response.body as Record<string, unknown>)["runs"])).toBe(true);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+});
+
+describe("OperatorRateLimiter", () => {
+  it("allows requests up to the limit within the window", () => {
+    const limiter = new OperatorRateLimiter(3, 60_000);
+    expect(limiter.allow("1.2.3.4", 1000)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 2000)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 3000)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 4000)).toBe(false);
+  });
+
+  it("resets after the window expires", () => {
+    const limiter = new OperatorRateLimiter(2, 1000);
+    expect(limiter.allow("1.2.3.4", 0)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 100)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 200)).toBe(false);
+    // Advance past the window
+    expect(limiter.allow("1.2.3.4", 1100)).toBe(true);
+    expect(limiter.allow("1.2.3.4", 1200)).toBe(true);
+  });
+
+  it("tracks different IPs independently", () => {
+    const limiter = new OperatorRateLimiter(1, 60_000);
+    expect(limiter.allow("1.1.1.1", 1000)).toBe(true);
+    expect(limiter.allow("2.2.2.2", 1000)).toBe(true);
+    expect(limiter.allow("1.1.1.1", 2000)).toBe(false);
+    expect(limiter.allow("2.2.2.2", 2000)).toBe(false);
   });
 });

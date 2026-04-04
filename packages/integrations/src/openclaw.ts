@@ -213,9 +213,16 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
       }
 
       const responseBody = await response.text();
-      const result = responseBody.length > 0
-        ? JSON.parse(responseBody) as Record<string, unknown>
-        : {};
+      let result: Record<string, unknown> = {};
+      if (responseBody.length > 0) {
+        try {
+          result = JSON.parse(responseBody) as Record<string, unknown>;
+        } catch {
+          throw new Error(
+            `OpenClaw dispatch to ${url} returned non-JSON response (status ${response.status}): ${responseBody.slice(0, 200)}`
+          );
+        }
+      }
 
       return {
         accepted: true,
