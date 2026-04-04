@@ -7,7 +7,14 @@ function makeWorkspace(partial: { workspaceId: string; workspaceRoot: string }):
     workspaceId: partial.workspaceId,
     workspaceRoot: partial.workspaceRoot,
     contextDir: "",
-    files: { taskJson: "", specMarkdown: "", policySnapshotJson: "", allowedPathsJson: "", acceptanceCriteriaJson: "" },
+    files: {
+      taskJson: "",
+      specMarkdown: "",
+      policySnapshotJson: "",
+      allowedPathsJson: "",
+      deniedPathsJson: "",
+      acceptanceCriteriaJson: ""
+    },
     instructions: { canonicalSources: [], taskContractFiles: [], files: { soulMd: "", agentsMd: "", toolsMd: "", taskSkillMd: "" } },
     stateDir: "",
     stateFile: "",

@@ -21,9 +21,24 @@ export function normalizeAllowedPaths(values: readonly string[]): string[] {
   )];
 }
 
+export function normalizeDeniedPaths(values: readonly string[]): string[] {
+  return normalizeAllowedPaths(values);
+}
+
 export function normalizeChangedRepoPath(value: string): string {
   return normalizeRepoRelativePath(value);
 }
+
+const defaultDeniedRepoPaths = [
+  ".git/**",
+  ".env",
+  ".env.*",
+  "**/.env",
+  "**/.env.*",
+  ".secrets",
+  "**/.secrets",
+  "runtime-data/**"
+] as const;
 
 const ignoredGeneratedRepoPathPatterns = [
   /^node_modules(?:\/|$)/i
@@ -88,4 +103,8 @@ export function expandAllowedPathsForGeneratedArtifacts(
   }
 
   return [...expanded];
+}
+
+export function createDefaultDeniedPaths(): string[] {
+  return [...defaultDeniedRepoPaths];
 }

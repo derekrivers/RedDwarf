@@ -72,6 +72,7 @@ const policySnapshot: PolicySnapshot = {
   approvalMode: "auto",
   allowedCapabilities: ["can_plan", "can_archive_evidence"],
   allowedPaths: ["docs/**"],
+  deniedPaths: [".git/**", ".env", "runtime-data/**"],
   allowedSecretScopes: [],
   blockedPhases: ["review"],
   reasons: ["Planning phase is approved for autonomous execution in v1."]
@@ -121,6 +122,11 @@ describe("workspace context materialization", () => {
     expect(JSON.parse(artifacts.allowedPathsJson)).toEqual([
       "docs/**",
       "docs/architecture.md"
+    ]);
+    expect(JSON.parse(artifacts.deniedPathsJson)).toEqual([
+      ".git/**",
+      ".env",
+      "runtime-data/**"
     ]);
     expect(JSON.parse(artifacts.acceptanceCriteriaJson)).toEqual([
       "Spec is produced"

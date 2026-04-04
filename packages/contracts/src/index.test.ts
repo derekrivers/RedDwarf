@@ -168,12 +168,14 @@ describe("contracts", () => {
         approvalMode: "auto",
         allowedCapabilities: ["can_plan", "can_archive_evidence"],
         allowedPaths: ["docs/**"],
+        deniedPaths: [".git/**", ".env", "runtime-data/**"],
         allowedSecretScopes: [],
         blockedPhases: ["review"],
         reasons: ["Planning phase is approved for autonomous execution in v1."]
       },
       acceptanceCriteria: ["Spec is produced"],
-      allowedPaths: ["docs/**"]
+      allowedPaths: ["docs/**"],
+      deniedPaths: [".git/**", ".env", "runtime-data/**"]
     });
 
     expect(bundle.policySnapshot.blockedPhases).toEqual(["review"]);
@@ -465,6 +467,7 @@ describe("contracts", () => {
       recommendedAgentType: "architect",
       allowedCapabilities: ["can_plan", "can_archive_evidence"],
       allowedPaths: ["docs/**"],
+      deniedPaths: [".git/**", ".env", "runtime-data/**"],
       blockedPhases: ["review"],
       canonicalSources: ["standards/engineering.md"],
       taskContractFiles: [
@@ -524,6 +527,7 @@ describe("contracts", () => {
       recommendedAgentType: "developer",
       allowedCapabilities: ["can_run_tests", "can_archive_evidence"],
       allowedPaths: ["src/**"],
+      deniedPaths: [".git/**", ".env", "runtime-data/**"],
       blockedPhases: ["review"],
       canonicalSources: ["agents/validation.md"],
       taskContractFiles: [
@@ -586,6 +590,7 @@ describe("contracts", () => {
       recommendedAgentType: "developer",
       allowedCapabilities: ["can_open_pr", "can_archive_evidence"],
       allowedPaths: ["src/**"],
+      deniedPaths: [".git/**", ".env", "runtime-data/**"],
       blockedPhases: ["review"],
       canonicalSources: ["docs/implementation-map.md"],
       taskContractFiles: [
@@ -676,12 +681,14 @@ describe("contracts", () => {
         approvalMode: "human_signoff_required",
         allowedCapabilities: ["can_plan", "can_archive_evidence", "can_use_secrets"],
         allowedPaths: ["src/**"],
+        deniedPaths: [".git/**", ".env", "runtime-data/**"],
         allowedSecretScopes: ["github_readonly"],
         blockedPhases: ["review"],
         reasons: ["Scoped secrets are allowed after approval."]
       },
       acceptanceCriteria: ["Secret scopes are explicit"],
-      allowedPaths: ["src/**"]
+      allowedPaths: ["src/**"],
+      deniedPaths: [".git/**", ".env", "runtime-data/**"]
     });
 
     expect(bundle.policySnapshot.allowedSecretScopes).toEqual([

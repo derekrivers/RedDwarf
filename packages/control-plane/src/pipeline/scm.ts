@@ -458,7 +458,7 @@ export async function runScmPhase(
             workspace,
             baseBranch: draft.baseBranch,
             branchName: draft.branchName,
-            allowedPaths: approvedRequest?.allowedPaths ?? validatedPolicySnapshot.allowedPaths,
+            deniedPaths: validatedPolicySnapshot.deniedPaths,
             logger: runLogger
           }),
           heartbeatIntervalMs,
@@ -486,7 +486,7 @@ export async function runScmPhase(
               workspaceId: workspace.workspaceId,
               baseBranch: draft.baseBranch,
               branchName: draft.branchName,
-              allowedPaths: error.allowedPaths,
+              deniedPaths: error.deniedPaths,
               changedFiles: error.changedFiles,
               violatingFiles: error.violatingFiles
             },

@@ -84,7 +84,7 @@ export interface WorkspaceCommitPublisher {
     workspace: MaterializedManagedWorkspace;
     baseBranch: string;
     branchName: string;
-    allowedPaths: string[];
+    deniedPaths: string[];
     logger?: PlanningPipelineLogger;
   }): Promise<WorkspaceCommitPublicationResult>;
 }
@@ -144,35 +144,34 @@ export class ExternalCommandTimeoutError extends Error {
 }
 
 export class AllowedPathViolationError extends Error {
-  readonly allowedPaths: string[];
+  readonly deniedPaths: string[];
   readonly changedFiles: string[];
   readonly violatingFiles: string[];
 
   constructor(input: {
     workspaceId: string;
-    allowedPaths: string[];
+    deniedPaths: string[];
     changedFiles: string[];
     violatingFiles: string[];
   }) {
     const scopeLabel =
-      input.allowedPaths.length > 0 ? input.allowedPaths.join(", ") : "none";
+      input.deniedPaths.length > 0 ? input.deniedPaths.join(", ") : "none";
     const violatingLabel = input.violatingFiles.join(", ");
     super(
-      `Workspace ${input.workspaceId} changed files outside the approved path scope. Allowed paths: ${scopeLabel}. Violating files: ${violatingLabel}.`
+      `Workspace ${input.workspaceId} changed files inside blocked repo paths. Blocked paths: ${scopeLabel}. Violating files: ${violatingLabel}.`
     );
     this.name = "AllowedPathViolationError";
-    this.allowedPaths = [...input.allowedPaths];
+    this.deniedPaths = [...input.deniedPaths];
     this.changedFiles = [...input.changedFiles];
     this.violatingFiles = [...input.violatingFiles];
   }
 }
 
-export function findDisallowedChangedFiles(
+export function findDeniedChangedFiles(
   changedFiles: string[],
-  allowedPaths: string[]
+  deniedPaths: string[]
 ): string[] {
-  const normalizedAllowedPaths =
-    expandAllowedPathsForGeneratedArtifacts(allowedPaths);
+  const normalizedDeniedPaths = normalizeAllowedPaths(deniedPaths);
 
   return [...new Set(
     changedFiles
@@ -181,11 +180,18 @@ export function findDisallowedChangedFiles(
       .filter((value) => !isIgnoredGeneratedRepoPath(value))
       .filter(
         (changedFile) =>
-          !normalizedAllowedPaths.some((allowedPath) =>
-            repoPathMatchesAllowedPattern(changedFile, allowedPath)
+          normalizedDeniedPaths.some((deniedPath) =>
+            repoPathMatchesPattern(changedFile, deniedPath)
           )
       )
   )].sort((left, right) => left.localeCompare(right));
+}
+
+export function findDisallowedChangedFiles(
+  changedFiles: string[],
+  deniedPaths: string[]
+): string[] {
+  return findDeniedChangedFiles(changedFiles, deniedPaths);
 }
 
 export function assignWorkspaceRepoRoot(
@@ -218,9 +224,9 @@ export async function assertWorkspaceRepoChangesWithinAllowedPaths(
   );
   const changedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
 
-  assertChangedFilesWithinAllowedPaths({
+  assertChangedFilesAvoidDeniedPaths({
     workspaceId: workspace.workspaceId,
-    allowedPaths: workspace.descriptor.allowedPaths,
+    deniedPaths: workspace.descriptor.deniedPaths,
     changedFiles
   });
 }
@@ -353,8 +359,8 @@ export async function enableWorkspaceCodeWriting(
 
   soulContent = applyRequiredPatch(
     soulContent,
-    "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
-    "- Product code writes are enabled for this approved development task; stay inside the approved workspace and path scope.",
+    "- Product code writes remain disabled; stay inside the managed workspace and do not touch blocked repo paths.",
+    "- Product code writes are enabled for this approved development task; stay inside the managed workspace and do not touch blocked repo paths.",
     "product code writes guardrail line"
   );
 
@@ -645,9 +651,9 @@ export function createGitWorkspaceCommitPublisher(
       const uncommittedChangedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
       const hasUncommittedChanges = uncommittedChangedFiles.length > 0;
 
-      assertChangedFilesWithinAllowedPaths({
+      assertChangedFilesAvoidDeniedPaths({
         workspaceId: input.workspace.workspaceId,
-        allowedPaths: input.allowedPaths,
+        deniedPaths: input.deniedPaths,
         changedFiles: uncommittedChangedFiles
       });
 
@@ -687,9 +693,9 @@ export function createGitWorkspaceCommitPublisher(
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
 
-      assertChangedFilesWithinAllowedPaths({
+      assertChangedFilesAvoidDeniedPaths({
         workspaceId: input.workspace.workspaceId,
-        allowedPaths: input.allowedPaths,
+        deniedPaths: input.deniedPaths,
         changedFiles
       });
 
@@ -950,14 +956,14 @@ function parseGitStatusChangedFiles(statusOutput: string): string[] {
     .filter((path) => path.length > 0);
 }
 
-function assertChangedFilesWithinAllowedPaths(input: {
+function assertChangedFilesAvoidDeniedPaths(input: {
   workspaceId: string;
-  allowedPaths: string[];
+  deniedPaths: string[];
   changedFiles: string[];
 }): void {
-  const violatingFiles = findDisallowedChangedFiles(
+  const violatingFiles = findDeniedChangedFiles(
     input.changedFiles,
-    input.allowedPaths
+    input.deniedPaths
   );
 
   if (violatingFiles.length === 0) {
@@ -966,17 +972,17 @@ function assertChangedFilesWithinAllowedPaths(input: {
 
   throw new AllowedPathViolationError({
     workspaceId: input.workspaceId,
-    allowedPaths: input.allowedPaths,
+    deniedPaths: input.deniedPaths,
     changedFiles: input.changedFiles,
     violatingFiles
   });
 }
 
-function repoPathMatchesAllowedPattern(
+function repoPathMatchesPattern(
   repoPath: string,
-  allowedPath: string
+  pathPattern: string
 ): boolean {
-  return globPatternToRegExp(allowedPath).test(repoPath);
+  return globPatternToRegExp(pathPattern).test(repoPath);
 }
 
 function globPatternToRegExp(pattern: string): RegExp {

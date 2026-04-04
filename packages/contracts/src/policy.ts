@@ -17,6 +17,7 @@ export const policySnapshotSchema = z.object({
   approvalMode: approvalModeSchema,
   allowedCapabilities: z.array(capabilitySchema),
   allowedPaths: z.array(z.string().min(1)),
+  deniedPaths: z.array(z.string().min(1)).default([]),
   allowedSecretScopes: z.array(z.string().min(1)).default([]),
   blockedPhases: z.array(taskPhaseSchema),
   reasons: z.array(z.string().min(1))

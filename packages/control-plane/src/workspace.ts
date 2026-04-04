@@ -74,6 +74,7 @@ export interface WorkspaceContextArtifacts {
   projectMemoryJson: string;
   policySnapshotJson: string;
   allowedPathsJson: string;
+  deniedPathsJson: string;
   acceptanceCriteriaJson: string;
 }
 
@@ -101,6 +102,7 @@ export interface MaterializedWorkspaceContext {
     projectMemoryJson: string;
     policySnapshotJson: string;
     allowedPathsJson: string;
+    deniedPathsJson: string;
     acceptanceCriteriaJson: string;
   };
   instructions: {
@@ -183,6 +185,9 @@ const taskContractFileMetadata = {
   },
   allowedPathsJson: {
     relativePath: ".context/allowed_paths.json"
+  },
+  deniedPathsJson: {
+    relativePath: ".context/denied_paths.json"
   },
   acceptanceCriteriaJson: {
     relativePath: ".context/acceptance_criteria.json"
@@ -285,7 +290,8 @@ export function createWorkspaceContextBundle(input: {
       ? { memoryContext: input.memoryContext }
       : {}),
     acceptanceCriteria: input.spec.acceptanceCriteria,
-    allowedPaths
+    allowedPaths,
+    deniedPaths: input.policySnapshot.deniedPaths ?? []
   });
 }
 
@@ -374,6 +380,7 @@ export function createWorkspaceContextArtifacts(
     projectMemoryJson: `${JSON.stringify(cachedProjectMemory, null, 2)}\n`,
     policySnapshotJson: `${JSON.stringify(bundle.policySnapshot, null, 2)}\n`,
     allowedPathsJson: `${JSON.stringify(bundle.allowedPaths, null, 2)}\n`,
+    deniedPathsJson: `${JSON.stringify(bundle.deniedPaths, null, 2)}\n`,
     acceptanceCriteriaJson: `${JSON.stringify(bundle.acceptanceCriteria, null, 2)}\n`
   };
 }
@@ -460,6 +467,7 @@ export async function materializeWorkspaceContext(input: {
     projectMemoryJson: join(contextDir, "project_memory.json"),
     policySnapshotJson: join(contextDir, "policy_snapshot.json"),
     allowedPathsJson: join(contextDir, "allowed_paths.json"),
+    deniedPathsJson: join(contextDir, "denied_paths.json"),
     acceptanceCriteriaJson: join(contextDir, "acceptance_criteria.json")
   };
   const materializedBundle = workspaceContextBundleSchema.parse({
@@ -576,6 +584,7 @@ export function createWorkspaceDescriptor(input: {
     recommendedAgentType: bundle.spec.recommendedAgentType,
     allowedCapabilities: toolPolicy.allowedCapabilities,
     allowedPaths: bundle.allowedPaths,
+    deniedPaths: bundle.deniedPaths,
     blockedPhases: toolPolicy.blockedPhases,
     canonicalSources: input.materialized.instructions.canonicalSources,
     taskContractFiles: input.materialized.instructions.taskContractFiles,
@@ -1182,11 +1191,17 @@ function getRoleScopedContextArtifactKeys(
 ): WorkspaceContextArtifactKey[] {
   switch (bundle.manifest.assignedAgentType) {
     case "developer":
-      return ["taskJson", "specMarkdown", "projectMemoryJson", "acceptanceCriteriaJson"];
+      return [
+        "taskJson",
+        "specMarkdown",
+        "projectMemoryJson",
+        "acceptanceCriteriaJson",
+        "deniedPathsJson"
+      ];
     case "validation":
-      return ["taskJson", "specMarkdown", "acceptanceCriteriaJson"];
+      return ["taskJson", "specMarkdown", "acceptanceCriteriaJson", "deniedPathsJson"];
     case "scm":
-      return ["taskJson", "specMarkdown"];
+      return ["taskJson", "specMarkdown", "deniedPathsJson"];
     default:
       return [
         "taskJson",
@@ -1194,6 +1209,7 @@ function getRoleScopedContextArtifactKeys(
         "projectMemoryJson",
         "policySnapshotJson",
         "allowedPathsJson",
+        "deniedPathsJson",
         "acceptanceCriteriaJson"
       ];
   }
@@ -1258,9 +1274,10 @@ function renderRuntimeSoulMarkdown(
     "## Guardrails",
     "",
     `- Allowed capabilities: ${formatLiteralList(toolPolicy.allowedCapabilities)}`,
-    `- Allowed paths: ${formatLiteralList(bundle.allowedPaths)}`,
+    `- Preferred implementation paths: ${formatLiteralList(bundle.allowedPaths)}`,
+    `- Blocked repo paths: ${formatLiteralList(bundle.deniedPaths)}`,
     `- Blocked phases in v1: ${formatLiteralList(toolPolicy.blockedPhases)}`,
-    "- Product code writes remain disabled; stay inside the approved workspace and path scope.",
+    "- Product code writes remain disabled; stay inside the managed workspace and do not touch blocked repo paths.",
     toolPolicy.allowedCapabilities.includes("can_open_pr")
       ? "- Remote mutations are limited to approved branch and pull-request creation for this task."
       : "- Remote mutations remain blocked; escalate before opening branches, pull requests, or mutating external systems.",
@@ -1347,8 +1364,14 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
     ...(bundle.allowedPaths.length > 0
       ? bundle.allowedPaths.map((path) => `- \`${path}\``)
       : [
-          "- No product-repo paths are pre-authorized. Escalate before modifying any surface."
+          "- No preferred implementation paths were captured for this task."
         ]),
+    "",
+    "## Blocked Repo Paths",
+    "",
+    ...(bundle.deniedPaths.length > 0
+      ? bundle.deniedPaths.map((path) => `- \`${path}\``)
+      : ["- No blocked repo paths are configured."]),
     "",
     "## Blocked Phases",
     "",
@@ -1361,7 +1384,7 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
       ? ["- mutating remote systems outside approved branch and pull-request creation"]
       : ["- opening pull requests or mutating remote systems"]),
     "- using secrets outside approved scopes or without an injected lease",
-    "- touching paths outside the allowed scope",
+    "- touching blocked repo paths",
     ""
   ].join("\n");
 }
@@ -1369,11 +1392,11 @@ function renderRuntimeToolsMarkdown(bundle: WorkspaceContextBundle): string {
 function roleContextReadingInstruction(bundle: WorkspaceContextBundle): string {
   switch (bundle.manifest.assignedAgentType) {
     case "developer":
-      return "1. Read `.context/task.json`, `.context/spec.md`, `.context/project_memory.json`, and `.context/acceptance_criteria.json` before writing code.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, `.context/project_memory.json`, `.context/acceptance_criteria.json`, and `.context/denied_paths.json` before writing code.";
     case "validation":
-      return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/acceptance_criteria.json` before running validation.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, `.context/acceptance_criteria.json`, and `.context/denied_paths.json` before running validation.";
     case "scm":
-      return "1. Read `.context/task.json` and `.context/spec.md` before creating branches or PRs.";
+      return "1. Read `.context/task.json`, `.context/spec.md`, and `.context/denied_paths.json` before creating branches or PRs.";
     default:
       return "1. Read `.context/task.json`, `.context/spec.md`, `.context/project_memory.json`, and `.context/policy_snapshot.json` before proposing or executing work.";
   }
@@ -1392,7 +1415,7 @@ function renderRuntimeTaskSkillMarkdown(
     "## Workflow",
     "",
     roleContextReadingInstruction(bundle),
-    "2. Confirm that the requested action stays within the current tool-policy capabilities and allowed paths.",
+    "2. Confirm that the requested action stays within the current tool-policy capabilities and does not touch blocked repo paths.",
     `3. Use the assigned role instructions first: \`${agentInstructionPathByType[bundle.manifest.assignedAgentType] ?? "AGENTS.md"}\`.`,
     `4. Use the recommended role instructions from planning: \`${agentInstructionPathByType[bundle.spec.recommendedAgentType] ?? "AGENTS.md"}\`.`,
     "5. Produce evidence-friendly output that traces assumptions, affected areas, constraints, acceptance criteria, and verification intent.",

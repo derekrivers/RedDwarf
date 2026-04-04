@@ -2,6 +2,10 @@
 
 ## 2026-04-04
 
+- Shifted RedDwarf’s repo-write policy from strict allowlist enforcement to a denylist-first model for code-writing work. `allowedPaths` now remain preferred implementation guidance, while new `deniedPaths` carry the hard blocklist for secrets, git internals, and runtime state.
+- Updated workspace context, runtime instructions, developer prompts, and SCM/development enforcement so agents can create adjacent implementation/config/helper files when needed unless they hit a blocked repo path. This removes the previous tendency to fail legitimate scaffolding work on companion files like `vite.config.ts` or `index.html`.
+- Added contract, policy, workspace-materialization, and control-plane regression coverage for the new denylist-first path model, including blocked-path prompt text, denied-path artifacts in `.context`, and SCM publish rejection when a blocked file is touched.
+
 - Investigated a live degraded-dashboard report and traced it to persisted polling health rather than the dashboard shell itself. The current dashboard badge only degrades on `repository.status === "degraded"` or `polling.status === "degraded"`.
 - Confirmed the live repo cursor for `derekrivers/FirstVoyage` was marked failed with `last_poll_error` showing a Zod `too_big` validation error on `confidenceReason` (`maximum: 300`), which meant planning output length could poison polling health even while Postgres and OpenClaw stayed healthy.
 - Updated `packages/control-plane/src/pipeline/planning.ts` to normalize planner confidence reasons before `planningSpecSchema.parse(...)`: trim whitespace, substitute a fallback when blank, and truncate overlong values to the persisted 300-character limit.

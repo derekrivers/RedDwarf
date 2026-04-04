@@ -310,7 +310,7 @@ export async function runDeveloperPhase(
       policySnapshot: validatedPolicySnapshot,
       memoryContext
     });
-    const scopeRiskWarnings = detectPreDispatchScopeRisks(bundle.allowedPaths);
+    const scopeRiskWarnings = detectPreDispatchScopeRisks(bundle.deniedPaths);
     const baseBranch = readPlanningDefaultBranchFromSnapshot(snapshot);
     secretLease = await issueWorkspaceSecretLease({
       bundle,
@@ -476,7 +476,7 @@ export async function runDeveloperPhase(
       if (dependencies.hollyHandoffMarkdown) {
         const architectViolations = detectArchitectHandoffPathViolations(
           dependencies.hollyHandoffMarkdown,
-          bundle.allowedPaths
+          bundle.deniedPaths
         );
         if (architectViolations.length > 0) {
           await recordRunEvent({
@@ -488,11 +488,11 @@ export async function runDeveloperPhase(
             phase: "development",
             level: "warn",
             code: EventCodes.SCOPE_RISK_DETECTED,
-            message: "Architect handoff references files outside the approved path scope. The developer may produce allowed-path violations at publish time.",
+            message: "Architect handoff references files inside blocked repo paths. The developer may produce a denied-path violation at publish time.",
             data: {
               workspaceId: workspace.workspaceId,
               violatingFiles: architectViolations,
-              allowedPaths: bundle.allowedPaths
+              deniedPaths: bundle.deniedPaths
             },
             createdAt: asIsoTimestamp(clock())
           });

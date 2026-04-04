@@ -22,6 +22,16 @@ const highRiskPatterns = [
   /migration/i
 ];
 const disabledPhases: readonly TaskPhase[] = v1DisabledPhases;
+const defaultDeniedPaths = [
+  ".git/**",
+  ".env",
+  ".env.*",
+  "**/.env",
+  "**/.env.*",
+  ".secrets",
+  "**/.secrets",
+  "runtime-data/**"
+] as const;
 export const planningCapabilities: Capability[] = ["can_plan", "can_archive_evidence"];
 export const developmentCapabilities: Capability[] = [
   "can_archive_evidence",
@@ -190,6 +200,10 @@ export function createAllowedPaths(
   return [];
 }
 
+export function createDeniedPaths(): string[] {
+  return [...defaultDeniedPaths];
+}
+
 export function buildPolicySnapshot(
   input: PlanningTaskInput,
   riskClass: RiskClass,
@@ -250,6 +264,7 @@ export function buildPolicySnapshot(
     approvalMode,
     allowedCapabilities,
     allowedPaths: createAllowedPaths(input, riskClass),
+    deniedPaths: createDeniedPaths(),
     allowedSecretScopes,
     blockedPhases: [...disabledPhases],
     reasons

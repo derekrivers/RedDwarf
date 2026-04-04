@@ -18,7 +18,8 @@ export const workspaceContextBundleSchema = z.object({
   policySnapshot: policySnapshotSchema,
   memoryContext: memoryContextSchema.nullable().optional(),
   acceptanceCriteria: z.array(z.string().min(1)),
-  allowedPaths: z.array(z.string().min(1))
+  allowedPaths: z.array(z.string().min(1)),
+  deniedPaths: z.array(z.string().min(1)).default([])
 });
 
 export const runtimeInstructionFileSchema = z.object({
@@ -52,6 +53,7 @@ export const workspaceDescriptorSchema = z.object({
   recommendedAgentType: agentTypeSchema,
   allowedCapabilities: z.array(capabilitySchema),
   allowedPaths: z.array(z.string().min(1)),
+  deniedPaths: z.array(z.string().min(1)).default([]),
   blockedPhases: z.array(taskPhaseSchema),
   canonicalSources: z.array(z.string().min(1)),
   taskContractFiles: z.array(z.string().min(1)),
@@ -96,6 +98,7 @@ export interface MaterializedManagedWorkspace {
     specMarkdown: string;
     policySnapshotJson: string;
     allowedPathsJson: string;
+    deniedPathsJson: string;
     acceptanceCriteriaJson: string;
   };
   instructions: {

@@ -134,7 +134,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
         phase,
         code: EventCodes.ALLOWED_PATHS_VIOLATED,
         details: {
-          allowedPaths: err.allowedPaths,
+          deniedPaths: err.deniedPaths,
           changedFiles: err.changedFiles,
           violatingFiles: err.violatingFiles
         },

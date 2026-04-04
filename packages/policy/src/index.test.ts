@@ -110,6 +110,16 @@ describe("policy", () => {
     const snapshot = buildPolicySnapshot(baseInput, "low", "auto");
     expect(snapshot.blockedPhases).toEqual(["review"]);
     expect(snapshot.allowedCapabilities).toContain("can_run_tests");
+    expect(snapshot.deniedPaths).toEqual([
+      ".git/**",
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*",
+      ".secrets",
+      "**/.secrets",
+      "runtime-data/**"
+    ]);
   });
 
   it("describes architecture review in the human-approval policy reason", () => {

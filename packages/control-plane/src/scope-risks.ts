@@ -1,4 +1,4 @@
-import { findDisallowedChangedFiles } from "./live-workflow.js";
+import { findDeniedChangedFiles } from "./live-workflow.js";
 
 const testFilePattern = /^(?:tests|test)\/.+\.(?:test|spec)\.[^/]+$/i;
 const testSetupFilePattern = /^(?:tests|test)\/setup\.[^/]+$/i;
@@ -43,29 +43,29 @@ function extractArchitectAffectedPaths(hollyHandoffMarkdown: string): string[] {
  */
 export function detectArchitectHandoffPathViolations(
   hollyHandoffMarkdown: string,
-  allowedPaths: readonly string[]
+  deniedPaths: readonly string[]
 ): string[] {
   const affectedPaths = extractArchitectAffectedPaths(hollyHandoffMarkdown);
   if (affectedPaths.length === 0) {
     return [];
   }
-  return findDisallowedChangedFiles(affectedPaths, [...allowedPaths]);
+  return findDeniedChangedFiles(affectedPaths, [...deniedPaths]);
 }
 
 export function detectPreDispatchScopeRisks(
-  allowedPaths: readonly string[]
+  deniedPaths: readonly string[]
 ): string[] {
-  const hasApprovedTestFile = allowedPaths.some((path) => testFilePattern.test(path));
-  const hasApprovedTestSetupFile = allowedPaths.some((path) =>
+  const hasDeniedTestFile = deniedPaths.some((path) => testFilePattern.test(path));
+  const hasDeniedTestSetupFile = deniedPaths.some((path) =>
     testSetupFilePattern.test(path)
   );
-  const hasApprovedViteConfig = allowedPaths.some((path) => viteConfigPattern.test(path));
+  const hasDeniedViteConfig = deniedPaths.some((path) => viteConfigPattern.test(path));
 
   const warnings: string[] = [];
 
-  if (hasApprovedTestFile && hasApprovedViteConfig && !hasApprovedTestSetupFile) {
+  if (hasDeniedTestFile || hasDeniedViteConfig || hasDeniedTestSetupFile) {
     warnings.push(
-      "No standalone test setup helper file is approved. If test setup is needed, keep it inside the approved test file instead of creating tests/setup.ts or test/setup.ts."
+      "Blocked path rules include test or Vite surfaces. Double-check helper/setup file choices before dispatch so the developer does not touch a denied repo path."
     );
   }
 
