@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Archived from the live board on 2026-04-04. Completed feature count: 130.
+Archived from the live board on 2026-04-04. Completed feature count: 131.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -122,6 +122,7 @@ Archived from the live board on 2026-04-04. Completed feature count: 130.
 | 128      | Add CORS support to the operator API HTTP server | M19 | completed | Control Plane, Operator Dashboard |
 | 129      | Scaffold `packages/dashboard` workspace package with Tabler layout shell and auth | M19 | completed | Operator Dashboard |
 | 130      | Typed API client (`src/api/client.ts`) | M19 | completed | Operator Dashboard |
+| 132      | Approval detail and resolve page (`/approvals/:id`) | M19 | completed | Operator Dashboard |
 | 88       | Architecture Reviewer Agent phase - add a post-Developer pre-Validator OpenClaw phase that checks implementation against the planning spec, flags structural drift, and emits a structured conformance verdict before the Validator runs | M15 | completed | Integration Plane, Control Plane, Contracts |
 
 | 89       | Deterministic eligibility gate - cheap pre-check before context materialization that confirms task eligibility (required label, acceptance criteria, minimum summary) and short-circuits ineligible tasks without an LLM call | M15 | completed | Control Plane, Knowledge & Policy Plane |
