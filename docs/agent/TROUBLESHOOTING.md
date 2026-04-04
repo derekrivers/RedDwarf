@@ -96,6 +96,14 @@
 - Working workaround: use a sliding no-progress window for development completion. Transcript growth or repo-state movement should renew the deadline, while dead/error sessions and stalled transcripts still fail fast through the existing terminal/stall checks.
 - Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'extends the developer deadline while the transcript keeps making progress|fails fast when the OpenClaw transcript ends with a provider error message before handoff output|fails fast when the OpenClaw transcript ends with a terminal stop reason before handoff output'"`.
 
+## Bounded implementation tasks waste their budget on planning narration before the first file edit
+
+- Symptom: a single-file or otherwise bounded development task burns a large amount of output budget on design narration, maze-by-maze reasoning, or repeated restatement of the plan before any repo write happens, eventually ending in `stopReason: "length"` or a generic timeout.
+- Root cause: the old developer prompt encouraged narrow inspection first, but it did not explicitly force the transition from orientation into editing soon enough for bounded tasks.
+- Failing approach: allowing the agent to keep narrating architecture or implementation options long after the task is already concrete enough to start coding.
+- Working workaround: use an implementation-first prompt mode for bounded tasks. After reading the trusted task/spec/context, the agent should spend at most a few orientation tool calls before the first repo write, keep planning terse, and avoid long design monologues or row-by-row dumps.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'fences untrusted GitHub issue content in architect and developer prompts'"`.
+
 ## Architecture review blocks a task at `await_human_review`, but there is no pending approval to continue
 
 - Symptom: a task reaches architecture review, returns `verdict: "escalate"` or `verdict: "fail"`, and the manifest becomes `blocked` in `architecture_review` with `nextAction: "await_human_review"`. Older builds still show only the original `policy_gate` approval row, so there is nothing pending to approve in `/approvals`.

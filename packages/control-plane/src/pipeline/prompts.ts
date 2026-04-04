@@ -350,6 +350,7 @@ export function buildOpenClawDeveloperPrompt(
   const runtimeAcceptanceCriteriaPath = join(runtimeWorkspacePath, ".context", "acceptance_criteria.json").replace(/\\/g, "/");
   const runtimeHandoffPath = join(runtimeWorkspacePath, "artifacts", "developer-handoff.md").replace(/\\/g, "/");
   const codeWriteEnabled = workspace.descriptor.toolPolicy.codeWriteEnabled;
+  const implementationFirstMode = shouldUseImplementationFirstMode(bundle);
 
   return [
     `Task ID: ${manifest.taskId}`,
@@ -409,7 +410,15 @@ export function buildOpenClawDeveloperPrompt(
     "Leave unrelated files untouched and do not modify any repo path that appears in the blocked list.",
     "You may create adjacent helper, setup, config, or support files when needed unless the repo-relative path falls under a blocked pattern.",
     "Do not recursively enumerate the whole repository or inspect `.git` internals. Avoid broad repo-wide `find`, `ls -R`, or similar sweeps unless you are concretely blocked without them.",
+    "Keep planning terse and action-oriented. Spend tokens on implementation and verification, not on long written deliberation or restating the spec.",
     "Start with the trusted task contract, planning spec, and the most likely target paths. Use narrow reads/listings against likely files or directories, then move into implementation once you have enough context.",
+    ...(implementationFirstMode
+      ? [
+          "This is a bounded implementation task. Use implementation-first mode.",
+          "After reading the trusted task/spec/TOOLS context, spend at most 3 tool calls on orientation before your first repo write unless you are concretely blocked.",
+          "Do not produce long design monologues, exhaustive option lists, or row-by-row planning dumps. If structure is clear enough to start, start coding and refine in the file."
+        ]
+      : []),
     "When `package.json` is in the preferred implementation paths, `.gitignore` is also approved as a companion file so install and build artifacts such as `node_modules/` stay out of version control.",
     "If the change appears to require a blocked repo path, do not touch it; record the blocker clearly in the handoff instead.",
     ...(workspace.descriptor.toolPolicy.allowedCapabilities.includes("can_run_tests")
@@ -455,6 +464,22 @@ export function buildOpenClawDeveloperPrompt(
     "",
     "- Bullet points for follow-up validation or review actions."
   ].join("\n");
+}
+
+function shouldUseImplementationFirstMode(bundle: WorkspaceContextBundle): boolean {
+  const concreteFilePaths = bundle.allowedPaths.filter((path) =>
+    /^[^*]+\/[^*]+\.[a-z0-9]+$/i.test(path)
+  );
+  const concreteDirectories = bundle.allowedPaths.filter(
+    (path) => path.endsWith("/") || /\(directory creation/i.test(path)
+  );
+
+  return (
+    concreteFilePaths.length <= 2 &&
+    bundle.allowedPaths.length <= 4 &&
+    concreteDirectories.length <= 2 &&
+    bundle.acceptanceCriteria.length <= 6
+  );
 }
 
 export function parseDevelopmentHandoffMarkdown(markdown: string): DevelopmentDraft {
