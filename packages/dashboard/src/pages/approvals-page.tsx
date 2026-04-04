@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { ApprovalRequestStatus } from "@reddwarf/contracts";
 import { getPendingApprovalCount } from "../api/client";
 import { useToast } from "../components/toast-provider";
+import { getApprovalUiCopy } from "../lib/approval-presenters";
 import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
 
 function statusBadgeClass(status: ApprovalRequestStatus): string {
@@ -162,6 +163,7 @@ export function ApprovalsPage(props: { apiClient: DashboardApiClient }) {
           <tbody>
             {approvals.map((approval) => {
               const task = taskMap.get(approval.taskId);
+              const uiCopy = getApprovalUiCopy(approval);
 
               return (
                 <tr key={approval.requestId}>
@@ -179,8 +181,13 @@ export function ApprovalsPage(props: { apiClient: DashboardApiClient }) {
                       {approval.riskClass}
                     </span>
                   </td>
-                  <td className="text-secondary text-capitalize">
-                    {approval.phase.replaceAll("_", " ")}
+                  <td>
+                    <div className="fw-medium">{uiCopy.phaseLabel}</div>
+                    {uiCopy.reviewBadgeLabel ? (
+                      <div className="text-secondary dashboard-table-subtext">
+                        {uiCopy.reviewBadgeLabel}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="text-secondary">{formatDateTime(approval.createdAt)}</td>
                   <td>
@@ -195,7 +202,7 @@ export function ApprovalsPage(props: { apiClient: DashboardApiClient }) {
                         state={{ runId: approval.runId, taskId: approval.taskId }}
                         to={`/approvals/${approval.requestId}`}
                       >
-                        Review
+                        {uiCopy.reviewCtaLabel}
                       </Link>
                     ) : (
                       <span className="text-secondary">Resolved</span>

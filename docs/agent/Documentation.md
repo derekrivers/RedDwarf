@@ -24,6 +24,7 @@
 - Added a real human-override path for architecture-review `fail` / `escalate` verdicts. `runArchitectureReviewPhase(...)` now creates a pending `architecture_review` approval request, `resolveApprovalRequest(...)` advances approved overrides to `ready` at `validation`, and downstream dispatch now resumes from the manifest’s current recoverable phase when a task is explicitly re-readied mid-pipeline.
 - Added regression coverage proving architecture-review failures now emit a pending override approval request and that approving the override resumes dispatch at validation without rerunning development or architecture review.
 - Follow-up fix: `runValidationPhase(...)` now accepts the approved architecture-review override state (`lifecycleStatus = ready`, `currentPhase = validation`, approved request phase `architecture_review`) so the resumed dispatch path works in live state instead of erroring with `cannot enter validation`.
+- Updated the dashboard approvals UI so `architecture_review` requests are visible as explicit override actions instead of generic planning/developer approvals. The approvals list, home dashboard pending-approvals card, and approval detail view now explain that approving these requests continues the task at validation.
 
 ## 2026-04-03
 

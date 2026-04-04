@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { HighlightedJson } from "../components/highlighted-json";
 import { useToast } from "../components/toast-provider";
+import { getApprovalUiCopy } from "../lib/approval-presenters";
 import type { DashboardApiClient } from "../types/dashboard";
 
 type ResolveIntent = "approve" | "reject";
@@ -98,15 +99,16 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
   const evidenceRecords = evidenceQuery.data?.evidenceRecords ?? [];
   const isResolved = approval?.status !== "pending";
   const rejectionValid = rejectReason.trim().length >= 10;
+  const uiCopy = approval ? getApprovalUiCopy(approval) : null;
 
   const taskDetails = useMemo(
     () => [
       { label: "Task Source", value: task ? formatTaskSource(task.manifest) : approval?.taskId ?? "Loading" },
-      { label: "Phase", value: approval ? approval.phase.replaceAll("_", " ") : "Loading" },
+      { label: "Approval Type", value: uiCopy?.phaseLabel ?? "Loading" },
       { label: "Created At", value: approval ? formatDateTime(approval.createdAt) : "Loading" },
       { label: "Policy Snapshot", value: toPolicyLabel(task) }
     ],
-    [approval, task]
+    [approval, task, uiCopy]
   );
 
   async function handleResolve(intent: ResolveIntent) {
@@ -269,11 +271,20 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
               </div>
             ) : null}
 
+            {uiCopy ? (
+              <div className="alert alert-warning" role="alert">
+                <div className="fw-medium mb-1">{uiCopy.phaseLabel}</div>
+                <div>{uiCopy.detailLead}</div>
+              </div>
+            ) : null}
+
             <div className="card border-success mb-4">
               <div className="card-body">
-                <h3 className="card-title text-success">Approve</h3>
+                <h3 className="card-title text-success">
+                  {uiCopy?.approveHeading ?? "Approve"}
+                </h3>
                 <p className="text-secondary">
-                  Allow the developer phase to proceed in OpenClaw.
+                  {uiCopy?.approveDescription ?? "Allow the developer phase to proceed in OpenClaw."}
                 </p>
                 <div className="mb-3">
                   <label className="form-label" htmlFor="approve-note">
@@ -296,16 +307,21 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                   onClick={() => setActiveModal("approve")}
                   type="button"
                 >
-                  {isSubmitting && activeModal === "approve" ? "Processing..." : "Approve Run"}
+                  {isSubmitting && activeModal === "approve"
+                    ? "Processing..."
+                    : (uiCopy?.approveButtonLabel ?? "Approve Run")}
                 </button>
               </div>
             </div>
 
             <div className="card border-danger">
               <div className="card-body">
-                <h3 className="card-title text-danger">Reject</h3>
+                <h3 className="card-title text-danger">
+                  {uiCopy?.rejectHeading ?? "Reject"}
+                </h3>
                 <p className="text-secondary">
-                  Provide a clear reason so the operator history stays auditable.
+                  {uiCopy?.rejectDescription ??
+                    "Provide a clear reason so the operator history stays auditable."}
                 </p>
                 <div className="mb-3">
                   <label className="form-label" htmlFor="reject-reason">
@@ -329,7 +345,9 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                   onClick={() => setActiveModal("reject")}
                   type="button"
                 >
-                  {isSubmitting && activeModal === "reject" ? "Processing..." : "Reject Run"}
+                  {isSubmitting && activeModal === "reject"
+                    ? "Processing..."
+                    : (uiCopy?.rejectButtonLabel ?? "Reject Run")}
                 </button>
               </div>
             </div>
@@ -352,7 +370,7 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                 <div className="modal-header">
                   <h5 className="modal-title">
                     {activeModal === "approve"
-                      ? "Approve this run?"
+                      ? (uiCopy?.approveModalTitle ?? "Approve this run?")
                       : "Reject this run?"}
                   </h5>
                   <button
@@ -364,10 +382,7 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                 </div>
                 <div className="modal-body">
                   {activeModal === "approve" ? (
-                    <p className="mb-0">
-                      Are you sure you want to approve this run? This will allow the
-                      developer phase to proceed in OpenClaw.
-                    </p>
+                    <p className="mb-0">{uiCopy?.approveModalBody ?? "Are you sure you want to approve this run? This will allow the developer phase to proceed in OpenClaw."}</p>
                   ) : (
                     <p className="mb-0">
                       Are you sure you want to reject this run? The rejection reason

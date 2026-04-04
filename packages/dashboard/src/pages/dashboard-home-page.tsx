@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import type { PipelineRun } from "@reddwarf/contracts";
+import { getApprovalUiCopy } from "../lib/approval-presenters";
 import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
 
 function formatDateTime(value: string): string {
@@ -196,25 +197,36 @@ export function DashboardHomePage(props: { apiClient: DashboardApiClient }) {
                 <p className="empty-title">Nothing is waiting for approval.</p>
               </div>
             ) : (
-              pendingApprovals.map((approval) => (
-                <div className="list-group-item" key={approval.requestId}>
-                  <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
-                    <div>
-                      <div className="fw-medium">{approval.summary}</div>
-                      <div className="text-secondary">
-                        {approval.taskId} • {approval.phase.replaceAll("_", " ")}
+              pendingApprovals.map((approval) => {
+                const uiCopy = getApprovalUiCopy(approval);
+
+                return (
+                  <div className="list-group-item" key={approval.requestId}>
+                    <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                      <div>
+                        <div className="d-flex align-items-center gap-2 flex-wrap mb-1">
+                          <div className="fw-medium">{approval.summary}</div>
+                          {uiCopy.reviewBadgeLabel ? (
+                            <span className="badge badge-outline text-uppercase">
+                              {uiCopy.reviewBadgeLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-secondary">
+                          {approval.taskId} • {uiCopy.phaseLabel}
+                        </div>
                       </div>
+                      <Link
+                        className="btn btn-sm btn-primary"
+                        state={{ runId: approval.runId, taskId: approval.taskId }}
+                        to={`/approvals/${approval.requestId}`}
+                      >
+                        {uiCopy.reviewCtaLabel}
+                      </Link>
                     </div>
-                    <Link
-                      className="btn btn-sm btn-primary"
-                      state={{ runId: approval.runId, taskId: approval.taskId }}
-                      to={`/approvals/${approval.requestId}`}
-                    >
-                      Review
-                    </Link>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
