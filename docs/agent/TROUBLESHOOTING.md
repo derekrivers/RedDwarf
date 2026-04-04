@@ -80,6 +80,14 @@
 - Working workaround: inspect the session JSONL for terminal stop reasons or stale growth. On current builds, the developer awaiter now fails fast with `OPENCLAW_SESSION_TERMINATED` when the transcript ends in a terminal assistant stop reason and with `OPENCLAW_SESSION_STALLED` when transcript growth stops before the handoff appears. The developer prompt also now explicitly forbids broad repo-wide enumeration and `.git` inspection, and high-complexity development tasks receive larger token/time budgets than small tasks instead of sharing one flat ceiling.
 - Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'parses real OpenClaw message events with stop reasons and tool errors|fails fast when the OpenClaw transcript ends with a terminal stop reason before handoff output|classifies terminal OpenClaw developer sessions before the generic completion timeout'"`.
 
+## OpenClaw provider content filtering is misreported as a completion timeout
+
+- Symptom: a development run shows `OPENCLAW_COMPLETION_TIMED_OUT`, but the session JSONL actually ends with assistant `stopReason: "error"` and an OpenClaw `errorMessage` containing text like `Output blocked by content filtering policy`.
+- Root cause: earlier transcript normalization preserved assistant `stopReason` but dropped the top-level OpenClaw `errorMessage` field. That meant provider-terminal events could slip past fast-fail logic and only surface after the generic handoff timeout expired.
+- Failing approach: increasing the timeout and treating this like a slow session rather than a dead provider-blocked session.
+- Working workaround: preserve `errorMessage` on parsed session entries and treat terminal provider errors as `OPENCLAW_SESSION_TERMINATED` immediately. The failure evidence should carry both `stopReason` and the provider error text so operators can distinguish policy/content-filter blocks from genuine runtime slowness.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'preserves terminal provider error messages from OpenClaw assistant events|fails fast when the OpenClaw transcript ends with a provider error message before handoff output'"`.
+
 ## Architecture review blocks a task at `await_human_review`, but there is no pending approval to continue
 
 - Symptom: a task reaches architecture review, returns `verdict: "escalate"` or `verdict: "fail"`, and the manifest becomes `blocked` in `architecture_review` with `nextAction: "await_human_review"`. Older builds still show only the original `policy_gate` approval row, so there is nothing pending to approve in `/approvals`.

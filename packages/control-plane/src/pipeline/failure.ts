@@ -118,6 +118,7 @@ const pipelineErrorMappers: PipelineErrorMapper[] = [
           agentId: err.agentId,
           transcriptPath: err.transcriptPath,
           stopReason: err.stopReason,
+          errorMessage: err.errorMessage,
           totalEntries: err.totalEntries
         },
         cause: err,

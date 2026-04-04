@@ -4342,6 +4342,82 @@ describe("createDeveloperHandoffAwaiter", () => {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("fails fast when the OpenClaw transcript ends with a provider error message before handoff output", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-provider-error-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-provider-error.jsonl"
+      );
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T14:40:04.094Z",
+            errorMessage:
+              "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Output blocked by content filtering policy\"}}",
+            message: {
+              role: "assistant",
+              content: [{ type: "thinking", thinking: "Writing the Pac-Man implementation..." }],
+              stopReason: "error"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 25,
+        sessionIdleTimeoutMs: 250
+      });
+
+      await expect(
+        awaiter.waitForCompletion({
+          manifest: { taskId: "acme-platform-47" } as never,
+          workspace: {
+            workspaceId: "workspace-provider-error",
+            workspaceRoot: tempRoot,
+            artifactsDir: join(tempRoot, "artifacts"),
+            descriptor: {
+              toolPolicy: { codeWriteEnabled: true }
+            }
+          } as never,
+          sessionKey: "github:issue:acme/platform:47",
+          dispatchResult: {
+            accepted: true,
+            sessionKey: "github:issue:acme/platform:47",
+            agentId: "reddwarf-developer",
+            sessionId: "session-provider-error",
+            respondedAt: new Date().toISOString(),
+            statusMessage: null
+          },
+          onHeartbeat: undefined
+        })
+      ).rejects.toMatchObject({
+        name: "OpenClawSessionTerminatedError",
+        stopReason: "error",
+        errorMessage: expect.stringContaining("Output blocked by content filtering policy")
+      });
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("parseSessionJsonl", () => {
@@ -4450,6 +4526,29 @@ describe("parseSessionJsonl", () => {
     expect(transcript.entries[1]?.isError).toBe(true);
     expect(transcript.entries[2]?.stopReason).toBe("length");
     expect(transcript.entries[2]?.content).toContain("I ran out of room.");
+  });
+
+  it("preserves terminal provider error messages from OpenClaw assistant events", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      timestamp: "2026-04-04T14:40:04.094Z",
+      errorMessage:
+        "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Output blocked by content filtering policy\"}}",
+      message: {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "Writing the Pac-Man implementation..." }],
+        stopReason: "error"
+      }
+    });
+
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+
+    expect(transcript.totalEntries).toBe(1);
+    expect(transcript.entries[0]?.role).toBe("assistant");
+    expect(transcript.entries[0]?.stopReason).toBe("error");
+    expect(transcript.entries[0]?.errorMessage).toContain(
+      "Output blocked by content filtering policy"
+    );
   });
 });
 

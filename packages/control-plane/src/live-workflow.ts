@@ -117,6 +117,7 @@ export class OpenClawSessionTerminatedError extends Error {
   readonly agentId: string | null;
   readonly transcriptPath: string;
   readonly stopReason: string | null;
+  readonly errorMessage: string | null;
   readonly totalEntries: number;
 
   constructor(input: {
@@ -125,11 +126,13 @@ export class OpenClawSessionTerminatedError extends Error {
     agentId?: string | null;
     transcriptPath: string;
     stopReason?: string | null;
+    errorMessage?: string | null;
     totalEntries: number;
   }) {
     super(
       `OpenClaw session ${input.sessionKey} terminated before producing the required handoff` +
-        `${input.stopReason ? ` (stopReason=${input.stopReason})` : ""}.`
+        `${input.stopReason ? ` (stopReason=${input.stopReason})` : ""}` +
+        `${input.errorMessage ? `: ${input.errorMessage}` : "."}`
     );
     this.name = "OpenClawSessionTerminatedError";
     this.sessionKey = input.sessionKey;
@@ -137,6 +140,7 @@ export class OpenClawSessionTerminatedError extends Error {
     this.agentId = input.agentId ?? null;
     this.transcriptPath = input.transcriptPath;
     this.stopReason = input.stopReason ?? null;
+    this.errorMessage = input.errorMessage ?? null;
     this.totalEntries = input.totalEntries;
   }
 }
@@ -670,7 +674,7 @@ export function createDeveloperHandoffAwaiter(
             sessionKey: input.sessionKey,
             agentId: input.dispatchResult.agentId ?? "unknown-agent"
           });
-          const signature = `${transcriptStatus.size}:${transcriptStatus.totalEntries}:${transcriptStatus.lastEntryTimestamp ?? ""}:${transcriptStatus.lastAssistantStopReason ?? ""}`;
+          const signature = `${transcriptStatus.size}:${transcriptStatus.totalEntries}:${transcriptStatus.lastEntryTimestamp ?? ""}:${transcriptStatus.lastAssistantStopReason ?? ""}:${transcriptStatus.lastTerminalErrorMessage ?? ""}`;
 
           if (signature !== lastTranscriptSignature) {
             lastTranscriptSignature = signature;
@@ -684,6 +688,19 @@ export function createDeveloperHandoffAwaiter(
               agentId: input.dispatchResult.agentId ?? null,
               transcriptPath: sessionTranscriptPath,
               stopReason: transcriptStatus.lastAssistantStopReason,
+              errorMessage: transcriptStatus.lastTerminalErrorMessage,
+              totalEntries: transcriptStatus.totalEntries
+            });
+          }
+
+          if (transcriptStatus.lastTerminalErrorMessage !== null) {
+            throw new OpenClawSessionTerminatedError({
+              sessionKey: input.sessionKey,
+              sessionId: input.dispatchResult.sessionId ?? null,
+              agentId: input.dispatchResult.agentId ?? null,
+              transcriptPath: sessionTranscriptPath,
+              stopReason: transcriptStatus.lastAssistantStopReason,
+              errorMessage: transcriptStatus.lastTerminalErrorMessage,
               totalEntries: transcriptStatus.totalEntries
             });
           }
@@ -758,6 +775,7 @@ async function inspectOpenClawSessionTranscript(
   totalEntries: number;
   lastEntryTimestamp: string | null;
   lastAssistantStopReason: string | null;
+  lastTerminalErrorMessage: string | null;
 }> {
   const [stats, transcript] = await Promise.all([
     stat(transcriptPath),
@@ -770,13 +788,20 @@ async function inspectOpenClawSessionTranscript(
     lastEntry.stopReason !== "toolUse"
       ? lastEntry.stopReason
       : null;
+  const terminalErrorMessage =
+    lastEntry?.role === "assistant" &&
+    typeof lastEntry.errorMessage === "string" &&
+    lastEntry.errorMessage.trim().length > 0
+      ? lastEntry.errorMessage
+      : null;
 
   return {
     size: stats.size,
     modifiedAtMs: stats.mtimeMs,
     totalEntries: transcript.totalEntries,
     lastEntryTimestamp: lastEntry?.timestamp ?? null,
-    lastAssistantStopReason: terminalAssistantStopReason
+    lastAssistantStopReason: terminalAssistantStopReason,
+    lastTerminalErrorMessage: terminalErrorMessage
   };
 }
 

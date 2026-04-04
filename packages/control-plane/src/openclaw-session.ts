@@ -19,6 +19,7 @@ export interface OpenClawSessionEntry {
   toolCallId?: string;
   metadata?: Record<string, unknown>;
   stopReason?: string;
+  errorMessage?: string;
   isError?: boolean;
   eventType?: string;
 }
@@ -97,6 +98,9 @@ function normalizeSessionEntry(parsed: Record<string, unknown>): OpenClawSession
         ? { metadata: parsed["metadata"] as Record<string, unknown> }
         : {}),
       ...(typeof parsed["stopReason"] === "string" ? { stopReason: parsed["stopReason"] } : {}),
+      ...(typeof parsed["errorMessage"] === "string"
+        ? { errorMessage: parsed["errorMessage"] }
+        : {}),
       ...(typeof parsed["isError"] === "boolean" ? { isError: parsed["isError"] } : {}),
       ...(typeof parsed["type"] === "string" ? { eventType: parsed["type"] } : {})
     };
@@ -137,6 +141,9 @@ function normalizeSessionEntry(parsed: Record<string, unknown>): OpenClawSession
     ...(typeof messageRecord["toolName"] === "string" ? { toolName: messageRecord["toolName"] } : {}),
     ...(typeof messageRecord["toolCallId"] === "string" ? { toolCallId: messageRecord["toolCallId"] } : {}),
     ...(typeof messageRecord["stopReason"] === "string" ? { stopReason: messageRecord["stopReason"] } : {}),
+    ...(typeof parsed["errorMessage"] === "string"
+      ? { errorMessage: parsed["errorMessage"] }
+      : {}),
     ...(typeof messageRecord["isError"] === "boolean" ? { isError: messageRecord["isError"] } : {}),
     ...(typeof parsed["type"] === "string" ? { eventType: parsed["type"] } : {})
   };

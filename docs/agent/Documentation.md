@@ -27,6 +27,8 @@
 - Updated the dashboard approvals UI so `architecture_review` requests are visible as explicit override actions instead of generic planning/developer approvals. The approvals list, home dashboard pending-approvals card, and approval detail view now explain that approving these requests continues the task at validation.
 - Investigated live task 47 and confirmed the missing `can_write_code` capability was caused by GitHub issue intake, not policy gating. The source issue requested `- can_plan, can_write_code` on a single bullet, but `parseIssueBodySections(...)` only accepted one exact capability token per line, so intake silently dropped `can_write_code` before planning persisted the task.
 - Hardened `packages/integrations/src/github.ts` so requested capability lines now accept comma-separated capability lists inside a single bullet or plain line, and added regression coverage in `packages/integrations/src/github.test.ts` for the exact mixed-bullet format that hit issue 47.
+- Investigated the next live task-47 development failure and confirmed the reported `OPENCLAW_COMPLETION_TIMED_OUT` was actually a provider-side terminal session error. The OpenClaw transcript ended with assistant `stopReason: "error"` plus `errorMessage: "Output blocked by content filtering policy"` before any handoff was written.
+- Hardened the OpenClaw transcript parser and developer awaiter so provider error messages are preserved from session JSONL and treated as terminal session failures immediately, rather than waiting the full handoff timeout. Failure evidence for `OPENCLAW_SESSION_TERMINATED` now includes the provider error message alongside the stop reason.
 
 ## 2026-04-03
 
