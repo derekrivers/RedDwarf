@@ -352,9 +352,17 @@ function createCorsMiddlewareRunner(): (
   req: IncomingMessage,
   res: ServerResponse
 ) => Promise<void> {
+  const allowedOrigins = resolveAllowedDashboardOrigins();
   const middleware = cors({
-    origin: process.env.REDDWARF_DASHBOARD_ORIGIN ?? "http://localhost:5173",
-    methods: ["GET", "POST", "OPTIONS"],
+    origin(origin, callback) {
+      if (origin === undefined || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS origin not allowed: ${origin}`));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Authorization", "Content-Type"]
   });
 
@@ -369,6 +377,24 @@ function createCorsMiddlewareRunner(): (
         resolve();
       });
     });
+}
+
+function resolveAllowedDashboardOrigins(): string[] {
+  const configuredOrigins = process.env.REDDWARF_DASHBOARD_ORIGIN
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  if (configuredOrigins && configuredOrigins.length > 0) {
+    return configuredOrigins;
+  }
+
+  return [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173"
+  ];
 }
 
 // ============================================================

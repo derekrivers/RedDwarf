@@ -2,6 +2,9 @@
 
 ## 2026-04-04
 
+- Fixed a dashboard/operator API CORS regression that could block browser login from normal local origins. The operator API now accepts the standard local dashboard origins by default (`localhost` and `127.0.0.1`, dev and preview ports), supports comma-separated `REDDWARF_DASHBOARD_ORIGIN` overrides, and advertises `PUT` / `DELETE` alongside the existing `GET` / `POST` / `OPTIONS` methods.
+- Added operator API regression coverage proving CORS preflight still succeeds before auth, now includes the full method set, and works for both `http://localhost:5173` and `http://127.0.0.1:5173` without an env override.
+
 - Investigated live development timeout issue 51 (`derekrivers-firstvoyage-51`) and found two compounding OpenClaw problems behind the bounded Pac-Man task failure. First, OpenClaw persisted the developer session under a lowercased GitHub repo key (`github:issue:derekrivers/firstvoyage:51`), while RedDwarf’s developer prompt and dispatch flow still referenced `github:issue:derekrivers/FirstVoyage:51`, guaranteeing `sessions_history` misses on mixed-case repos. Second, when the webhook response does not return a usable `sessionId`, the developer awaiter had no fallback path to the transcript registry and could degrade back into generic timeout reporting.
 - Added a shared GitHub-issue session-key normalizer so planning, development, architecture review, and developer prompt session references now use the same lowercased OpenClaw-compatible key.
 - Hardened `createDeveloperHandoffAwaiter(...)` to recover the session transcript path from the agent `sessions.json` registry when the dispatch response omits or misstates `sessionId`, which keeps terminal `stopReason: "length"` sessions classifiable instead of hiding behind `OPENCLAW_COMPLETION_TIMED_OUT`.

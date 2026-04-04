@@ -290,6 +290,8 @@ describe("operator API server", () => {
       );
       expect(response.headers["access-control-allow-methods"]).toContain("GET");
       expect(response.headers["access-control-allow-methods"]).toContain("POST");
+      expect(response.headers["access-control-allow-methods"]).toContain("PUT");
+      expect(response.headers["access-control-allow-methods"]).toContain("DELETE");
       expect(response.headers["access-control-allow-methods"]).toContain(
         "OPTIONS"
       );
@@ -298,6 +300,49 @@ describe("operator API server", () => {
       );
       expect(response.headers["access-control-allow-headers"]).toContain(
         "Content-Type"
+      );
+    } finally {
+      await apiServer.stop();
+      if (previousDashboardOrigin === undefined) {
+        delete process.env.REDDWARF_DASHBOARD_ORIGIN;
+      } else {
+        process.env.REDDWARF_DASHBOARD_ORIGIN = previousDashboardOrigin;
+      }
+    }
+  });
+
+  it("allows the default local dashboard origins without requiring an env override", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const previousDashboardOrigin = process.env.REDDWARF_DASHBOARD_ORIGIN;
+    delete process.env.REDDWARF_DASHBOARD_ORIGIN;
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-04T19:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const localhostResponse = await operatorOptions(port, "/runs", {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization, Content-Type"
+      });
+      expect(localhostResponse.status).toBe(204);
+      expect(localhostResponse.headers["access-control-allow-origin"]).toBe(
+        "http://localhost:5173"
+      );
+
+      const loopbackResponse = await operatorOptions(port, "/runs", {
+        Origin: "http://127.0.0.1:5173",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization, Content-Type"
+      });
+      expect(loopbackResponse.status).toBe(204);
+      expect(loopbackResponse.headers["access-control-allow-origin"]).toBe(
+        "http://127.0.0.1:5173"
       );
     } finally {
       await apiServer.stop();

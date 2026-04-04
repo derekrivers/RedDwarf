@@ -8,6 +8,14 @@
 - Working workaround: run Vitest directly with `corepack pnpm exec vitest run --configLoader runner` so Vite does not bundle the config to `.vite-temp`, and run that command outside the sandbox when the suite needs localhost listeners.
 - Verification: `corepack pnpm exec vitest run --configLoader runner`; `corepack pnpm typecheck`.
 
+## Dashboard login fails from `127.0.0.1` because the operator API CORS allowlist only trusts one origin
+
+- Symptom: the React dashboard accepts the pasted operator token, then immediately fails its first API request in the browser with a CORS error. This often appears only when the dashboard is opened from `http://127.0.0.1:5173` or Vite preview while the API still trusts only `http://localhost:5173`.
+- Root cause: the operator API CORS middleware was previously configured with one exact origin string and only `GET` / `POST` / `OPTIONS`. That was too narrow for normal local usage across `localhost` vs `127.0.0.1`, dev vs preview ports, and the API's own `PUT` / `DELETE` routes.
+- Failing approach: relying on a single `REDDWARF_DASHBOARD_ORIGIN` string or assuming all local dashboard traffic will come from `localhost:5173`.
+- Working workaround: allow the normal local dashboard origins by default (`localhost` and `127.0.0.1`, dev and preview ports), support comma-separated `REDDWARF_DASHBOARD_ORIGIN` values when an explicit override is needed, and advertise the full method set the operator API already serves (`GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`).
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/operator-api.test.ts`; `corepack pnpm typecheck`.
+
 ## Mixed-case GitHub repos can break OpenClaw `sessions_history` and transcript lookup unless session keys are normalized
 
 - Symptom: a developer run on a mixed-case GitHub repo such as `derekrivers/FirstVoyage` reports that `sessions_history` returned `No session found: github:issue:derekrivers/FirstVoyage:51`, even though the session exists on disk, and the development failure can fall back to a generic timeout instead of classifying the terminal transcript.
