@@ -85,6 +85,33 @@ describe("dashboard api client", () => {
     );
   });
 
+  it("prefers an explicit token so the first authenticated request does not race session storage", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createApiClient({
+      baseUrl: "http://localhost:8080",
+      token: "fresh-login-token"
+    });
+
+    await client.getHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/health",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer fresh-login-token"
+        })
+      })
+    );
+    expect(readOperatorToken()).toBe("");
+  });
+
   it("clears the stored token and calls onUnauthorized after a 401 response", async () => {
     writeOperatorToken("expired-token");
     const onUnauthorized = vi.fn();

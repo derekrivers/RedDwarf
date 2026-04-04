@@ -110,6 +110,7 @@ export interface SubmitIssueResponse {
 
 interface ApiClientOptions {
   baseUrl?: string;
+  token?: string;
   onUnauthorized?: () => void;
 }
 
@@ -137,7 +138,7 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
   const baseUrl = options.baseUrl ?? "/api";
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const token = readOperatorToken();
+    const token = options.token ?? readOperatorToken();
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {

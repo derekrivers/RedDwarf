@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Dashboard login immediately clears the pasted token and returns to the login screen
+
+- Symptom: the React dashboard accepts a valid `REDDWARF_OPERATOR_TOKEN`, then instantly bounces back to the login screen with `{"error":"unauthorized","message":"Valid operator token required. Supply Authorization: Bearer <token>."}`. Looking in `sessionStorage` after the failure often shows no `reddwarf-operator-token` entry.
+- Root cause: the dashboard API client was changed to read auth from `sessionStorage`, but the login flow only persisted the token in a later React effect. On the first authenticated render, `DashboardShell` immediately fired `/health` and `/blocked`; those requests could run before `writeOperatorToken(...)` executed, so the first fetch went out without `Authorization`. The resulting `401` then cleared the just-entered token, making it look like the token never stuck.
+- Failing approach: debugging only the token value or the operator API process while assuming the browser already persisted the token before the first dashboard query runs.
+- Working workaround: pass the in-memory token directly into `createApiClient(...)` for the first authenticated dashboard render, while still mirroring it into `sessionStorage` for reloads and later requests.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/dashboard/src/api/client.test.ts`; `corepack pnpm typecheck`.
+
 ## `pnpm test` fails before startup because Vitest cannot write `.vite-temp` or bind localhost in the sandbox
 
 - Symptom: `corepack pnpm test` fails before test execution with `EACCES: permission denied, open '.../node_modules/.vite-temp/...mjs'`, or MCP/operator tests hang and then fail with `listen EPERM: operation not permitted 127.0.0.1`.
