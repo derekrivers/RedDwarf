@@ -93,7 +93,7 @@ export interface WorkspaceCommitPublisher {
 
 type RepoAwareWorkspace = MaterializedManagedWorkspace & { repoRoot?: string | null };
 
-export const DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS = 30 * 1000;
 export const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
 const COMMAND_FORCE_KILL_AFTER_TIMEOUT_MS = 5 * 1000;
