@@ -238,8 +238,39 @@ function applyRequiredPatch(
   content: string,
   search: string | RegExp,
   replacement: string,
-  description: string
+  description: string,
+  alreadyApplied?: string | RegExp
 ): string {
+  if (alreadyApplied) {
+    const alreadyAppliedMatcher =
+      typeof alreadyApplied === "string"
+        ? alreadyApplied
+        : new RegExp(alreadyApplied.source, alreadyApplied.flags.replace(/g/g, ""));
+
+    if (
+      typeof alreadyAppliedMatcher === "string"
+        ? content.includes(alreadyAppliedMatcher)
+        : alreadyAppliedMatcher.test(content)
+    ) {
+      return content;
+    }
+  }
+
+  const searchMatcher =
+    typeof search === "string"
+      ? search
+      : new RegExp(search.source, search.flags.replace(/g/g, ""));
+
+  if (
+    typeof searchMatcher === "string"
+      ? !content.includes(searchMatcher)
+      : !searchMatcher.test(content)
+  ) {
+    throw new Error(
+      `enableWorkspaceCodeWriting: required patch "${description}" could not be applied — the expected string was not found. The workspace instruction files may be out of sync with the current runtime.`
+    );
+  }
+
   const patched = content.replace(search as string, replacement);
 
   if (patched === content) {
@@ -300,31 +331,36 @@ export async function enableWorkspaceCodeWriting(
     toolsContent,
     /- Tool policy mode: `[^`]+`/,
     "- Tool policy mode: `development_readwrite`",
-    "tool policy mode line"
+    "tool policy mode line",
+    "- Tool policy mode: `development_readwrite`"
   );
   toolsContent = applyRequiredPatch(
     toolsContent,
     "- Code writing enabled: no",
     "- Code writing enabled: yes",
-    "code writing enabled line"
+    "code writing enabled line",
+    "- Code writing enabled: yes"
   );
   toolsContent = applyRequiredPatch(
     toolsContent,
     /- Allowed capabilities now: .*/,
     `- Allowed capabilities now: ${formatLiteralList(allowedCapabilities)}`,
-    "allowed capabilities now line"
+    "allowed capabilities now line",
+    `- Allowed capabilities now: ${formatLiteralList(allowedCapabilities)}`
   );
   toolsContent = applyRequiredPatch(
     toolsContent,
     /- Currently denied capabilities: .*/,
     `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`,
-    "currently denied capabilities line"
+    "currently denied capabilities line",
+    `- Currently denied capabilities: ${formatLiteralList(deniedCapabilities)}`
   );
   toolsContent = applyRequiredPatch(
     toolsContent,
-    /Developer orchestration is enabled in RedDwarf v1, but product code writes remain disabled by default\./,
-    "Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task.",
-    "tool policy note"
+    /- Developer orchestration is enabled in RedDwarf v1.*product code writes.*\./,
+    "- Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task.",
+    "tool policy note",
+    "- Developer orchestration is enabled in RedDwarf v1 with product code writes enabled for this approved task."
   );
 
   // Remove can_write_code from "Requested but denied" — it is now granted.
@@ -337,19 +373,21 @@ export async function enableWorkspaceCodeWriting(
   );
 
   // Remove "writing product code" from Escalate Instead Of — writes are now approved.
-  toolsContent = applyRequiredPatch(
-    toolsContent,
+  const toolsWithoutWriteEscalation = toolsContent.replace(
     "\n- writing product code\n",
-    "\n",
-    "Escalate Instead Of / writing product code line"
+    "\n"
   );
+  if (toolsWithoutWriteEscalation !== toolsContent) {
+    toolsContent = toolsWithoutWriteEscalation;
+  }
 
   // Insert can_write_code guidance so developers understand its scope.
   toolsContent = applyRequiredPatch(
     toolsContent,
     "## Allowed Capability Guidance\n\n",
     `## Allowed Capability Guidance\n\n### \`can_write_code\`\n\n${CAN_WRITE_CODE_GUIDANCE}\n\n`,
-    "Allowed Capability Guidance section header"
+    "Allowed Capability Guidance section header",
+    "### `can_write_code`"
   );
 
   await writeFile(toolsPath, toolsContent, "utf8");
@@ -359,9 +397,10 @@ export async function enableWorkspaceCodeWriting(
 
   soulContent = applyRequiredPatch(
     soulContent,
-    "- Product code writes remain disabled; stay inside the managed workspace and do not touch blocked repo paths.",
+    /- Product code writes .* stay inside the managed workspace and do not touch blocked repo paths\./,
     "- Product code writes are enabled for this approved development task; stay inside the managed workspace and do not touch blocked repo paths.",
-    "product code writes guardrail line"
+    "product code writes guardrail line",
+    "- Product code writes are enabled for this approved development task; stay inside the managed workspace and do not touch blocked repo paths."
   );
 
   // Add can_write_code to the Allowed capabilities list.
@@ -387,7 +426,8 @@ export async function enableWorkspaceCodeWriting(
     taskSkillContent,
     /6\. Escalate whenever the task would require code-writing, (secrets[^.]+\.)/,
     "6. Escalate whenever the task would require $1",
-    "escalation rule in task skill"
+    "escalation rule in task skill",
+    /6\. Escalate whenever the task would require secrets[^.]+\./
   );
 
   await writeFile(taskSkillPath, taskSkillContent, "utf8");

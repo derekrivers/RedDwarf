@@ -64,6 +64,14 @@
 - Working workaround: normalize the planning confidence reason at the control-plane boundary before schema parsing, trimming whitespace, filling in a fallback when blank, and truncating overlong values to 300 characters. To confirm an existing degraded badge is this specific issue, inspect `github_issue_polling_cursors.last_poll_error` for the affected repo.
 - Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`.
 
+## Development retries fail immediately because `enableWorkspaceCodeWriting(...)` cannot patch `SOUL.md`
+
+- Symptom: a code-writing task reaches development, but both the initial attempt and the retry fail immediately with `DEVELOPMENT_FAILED` and a message like `enableWorkspaceCodeWriting: required patch "product code writes guardrail line" could not be applied`. The workspace may already show `TOOLS.md` or `.workspace/workspace.json` in read-write mode even though the run never dispatched to OpenClaw.
+- Root cause: `enableWorkspaceCodeWriting(...)` upgrades runtime instruction files in-place before dispatch. A wording drift or a partially upgraded workspace can leave `TOOLS.md` and `workspace.json` advanced while `SOUL.md` still contains the old read-only guardrail. Before the April 4, 2026 hardening, the upgrader depended on a single exact `SOUL.md` sentence and could wedge retries after a partial patch failure.
+- Failing approach: assuming the runtime instruction files always match one frozen literal string, or retrying the same workspace without making the patcher tolerant of already-upgraded files.
+- Working workaround: make the write-enablement patcher idempotent for already-upgraded `TOOLS.md` / task-skill content and match the `SOUL.md` product-code-write guardrail by pattern rather than one exact sentence. If a live workspace is already wedged, inspect `runtime-data/workspaces/<workspaceId>/{SOUL.md,TOOLS.md,.workspace/workspace.json}` to confirm whether the workspace is partially upgraded.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts"`.
+
 ## Vitest commands fail or skip in the sandbox
 
 - Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.

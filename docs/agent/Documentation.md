@@ -11,6 +11,9 @@
 - Updated `packages/control-plane/src/pipeline/planning.ts` to normalize planner confidence reasons before `planningSpecSchema.parse(...)`: trim whitespace, substitute a fallback when blank, and truncate overlong values to the persisted 300-character limit.
 - Added regression coverage in `packages/control-plane/src/index.test.ts` proving an overlong planner confidence reason now survives planning, persists safely, and keeps the approval payload aligned with the stored spec.
 - Added a troubleshooting entry documenting the degraded-dashboard symptom, root cause, working workaround, and verification path for future poller-health investigations.
+- Investigated live development failure issue 40 (`derekrivers-firstvoyage-40`) and traced the retry exhaustion to RedDwarf’s own workspace write-enablement step, not the GitHub task: `enableWorkspaceCodeWriting(...)` was failing before OpenClaw dispatch with `required patch "product code writes guardrail line" could not be applied`.
+- Hardened `packages/control-plane/src/live-workflow.ts` so write-enablement patching is idempotent for already-upgraded runtime files and matches the `SOUL.md` product-code-write guardrail by pattern instead of one brittle literal string. This lets retries survive partially upgraded workspace instruction files.
+- Added a troubleshooting entry documenting the development-phase symptom, the telltale partially upgraded workspace state (`TOOLS.md` / `workspace.json` advanced while `SOUL.md` stays readonly), and the working verification path.
 
 ## 2026-04-03
 
