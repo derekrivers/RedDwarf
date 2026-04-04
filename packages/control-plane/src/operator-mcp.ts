@@ -532,61 +532,66 @@ export async function runOperatorMcpStdioServer(
   const initialized = { value: false };
   let buffer = Buffer.alloc(0);
 
-  process.stdin.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
+  return new Promise<void>((resolve, reject) => {
+    process.stdin.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
 
-    while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        return;
+      while (true) {
+        const headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd === -1) {
+          return;
+        }
+
+        const headerText = buffer.slice(0, headerEnd).toString("utf8");
+        const contentLengthMatch = /^Content-Length:\s*(\d+)$/im.exec(headerText);
+        if (!contentLengthMatch) {
+          writeJsonRpcMessage({
+            jsonrpc: "2.0",
+            id: null,
+            error: {
+              code: -32700,
+              message: "Missing Content-Length header."
+            }
+          });
+          buffer = Buffer.alloc(0);
+          return;
+        }
+
+        const contentLength = Number.parseInt(contentLengthMatch[1] ?? "0", 10);
+        const messageStart = headerEnd + 4;
+        const messageEnd = messageStart + contentLength;
+        if (buffer.length < messageEnd) {
+          return;
+        }
+
+        const body = buffer.slice(messageStart, messageEnd).toString("utf8");
+        buffer = buffer.slice(messageEnd);
+
+        let parsed: JsonRpcRequest | JsonRpcRequest[];
+        try {
+          parsed = JSON.parse(body) as JsonRpcRequest | JsonRpcRequest[];
+        } catch {
+          writeJsonRpcMessage({
+            jsonrpc: "2.0",
+            id: null,
+            error: {
+              code: -32700,
+              message: "Invalid JSON payload."
+            }
+          });
+          continue;
+        }
+
+        const requests = Array.isArray(parsed) ? parsed : [parsed];
+        for (const request of requests) {
+          void handleJsonRpcRequest(bridge, request, serverVersion, initialized);
+        }
       }
+    });
 
-      const headerText = buffer.slice(0, headerEnd).toString("utf8");
-      const contentLengthMatch = /^Content-Length:\s*(\d+)$/im.exec(headerText);
-      if (!contentLengthMatch) {
-        writeJsonRpcMessage({
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: -32700,
-            message: "Missing Content-Length header."
-          }
-        });
-        buffer = Buffer.alloc(0);
-        return;
-      }
+    process.stdin.on("end", () => resolve());
+    process.stdin.on("error", (err) => reject(err));
 
-      const contentLength = Number.parseInt(contentLengthMatch[1] ?? "0", 10);
-      const messageStart = headerEnd + 4;
-      const messageEnd = messageStart + contentLength;
-      if (buffer.length < messageEnd) {
-        return;
-      }
-
-      const body = buffer.slice(messageStart, messageEnd).toString("utf8");
-      buffer = buffer.slice(messageEnd);
-
-      let parsed: JsonRpcRequest | JsonRpcRequest[];
-      try {
-        parsed = JSON.parse(body) as JsonRpcRequest | JsonRpcRequest[];
-      } catch {
-        writeJsonRpcMessage({
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: -32700,
-            message: "Invalid JSON payload."
-          }
-        });
-        continue;
-      }
-
-      const requests = Array.isArray(parsed) ? parsed : [parsed];
-      for (const request of requests) {
-        void handleJsonRpcRequest(bridge, request, serverVersion, initialized);
-      }
-    }
+    process.stdin.resume();
   });
-
-  process.stdin.resume();
 }
