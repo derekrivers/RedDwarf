@@ -1,5 +1,13 @@
 # Agent Documentation
 
+## 2026-04-04
+
+- Investigated a live degraded-dashboard report and traced it to persisted polling health rather than the dashboard shell itself. The current dashboard badge only degrades on `repository.status === "degraded"` or `polling.status === "degraded"`.
+- Confirmed the live repo cursor for `derekrivers/FirstVoyage` was marked failed with `last_poll_error` showing a Zod `too_big` validation error on `confidenceReason` (`maximum: 300`), which meant planning output length could poison polling health even while Postgres and OpenClaw stayed healthy.
+- Updated `packages/control-plane/src/pipeline/planning.ts` to normalize planner confidence reasons before `planningSpecSchema.parse(...)`: trim whitespace, substitute a fallback when blank, and truncate overlong values to the persisted 300-character limit.
+- Added regression coverage in `packages/control-plane/src/index.test.ts` proving an overlong planner confidence reason now survives planning, persists safely, and keeps the approval payload aligned with the stored spec.
+- Added a troubleshooting entry documenting the degraded-dashboard symptom, root cause, working workaround, and verification path for future poller-health investigations.
+
 ## 2026-04-03
 
 - Investigated the live stall on GitHub issue 37 (`derekrivers-firstvoyage-37`) and confirmed the blocker was not the allowed-path gate itself: the generated React workspace had no `.gitignore`, so `git add --all` in the SCM phase would try to stage the full `node_modules/` tree after `npm install`.

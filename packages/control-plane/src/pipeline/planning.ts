@@ -105,6 +105,24 @@ function mapPreScreenFindingKind(
   }
 }
 
+const MAX_PLANNING_CONFIDENCE_REASON_LENGTH = 300;
+
+function normalizePlanningConfidenceReason(reason: string): string {
+  const normalized = reason.trim();
+
+  if (normalized.length === 0) {
+    return "Planner did not provide a confidence rationale.";
+  }
+
+  if (normalized.length <= MAX_PLANNING_CONFIDENCE_REASON_LENGTH) {
+    return normalized;
+  }
+
+  return `${normalized
+    .slice(0, MAX_PLANNING_CONFIDENCE_REASON_LENGTH - 3)
+    .trimEnd()}...`;
+}
+
 export async function runPlanningPipeline(
   rawInput: PlanningTaskInput,
   dependencies: PlanningPipelineDependencies
@@ -806,7 +824,7 @@ export async function runPlanningPipeline(
       recommendedAgentType: "architect",
       riskClass,
       confidenceLevel: draft.confidence.level,
-      confidenceReason: draft.confidence.reason,
+      confidenceReason: normalizePlanningConfidenceReason(draft.confidence.reason),
       createdAt: planningCompletedAtIso
     });
 

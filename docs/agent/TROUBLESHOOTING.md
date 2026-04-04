@@ -56,6 +56,14 @@
 - Working workaround: on older builds, inspect `GET /health` polling cursor timestamps plus any long-running active run, then manually re-run intake or restart the stack. On current builds, rely on the added cycle/request timeouts so the loop fails fast, logs an error, and enters backoff instead of silently freezing.
 - Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts packages/integrations/src/index.test.ts packages/execution-plane/src/index.test.ts`.
 
+## Dashboard health shows degraded because the poller recorded an overlong planning confidence reason
+
+- Symptom: the dashboard health badge turns degraded even though Postgres and OpenClaw look healthy. The persisted polling cursor for a repo shows `last_poll_status = failed`, and `last_poll_error` contains a Zod `too_big` error for `confidenceReason` with `maximum: 300`.
+- Root cause: live planning output can emit a `confidence.reason` string longer than the persisted `planningSpecSchema` allows. Before the April 4, 2026 fix, `runPlanningPipeline(...)` passed that value straight into `planningSpecSchema.parse(...)`, which failed the poll cycle and left the cursor in a degraded state.
+- Failing approach: trusting planner output lengths to already satisfy the storage contract.
+- Working workaround: normalize the planning confidence reason at the control-plane boundary before schema parsing, trimming whitespace, filling in a fallback when blank, and truncating overlong values to 300 characters. To confirm an existing degraded badge is this specific issue, inspect `github_issue_polling_cursors.last_poll_error` for the affected repo.
+- Verification: `corepack pnpm typecheck`; `corepack pnpm test -- packages/control-plane/src/index.test.ts`.
+
 ## Vitest commands fail or skip in the sandbox
 
 - Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.

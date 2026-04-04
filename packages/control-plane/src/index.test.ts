@@ -923,6 +923,36 @@ describe("control-plane", () => {
     expect(result.approvalRequest?.confidenceReason).toContain("not confident");
   });
 
+  it("truncates overlong planner confidence reasons before persisting the planning spec", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const overlongConfidenceReason = "Confidence rationale ".repeat(20);
+
+    const result = await runPlanningPipeline(eligibleInput, {
+      repository,
+      planner: {
+        async createSpec() {
+          return {
+            summary: "Plan a docs-safe change with an overly verbose confidence explanation.",
+            assumptions: ["The task remains docs-only."],
+            affectedAreas: ["docs/guide.md"],
+            constraints: ["Keep the change within docs."],
+            testExpectations: ["Validate the planning schema."],
+            confidence: {
+              level: "medium",
+              reason: overlongConfidenceReason
+            }
+          };
+        }
+      },
+      clock: () => new Date("2026-04-04T08:10:00.000Z"),
+      idGenerator: () => "run-overlong-confidence-reason"
+    });
+
+    expect(result.spec?.confidenceReason.length).toBeLessThanOrEqual(300);
+    expect(result.spec?.confidenceReason.endsWith("...")).toBe(true);
+    expect(result.spec?.confidenceReason).toContain("Confidence rationale");
+  });
+
   it("normalizes annotated planning affected areas before persisting approval scope", async () => {
     const repository = new InMemoryPlanningRepository();
     const result = await runPlanningPipeline(
