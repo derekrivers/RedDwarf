@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Archived from the live board on 2026-03-31. Completed feature count: 126.
+Archived from the live board on 2026-04-04. Completed feature count: 127.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -100,6 +100,7 @@ Archived from the live board on 2026-03-31. Completed feature count: 126.
 | 95       | Align heartbeats, stale windows, and subprocess timeouts - heartbeat long waits and bound git and validation child processes end to end | M15 | completed | Control Plane, Failure Recovery Model, Execution Plane              |
 | 96       | Scrub or destroy secret-bearing workspaces on phase exit - remove scoped secret files once the requiring phase finishes or fails | M15 | completed | Control Plane, Isolation and Security Model, Evidence Plane         |
 | 97       | Fence untrusted issue content inside planner and agent prompts - isolate GitHub issue text as data instead of executable instruction context | M15 | completed | Integration Plane, Execution Plane, Knowledge & Policy Plane        |
+| 137      | Transcript-aware developer completion detection - fail fast when an OpenClaw development session terminates without producing `developer-handoff.md` (for example `stopReason = length`, stalled transcript growth, or dead-end tool/error loops), and tighten prompts to avoid broad repo enumeration that burns output budget before implementation starts | M15 | completed | Control Plane, Integration Plane, Failure Recovery Model |
 | 98       | Harden the Postgres pool with timeouts, sizing, and telemetry - make DB stalls fail boundedly and expose saturation before the pipeline wedges | M16 | completed | Evidence Plane, Observability Model, Control Plane                  |
 | 99       | Wire structured runtime logging and degraded-startup health across poller and dispatcher - replace noop defaults and keep startup alive on first-cycle failures | M16 | completed | Observability Model, Control Plane, Integration Plane               |
 | 100      | Sweep stale script call sites to the current Postgres repository factory - replace legacy constructor usage so verifiers and maintenance scripts survive repository DI changes | M16 | completed | Evidence Plane, System Context                                      |

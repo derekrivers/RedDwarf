@@ -36,7 +36,6 @@ Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDw
 | - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
 | 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — | Both | — |
 | 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — | Both | — |
-| 137 | Transcript-aware developer completion detection - fail fast when an OpenClaw development session terminates without producing `developer-handoff.md` (for example `stopReason = length`, stalled transcript growth, or dead-end tool/error loops), and tighten prompts to avoid broad repo enumeration that burns output budget before implementation starts | M15 | pending | — | Both | Pipeline hardening follow-up from issue 45 / follow-up issue 46 investigation |
 
 ---
 

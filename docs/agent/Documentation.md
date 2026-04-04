@@ -2,6 +2,10 @@
 
 ## 2026-04-04
 
+- Verified that feature 137 is already present in code on this branch: developer completion now inspects OpenClaw JSONL transcripts for terminal `stopReason` / provider error exits, raises stalled-session failures on no-progress windows before `developer-handoff.md` appears, and the developer prompt explicitly avoids broad repo-wide enumeration before implementation.
+- Synced repository memory for feature 137 by archiving it out of `FEATURE_BOARD.md` after verification and adding a troubleshooting note for the current Vitest environment workaround.
+- Environment note: this checkout's root `pnpm test` script can fail before startup because Vite tries to write bundled config temp files under a `node_modules/.vite-temp` directory owned by `nobody:nogroup`, and sandboxed runs can also block localhost listeners used by `operator-mcp` tests. Use `corepack pnpm exec vitest run --configLoader runner` outside the sandbox when full-suite verification is needed.
+
 - Shifted RedDwarf’s repo-write policy from strict allowlist enforcement to a denylist-first model for code-writing work. `allowedPaths` now remain preferred implementation guidance, while new `deniedPaths` carry the hard blocklist for secrets, git internals, and runtime state.
 - Updated workspace context, runtime instructions, developer prompts, and SCM/development enforcement so agents can create adjacent implementation/config/helper files when needed unless they hit a blocked repo path. This removes the previous tendency to fail legitimate scaffolding work on companion files like `vite.config.ts` or `index.html`.
 - Added contract, policy, workspace-materialization, and control-plane regression coverage for the new denylist-first path model, including blocked-path prompt text, denied-path artifacts in `.context`, and SCM publish rejection when a blocked file is touched.

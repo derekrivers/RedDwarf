@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## `pnpm test` fails before startup because Vitest cannot write `.vite-temp` or bind localhost in the sandbox
+
+- Symptom: `corepack pnpm test` fails before test execution with `EACCES: permission denied, open '.../node_modules/.vite-temp/...mjs'`, or MCP/operator tests hang and then fail with `listen EPERM: operation not permitted 127.0.0.1`.
+- Root cause: this checkout's `node_modules/` tree can be owned by `nobody:nogroup`, so Vite's default bundled config loader cannot create temp files under `node_modules/.vite-temp`. Separately, the sandbox can deny localhost binds needed by tests that spin up in-process HTTP servers.
+- Failing approach: retrying the root `pnpm test` script unchanged inside the sandbox.
+- Working workaround: run Vitest directly with `corepack pnpm exec vitest run --configLoader runner` so Vite does not bundle the config to `.vite-temp`, and run that command outside the sandbox when the suite needs localhost listeners.
+- Verification: `corepack pnpm exec vitest run --configLoader runner`; `corepack pnpm typecheck`.
+
 ## SCM stalls after frontend scaffolding because `git add --all` tries to stage `node_modules`
 
 - Symptom: a React/Vite/npm task completes development, but the SCM phase slows dramatically, times out, or appears stuck while preparing the commit. The workspace repo has a generated `node_modules/` tree and no `.gitignore`.
