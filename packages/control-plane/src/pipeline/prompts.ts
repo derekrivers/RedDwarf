@@ -406,13 +406,19 @@ export function buildOpenClawDeveloperPrompt(
     "Do not recursively enumerate the whole repository or inspect `.git` internals. Avoid broad repo-wide `find`, `ls -R`, or similar sweeps unless you are concretely blocked without them.",
     "Keep planning terse and action-oriented. Spend tokens on implementation and verification, not on long written deliberation or restating the spec.",
     "Start with the trusted task contract, planning spec, and the most likely target paths. Use narrow reads/listings against likely files or directories, then move into implementation once you have enough context.",
+    ...(codeWriteEnabled
+      ? [
+          "When creating or replacing any file that is likely to exceed 150 lines, you must write it in multiple passes: write a minimal working scaffold first, then build out each logical section with separate edit or write calls.",
+          "Do not attempt to produce a complete large file in a single write tool call. Break the content into meaningful batches — for example: HTML structure, then CSS, then JS scaffold, then game logic sections.",
+          "Each intermediate write should leave the file in a state that is syntactically valid or clearly marked as in-progress."
+        ]
+      : []),
     ...(implementationFirstMode
       ? [
           "This is a bounded implementation task. Use implementation-first mode.",
           "After reading the trusted task/spec/TOOLS context, spend at most 3 tool calls on orientation before your first repo write unless you are concretely blocked.",
           "Do not produce long design monologues, exhaustive option lists, or row-by-row planning dumps. If structure is clear enough to start, start coding and refine in the file.",
-          "Once orientation is complete, your next assistant turn should begin the repo write path with a write/edit tool call unless you have a real blocker.",
-          "When creating or replacing a substantial file, prefer a small scaffold first and then refine it with follow-up edits instead of one very large write payload."
+          "Once orientation is complete, your next assistant turn should begin the repo write path with a write/edit tool call unless you have a real blocker."
         ]
       : []),
     "When `package.json` is in the preferred implementation paths, `.gitignore` is also approved as a companion file so install and build artifacts such as `node_modules/` stay out of version control.",

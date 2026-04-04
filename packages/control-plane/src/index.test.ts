@@ -5251,7 +5251,10 @@ describe("developer phase with OpenClaw dispatch", () => {
         "your next assistant turn should begin the repo write path with a write/edit tool call"
       );
       expect(developerPrompt).toContain(
-        "prefer a small scaffold first and then refine it with follow-up edits instead of one very large write payload"
+        "When creating or replacing any file that is likely to exceed 150 lines, you must write it in multiple passes"
+      );
+      expect(developerPrompt).toContain(
+        "Do not attempt to produce a complete large file in a single write tool call."
       );
       expect(developerPrompt).toContain(
         "Do not produce long design monologues, exhaustive option lists, or row-by-row planning dumps."
