@@ -228,8 +228,10 @@ export function createOpenClawAgentRoleDefinitions(
       // group:runtime is intentionally excluded: the reviewer only reads workspace
       // files and writes a single architecture-review.json verdict. Process
       // execution is not required and would over-permission a read+write-JSON role.
-      // group:sessions enables sessions_history so Kryten can read Lister's
-      // transcript when forming the architecture review verdict.
+      // group:sessions is forward-looking: positions Kryten to read session
+      // transcripts (e.g. Holly's plan or Lister's implementation) in a future
+      // improvement. His current flow reads the handoff file from disk and does
+      // not use sessions_history yet.
       // sessions_spawn/yield/subagents are denied to prevent Kryten from
       // spawning autonomous sub-agents during review.
       allow: ["group:fs", "group:sessions", "group:openclaw"],
