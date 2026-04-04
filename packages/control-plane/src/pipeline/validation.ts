@@ -112,7 +112,7 @@ export async function runValidationPhase(
       validatedManifest.currentPhase === "validation") ||
     (validatedManifest.lifecycleStatus === "ready" &&
       validatedManifest.currentPhase === "validation" &&
-      approvedFailureRetry !== null);
+      (approvedFailureRetry !== null || approvedRequest?.phase === "architecture_review"));
 
   if (!lifecycleAllowsValidation) {
     throw new Error(
