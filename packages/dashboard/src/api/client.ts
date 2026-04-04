@@ -2,6 +2,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   ApprovalRequestStatus,
+  Capability,
   EvidenceRecord,
   PipelineRun
 } from "@reddwarf/contracts";
@@ -81,6 +82,29 @@ export interface ResolveApprovalResponse {
   manifest: {
     taskId: string;
   };
+}
+
+export interface ReposResponse {
+  repos: Array<{ repo: string }>;
+  total: number;
+}
+
+export interface SubmitIssueRequest {
+  repo: string;
+  title: string;
+  summary: string;
+  acceptanceCriteria: string[];
+  affectedPaths: string[];
+  constraints: string[];
+  labels: string[];
+  requestedCapabilities: Capability[];
+  riskClassHint?: "low" | "medium" | "high";
+}
+
+export interface SubmitIssueResponse {
+  issueNumber: number;
+  issueUrl: string;
+  repo: string;
 }
 
 interface ApiClientOptions {
@@ -195,6 +219,15 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
           })
         }
       );
+    },
+    getRepos() {
+      return request<ReposResponse>("/repos");
+    },
+    submitIssue(req: SubmitIssueRequest) {
+      return request<SubmitIssueResponse>("/issues/submit", {
+        method: "POST",
+        body: JSON.stringify(req)
+      });
     }
   };
 }

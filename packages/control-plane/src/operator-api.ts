@@ -29,6 +29,7 @@ import {
   serializeOperatorConfigValue,
   taskGroupInjectionRequestSchema,
   directTaskInjectionRequestSchema,
+  githubIssueSubmitSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type GitHubIssuePollingCursor,
@@ -38,6 +39,7 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
+import type { GitHubWriter } from "@reddwarf/integrations";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -89,6 +91,8 @@ export interface OperatorApiDependencies {
   pollingDaemon?: GitHubIssuePollingDaemon;
   /** Dependencies for manual dispatch via POST /tasks/:taskId/dispatch. */
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
+  /** When provided, enables POST /issues/submit to create GitHub issues for polling to intercept. */
+  githubWriter?: GitHubWriter;
 }
 
 export interface OperatorBlockedSummary {
@@ -202,7 +206,8 @@ export function createOperatorApiServer(
     clock = () => new Date(),
     dispatcher,
     pollingDaemon,
-    dispatchDependencies
+    dispatchDependencies,
+    githubWriter
   } = deps;
   let boundPort = config.port;
 
@@ -244,7 +249,8 @@ export function createOperatorApiServer(
           dispatchDependencies,
           managedTargetRoot,
           managedEvidenceRoot,
-          localSecretsPath
+          localSecretsPath,
+          githubWriter
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -1449,7 +1455,8 @@ async function handleOperatorRequest(
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">,
   managedTargetRoot?: string,
   managedEvidenceRoot?: string,
-  localSecretsPath?: string
+  localSecretsPath?: string,
+  githubWriter?: GitHubWriter
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -1970,6 +1977,70 @@ async function handleOperatorRequest(
       ...(result.spec ? { spec: result.spec } : {}),
       ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
       ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
+    });
+    return;
+  }
+
+  if (method === "POST" && path === "/issues/submit") {
+    if (!githubWriter) {
+      writeOperatorJsonResponse(res, 503, {
+        error: "service_unavailable",
+        message: "GitHub writer is not configured on this server."
+      });
+      return;
+    }
+
+    const rawBody = (await readOperatorJsonBody(
+      req,
+      maxRequestBodyBytes
+    )) as Record<string, unknown> | null;
+    let submission;
+    try {
+      submission = githubIssueSubmitSchema.parse(rawBody ?? {});
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid issue submission payload.";
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message
+      });
+      return;
+    }
+
+    const bodyParts: string[] = [];
+    bodyParts.push(`## Summary\n\n${submission.summary}`);
+    bodyParts.push(
+      `## Acceptance Criteria\n\n${submission.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
+    );
+    if (submission.affectedPaths.length > 0) {
+      bodyParts.push(
+        `## Affected Paths\n\n${submission.affectedPaths.map((p) => `- ${p}`).join("\n")}`
+      );
+    }
+    if (submission.constraints.length > 0) {
+      bodyParts.push(
+        `## Constraints\n\n${submission.constraints.map((c) => `- ${c}`).join("\n")}`
+      );
+    }
+    bodyParts.push(
+      `## Requested Capabilities\n\n${submission.requestedCapabilities.join(", ")}`
+    );
+    if (submission.riskClassHint) {
+      bodyParts.push(`## Risk Hint\n\n${submission.riskClassHint}`);
+    }
+    const issueBody = bodyParts.join("\n\n");
+
+    const created = await githubWriter.createIssue({
+      repo: submission.repo,
+      title: submission.title,
+      body: issueBody,
+      labels: ["ai-eligible", ...submission.labels]
+    });
+
+    writeOperatorJsonResponse(res, 201, {
+      issueNumber: created.issueNumber,
+      issueUrl: created.url,
+      repo: created.repo
     });
     return;
   }

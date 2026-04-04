@@ -1617,6 +1617,99 @@ describe("operator API server", () => {
     }
   });
 
+  it("creates a GitHub issue via POST /issues/submit and returns issue coordinates", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const githubWriter = new FixtureGitHubAdapter({
+      candidates: [],
+      mutations: { allowIssueCreation: true, issueNumberStart: 200 }
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, githubWriter }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/issues/submit", {
+        repo: "acme/platform",
+        title: "Add structured issue intake via dashboard form",
+        summary: "Operators should be able to create GitHub issues directly from the dashboard to inject tasks into the planning pipeline without leaving the UI.",
+        acceptanceCriteria: [
+          "A GitHub issue is created with the ai-eligible label",
+          "The response includes the issue number and URL"
+        ],
+        affectedPaths: ["packages/dashboard/src/"],
+        constraints: ["Must not change the polling daemon"],
+        requestedCapabilities: ["can_plan", "can_write_code", "can_run_tests", "can_open_pr", "can_archive_evidence"],
+        riskClassHint: "low"
+      });
+
+      expect(response.status).toBe(201);
+      const body = response.body as Record<string, unknown>;
+      expect(body["issueNumber"]).toBe(200);
+      expect(body["repo"]).toBe("acme/platform");
+      expect(typeof body["issueUrl"]).toBe("string");
+      expect(String(body["issueUrl"])).toContain("acme/platform/issues/200");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns 503 for POST /issues/submit when no githubWriter is configured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/issues/submit", {
+        repo: "acme/platform",
+        title: "This should not reach GitHub",
+        summary: "The server has no GitHub writer configured so this must fail with 503.",
+        acceptanceCriteria: ["Returns 503 when githubWriter is absent"]
+      });
+
+      expect(response.status).toBe(503);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("service_unavailable");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("returns 400 for POST /issues/submit when the payload is invalid", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const githubWriter = new FixtureGitHubAdapter({
+      candidates: [],
+      mutations: { allowIssueCreation: true }
+    });
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, githubWriter }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const response = await operatorPost(port, "/issues/submit", {
+        repo: "acme/platform",
+        title: "Hi",
+        summary: "Too short."
+      });
+
+      expect(response.status).toBe(400);
+      expect((response.body as Record<string, unknown>)["error"]).toBe("bad_request");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("includes prompt snapshots in the JSON run report once they are captured", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(eligibleInput, {

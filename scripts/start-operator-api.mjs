@@ -10,6 +10,7 @@
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
+import { createRestGitHubAdapter } from "../packages/integrations/dist/index.js";
 import {
   applyOperatorRuntimeConfig,
   connectionString,
@@ -50,9 +51,11 @@ try {
   process.exit(1);
 }
 
+const github = createRestGitHubAdapter();
+
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
-  { repository, planner, defaultPlanningDryRun: dryRun }
+  { repository, planner, defaultPlanningDryRun: dryRun, githubWriter: github }
 );
 
 await server.start();

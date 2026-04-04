@@ -3,6 +3,7 @@ import {
   isoDateTimeSchema,
   jsonValueSchema,
   capabilitySchema,
+  capabilities,
   failureClassSchema,
   riskClassSchema,
   approvalModeSchema,
@@ -185,8 +186,23 @@ export const taskManifestQuerySchema = z.object({
   limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
 });
 
+export const githubIssueSubmitSchema = z.object({
+  repo: z.string().min(1),
+  title: z.string().min(TITLE_MIN_LENGTH).max(200),
+  summary: z.string().min(SUMMARY_MIN_LENGTH),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  affectedPaths: z.array(z.string().min(1)).default([]),
+  constraints: z.array(z.string().min(1)).default([]),
+  labels: z.array(z.string().min(1)).default([]),
+  requestedCapabilities: z
+    .array(capabilitySchema)
+    .default([...capabilities]),
+  riskClassHint: riskClassSchema.optional()
+});
+
 export type PlanningTaskInput = z.infer<typeof planningTaskInputSchema>;
 export type DirectTaskInjectionRequest = z.infer<typeof directTaskInjectionRequestSchema>;
+export type GitHubIssueSubmitRequest = z.infer<typeof githubIssueSubmitSchema>;
 export type PreScreenFinding = z.infer<typeof preScreenFindingSchema>;
 export type PreScreenAssessment = z.infer<typeof preScreenAssessmentSchema>;
 export type GroupedTaskInjectionRequest = z.infer<

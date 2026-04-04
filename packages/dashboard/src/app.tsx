@@ -11,6 +11,7 @@ import {
 import {
   IconActivityHeartbeat,
   IconChecklist,
+  IconCloudUpload,
   IconDatabase,
   IconFileSearch,
   IconGauge,
@@ -28,6 +29,7 @@ import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
 import { PipelinePage } from "./pages/pipeline-page";
+import { SubmitIssuePage } from "./pages/submit-issue-page";
 import {
   createApiClient,
   getPendingApprovalCount,
@@ -55,7 +57,8 @@ const navItems: NavItem[] = [
   { to: "/approvals", label: "Approvals", icon: IconChecklist },
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
-  { to: "/agents", label: "Agents", icon: IconRobot }
+  { to: "/agents", label: "Agents", icon: IconRobot },
+  { to: "/submit", label: "Submit Issue", icon: IconCloudUpload }
 ];
 
 function getHealthTone(health: HealthResponse | undefined): ShellHealthTone {
@@ -309,6 +312,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/agents"
                 element={<AgentsPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/submit"
+                element={<SubmitIssuePage apiClient={apiClient} />}
               />
               {/* <Route path="/logs" element={<LogsPage />} /> */}
               <Route path="*" element={<Navigate replace to="/dashboard" />} />

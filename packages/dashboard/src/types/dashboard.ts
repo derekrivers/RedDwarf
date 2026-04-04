@@ -15,8 +15,11 @@ import type {
   BlockedApprovalsResponse,
   HealthResponse,
   PipelineRunsResponse,
+  ReposResponse,
   RunEvidenceResponse,
-  ResolveApprovalResponse
+  ResolveApprovalResponse,
+  SubmitIssueRequest,
+  SubmitIssueResponse
 } from "../api/client";
 
 export interface ApprovalListResponse {
@@ -73,4 +76,6 @@ export interface DashboardApiClient {
     decision: "approve" | "reject",
     decisionSummary: string
   ): Promise<ResolveApprovalResponse>;
+  getRepos(): Promise<ReposResponse>;
+  submitIssue(req: SubmitIssueRequest): Promise<SubmitIssueResponse>;
 }

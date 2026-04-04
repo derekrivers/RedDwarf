@@ -441,13 +441,14 @@ const server = createOperatorApiServer(
     managedTargetRoot: workspaceTargetRoot,
     managedEvidenceRoot: evidenceRoot
   },
-    {
-      repository,
-      defaultPlanningDryRun: dryRun,
-      ...(planner ? { planner } : {}),
-      ...(dispatcher ? { dispatcher } : {}),
-      ...(daemon ? { pollingDaemon: daemon } : {}),
-      ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+  {
+    repository,
+    defaultPlanningDryRun: dryRun,
+    githubWriter: github,
+    ...(planner ? { planner } : {}),
+    ...(dispatcher ? { dispatcher } : {}),
+    ...(daemon ? { pollingDaemon: daemon } : {}),
+    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
   }
 );
 await server.start();
