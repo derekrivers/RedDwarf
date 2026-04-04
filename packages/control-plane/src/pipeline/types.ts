@@ -295,6 +295,7 @@ export interface ArchitectureReviewPhaseResult {
   workspace?: MaterializedManagedWorkspace;
   report?: ArchitectureReviewReport;
   reportPath?: string;
+  approvalRequest?: ApprovalRequest;
   nextAction: "await_validation" | "await_human_review" | "task_blocked";
   concurrencyDecision: ConcurrencyDecision;
   openClawDispatchResult?: OpenClawDispatchResult;

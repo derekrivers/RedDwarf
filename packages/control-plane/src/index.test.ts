@@ -1853,6 +1853,8 @@ describe("control-plane", () => {
 
       expect(review.nextAction).toBe("await_human_review");
       expect(review.report?.verdict).toBe("fail");
+      expect(review.approvalRequest?.phase).toBe("architecture_review");
+      expect(review.approvalRequest?.status).toBe("pending");
       expect(review.manifest.currentPhase).toBe("architecture_review");
       expect(review.manifest.lifecycleStatus).toBe("blocked");
       expect(
@@ -1870,6 +1872,140 @@ describe("control-plane", () => {
             event.code === "PHASE_BLOCKED"
         )
       ).toBe(true);
+      expect(
+        repository.runEvents.some(
+          (event) =>
+            event.phase === "architecture_review" &&
+            (event.data["approvalRequestId"] as string | undefined) ===
+              review.approvalRequest?.requestId
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("continues at validation after approving an architecture review override", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), "reddwarf-architecture-review-override-")
+    );
+
+    const planningResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:24:00.000Z"),
+        idGenerator: () => "run-architecture-review-override-plan"
+      }
+    );
+
+    await resolveApprovalRequest(
+      {
+        requestId: planningResult.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for architecture-review override coverage."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:25:00.000Z")
+      }
+    );
+
+    try {
+      await runDeveloperPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot,
+          workspaceId: "workspace-architecture-review-override"
+        },
+        {
+          repository,
+          developer: new DeterministicDeveloperAgent(),
+          clock: () => new Date("2026-03-25T18:26:00.000Z"),
+          idGenerator: () => "run-architecture-review-override-dev"
+        }
+      );
+
+      const review = await runArchitectureReviewPhase(
+        {
+          taskId: planningResult.manifest.taskId,
+          targetRoot: tempRoot
+        },
+        {
+          repository,
+          reviewer: {
+            async reviewImplementation() {
+              return {
+                verdict: "escalate",
+                summary: "Human judgment is required before validation continues.",
+                structuralDrift: ["One implementation choice needs explicit operator signoff."],
+                checks: [
+                  {
+                    name: "guardrail_preservation",
+                    status: "not_applicable",
+                    detail: "Escalated for human judgment."
+                  }
+                ],
+                findings: [],
+                recommendedNextActions: [
+                  "Operator should approve continuation if the risk is acceptable."
+                ]
+              };
+            }
+          } as unknown as DeterministicArchitectureReviewAgent,
+          clock: () => new Date("2026-03-25T18:27:00.000Z"),
+          idGenerator: () => "run-architecture-review-override-phase"
+        }
+      );
+
+      expect(review.nextAction).toBe("await_human_review");
+      expect(review.approvalRequest?.status).toBe("pending");
+
+      const overrideDecision = await resolveApprovalRequest(
+        {
+          requestId: review.approvalRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Accept the architecture-review escalation and continue to validation."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:28:00.000Z")
+        }
+      );
+
+      expect(overrideDecision.manifest.lifecycleStatus).toBe("ready");
+      expect(overrideDecision.manifest.currentPhase).toBe("validation");
+
+      const dispatchResult = await dispatchReadyTask(
+        { taskId: planningResult.manifest.taskId, targetRoot: tempRoot },
+        {
+          repository,
+          developer: {
+            async createHandoff() {
+              throw new Error("developer should not rerun after architecture-review override approval");
+            }
+          } as unknown as DeterministicDeveloperAgent,
+          reviewer: {
+            async reviewImplementation() {
+              throw new Error("reviewer should not rerun after architecture-review override approval");
+            }
+          } as unknown as DeterministicArchitectureReviewAgent,
+          validator: new DeterministicValidationAgent(),
+          scm: new DeterministicScmAgent(),
+          github: new FixtureGitHubAdapter({ candidates: [] })
+        }
+      );
+
+      expect(dispatchResult.phasesExecuted).toEqual(["validation"]);
+      expect(dispatchResult.finalPhase).toBe("validation");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

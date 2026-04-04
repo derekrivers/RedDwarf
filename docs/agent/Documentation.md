@@ -21,6 +21,8 @@
 - Added focused regression coverage in `packages/control-plane/src/index.test.ts` for the real JSONL transcript shape, awaiter fast-fail on terminal sessions, and development-phase classification of `OPENCLAW_SESSION_TERMINATED`.
 - Added complexity-scaled development budgets in `packages/control-plane/src/pipeline/token-budget.ts` and `packages/control-plane/src/pipeline/development.ts`. RedDwarf now derives a developer complexity profile from the persisted planning spec and requested capabilities, then scales both the development token budget and the OpenClaw completion timeout for elevated/high-complexity tasks instead of treating every code-writing task as flat-cost work.
 - Added regression coverage proving straightforward tasks stay on the standard budget tier, broad multi-surface tasks promote into higher tiers, and the development phase records the scaled budget limit in evidence for complex tasks.
+- Added a real human-override path for architecture-review `fail` / `escalate` verdicts. `runArchitectureReviewPhase(...)` now creates a pending `architecture_review` approval request, `resolveApprovalRequest(...)` advances approved overrides to `ready` at `validation`, and downstream dispatch now resumes from the manifest’s current recoverable phase when a task is explicitly re-readied mid-pipeline.
+- Added regression coverage proving architecture-review failures now emit a pending override approval request and that approving the override resumes dispatch at validation without rerunning development or architecture review.
 
 ## 2026-04-03
 

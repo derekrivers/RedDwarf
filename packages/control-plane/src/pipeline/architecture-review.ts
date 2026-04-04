@@ -5,6 +5,7 @@ import {
   asIsoTimestamp
 } from "@reddwarf/contracts";
 import {
+  createApprovalRequest,
   createEvidenceRecord,
   createMemoryRecord,
   createPipelineRun,
@@ -863,6 +864,32 @@ export async function runArchitectureReviewPhase(
 
     const blockedAt = clock();
     const blockedAtIso = asIsoTimestamp(blockedAt);
+    const reviewApprovalRequest = createApprovalRequest({
+      requestId: `${taskId}:approval:architecture_review:${runId}`,
+      taskId,
+      runId,
+      phase: "architecture_review",
+      dryRun: currentManifest.dryRun,
+      approvalMode: currentManifest.approvalMode,
+      status: "pending",
+      riskClass: currentManifest.riskClass,
+      summary:
+        report.verdict === "escalate"
+          ? "Architecture review escalated and requires human approval to continue to validation."
+          : "Architecture review failed. Human approval is required to override the verdict and continue to validation.",
+      requestedCapabilities: currentManifest.requestedCapabilities,
+      allowedPaths: validatedPolicySnapshot.allowedPaths,
+      blockedPhases: ["validation", "scm"],
+      policyReasons: [
+        `Architecture review verdict: ${report.verdict}`,
+        report.summary,
+        ...report.recommendedNextActions
+      ],
+      requestedBy: "architecture-review",
+      createdAt: blockedAtIso,
+      updatedAt: blockedAtIso
+    });
+    await repository.saveApprovalRequest(reviewApprovalRequest);
     await recordRunEvent({
       repository,
       logger: runLogger,
@@ -886,6 +913,7 @@ export async function runArchitectureReviewPhase(
         workspaceId: workspace.workspaceId,
         verdict: report.verdict,
         structuralDrift: report.structuralDrift,
+        approvalRequestId: reviewApprovalRequest.requestId,
         reportArchiveLocation: archivedReport.location,
         reportMarkdownArchiveLocation: archivedReportMarkdown.location
       },
@@ -907,6 +935,7 @@ export async function runArchitectureReviewPhase(
         nextAction: "await_human_review",
         workspaceId: workspace.workspaceId,
         verdict: report.verdict,
+        approvalRequestId: reviewApprovalRequest.requestId,
         reportArchiveLocation: archivedReport.location,
         reportMarkdownArchiveLocation: archivedReportMarkdown.location
       }
@@ -920,6 +949,7 @@ export async function runArchitectureReviewPhase(
       reportPath: reportJsonPath,
       nextAction: "await_human_review",
       concurrencyDecision,
+      approvalRequest: reviewApprovalRequest,
       ...(dispatchResult !== null
         ? { openClawDispatchResult: dispatchResult }
         : {})

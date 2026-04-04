@@ -87,6 +87,9 @@ export async function resolveApprovalRequest(
   });
   const updatedManifest = patchManifest(manifest, {
     lifecycleStatus,
+    ...(input.decision === "approve" && approvalRequest.phase === "architecture_review"
+      ? { currentPhase: "validation" as const }
+      : {}),
     evidenceLinks: [
       ...manifest.evidenceLinks,
       `db://gate_decision/${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`
@@ -119,7 +122,9 @@ export async function resolveApprovalRequest(
     input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
   const decisionMessage =
     input.decision === "approve"
-      ? "Approval granted for downstream execution."
+      ? approvalRequest.phase === "architecture_review"
+        ? "Architecture review override approved; the task is ready to continue at validation."
+        : "Approval granted for downstream execution."
       : "Approval rejected and the task was cancelled.";
   const phaseStatus: PhaseLifecycleStatus =
     input.decision === "approve" ? "passed" : "failed";

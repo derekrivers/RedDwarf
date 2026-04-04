@@ -80,6 +80,14 @@
 - Working workaround: inspect the session JSONL for terminal stop reasons or stale growth. On current builds, the developer awaiter now fails fast with `OPENCLAW_SESSION_TERMINATED` when the transcript ends in a terminal assistant stop reason and with `OPENCLAW_SESSION_STALLED` when transcript growth stops before the handoff appears. The developer prompt also now explicitly forbids broad repo-wide enumeration and `.git` inspection, and high-complexity development tasks receive larger token/time budgets than small tasks instead of sharing one flat ceiling.
 - Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'parses real OpenClaw message events with stop reasons and tool errors|fails fast when the OpenClaw transcript ends with a terminal stop reason before handoff output|classifies terminal OpenClaw developer sessions before the generic completion timeout'"`.
 
+## Architecture review blocks a task at `await_human_review`, but there is no pending approval to continue
+
+- Symptom: a task reaches architecture review, returns `verdict: "escalate"` or `verdict: "fail"`, and the manifest becomes `blocked` in `architecture_review` with `nextAction: "await_human_review"`. Older builds still show only the original `policy_gate` approval row, so there is nothing pending to approve in `/approvals`.
+- Root cause: before the April 4, 2026 hardening, architecture review recorded the blocked verdict but did not mint a follow-up approval request for human override. That left operators with no first-class way to approve continuation to validation.
+- Failing approach: trying to reuse the original planning approval row, or resolving `/approvals/:id/resolve` against an already-approved `policy_gate` request.
+- Working workaround: on current builds, non-pass architecture-review verdicts now create a pending `architecture_review` approval request. Approving that request advances the manifest to `ready` with `currentPhase = validation`, and dispatch resumes at validation instead of rerunning development. On older persisted tasks, seed a review approval row manually or rerun the phase on the updated build before trying to approve continuation.
+- Verification: `corepack pnpm typecheck`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm exec vitest run packages/control-plane/src/index.test.ts -t 'blocks validation when architecture review returns a failing verdict|continues at validation after approving an architecture review override'"`.
+
 ## Vitest commands fail or skip in the sandbox
 
 - Symptom: `corepack pnpm test`, focused commands such as `corepack pnpm test -- packages/control-plane/src/index.test.ts`, or `corepack pnpm test:postgres` fail with `spawn EPERM` while loading `vitest.config.ts`, or the Postgres file runs but all DB-backed tests are skipped.

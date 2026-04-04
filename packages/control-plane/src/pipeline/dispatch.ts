@@ -51,7 +51,9 @@ export async function dispatchReadyTask(
 
   let startPhase: RecoverablePhase = "development";
   if (isRecoverablePhase(manifest.currentPhase)) {
-    if (approvedFailureRecoveryRequest !== null) {
+    if (isDispatchableReadyManifest) {
+      startPhase = manifest.currentPhase;
+    } else if (approvedFailureRecoveryRequest !== null) {
       startPhase = manifest.currentPhase;
     } else if (automatedRetryRecovery !== null) {
       startPhase = manifest.currentPhase;
