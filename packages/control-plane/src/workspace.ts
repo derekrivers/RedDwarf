@@ -372,35 +372,37 @@ export function renderPlanningSpecMarkdown(
 export function createWorkspaceContextArtifacts(
   bundle: WorkspaceContextBundle
 ): WorkspaceContextArtifacts {
-  const cachedProjectMemory = bundle.memoryContext
+  const normalizedBundle = workspaceContextBundleSchema.parse(bundle);
+  const cachedProjectMemory = normalizedBundle.memoryContext
     ? memoryContextSchema.parse({
-        ...bundle.memoryContext,
+        ...normalizedBundle.memoryContext,
         taskMemory: []
       })
     : null;
   return {
-    taskJson: `${JSON.stringify(bundle.manifest, null, 2)}\n`,
-    specMarkdown: renderPlanningSpecMarkdown(bundle),
+    taskJson: `${JSON.stringify(normalizedBundle.manifest, null, 2)}\n`,
+    specMarkdown: renderPlanningSpecMarkdown(normalizedBundle),
     projectMemoryJson: `${JSON.stringify(cachedProjectMemory, null, 2)}\n`,
-    policySnapshotJson: `${JSON.stringify(bundle.policySnapshot, null, 2)}\n`,
-    allowedPathsJson: `${JSON.stringify(bundle.allowedPaths, null, 2)}\n`,
-    deniedPathsJson: `${JSON.stringify(bundle.deniedPaths, null, 2)}\n`,
-    acceptanceCriteriaJson: `${JSON.stringify(bundle.acceptanceCriteria, null, 2)}\n`
+    policySnapshotJson: `${JSON.stringify(normalizedBundle.policySnapshot, null, 2)}\n`,
+    allowedPathsJson: `${JSON.stringify(normalizedBundle.allowedPaths, null, 2)}\n`,
+    deniedPathsJson: `${JSON.stringify(normalizedBundle.deniedPaths, null, 2)}\n`,
+    acceptanceCriteriaJson: `${JSON.stringify(normalizedBundle.acceptanceCriteria, null, 2)}\n`
   };
 }
 
 export function createRuntimeInstructionLayer(
   bundle: WorkspaceContextBundle
 ): RuntimeInstructionLayer {
-  const canonicalSources = buildCanonicalSources(bundle);
-  const toolPolicy = createWorkspaceToolPolicy(bundle);
-  const contextFiles = getRoleScopedContextFiles(bundle);
+  const normalizedBundle = workspaceContextBundleSchema.parse(bundle);
+  const canonicalSources = buildCanonicalSources(normalizedBundle);
+  const toolPolicy = createWorkspaceToolPolicy(normalizedBundle);
+  const contextFiles = getRoleScopedContextFiles(normalizedBundle);
 
   return runtimeInstructionLayerSchema.parse({
-    taskId: bundle.manifest.taskId,
-    assignedAgentType: bundle.manifest.assignedAgentType,
-    recommendedAgentType: bundle.spec.recommendedAgentType,
-    approvalMode: bundle.policySnapshot.approvalMode,
+    taskId: normalizedBundle.manifest.taskId,
+    assignedAgentType: normalizedBundle.manifest.assignedAgentType,
+    recommendedAgentType: normalizedBundle.spec.recommendedAgentType,
+    approvalMode: normalizedBundle.policySnapshot.approvalMode,
     allowedCapabilities: toolPolicy.allowedCapabilities,
     blockedPhases: toolPolicy.blockedPhases,
     canonicalSources,
@@ -409,24 +411,32 @@ export function createRuntimeInstructionLayer(
       {
         relativePath: runtimeInstructionRelativePaths.soulMd,
         description: "Workspace operating posture and source hierarchy.",
-        content: renderRuntimeSoulMarkdown(bundle, canonicalSources, contextFiles)
+        content: renderRuntimeSoulMarkdown(
+          normalizedBundle,
+          canonicalSources,
+          contextFiles
+        )
       },
       {
         relativePath: runtimeInstructionRelativePaths.agentsMd,
         description: "Runtime agent roster and task routing guidance.",
-        content: renderRuntimeAgentsMarkdown(bundle)
+        content: renderRuntimeAgentsMarkdown(normalizedBundle)
       },
       {
         relativePath: runtimeInstructionRelativePaths.toolsMd,
         description:
           "Capability, path, and escalation guardrails for the workspace.",
-        content: renderRuntimeToolsMarkdown(bundle)
+        content: renderRuntimeToolsMarkdown(normalizedBundle)
       },
       {
         relativePath: runtimeInstructionRelativePaths.taskSkillMd,
         description:
           "Task-scoped skill that tells agents how to use the context bundle and policy pack.",
-        content: renderRuntimeTaskSkillMarkdown(bundle, canonicalSources, contextFiles)
+        content: renderRuntimeTaskSkillMarkdown(
+          normalizedBundle,
+          canonicalSources,
+          contextFiles
+        )
       }
     ]
   });
