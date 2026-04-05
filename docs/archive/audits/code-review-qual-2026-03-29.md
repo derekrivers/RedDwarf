@@ -6,7 +6,7 @@
 **Codebase totals at audit time:** `pipeline.ts` 6,524 lines; `control-plane/src/index.test.ts` 5,602 lines; `integrations/src/index.ts` 1,740 lines; `evidence/src/postgres-repository.ts` 1,205 lines.
 **Feature board items:** F105–F115 (QUAL-001 through QUAL-011)
 
-Read [docs/code-review-m6.md](/c:/Dev/RedDwarf/docs/code-review-m6.md) and [docs/code-review-m11.md](/c:/Dev/RedDwarf/docs/code-review-m11.md) for earlier review passes (M6 and M11). This audit follows on from those and focuses on what remained after the M6/M7 refactor delivered features 26–42.
+Read [docs/archive/audits/code-review-m6.md](/c:/Dev/RedDwarf/docs/archive/audits/code-review-m6.md) and [docs/archive/audits/code-review-m11.md](/c:/Dev/RedDwarf/docs/archive/audits/code-review-m11.md) for earlier review passes (M6 and M11). This audit follows on from those and focuses on what remained after the M6/M7 refactor delivered features 26–42.
 
 ---
 
