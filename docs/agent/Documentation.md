@@ -263,7 +263,7 @@
 - Updated repository docs and the feature board so feature 25 is marked complete. All board items through M5 are now delivered.
 - Completed a full codebase code review (2026-03-26) covering all 6 packages across code smells, optimisations, and SOLID violations.
 - 18 findings recorded as feature board items 26–40 (M6/M7) in `FEATURE_BOARD.md`.
-- Full report with problem descriptions, affected line ranges, and concrete fix guidance is at `docs/code-review-m6.md` — read this before picking up any M6 item.
+- Full report with problem descriptions, affected line ranges, and concrete fix guidance is at `docs/archive/audits/code-review-m6.md` — read this before picking up any M6 item.
 - Likely next board item: feature 26, extract shared concurrency gate utility.
 - Completed features 26–31 from `FEATURE_BOARD.md` (M6 refactor pass).
   - Feature 26: extracted `detectOverlappingRuns` helper from the four duplicated stale-run detection loops in `pipeline.ts`.
@@ -430,7 +430,7 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Updated `scripts/verify-packaged-policy-pack.mjs` to assert the current five-role roster (`coordinator`, `analyst`, `reviewer`, `validator`, `developer`) so CI matches the shipped execution-plane definitions again.
 - Verification note: this workspace's WSL shell cannot execute the Windows-installed `corepack` shim or `node.exe` (`/mnt/c/Program Files/nodejs/...`), so local verification from this session is blocked until a Linux Node toolchain is available or the command is rerun from the Windows host.
 - Reprioritized `FEATURE_BOARD.md` so the next actionable work is feature 90, atomic run claiming, followed by transactional state transitions, allowed-path enforcement, git credential redaction, operator API hardening, timeout and heartbeat alignment, secret-workspace cleanup, prompt-boundary hardening, Postgres-pool hardening, and structured runtime logging.
-- Full audit handoff is documented in [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) - read this before implementing features 90-99.
+- Full audit handoff is documented in [docs/archive/audits/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/archive/audits/pipeline-hardening-audit-2026-03-29.md) - read this before implementing features 90-99.
 - Existing pending feature work for OpenAI provider support (feature 86) and GitHub intake allowlisting (feature 87) is intentionally deferred behind the new hardening queue because the audit found production-correctness and security gaps with higher blast radius.
 
 - Completed feature 90 from `FEATURE_BOARD.md`: atomic run claiming for each pipeline phase.
@@ -671,7 +671,7 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 
 ## 2026-04-01
 
-- Reviewed the proposed feature source file at `docs/REDDWARF_PROPOSED_FEATURES (1).md` against the active `FEATURE_BOARD.md`.
+- Reviewed the proposed feature source file at `docs/roadmap.md` against the active `FEATURE_BOARD.md`.
 - Added seven new pending M16 board items (features 107-113): dry-run / simulation mode, plan confidence gate, token budget enforcement, pipeline run report export, prompt version tracking, phase retry budget, and structured eligibility rejection reasons.
 - Updated `FEATURE_BOARD.md` so the M16 section now includes an explicit source-reference note plus per-feature links back to the proposal file, giving future implementation work a durable context handoff path.
 - Evaluation note: the proposal document says "six proposed features" near the top, but it currently defines seven concrete feature sections plus cross-cutting wiring notes; the board now reflects the seven implementable sections.

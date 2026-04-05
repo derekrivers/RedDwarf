@@ -4,7 +4,7 @@ The board is ordered by implementation priority.
 
 This active board only lists pending work. Completed items are archived in [features_archive/COMPLETED_FEATURES.md](/c:/Dev/RedDwarf/features_archive/COMPLETED_FEATURES.md).
 
-Priority reset note: after the March 29, 2026 hardening audit and the April 2026 UX research pass, pending feature work is intentionally ordered by operator leverage and production blast radius rather than feature-number chronology. Operator onboarding, configuration safety, and day-to-day observability now sit ahead of speculative platform expansion. Read [docs/RedDwarf-UX-Research-Report.md](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md) before picking up features 114-127, and read [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
+Priority reset note: after the March 29, 2026 hardening audit and the April 2026 UX research pass, pending feature work is intentionally ordered by operator leverage and production blast radius rather than feature-number chronology. Operator onboarding, configuration safety, and day-to-day observability now sit ahead of speculative platform expansion. Read [docs/RedDwarf-UX-Research-Report.md](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md) before picking up features 114-127, and read [docs/archive/audits/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/archive/audits/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
 
 **OpenClaw platform principle (adopted March 2026):** Use OpenClaw for infrastructure concerns — sandboxing, model failover, notifications, scheduling, browser access. Own RedDwarf's domain logic — eligibility gating, role-scoped context, policy enforcement, pipeline orchestration. Where OpenClaw already provides a capability, configure it rather than build it. See [`docs/openclaw/reddwarf-openclaw-opportunities.md`](/c:/Dev/RedDwarf/docs/openclaw/reddwarf-openclaw-opportunities.md).
 
@@ -53,17 +53,17 @@ These items are configuration tasks against confirmed OpenClaw platform capabili
 
 ## M16 — Pipeline Domain Features
 
-Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md). Read the linked section before implementation so schema, contract, control-plane, and operator-surface notes stay aligned with the original proposal.
+Source reference: proposed additions in [`docs/roadmap.md`](/home/derek/code/RedDwarf/docs/roadmap.md). Read the linked section before implementation so schema, contract, control-plane, and operator-surface notes stay aligned with the original proposal.
 
 | # | Feature | Milestone | Status | Architecture Trace |
 | - | ------- | --------- | ------ | ------------------ |
-| 107 | Dry-run / simulation mode | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#1-dry-run--simulation-mode`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 108 | Plan confidence gate | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#2-plan-confidence-gate`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 109 | Token budget enforcement | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#3-token-budget-enforcement`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 110 | Pipeline run report export | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#4-pipeline-run-report-export`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 111 | Prompt version tracking | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#5-prompt-version-tracking`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 112 | Phase retry budget | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#6-phase-retry-budget`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 113 | Structured eligibility rejection reasons | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#7-structured-eligibility-rejection-reasons`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
+| 107 | Dry-run / simulation mode | M16 | complete | Proposal source: [`docs/roadmap.md#1-dry-run--simulation-mode`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 108 | Plan confidence gate | M16 | complete | Proposal source: [`docs/roadmap.md#2-plan-confidence-gate`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 109 | Token budget enforcement | M16 | complete | Proposal source: [`docs/roadmap.md#3-token-budget-enforcement`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 110 | Pipeline run report export | M16 | complete | Proposal source: [`docs/roadmap.md#4-pipeline-run-report-export`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 111 | Prompt version tracking | M16 | complete | Proposal source: [`docs/roadmap.md#5-prompt-version-tracking`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 112 | Phase retry budget | M16 | complete | Proposal source: [`docs/roadmap.md#6-phase-retry-budget`](/home/derek/code/RedDwarf/docs/roadmap.md) |
+| 113 | Structured eligibility rejection reasons | M16 | complete | Proposal source: [`docs/roadmap.md#7-structured-eligibility-rejection-reasons`](/home/derek/code/RedDwarf/docs/roadmap.md) |
 
 ---
 
