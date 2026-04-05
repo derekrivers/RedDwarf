@@ -3,7 +3,7 @@
 ## 2026-04-05
 
 - Fixed packaged policy-pack verification so exported control-plane workspace helpers now normalize raw JavaScript bundle inputs through `workspaceContextBundleSchema` before rendering JSON artifacts or runtime instruction markdown. This restores defaults like `policySnapshot.deniedPaths` and `policySnapshot.allowedSecretScopes` for package-verification callers that do not pre-parse a full `WorkspaceContextBundle`.
-- Added focused regression coverage in `packages/control-plane/src/index.test.ts` that mirrors the packaged verifier’s minimal raw bundle and proves the helpers now render `none` / `[]` instead of crashing.
+- Added focused regression coverage in `packages/control-plane/src/workspace.test.ts` that mirrors the packaged verifier’s minimal raw bundle and proves the helpers now render `none` / `[]` instead of crashing.
 
 ## 2026-04-04
 
