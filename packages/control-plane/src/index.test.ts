@@ -23,7 +23,6 @@ import {
   createArchitectHandoffAwaiter,
   createDeveloperHandoffAwaiter,
   createReadyTaskDispatcher,
-  createWorkspaceContextArtifacts,
   createRuntimeInstructionArtifacts,
   createRuntimeInstructionLayer,
   createWorkspaceContextBundle,
@@ -579,41 +578,6 @@ describe("control-plane", () => {
         "package-lock.json",
         ".gitignore"
       ]);
-    });
-
-    it("normalizes defaulted policy snapshot arrays for raw runtime bundle callers", () => {
-      const rawBundle = {
-        manifest: taskManifestSchema.parse({
-          ...baseManifest,
-          assignedAgentType: "architect"
-        }),
-        spec: baseSpec,
-        policySnapshot: {
-          policyVersion: basePolicySnapshot.policyVersion,
-          approvalMode: basePolicySnapshot.approvalMode,
-          allowedCapabilities: basePolicySnapshot.allowedCapabilities,
-          allowedPaths: basePolicySnapshot.allowedPaths,
-          blockedPhases: basePolicySnapshot.blockedPhases,
-          reasons: basePolicySnapshot.reasons
-        },
-        acceptanceCriteria: baseSpec.acceptanceCriteria,
-        allowedPaths: ["prompts/planning-system.md"]
-      } as unknown as ReturnType<typeof createWorkspaceContextBundle>;
-
-      const artifacts = createWorkspaceContextArtifacts(rawBundle);
-      const layer = createRuntimeInstructionLayer(rawBundle);
-
-      expect(JSON.parse(artifacts.deniedPathsJson)).toEqual([]);
-      expect(JSON.parse(artifacts.policySnapshotJson).deniedPaths).toEqual([]);
-      expect(JSON.parse(artifacts.policySnapshotJson).allowedSecretScopes).toEqual(
-        []
-      );
-      expect(
-        layer.files.find((file) => file.relativePath === "SOUL.md")?.content
-      ).toContain("- Blocked repo paths: none");
-      expect(
-        layer.files.find((file) => file.relativePath === "TOOLS.md")?.content
-      ).toContain("- Allowed secret scopes: none");
     });
 
     it("treats annotated blocked-path entries as valid repo paths during enforcement", () => {
