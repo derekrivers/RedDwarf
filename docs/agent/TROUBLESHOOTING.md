@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## `verify:package` fails in the packaged control plane with `TypeError: Cannot read properties of undefined (reading 'length')`
+
+- Symptom: `node scripts/verify-packaged-policy-pack.mjs` or the GitHub Actions packaging workflow fails inside `packages/control-plane/dist/workspace.js` while rendering runtime instructions, with a stack through `formatLiteralList(...)` and `renderRuntimeSoulMarkdown(...)`.
+- Root cause: the packaged verifier was calling exported workspace helpers with a raw JavaScript bundle that omitted defaulted policy arrays like `policySnapshot.deniedPaths` and `policySnapshot.allowedSecretScopes`. TypeScript-first call paths usually parse these defaults earlier, but plain JS callers can bypass that normalization.
+- Failing approach: assuming helper callers will always pre-parse a complete `WorkspaceContextBundle`, or patching only the verifier fixture while leaving other raw bundle callers vulnerable.
+- Working workaround: re-parse exported helper inputs with `workspaceContextBundleSchema.parse(...)` before rendering artifacts or runtime markdown so missing arrays default to `[]` and render as `none`.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/workspace.test.ts`; `corepack pnpm verify:package`.
+
 ## Dashboard-created issues request every capability unless the operator manually trims them
 
 - Symptom: a task created from the dashboard submit form lands in GitHub with unrelated capabilities such as `can_modify_schema`, `can_touch_sensitive_paths`, `can_use_secrets`, or `can_review`, even for straightforward frontend or docs work. That extra scope can make approvals noisier and can leak unnecessary capability names into downstream prompts.

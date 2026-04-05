@@ -1,5 +1,10 @@
 # Agent Documentation
 
+## 2026-04-05
+
+- Fixed packaged policy-pack verification so exported control-plane workspace helpers now normalize raw JavaScript bundle inputs through `workspaceContextBundleSchema` before rendering JSON artifacts or runtime instruction markdown. This restores defaults like `policySnapshot.deniedPaths` and `policySnapshot.allowedSecretScopes` for package-verification callers that do not pre-parse a full `WorkspaceContextBundle`.
+- Added focused regression coverage in `packages/control-plane/src/workspace.test.ts` that mirrors the packaged verifier’s minimal raw bundle and proves the helpers now render `none` / `[]` instead of crashing.
+
 ## 2026-04-04
 
 - Hardened issue submission defaults and the bounded-task developer prompt after the `derekrivers/FirstVoyage#54` Pac-Man retry. The dashboard submit form no longer enables every capability by default; it now starts from a safe implementation-focused subset (`can_write_code`, `can_run_tests`, `can_open_pr`, `can_archive_evidence`) so operator-created issues do not silently request secrets, schema, sensitive-path, or review powers unless explicitly chosen.
