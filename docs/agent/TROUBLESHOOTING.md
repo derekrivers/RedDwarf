@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## Approving a project-mode task through `/approvals/:requestId/resolve` bypasses project approval and no GitHub sub-issues get created
+
+- Symptom: `/projects` shows a pending project with ticket decomposition, but an operator approval click or API call against the generic approvals route starts a normal whole-task development run instead of creating project sub-issues. The project can remain `pending_approval` while the parent task unexpectedly advances to `development`.
+- Root cause: project-mode planning used to persist both a `ProjectSpec` and a legacy `policy_gate` approval request. Resolving that generic approval marked the parent manifest `ready`, and the normal dispatcher resumed the single-task pipeline. The dedicated project approval logic in `POST /projects/:id/approve` never ran, so sub-issue creation and first-ticket dispatch were skipped.
+- Failing approach: approving the task through `POST /approvals/:requestId/resolve` or an approvals UI card after project decomposition has already been created.
+- Working workaround: use `POST /projects/:id/approve` for project-mode plans. On current builds, project-mode planning no longer creates the legacy approval row, and stale generic approval rows now return `409 conflict` with the correct `/projects/:id/approve` route.
+- Verification: run `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/operator-api.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/pipeline/project-approval.test.ts`; confirm project-mode planning returns `approvalRequest === undefined`, confirm `/approvals/:id/resolve` returns `409` for stale project-mode approvals, and confirm `/projects/:id/approve` still transitions the project to `executing`.
+
+## `WORKSPACE_PROVISIONED` reports `development_readonly` even though the approved developer workspace can write code
+
+- Symptom: the live run event or workspace evidence record says `toolPolicyMode: development_readonly` and `codeWriteEnabled: false`, but the actual workspace descriptor and `TOOLS.md` show `development_readwrite` with code writing enabled.
+- Root cause: the development pipeline used to persist the workspace artifact and `WORKSPACE_PROVISIONED` event before `enableWorkspaceCodeWriting(...)` patched the descriptor for approved code-writing runs.
+- Failing approach: treating the early event payload as source of truth for whether the workspace can mutate code.
+- Working workaround: trust the workspace descriptor and `TOOLS.md`, or upgrade to the build where the event/evidence emission happens after the code-writing patch. The emitted `WORKSPACE_PROVISIONED` event now reflects the final descriptor state.
+- Verification: run `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts`; confirm the OpenClaw developer dispatch test records `WORKSPACE_PROVISIONED.codeWriteEnabled = true` when the approved policy-gate request grants `can_write_code`.
+
 ## Medium/large GitHub issues from the poller skip Project Mode and go straight into the single-task pipeline
 
 - Symptom: a polled GitHub issue that should decompose into tickets instead creates only a normal `PlanningSpec`, lands in the standard approval/development flow, and `/projects` remains empty. Task snapshots may misleadingly show `spec.projectSize: "small"` even though the issue looks broader than that.

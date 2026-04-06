@@ -2,6 +2,12 @@
 
 ## 2026-04-06
 
+- Fixed project-mode approval routing after live issue `#65` showed the operator could approve the generic policy-gate request and accidentally resume the legacy whole-task pipeline instead of the documented project approval flow.
+- Project-mode planning no longer queues a normal `policy_gate` approval request when it already persisted a pending `ProjectSpec`; those runs now stay blocked and wait for `POST /projects/:id/approve`.
+- Hardened the generic approval resolver so stale legacy approval rows now fail with a clear conflict pointing operators at `/projects/:id/approve` instead of silently bypassing sub-issue creation.
+- Also corrected development telemetry so the `WORKSPACE_PROVISIONED` event and workspace evidence snapshot reflect post-approval write access after `enableWorkspaceCodeWriting(...)` runs, matching the actual workspace descriptor and `TOOLS.md`.
+- Added regression coverage proving project-mode planning does not emit a legacy approval request, the operator API rejects stale generic approval clicks for pending projects, and write-enabled developer runs now record `WORKSPACE_PROVISIONED.codeWriteEnabled = true`.
+
 - Investigated live GitHub issue intake for `derekrivers/FirstVoyage#63` after it unexpectedly entered the single-task developer pipeline instead of Project Mode.
 - Confirmed the deterministic classifier rates that issue as `medium` (`2` affected paths, `4` acceptance criteria, no package fan-out required), so it should be eligible for project-mode planning.
 - Fixed the live intake wiring so GitHub polling now forwards OpenClaw project-planning dependencies into `runPlanningPipeline(...)` when they are available, which allows medium/large polled issues to create `ProjectSpec` records instead of silently staying on the single-issue path.

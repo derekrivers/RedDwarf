@@ -27,6 +27,18 @@ import {
   type ResolveApprovalRequestResult
 } from "./types.js";
 
+export class ProjectApprovalRequiredError extends Error {
+  readonly projectId: string;
+
+  constructor(projectId: string) {
+    super(
+      `Project-mode tasks must be approved via POST /projects/${projectId}/approve before execution can continue.`
+    );
+    this.name = "ProjectApprovalRequiredError";
+    this.projectId = projectId;
+  }
+}
+
 export async function resolveApprovalRequest(
   input: ResolveApprovalRequestInput,
   dependencies: ResolveApprovalRequestDependencies
@@ -70,6 +82,14 @@ export async function resolveApprovalRequest(
     throw new Error(
       `Task manifest ${approvalRequest.taskId} was not found for approval request ${requestId}.`
     );
+  }
+
+  if (approvalRequest.phase === "policy_gate") {
+    const projectId = `project:${approvalRequest.taskId}`;
+    const project = await repository.getProjectSpec(projectId);
+    if (project?.status === "pending_approval") {
+      throw new ProjectApprovalRequiredError(projectId);
+    }
   }
 
   const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";

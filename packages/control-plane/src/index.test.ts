@@ -5389,7 +5389,6 @@ describe("developer phase with OpenClaw dispatch", () => {
         return { handoffPath, repoRoot: null };
       }
     };
-
     try {
       const planningResult = await runPlanningPipeline(
         {
@@ -5665,6 +5664,15 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(
         development.workspace?.descriptor.toolPolicy.allowedCapabilities
       ).toContain("can_write_code");
+      const provisionedEvent = repository.runEvents.find(
+        (event) =>
+          event.runId === "run-dispatch" &&
+          event.code === "WORKSPACE_PROVISIONED"
+      );
+      expect(provisionedEvent?.data["toolPolicyMode"]).toBe(
+        "development_readwrite"
+      );
+      expect(provisionedEvent?.data["codeWriteEnabled"]).toBe(true);
 
       // Verify TOOLS.md was fully patched: no legacy read-only escalation rule,
       // can_write_code appears in the capability guidance, and it is no longer in
@@ -6718,6 +6726,172 @@ describe("phase timing hardening", () => {
       });
     } finally {
       await rm(architectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps project-mode plans blocked without creating a legacy policy-gate approval request", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const targetRoot = await mkdtemp(join(tmpdir(), "project-plan-approval-route-"));
+
+    let architectCallCount = 0;
+    const projectAwaiter = {
+      async waitForCompletion(input: {
+        manifest: { taskId: string; source: { repo: string } };
+        workspace: { artifactsDir: string };
+      }) {
+        await mkdir(input.workspace.artifactsDir, { recursive: true });
+        architectCallCount += 1;
+        const isProjectPlanningCall = architectCallCount > 1;
+        const handoffPath = join(
+          input.workspace.artifactsDir,
+          isProjectPlanningCall
+            ? "project-architect-handoff.md"
+            : "architect-handoff.md"
+        );
+        await writeFile(
+          handoffPath,
+          (isProjectPlanningCall
+            ? [
+                "# Project Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Project approval should be handled through /projects.",
+                "",
+                "## Project Title",
+                "",
+                "Project approval route hardening",
+                "",
+                "## Project Summary",
+                "",
+                "Ensure project-mode planning blocks on the project approval route instead of creating a generic task approval.",
+                "",
+                "## Tickets",
+                "",
+                "### Ticket: Remove the legacy approval artifact",
+                "",
+                "- Complexity: medium",
+                "- Depends on: none",
+                "",
+                "#### Description",
+                "",
+                "Keep project-mode plans in pending approval without queuing the generic task approval request.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Project-mode plans do not create a policy-gate approval request.",
+                "- The project remains pending approval in /projects.",
+                "",
+                "### Ticket: Guard the generic approval route",
+                "",
+                "- Complexity: medium",
+                "- Depends on: Remove the legacy approval artifact",
+                "",
+                "#### Description",
+                "",
+                "Reject generic approval resolution when a project is waiting on /projects approval.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Generic approval resolution returns a conflict.",
+                "- The operator is pointed at /projects/:id/approve."
+              ]
+            : [
+                "# Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Single-task planning completed before project decomposition.",
+                "",
+                "## Summary",
+                "",
+                "Plan the project-mode approval routing fix with enough detail for policy persistence.",
+                "",
+                "## Implementation Approach",
+                "",
+                "Persist the normal planning spec first, then persist the project decomposition and hold approval at the project route.",
+                "",
+                "## Affected Files",
+                "",
+                "- packages/control-plane/src/pipeline/planning.ts",
+                "- packages/control-plane/src/operator-api.ts",
+                "",
+                "## Risks and Assumptions",
+                "",
+                "- Project-mode planning should block on /projects approval.",
+                "- The legacy task approval route must not resume project execution.",
+                "",
+                "## Test Strategy",
+                "",
+                "- Verify project-mode planning stays blocked without a generic approval request.",
+                "",
+                "## Non-Goals",
+                "",
+                "- Do not queue a policy-gate approval request for project-mode planning."
+              ]).join("\n"),
+          "utf8"
+        );
+        return { handoffPath, repoRoot: null };
+      }
+    };
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 614,
+            issueUrl: "https://github.com/acme/platform/issues/614"
+          },
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: [
+            "packages/control-plane/src/pipeline/planning.ts",
+            "packages/control-plane/src/operator-api.ts"
+          ],
+          metadata: {
+            complexityClassification: {
+              size: "medium",
+              reasoning: "Spans multiple control-plane paths and requires project decomposition.",
+              signals: ["multi-package", "project-mode"]
+            }
+          }
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          openClawDispatch: new FixtureOpenClawDispatchAdapter({
+            fixedSessionId: "session-project-plan-approval-route"
+          }),
+          openClawArchitectAwaiter: projectAwaiter as never,
+          architectTargetRoot: targetRoot,
+          clock: () => new Date("2026-04-06T20:00:00.000Z"),
+          idGenerator: () => "project-plan-approval-route"
+        }
+      );
+
+      expect(planningResult.projectSpec?.projectId).toBe(
+        `project:${planningResult.manifest.taskId}`
+      );
+      expect(planningResult.projectSpec?.status).toBe("pending_approval");
+      expect(planningResult.ticketSpecs).toHaveLength(2);
+      expect(planningResult.approvalRequest).toBeUndefined();
+      expect(planningResult.nextAction).toBe("await_human");
+
+      const manifest = await repository.getManifest(planningResult.manifest.taskId);
+      expect(manifest?.lifecycleStatus).toBe("blocked");
+
+      const approvals = await repository.listApprovalRequests({
+        taskId: planningResult.manifest.taskId
+      });
+      expect(approvals).toHaveLength(0);
+    } finally {
+      await rm(targetRoot, { recursive: true, force: true });
     }
   });
 

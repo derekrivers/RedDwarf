@@ -1027,8 +1027,13 @@ export async function runPlanningPipeline(
         ])
       )
     };
+    const projectApprovalRequired = projectSpec?.status === "pending_approval";
+    const humanApprovalRequired =
+      approvalMode !== "auto" || projectApprovalRequired;
     const approvalRequestId =
-      approvalMode === "auto" ? null : `${taskId}:approval:${runId}`;
+      approvalMode === "auto" || projectApprovalRequired
+        ? null
+        : `${taskId}:approval:${runId}`;
     await repository.savePolicySnapshot(taskId, policySnapshot);
     await repository.saveMemoryRecord(
       createMemoryRecord({
@@ -1050,6 +1055,8 @@ export async function runPlanningPipeline(
           confidenceReason: spec.confidenceReason,
           allowedSecretScopes: policySnapshot.allowedSecretScopes,
           defaultBranch: readConfiguredBaseBranch(input),
+          ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+          ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
           ...(approvalRequestId ? { approvalRequestId } : {})
         },
         repo: input.source.repo,
@@ -1063,7 +1070,7 @@ export async function runPlanningPipeline(
     const policyCompletedAt = clock();
     const policyCompletedAtIso = asIsoTimestamp(policyCompletedAt);
     const policyStatus: import("@reddwarf/contracts").PhaseLifecycleStatus =
-      approvalMode === "auto" ? "passed" : "escalated";
+      humanApprovalRequired ? "escalated" : "passed";
     const approvalRequest =
       approvalRequestId === null
         ? undefined
@@ -1090,6 +1097,12 @@ export async function runPlanningPipeline(
             createdAt: policyCompletedAtIso,
             updatedAt: policyCompletedAtIso
           });
+    const policySummary =
+      policyStatus === "passed"
+        ? "Policy gate passed for this planning run."
+        : projectApprovalRequired
+          ? "Project-mode planning completed, and approval continues via the project approval route."
+          : "Planning completed, but future execution requires human intervention.";
 
     if (approvalRequest) {
       await repository.saveApprovalRequest(approvalRequest);
@@ -1102,15 +1115,14 @@ export async function runPlanningPipeline(
         phase: "policy_gate",
         status: policyStatus,
         actor: "policy",
-        summary:
-          policyStatus === "passed"
-            ? "Policy gate passed for this planning run."
-            : "Planning completed, but future execution requires human intervention.",
+        summary: policySummary,
         details: {
           approvalMode,
           reasons: policySnapshot.reasons,
           confidenceLevel: spec.confidenceLevel,
           confidenceReason: spec.confidenceReason,
+          ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+          ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
           ...(approvalRequest
             ? { approvalRequestId: approvalRequest.requestId }
             : {})
@@ -1131,6 +1143,8 @@ export async function runPlanningPipeline(
           confidenceLevel: spec.confidenceLevel,
           confidenceReason: spec.confidenceReason,
           policySnapshot,
+          ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+          ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
           ...(approvalRequest
             ? { approvalRequestId: approvalRequest.requestId }
             : {})
@@ -1175,10 +1189,7 @@ export async function runPlanningPipeline(
       phase: "policy_gate",
       level: policyStatus === "passed" ? "info" : "warn",
       code: policyStatus === "passed" ? EventCodes.PHASE_PASSED : EventCodes.PHASE_ESCALATED,
-      message:
-        policyStatus === "passed"
-          ? "Policy gate passed for this planning run."
-          : "Planning completed, but future execution requires human intervention.",
+      message: policySummary,
       durationMs: getDurationMs(policyStartedAt, policyCompletedAt),
       data: {
         actor: "policy",
@@ -1188,6 +1199,8 @@ export async function runPlanningPipeline(
         confidenceReason: spec.confidenceReason,
         allowedSecretScopes: policySnapshot.allowedSecretScopes,
         status: policyStatus,
+        ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+        ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {})
@@ -1222,6 +1235,8 @@ export async function runPlanningPipeline(
       metadata: {
         currentPhase: "policy_gate",
         approvalMode,
+        ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+        ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {})
@@ -1238,9 +1253,13 @@ export async function runPlanningPipeline(
         status: "passed",
         actor: "evidence",
         summary: "Planning outputs archived.",
-        details: approvalRequest
-          ? { approvalRequestId: approvalRequest.requestId }
-          : {},
+        details: {
+          ...(approvalRequest
+            ? { approvalRequestId: approvalRequest.requestId }
+            : {}),
+          ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+          ...(projectApprovalRequired ? { projectApprovalRequired: true } : {})
+        },
         createdAt: asIsoTimestamp(archiveStartedAt)
       })
     );
@@ -1260,6 +1279,8 @@ export async function runPlanningPipeline(
       data: {
         actor: "evidence",
         status: "passed",
+        ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+        ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {})
@@ -1271,20 +1292,24 @@ export async function runPlanningPipeline(
       logger: runLogger,
       eventId: nextEventId(
         "archive",
-        approvalRequest ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED
+        humanApprovalRequired ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED
       ),
       taskId,
       runId,
       phase: "archive",
-      level: approvalRequest ? "warn" : "info",
-      code: approvalRequest ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED,
-      message: approvalRequest
-        ? "Planning outputs are archived and the task is waiting for human approval."
+      level: humanApprovalRequired ? "warn" : "info",
+      code: humanApprovalRequired ? EventCodes.PIPELINE_BLOCKED : EventCodes.PIPELINE_COMPLETED,
+      message: humanApprovalRequired
+        ? projectApprovalRequired
+          ? "Planning outputs are archived and the project is waiting for approval via /projects."
+          : "Planning outputs are archived and the task is waiting for human approval."
         : "Planning pipeline completed.",
       durationMs: getDurationMs(runStartedAt, archiveCompletedAt),
       data: {
         approvalMode,
         riskClass,
+        ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+        ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {})
@@ -1294,7 +1319,7 @@ export async function runPlanningPipeline(
 
     const completedManifest = patchManifest(currentManifest, {
       currentPhase: "archive",
-      lifecycleStatus: approvalRequest ? "blocked" : "completed",
+      lifecycleStatus: humanApprovalRequired ? "blocked" : "completed",
       evidenceLinks: [
         `db://manifest/${taskId}`,
         `db://planning_spec/${spec.specId}`,
@@ -1308,12 +1333,14 @@ export async function runPlanningPipeline(
 
     await repository.updateManifest(completedManifest);
     await persistTrackedRun({
-      status: approvalRequest ? "blocked" : "completed",
+      status: humanApprovalRequired ? "blocked" : "completed",
       lastHeartbeatAt: archiveCompletedAtIso,
       completedAt: archiveCompletedAtIso,
       metadata: {
         currentPhase: "archive",
-        nextAction: approvalRequest ? "await_human" : "complete",
+        nextAction: humanApprovalRequired ? "await_human" : "complete",
+        ...(projectSpec ? { projectId: projectSpec.projectId } : {}),
+        ...(projectApprovalRequired ? { projectApprovalRequired: true } : {}),
         ...(approvalRequest
           ? { approvalRequestId: approvalRequest.requestId }
           : {})
@@ -1333,7 +1360,7 @@ export async function runPlanningPipeline(
       ...(projectPlanningResult ? { projectPlanningResult } : {}),
       nextAction: projectPlanningResult?.outcome === "clarification_needed"
         ? "clarification_needed" as const
-        : approvalRequest ? "await_human" : "complete",
+        : humanApprovalRequired ? "await_human" : "complete",
       concurrencyDecision
     };
   } catch (error) {

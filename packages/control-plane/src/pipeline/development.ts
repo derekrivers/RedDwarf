@@ -371,6 +371,25 @@ export async function runDeveloperPhase(
       ]
     });
     await repository.updateManifest(currentManifest);
+
+    let handoff: DevelopmentDraft;
+    let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
+    let developmentTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
+    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
+    const developmentHeartbeatMetadata = {
+      workspaceId: workspace.workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    };
+
+    const codeWritingApproved =
+      dependencies.openClawDispatch !== undefined &&
+      (approvedRequest?.requestedCapabilities.includes("can_write_code") ?? false);
+    if (codeWritingApproved) {
+      await enableWorkspaceCodeWriting(workspace);
+    }
+
     await repository.saveEvidenceRecord(
       createEvidenceRecord({
         recordId: `${taskId}:workspace:${workspace.workspaceId}:provisioned`,
@@ -438,23 +457,7 @@ export async function runDeveloperPhase(
       });
     }
 
-    let handoff: DevelopmentDraft;
-    let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
-    let developmentTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
-    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
-    const developmentHeartbeatMetadata = {
-      workspaceId: workspace.workspaceId,
-      ...(approvedRequest
-        ? { approvalRequestId: approvedRequest.requestId }
-        : {})
-    };
-
     if (dependencies.openClawDispatch) {
-      const codeWritingApproved =
-        approvedRequest?.requestedCapabilities.includes("can_write_code") ?? false;
-      if (codeWritingApproved) {
-        await enableWorkspaceCodeWriting(workspace);
-      }
       const repoBootstrap = await waitWithHeartbeat({
         work: workspaceRepoBootstrapper.ensureRepo({
           manifest: currentManifest,

@@ -54,6 +54,7 @@ import {
 import {
   assembleRunReport,
   dispatchReadyTask,
+  ProjectApprovalRequiredError,
   renderRunReportMarkdown,
   resolveApprovalRequest,
   runPlanningPipeline,
@@ -1995,17 +1996,31 @@ async function handleOperatorRequest(
       });
       return;
     }
-    const resolveResult = await resolveApprovalRequest(
-      {
-        requestId,
-        decision: body["decision"] as ApprovalDecision,
-        decidedBy: body["decidedBy"],
-        decisionSummary: body["decisionSummary"],
-        comment:
-          typeof body["comment"] === "string" ? body["comment"] : null
-      },
-      { repository, clock }
-    );
+    let resolveResult;
+    try {
+      resolveResult = await resolveApprovalRequest(
+        {
+          requestId,
+          decision: body["decision"] as ApprovalDecision,
+          decidedBy: body["decidedBy"],
+          decisionSummary: body["decisionSummary"],
+          comment:
+            typeof body["comment"] === "string" ? body["comment"] : null
+        },
+        { repository, clock }
+      );
+    } catch (error) {
+      if (error instanceof ProjectApprovalRequiredError) {
+        writeOperatorJsonResponse(res, 409, {
+          error: "conflict",
+          message: error.message,
+          projectId: error.projectId,
+          approvalRoute: `/projects/${encodeURIComponent(error.projectId)}/approve`
+        });
+        return;
+      }
+      throw error;
+    }
     writeOperatorJsonResponse(res, 200, {
       approval: resolveResult.approvalRequest,
       manifest: resolveResult.manifest

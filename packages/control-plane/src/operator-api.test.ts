@@ -1313,6 +1313,67 @@ describe("operator API server", () => {
     }
   });
 
+  it("rejects generic approval resolution when a project-mode plan is awaiting project approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-project-approval-conflict"
+      }
+    );
+
+    const projectId = `project:${planResult.manifest.taskId}`;
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        projectId,
+        sourceIssueId: String(planResult.manifest.source.issueNumber ?? 10),
+        sourceRepo: planResult.manifest.source.repo
+      })
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const resolved = await operatorPost(
+        port,
+        `/approvals/${planResult.approvalRequest!.requestId}/resolve`,
+        {
+          decision: "approve",
+          decidedBy: "operator-test",
+          decisionSummary: "Approved via the wrong route."
+        }
+      );
+      expect(resolved.status).toBe(409);
+      expect((resolved.body as Record<string, unknown>)["projectId"]).toBe(projectId);
+      expect((resolved.body as Record<string, unknown>)["approvalRoute"]).toBe(
+        `/projects/${encodeURIComponent(projectId)}/approve`
+      );
+
+      const approval = await repository.getApprovalRequest(
+        planResult.approvalRequest!.requestId
+      );
+      expect(approval?.status).toBe("pending");
+
+      const manifest = await repository.getManifest(planResult.manifest.taskId);
+      expect(manifest?.lifecycleStatus).toBe("blocked");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("rejects oversized operator JSON bodies", async () => {
     const repository = new InMemoryPlanningRepository();
     const planResult = await runPlanningPipeline(
