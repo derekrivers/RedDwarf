@@ -5344,8 +5344,11 @@ describe("developer phase with OpenClaw dispatch", () => {
     const architectAwaiter = {
       async waitForCompletion(input: {
         manifest: { taskId: string; source: { repo: string } };
-        workspace: { artifactsDir: string };
+        workspace: { workspaceRoot: string; artifactsDir: string };
       }) {
+        await expect(
+          access(join(input.workspace.workspaceRoot, "repo", ".git"))
+        ).resolves.toBeUndefined();
         await mkdir(input.workspace.artifactsDir, { recursive: true });
         const handoffPath = join(
           input.workspace.artifactsDir,
@@ -5412,6 +5415,7 @@ describe("developer phase with OpenClaw dispatch", () => {
           openClawArchitectAgentId: "reddwarf-analyst",
           openClawArchitectAwaiter: architectAwaiter as never,
           architectTargetRoot: tempRoot,
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
           clock: () => new Date("2026-03-29T17:00:00.000Z"),
           idGenerator: () => "run-prompt-boundary-plan"
         }
@@ -5456,7 +5460,11 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(architectPrompt).toContain("## Trusted Instructions");
       expect(architectPrompt).toContain("## Untrusted GitHub Issue Data");
       expect(architectPrompt).toContain("## Required Handoff Format");
+      expect(architectPrompt).toContain("Repository checkout:");
       expect(architectPrompt).toContain(maliciousSummary);
+      expect(architectPrompt).toContain(
+        "Inspect the checked-out repository at the repository checkout path above"
+      );
       expect(architectPrompt).toContain(
         "you may use the managed OpenClaw browser to inspect current framework docs and API references"
       );
@@ -6732,13 +6740,19 @@ describe("phase timing hardening", () => {
   it("keeps project-mode plans blocked without creating a legacy policy-gate approval request", async () => {
     const repository = new InMemoryPlanningRepository();
     const targetRoot = await mkdtemp(join(tmpdir(), "project-plan-approval-route-"));
+    const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+      fixedSessionId: "session-project-plan-approval-route"
+    });
 
     let architectCallCount = 0;
     const projectAwaiter = {
       async waitForCompletion(input: {
         manifest: { taskId: string; source: { repo: string } };
-        workspace: { artifactsDir: string };
+        workspace: { workspaceRoot: string; artifactsDir: string };
       }) {
+        await expect(
+          access(join(input.workspace.workspaceRoot, "repo", ".git"))
+        ).resolves.toBeUndefined();
         await mkdir(input.workspace.artifactsDir, { recursive: true });
         architectCallCount += 1;
         const isProjectPlanningCall = architectCallCount > 1;
@@ -6865,11 +6879,10 @@ describe("phase timing hardening", () => {
         {
           repository,
           planner: new DeterministicPlanningAgent(),
-          openClawDispatch: new FixtureOpenClawDispatchAdapter({
-            fixedSessionId: "session-project-plan-approval-route"
-          }),
+          openClawDispatch: dispatchAdapter,
           openClawArchitectAwaiter: projectAwaiter as never,
           architectTargetRoot: targetRoot,
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
           clock: () => new Date("2026-04-06T20:00:00.000Z"),
           idGenerator: () => "project-plan-approval-route"
         }
@@ -6882,6 +6895,13 @@ describe("phase timing hardening", () => {
       expect(planningResult.ticketSpecs).toHaveLength(2);
       expect(planningResult.approvalRequest).toBeUndefined();
       expect(planningResult.nextAction).toBe("await_human");
+      expect(dispatchAdapter.dispatches).toHaveLength(2);
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "Repository checkout:"
+      );
+      expect(dispatchAdapter.dispatches[1]?.prompt ?? "").toContain(
+        "Repository checkout:"
+      );
 
       const manifest = await repository.getManifest(planningResult.manifest.taskId);
       expect(manifest?.lifecycleStatus).toBe("blocked");

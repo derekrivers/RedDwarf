@@ -166,6 +166,7 @@ export interface PlanningPipelineDependencies {
   planner: PlanningAgent;
   prescreener?: PreScreeningAgent;
   runtimeConfig?: WorkspaceRuntimeConfig;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   openClawDispatch?: OpenClawDispatchAdapter;
   openClawArchitectAgentId?: string;
   openClawArchitectAwaiter?: OpenClawCompletionAwaiter;

@@ -123,6 +123,9 @@ export async function runProjectPlanningPhase(
     clock,
     idGenerator,
     nextEventId,
+    ...(deps.workspaceRepoBootstrapper !== undefined
+      ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper }
+      : {}),
     onHeartbeat: async () => {
       await deps.persistTrackedRun({
         phase: "planning",

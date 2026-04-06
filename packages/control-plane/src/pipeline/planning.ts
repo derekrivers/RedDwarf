@@ -748,6 +748,9 @@ export async function runPlanningPipeline(
           clock,
           idGenerator,
           nextEventId,
+          ...(dependencies.workspaceRepoBootstrapper !== undefined
+            ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper }
+            : {}),
           onHeartbeat: () =>
             heartbeatTrackedRun({
               phase: "planning",
@@ -974,6 +977,9 @@ export async function runPlanningPipeline(
             architectTargetRoot: dependencies.architectTargetRoot,
             ...(dependencies.openClawArchitectAgentId !== undefined ? { openClawArchitectAgentId: dependencies.openClawArchitectAgentId } : {}),
             ...(dependencies.openClawArchitectAwaiter !== undefined ? { openClawArchitectAwaiter: dependencies.openClawArchitectAwaiter } : {}),
+            ...(dependencies.workspaceRepoBootstrapper !== undefined
+              ? { workspaceRepoBootstrapper: dependencies.workspaceRepoBootstrapper }
+              : {}),
             ...(dependencies.timing !== undefined ? { timing: dependencies.timing } : {}),
             taskId,
             runId,

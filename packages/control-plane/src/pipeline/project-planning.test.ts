@@ -41,6 +41,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/var/lib/reddwarf/workspaces/test",
+      "/var/lib/reddwarf/workspaces/test/repo",
       "/var/lib/reddwarf/workspaces/test/artifacts/project-architect-handoff.md"
     );
 
@@ -59,6 +60,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/workspace",
+      "/workspace/repo",
       "/workspace/handoff.md"
     );
     expect(prompt).toContain("## Untrusted GitHub Issue Data");
@@ -70,6 +72,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/workspace",
+      "/workspace/repo",
       "/workspace/handoff.md",
       {
         questions: ["What framework?", "What database?"],
@@ -92,6 +95,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/workspace",
+      "/workspace/repo",
       "/workspace/handoff.md",
       null
     );
@@ -104,6 +108,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/workspace",
+      "/workspace/repo",
       "/workspace/handoff.md",
       null,
       "Please add more detail to ticket 2's acceptance criteria."
@@ -118,6 +123,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleInput,
       sampleManifest,
       "/workspace",
+      "/workspace/repo",
       "/workspace/handoff.md",
       {
         questions: ["What framework?"],

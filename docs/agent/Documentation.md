@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Fixed Holly architect sessions getting stuck before project creation because planning dispatch only created an `artifacts/` directory and pointed Holly at a generic `/var/lib/reddwarf/workspaces` root. In live issue `derekrivers/FirstVoyage#68`, that left Holly with no concrete repo checkout to inspect, so the analyst session bounced between `read`-on-directory failures, unavailable browser fallbacks, and GitHub HTML/raw fetches instead of producing `architect-handoff.md`.
+- Planning and project-mode architect dispatch now bootstrap a real `repo/` checkout inside the architect workspace before OpenClaw dispatch, pass the checkout path through the prompt, and instruct Holly to search and read within that specific checkout rather than the shared workspace root.
+- Added regression coverage proving architect and project-mode planning workspaces contain a repo checkout before the awaiter runs, and updated the project prompt unit suite for the new repository-checkout prompt contract.
+
 - Fixed a startup regression in `scripts/start-stack.mjs` after the project sub-issue adapter wiring landed. The script imported `createRestGitHubAdapter` at module scope and then destructured the same identifier again from a later dynamic import, causing Node to abort at parse time with `SyntaxError: Identifier 'createRestGitHubAdapter' has already been declared`.
 - The dynamic import now only pulls `createHttpOpenClawDispatchAdapter`, leaving the shared REST GitHub adapter bound once at module scope.
 

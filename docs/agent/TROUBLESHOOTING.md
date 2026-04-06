@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Holly architect sessions stall because the planning workspace has no repo checkout
+
+- Symptom: a GitHub issue creates an `*-architect` workspace and OpenClaw session, but no `architect-handoff.md` appears. The Holly transcript shows `read` failing with `EISDIR` on workspace directories, browser fallbacks reporting `No supported browser found`, and `web_fetch` calls against GitHub HTML/raw URLs instead of grounded local repo inspection.
+- Root cause: the planning pipeline used to create only the architect workspace `artifacts/` directory before dispatch. Holly received a generic `/var/lib/reddwarf/workspaces` hint in the prompt, but there was no checked-out `repo/` inside the architect workspace to inspect with filesystem tools.
+- Failing approach: retrying the same issue intake, increasing the planning timeout, or relying on browser/web fallbacks when the analyst workspace itself does not contain a repo checkout.
+- Working workaround: run a build where architect and project-architect dispatch bootstrap `workspaceRoot/repo` before OpenClaw dispatch and the prompt points Holly at that explicit checkout path. With that fix, the awaiter sees a real repo checkout before Holly starts planning.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "fences untrusted GitHub issue content in architect and developer prompts|keeps project-mode plans blocked without creating a legacy policy-gate approval request"`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; `corepack pnpm typecheck`.
+
 ## `node scripts/start-stack.mjs` fails immediately with `Identifier 'createRestGitHubAdapter' has already been declared`
 
 - Symptom: Node aborts before any stack startup work begins and points at `scripts/start-stack.mjs` with a parse-time `SyntaxError` for `createRestGitHubAdapter`.
