@@ -63,7 +63,7 @@ import {
   type SweepOrphanedStateResult
 } from "./pipeline.js";
 import { classifyComplexity } from "./rimmer/index.js";
-import { executeProjectApproval } from "./pipeline/project-approval.js";
+import { executeProjectApproval, advanceProjectTicket } from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
@@ -2712,6 +2712,82 @@ async function handleOperatorRequest(
         "Clarification answers recorded. Project returned to draft for re-planning with answers included in the planning context."
     });
     return;
+  }
+
+  // POST /projects/advance — advance ticket queue after PR merge
+  if (method === "POST" && path === "/projects/advance") {
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("ticket_id" in rawBody) ||
+      !("github_pr_number" in rawBody)
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { ticket_id: string, github_pr_number: number }."
+      });
+      return;
+    }
+
+    const body = rawBody as { ticket_id: string; github_pr_number: number };
+
+    if (typeof body.ticket_id !== "string" || body.ticket_id.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "ticket_id must be a non-empty string."
+      });
+      return;
+    }
+
+    if (typeof body.github_pr_number !== "number" || body.github_pr_number <= 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "github_pr_number must be a positive integer."
+      });
+      return;
+    }
+
+    try {
+      const result = await advanceProjectTicket(
+        {
+          ticketId: body.ticket_id,
+          githubPrNumber: body.github_pr_number
+        },
+        {
+          repository,
+          githubIssuesAdapter: githubIssuesAdapter ?? null,
+          clock
+        }
+      );
+
+      const statusCode = result.outcome === "already_merged" ? 200 : 200;
+      writeOperatorJsonResponse(res, statusCode, {
+        outcome: result.outcome,
+        ticket: result.ticket,
+        project: result.project,
+        nextDispatchedTicket: result.nextDispatchedTicket,
+        message:
+          result.outcome === "already_merged"
+            ? `Ticket ${body.ticket_id} is already merged. No state change.`
+            : result.outcome === "completed"
+              ? `Ticket ${body.ticket_id} merged. All tickets complete. Project marked as complete.`
+              : result.nextDispatchedTicket
+                ? `Ticket ${body.ticket_id} merged. Next ticket ${result.nextDispatchedTicket.ticketId} dispatched.`
+                : `Ticket ${body.ticket_id} merged. No next ticket ready.`
+      });
+      return;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not found")) {
+        writeOperatorJsonResponse(res, 404, {
+          error: "not_found",
+          message: err.message
+        });
+        return;
+      }
+      throw err;
+    }
   }
 
   writeOperatorJsonResponse(res, 404, {

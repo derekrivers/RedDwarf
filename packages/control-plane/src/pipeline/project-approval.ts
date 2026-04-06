@@ -207,3 +207,167 @@ function sortTicketsByDependencyOrder(tickets: TicketSpec[]): TicketSpec[] {
 
   return sorted;
 }
+
+// ============================================================
+// Ticket advance (merge-driven execution)
+// ============================================================
+
+export interface AdvanceProjectTicketInput {
+  ticketId: string;
+  githubPrNumber: number;
+}
+
+export interface AdvanceProjectTicketDependencies {
+  repository: PlanningRepository;
+  githubIssuesAdapter?: GitHubIssuesAdapter | null;
+  clock?: () => Date;
+  logger?: { info: (msg: string) => void; warn: (msg: string) => void };
+}
+
+export type AdvanceProjectTicketOutcome =
+  | "advanced"
+  | "completed"
+  | "already_merged";
+
+export interface AdvanceProjectTicketResult {
+  outcome: AdvanceProjectTicketOutcome;
+  ticket: TicketSpec;
+  project: ProjectSpec;
+  nextDispatchedTicket: TicketSpec | null;
+}
+
+/**
+ * Advance the project ticket queue after a PR merge:
+ *
+ * 1. Set the ticket status to "merged" and record the PR number
+ * 2. Close the linked GitHub sub-issue (if adapter enabled)
+ * 3. Call resolveNextReadyTicket():
+ *    - If a next ticket exists, dispatch it and label its sub-issue "in-progress"
+ *    - If none remain, set project status to "complete"
+ *
+ * Idempotent: re-running on an already-merged ticket logs a warning and
+ * returns without mutating state.
+ */
+export async function advanceProjectTicket(
+  input: AdvanceProjectTicketInput,
+  deps: AdvanceProjectTicketDependencies
+): Promise<AdvanceProjectTicketResult> {
+  const { repository, clock = () => new Date(), logger } = deps;
+  const now = () => asIsoTimestamp(clock());
+
+  const ticket = await repository.getTicketSpec(input.ticketId);
+  if (!ticket) {
+    throw new Error(`Ticket ${input.ticketId} not found.`);
+  }
+
+  const project = await repository.getProjectSpec(ticket.projectId);
+  if (!project) {
+    throw new Error(`Project ${ticket.projectId} not found.`);
+  }
+
+  // Idempotent: already-merged ticket
+  if (ticket.status === "merged") {
+    logger?.warn(
+      `Ticket ${input.ticketId} is already merged. No state mutation performed.`
+    );
+    return {
+      outcome: "already_merged",
+      ticket,
+      project,
+      nextDispatchedTicket: null
+    };
+  }
+
+  // Step 1: Mark ticket as merged with PR number
+  const mergedTicket: TicketSpec = {
+    ...ticket,
+    status: "merged",
+    githubPrNumber: input.githubPrNumber,
+    updatedAt: now()
+  };
+  await repository.saveTicketSpec(mergedTicket);
+  logger?.info(
+    `Ticket ${input.ticketId} marked as merged (PR #${input.githubPrNumber}).`
+  );
+
+  // Step 2: Close the linked GitHub sub-issue
+  if (deps.githubIssuesAdapter && ticket.githubSubIssueNumber !== null) {
+    try {
+      await deps.githubIssuesAdapter.closeIssue(ticket.githubSubIssueNumber);
+      logger?.info(
+        `Closed GitHub sub-issue #${ticket.githubSubIssueNumber} for ticket ${input.ticketId}.`
+      );
+    } catch (err) {
+      if (err instanceof V1MutationDisabledError) {
+        logger?.warn(
+          `GitHub Issues adapter is disabled. Skipping sub-issue close for #${ticket.githubSubIssueNumber}.`
+        );
+      } else {
+        logger?.warn(
+          `Failed to close GitHub sub-issue #${ticket.githubSubIssueNumber}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  }
+
+  // Step 3: Resolve next ready ticket
+  const nextTicket = await repository.resolveNextReadyTicket(ticket.projectId);
+  let nextDispatchedTicket: TicketSpec | null = null;
+
+  if (nextTicket) {
+    // Dispatch the next ticket
+    const dispatched: TicketSpec = {
+      ...nextTicket,
+      status: "dispatched",
+      updatedAt: now()
+    };
+    await repository.saveTicketSpec(dispatched);
+    nextDispatchedTicket = dispatched;
+
+    logger?.info(
+      `Dispatched next ticket ${nextTicket.ticketId} (${nextTicket.title}).`
+    );
+
+    return {
+      outcome: "advanced",
+      ticket: mergedTicket,
+      project,
+      nextDispatchedTicket
+    };
+  }
+
+  // No more tickets — check if all are merged
+  const allTickets = await repository.listTicketSpecs(ticket.projectId);
+  const allMerged = allTickets.every((t) => t.status === "merged");
+
+  if (allMerged) {
+    const completedProject: ProjectSpec = {
+      ...project,
+      status: "complete",
+      updatedAt: now()
+    };
+    await repository.saveProjectSpec(completedProject);
+    logger?.info(
+      `All tickets merged. Project ${ticket.projectId} marked as complete.`
+    );
+
+    return {
+      outcome: "completed",
+      ticket: mergedTicket,
+      project: completedProject,
+      nextDispatchedTicket: null
+    };
+  }
+
+  // Some tickets remain but none are ready (could be blocked/failed)
+  logger?.warn(
+    `No ready tickets found for project ${ticket.projectId} but not all tickets are merged.`
+  );
+
+  return {
+    outcome: "advanced",
+    ticket: mergedTicket,
+    project,
+    nextDispatchedTicket: null
+  };
+}

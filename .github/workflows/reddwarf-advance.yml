@@ -1,0 +1,98 @@
+# RedDwarf Project Mode — Ticket Advance Workflow
+#
+# Fires when a pull request is closed and merged. Extracts the ticket_id from
+# the PR branch name (format: reddwarf/ticket/{ticket_id}) or the PR body,
+# then calls POST /projects/advance on the RedDwarf operator API to advance
+# the project ticket queue.
+#
+# Required secrets:
+#   REDDWARF_OPERATOR_TOKEN — the operator API bearer token
+#
+# Required variables (set in repo or environment settings):
+#   REDDWARF_OPERATOR_API_URL — the operator API base URL reachable from
+#     GitHub Actions runners (e.g. https://<machine>.tail<net>.ts.net:8080)
+
+name: RedDwarf Ticket Advance
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  advance:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract ticket ID
+        id: extract
+        env:
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Try branch name first: reddwarf/ticket/{ticket_id}
+          if [[ "$PR_BRANCH" =~ ^reddwarf/ticket/(.+)$ ]]; then
+            echo "ticket_id=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "source=branch" >> "$GITHUB_OUTPUT"
+            echo "Extracted ticket_id from branch: ${BASH_REMATCH[1]}"
+            exit 0
+          fi
+
+          # Fall back to PR body: look for <!-- reddwarf:ticket_id:VALUE -->
+          TICKET_ID=$(echo "$PR_BODY" | grep -oP '<!-- reddwarf:ticket_id:(.+?) -->' | head -1 | sed 's/<!-- reddwarf:ticket_id:\(.*\) -->/\1/')
+          if [ -n "$TICKET_ID" ]; then
+            echo "ticket_id=$TICKET_ID" >> "$GITHUB_OUTPUT"
+            echo "source=body" >> "$GITHUB_OUTPUT"
+            echo "Extracted ticket_id from PR body: $TICKET_ID"
+            exit 0
+          fi
+
+          echo "No ticket_id found in branch name or PR body. Skipping advance."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+      - name: Advance ticket queue
+        if: steps.extract.outputs.skip != 'true'
+        env:
+          REDDWARF_OPERATOR_TOKEN: ${{ secrets.REDDWARF_OPERATOR_TOKEN }}
+          REDDWARF_OPERATOR_API_URL: ${{ vars.REDDWARF_OPERATOR_API_URL }}
+          TICKET_ID: ${{ steps.extract.outputs.ticket_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$REDDWARF_OPERATOR_API_URL" ]; then
+            echo "::error::REDDWARF_OPERATOR_API_URL is not set. Configure it in repository variables."
+            exit 1
+          fi
+
+          if [ -z "$REDDWARF_OPERATOR_TOKEN" ]; then
+            echo "::error::REDDWARF_OPERATOR_TOKEN secret is not set."
+            exit 1
+          fi
+
+          echo "Advancing ticket $TICKET_ID (PR #$PR_NUMBER)..."
+
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $REDDWARF_OPERATOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"ticket_id\": \"$TICKET_ID\", \"github_pr_number\": $PR_NUMBER}" \
+            "$REDDWARF_OPERATOR_API_URL/projects/advance")
+
+          cat response.json
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            OUTCOME=$(jq -r '.outcome // "unknown"' response.json)
+            echo "Advance succeeded. Outcome: $OUTCOME"
+
+            if [ "$OUTCOME" = "already_merged" ]; then
+              echo "::warning::Ticket $TICKET_ID was already merged. No state change."
+            elif [ "$OUTCOME" = "completed" ]; then
+              echo "All tickets merged. Project complete."
+            else
+              NEXT_TICKET=$(jq -r '.nextDispatchedTicket.ticketId // "none"' response.json)
+              echo "Next dispatched ticket: $NEXT_TICKET"
+            fi
+          else
+            echo "::error::Advance API call failed with HTTP $HTTP_CODE"
+            cat response.json
+            exit 1
+          fi

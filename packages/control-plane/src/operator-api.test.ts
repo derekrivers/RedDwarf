@@ -2683,3 +2683,157 @@ describe("Project Mode — POST /projects/:id/clarify", () => {
     }
   });
 });
+
+describe("Project Mode — POST /projects/advance", () => {
+  it("merges ticket, dispatches next, and returns advanced outcome", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"],
+        githubSubIssueNumber: 2001
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string; ticket: { status: string; githubPrNumber: number }; nextDispatchedTicket: { ticketId: string } | null };
+      expect(body.outcome).toBe("advanced");
+      expect(body.ticket.status).toBe("merged");
+      expect(body.ticket.githubPrNumber).toBe(55);
+      expect(body.nextDispatchedTicket).not.toBeNull();
+      expect(body.nextDispatchedTicket!.ticketId).toBe("project:task-001:ticket:2");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("completes project when all tickets are merged", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "merged" })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Last ticket",
+        status: "dispatched",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:2",
+        github_pr_number: 56
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string; project: { status: string } };
+      expect(body.outcome).toBe("completed");
+      expect(body.project.status).toBe("complete");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns already_merged for idempotent re-advance", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "merged", githubPrNumber: 55 })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string };
+      expect(body.outcome).toBe("already_merged");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent ticket", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "nonexistent",
+        github_pr_number: 1
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 400 for invalid payload", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        wrong_field: "bad"
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      }, null);
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});

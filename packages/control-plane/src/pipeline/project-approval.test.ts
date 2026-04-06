@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryPlanningRepository } from "@reddwarf/evidence";
 import { FixtureGitHubIssuesAdapter } from "@reddwarf/integrations";
 import type { ProjectSpec, TicketSpec } from "@reddwarf/contracts";
-import { executeProjectApproval } from "./project-approval.js";
+import { executeProjectApproval, advanceProjectTicket } from "./project-approval.js";
 
 const testTimestamp = "2026-04-06T12:00:00.000Z";
 
@@ -273,5 +273,143 @@ describe("executeProjectApproval", () => {
     );
 
     expect(result.dispatchedTicket?.ticketId).toBe("project:task-100:ticket:2");
+  });
+});
+
+describe("advanceProjectTicket", () => {
+  it("merges a ticket, closes sub-issue, and dispatches next ready ticket", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "executing" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        ticketId: "project:task-100:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-100:ticket:1"],
+        githubSubIssueNumber: 2001
+      })
+    );
+
+    const result = await advanceProjectTicket(
+      { ticketId: "project:task-100:ticket:1", githubPrNumber: 55 },
+      {
+        repository,
+        githubIssuesAdapter: adapter,
+        clock: () => new Date("2026-04-06T14:00:00.000Z")
+      }
+    );
+
+    expect(result.outcome).toBe("advanced");
+    expect(result.ticket.status).toBe("merged");
+    expect(result.ticket.githubPrNumber).toBe(55);
+    expect(result.nextDispatchedTicket?.ticketId).toBe("project:task-100:ticket:2");
+
+    // Sub-issue should have been closed
+    expect(adapter.getClosedIssues().has(2000)).toBe(true);
+
+    // Verify persisted
+    const persistedTicket1 = await repository.getTicketSpec("project:task-100:ticket:1");
+    expect(persistedTicket1?.status).toBe("merged");
+
+    const persistedTicket2 = await repository.getTicketSpec("project:task-100:ticket:2");
+    expect(persistedTicket2?.status).toBe("dispatched");
+  });
+
+  it("completes the project when all tickets are merged", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "executing" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({ status: "merged" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        ticketId: "project:task-100:ticket:2",
+        title: "Last ticket",
+        status: "dispatched",
+        dependsOn: ["project:task-100:ticket:1"]
+      })
+    );
+
+    const result = await advanceProjectTicket(
+      { ticketId: "project:task-100:ticket:2", githubPrNumber: 56 },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T14:00:00.000Z")
+      }
+    );
+
+    expect(result.outcome).toBe("completed");
+    expect(result.project.status).toBe("complete");
+
+    const persisted = await repository.getProjectSpec("project:task-100");
+    expect(persisted?.status).toBe("complete");
+  });
+
+  it("is idempotent for already-merged tickets", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "executing" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({ status: "merged", githubPrNumber: 55 })
+    );
+
+    const result = await advanceProjectTicket(
+      { ticketId: "project:task-100:ticket:1", githubPrNumber: 55 },
+      { repository }
+    );
+
+    expect(result.outcome).toBe("already_merged");
+    expect(result.nextDispatchedTicket).toBeNull();
+  });
+
+  it("throws when ticket does not exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await expect(
+      advanceProjectTicket(
+        { ticketId: "nonexistent", githubPrNumber: 1 },
+        { repository }
+      )
+    ).rejects.toThrow(/not found/);
+  });
+
+  it("handles advance without GitHub Issues adapter", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "executing" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+
+    const result = await advanceProjectTicket(
+      { ticketId: "project:task-100:ticket:1", githubPrNumber: 55 },
+      {
+        repository,
+        githubIssuesAdapter: null,
+        clock: () => new Date("2026-04-06T14:00:00.000Z")
+      }
+    );
+
+    expect(result.outcome).toBe("completed");
+    expect(result.ticket.status).toBe("merged");
   });
 });
