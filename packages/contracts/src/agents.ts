@@ -120,6 +120,31 @@ export interface PlanningDraft {
   usage?: TokenUsage;
 }
 
+export interface ClarificationRequest {
+  questions: string[];
+}
+
+export type ProjectPlanningMode = "single" | "project";
+
+export interface ProjectTicketDraft {
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  dependsOn: string[];
+  complexityClass: string;
+}
+
+export interface ProjectPlanningDraft {
+  title: string;
+  summary: string;
+  tickets: ProjectTicketDraft[];
+  confidence: ConfidenceSignal;
+}
+
+export type ProjectPlanningResult =
+  | { outcome: "project_spec"; draft: ProjectPlanningDraft }
+  | { outcome: "clarification_needed"; clarification: ClarificationRequest };
+
 export interface DevelopmentDraft {
   summary: string;
   implementationNotes: string[];

@@ -327,10 +327,8 @@ export function createGitHubIssuePollingDaemon(
             complexityClassification: classification
           };
 
-          // TODO(project-mode): when classification.size !== "small",
-          // route to project mode planning pipeline (feature 142).
-          // For now, all sizes continue through the existing single-issue path.
-
+          // The planning pipeline detects project mode from metadata.complexityClassification
+          // and runs project-mode planning when OpenClaw deps are available and size !== 'small'.
           const result = await runPlanningPipeline(
             {
               ...planningInput,

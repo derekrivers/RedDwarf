@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   asIsoTimestamp,
+  type ComplexityClassification,
   type EligibilityRejectionReasonCode,
   planningSpecSchema,
   planningTaskInputSchema,
@@ -66,6 +67,9 @@ import {
 import {
   dispatchHollyArchitectPhase
 } from "./prompts.js";
+import {
+  runProjectPlanningPhase
+} from "./project-planning.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
 import {
   enforceTokenBudget,
@@ -942,6 +946,69 @@ export async function runPlanningPipeline(
       }
     });
 
+    // Project mode: when classification is medium/large and OpenClaw is available,
+    // additionally produce a ProjectSpec with TicketSpec[] decomposition.
+    let projectSpec: import("@reddwarf/contracts").ProjectSpec | undefined;
+    let ticketSpecs: import("@reddwarf/contracts").TicketSpec[] | undefined;
+    let projectPlanningResult: import("@reddwarf/contracts").ProjectPlanningResult | undefined;
+    let projectHandoffMarkdown: string | undefined;
+
+    const classification = (input.metadata as Record<string, unknown>)?.complexityClassification as ComplexityClassification | undefined;
+    if (
+      classification &&
+      classification.size !== "small" &&
+      dependencies.openClawDispatch &&
+      dependencies.architectTargetRoot
+    ) {
+      try {
+        const projectResult = await runProjectPlanningPhase(
+          input,
+          classification,
+          {
+            repository,
+            planner,
+            ...(dependencies.logger !== undefined ? { logger: dependencies.logger } : {}),
+            ...(dependencies.runtimeConfig !== undefined ? { runtimeConfig: dependencies.runtimeConfig } : {}),
+            openClawDispatch: dependencies.openClawDispatch,
+            architectTargetRoot: dependencies.architectTargetRoot,
+            ...(dependencies.openClawArchitectAgentId !== undefined ? { openClawArchitectAgentId: dependencies.openClawArchitectAgentId } : {}),
+            ...(dependencies.openClawArchitectAwaiter !== undefined ? { openClawArchitectAwaiter: dependencies.openClawArchitectAwaiter } : {}),
+            ...(dependencies.timing !== undefined ? { timing: dependencies.timing } : {}),
+            taskId,
+            runId,
+            manifest: currentManifest,
+            clock,
+            idGenerator,
+            nextEventId,
+            persistTrackedRun: async (metadata) => {
+              await persistTrackedRun({
+                ...metadata,
+                lastHeartbeatAt: asIsoTimestamp(clock())
+              });
+            }
+          }
+        );
+        projectSpec = projectResult.projectSpec;
+        ticketSpecs = projectResult.ticketSpecs;
+        projectPlanningResult = projectResult.projectPlanningResult;
+        projectHandoffMarkdown = projectResult.hollyHandoffMarkdown;
+
+        runLogger.info("Project mode planning completed.", {
+          taskId,
+          runId,
+          projectId: projectSpec.projectId,
+          ticketCount: ticketSpecs.length,
+          outcome: projectPlanningResult.outcome
+        });
+      } catch (projectError) {
+        runLogger.warn("Project mode planning failed; single-issue plan remains as fallback.", {
+          taskId,
+          runId,
+          error: projectError instanceof Error ? projectError.message : String(projectError)
+        });
+      }
+    }
+
     activePhase = "policy_gate";
     const policyStartedAt = clock();
     const basePolicySnapshot = buildPolicySnapshot(
@@ -1260,7 +1327,12 @@ export async function runPlanningPipeline(
       policySnapshot,
       ...(approvalRequest ? { approvalRequest } : {}),
       ...(hollyHandoffMarkdown ? { hollyHandoffMarkdown } : {}),
-      nextAction: approvalRequest ? "await_human" : "complete",
+      ...(projectSpec ? { projectSpec } : {}),
+      ...(ticketSpecs && ticketSpecs.length > 0 ? { ticketSpecs } : {}),
+      ...(projectPlanningResult ? { projectPlanningResult } : {}),
+      nextAction: projectPlanningResult?.outcome === "clarification_needed"
+        ? "clarification_needed" as const
+        : approvalRequest ? "await_human" : "complete",
       concurrencyDecision
     };
   } catch (error) {

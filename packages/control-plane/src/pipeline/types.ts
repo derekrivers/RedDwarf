@@ -16,6 +16,9 @@ import {
   type PreScreeningAgent,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
+  type TicketSpec,
+  type ProjectPlanningResult,
   type ScmAgent,
   type TaskManifest,
   type TaskPhase,
@@ -182,7 +185,10 @@ export interface PlanningPipelineResult {
   policySnapshot?: PolicySnapshot;
   approvalRequest?: ApprovalRequest;
   hollyHandoffMarkdown?: string;
-  nextAction: "complete" | "await_human" | "task_blocked";
+  projectSpec?: ProjectSpec;
+  ticketSpecs?: TicketSpec[];
+  projectPlanningResult?: ProjectPlanningResult;
+  nextAction: "complete" | "await_human" | "task_blocked" | "clarification_needed";
   concurrencyDecision: ConcurrencyDecision;
 }
 

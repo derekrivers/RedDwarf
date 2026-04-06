@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { FixtureGitHubAdapter, createPlanningInputFromGitHubIssue } from "./github.js";
+import { FixtureGitHubAdapter, FixtureGitHubIssuesAdapter, createPlanningInputFromGitHubIssue, formatTicketSpecBody, createGitHubIssuesAdapter } from "./github.js";
 import { V1MutationDisabledError } from "./errors.js";
 import type { GitHubIssueCandidate } from "./github.js";
+import type { TicketSpec } from "@reddwarf/contracts";
 
 const candidate: GitHubIssueCandidate = {
   repo: "acme/platform",
@@ -344,5 +345,156 @@ describe("FixtureGitHubAdapter", () => {
       labels: ["non-existent-label"]
     });
     expect(notFound).toHaveLength(0);
+  });
+});
+
+// ── GitHub Issues Adapter (Feature 144) ──────────────────────────────────────
+
+const sampleTicketSpec: TicketSpec = {
+  ticketId: "ticket-001",
+  projectId: "project-001",
+  title: "Add user authentication",
+  description: "Implement JWT-based authentication for the operator API.",
+  acceptanceCriteria: [
+    "POST /auth/login returns a JWT token",
+    "Unauthenticated requests return 401",
+    "Token expiry is configurable"
+  ],
+  dependsOn: [],
+  status: "pending",
+  complexityClass: "low",
+  riskClass: "low",
+  githubSubIssueNumber: null,
+  githubPrNumber: null,
+  createdAt: "2026-04-06T00:00:00.000Z",
+  updatedAt: "2026-04-06T00:00:00.000Z"
+};
+
+const ticketWithDependencies: TicketSpec = {
+  ...sampleTicketSpec,
+  ticketId: "ticket-002",
+  title: "Add role-based access control",
+  description: "Implement RBAC on top of JWT auth.",
+  acceptanceCriteria: [
+    "Admin role can access all endpoints",
+    "Viewer role is read-only"
+  ],
+  dependsOn: ["ticket-001"]
+};
+
+describe("formatTicketSpecBody", () => {
+  it("formats ticket spec as markdown with acceptance criteria checklist", () => {
+    const body = formatTicketSpecBody(sampleTicketSpec, 10);
+    expect(body).toContain("Parent issue: #10");
+    expect(body).toContain("## Acceptance Criteria");
+    expect(body).toContain("- [ ] POST /auth/login returns a JWT token");
+    expect(body).toContain("- [ ] Unauthenticated requests return 401");
+    expect(body).toContain("- [ ] Token expiry is configurable");
+    expect(body).not.toContain("## Dependencies");
+  });
+
+  it("includes dependencies section when ticket has depends_on entries", () => {
+    const body = formatTicketSpecBody(ticketWithDependencies, 10);
+    expect(body).toContain("## Dependencies");
+    expect(body).toContain("- ticket-001");
+  });
+});
+
+describe("FixtureGitHubIssuesAdapter", () => {
+  it("creates a sub-issue and returns an issue number", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+    const issueNumber = await adapter.createSubIssue(10, sampleTicketSpec);
+    expect(issueNumber).toBeGreaterThanOrEqual(2_000);
+
+    const created = adapter.getCreatedSubIssues().get(issueNumber);
+    expect(created).toBeDefined();
+    expect(created!.parentIssueNumber).toBe(10);
+    expect(created!.ticketSpec.ticketId).toBe("ticket-001");
+    expect(created!.body).toContain("- [ ] POST /auth/login returns a JWT token");
+  });
+
+  it("closes an issue", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+    const issueNumber = await adapter.createSubIssue(10, sampleTicketSpec);
+    await adapter.closeIssue(issueNumber);
+    expect(adapter.getClosedIssues().has(issueNumber)).toBe(true);
+  });
+
+  it("getIssue returns closed state for closed issues", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+    const issueNumber = await adapter.createSubIssue(10, sampleTicketSpec);
+
+    const openStatus = await adapter.getIssue(issueNumber);
+    expect(openStatus.state).toBe("open");
+
+    await adapter.closeIssue(issueNumber);
+    const closedStatus = await adapter.getIssue(issueNumber);
+    expect(closedStatus.state).toBe("closed");
+  });
+
+  it("throws V1MutationDisabledError when disabled", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform", enabled: false });
+    await expect(adapter.createSubIssue(10, sampleTicketSpec)).rejects.toBeInstanceOf(V1MutationDisabledError);
+    await expect(adapter.closeIssue(100)).rejects.toBeInstanceOf(V1MutationDisabledError);
+  });
+
+  it("getIssue works even when adapter is disabled", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform", enabled: false });
+    const status = await adapter.getIssue(42);
+    expect(status.repo).toBe("acme/platform");
+    expect(status.issueNumber).toBe(42);
+  });
+});
+
+describe("createGitHubIssuesAdapter", () => {
+  it("throws V1MutationDisabledError when REDDWARF_GITHUB_ISSUES_ENABLED is not true", () => {
+    const original = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+    try {
+      delete process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+      expect(() => createGitHubIssuesAdapter()).toThrow(V1MutationDisabledError);
+
+      process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = "false";
+      expect(() => createGitHubIssuesAdapter()).toThrow(V1MutationDisabledError);
+    } finally {
+      if (original !== undefined) {
+        process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = original;
+      } else {
+        delete process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+      }
+    }
+  });
+
+  it("throws when GITHUB_TOKEN is missing", () => {
+    const origEnabled = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+    const origToken = process.env["GITHUB_TOKEN"];
+    try {
+      process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = "true";
+      delete process.env["GITHUB_TOKEN"];
+      expect(() => createGitHubIssuesAdapter()).toThrow("GITHUB_TOKEN");
+    } finally {
+      if (origEnabled !== undefined) process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = origEnabled;
+      else delete process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+      if (origToken !== undefined) process.env["GITHUB_TOKEN"] = origToken;
+      else delete process.env["GITHUB_TOKEN"];
+    }
+  });
+
+  it("throws when GITHUB_REPO is missing", () => {
+    const origEnabled = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+    const origToken = process.env["GITHUB_TOKEN"];
+    const origRepo = process.env["GITHUB_REPO"];
+    try {
+      process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = "true";
+      process.env["GITHUB_TOKEN"] = "ghp_test";
+      delete process.env["GITHUB_REPO"];
+      expect(() => createGitHubIssuesAdapter()).toThrow("GITHUB_REPO");
+    } finally {
+      if (origEnabled !== undefined) process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = origEnabled;
+      else delete process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+      if (origToken !== undefined) process.env["GITHUB_TOKEN"] = origToken;
+      else delete process.env["GITHUB_TOKEN"];
+      if (origRepo !== undefined) process.env["GITHUB_REPO"] = origRepo;
+      else delete process.env["GITHUB_REPO"];
+    }
   });
 });

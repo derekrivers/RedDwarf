@@ -1,4 +1,4 @@
-import { asIsoTimestamp, capabilities, type Capability, type PlanningTaskInput } from "@reddwarf/contracts";
+import { asIsoTimestamp, capabilities, type Capability, type PlanningTaskInput, type TicketSpec } from "@reddwarf/contracts";
 import type { CiAdapter, CiCheckSuiteSnapshot } from "./ci.js";
 import { V1MutationDisabledError } from "./errors.js";
 
@@ -114,6 +114,16 @@ export interface GitHubWriter {
 }
 
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
+
+// ============================================================
+// GitHubIssuesAdapter — project mode sub-issue operations
+// ============================================================
+
+export interface GitHubIssuesAdapter {
+  createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number>;
+  closeIssue(issueNumber: number): Promise<void>;
+  getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot>;
+}
 
 export interface GitHubIssueIntakeResult {
   candidate: GitHubIssueCandidate;
@@ -329,6 +339,68 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
 
   async commentOnIssue(comment: GitHubIssueComment): Promise<void> {
     throw new V1MutationDisabledError(`Commenting on ${comment.repo}#${comment.issueNumber}`);
+  }
+}
+
+export interface FixtureGitHubIssuesAdapterOptions {
+  repo: string;
+  enabled?: boolean;
+  issueNumberStart?: number;
+}
+
+export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
+  private readonly repo: string;
+  private readonly enabled: boolean;
+  private readonly createdSubIssues: Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string }>;
+  private readonly closedIssues: Set<number>;
+  private nextIssueNumber: number;
+
+  constructor(options: FixtureGitHubIssuesAdapterOptions) {
+    this.repo = options.repo;
+    this.enabled = options.enabled ?? true;
+    this.createdSubIssues = new Map();
+    this.closedIssues = new Set();
+    this.nextIssueNumber = options.issueNumberStart ?? 2_000;
+  }
+
+  getCreatedSubIssues(): Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string }> {
+    return this.createdSubIssues;
+  }
+
+  getClosedIssues(): Set<number> {
+    return this.closedIssues;
+  }
+
+  async createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number> {
+    if (!this.enabled) {
+      throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+    }
+    const issueNumber = this.nextIssueNumber;
+    this.nextIssueNumber += 1;
+    const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
+    this.createdSubIssues.set(issueNumber, { parentIssueNumber, ticketSpec, body });
+    return issueNumber;
+  }
+
+  async closeIssue(issueNumber: number): Promise<void> {
+    if (!this.enabled) {
+      throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+    }
+    this.closedIssues.add(issueNumber);
+  }
+
+  async getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot> {
+    return {
+      repo: this.repo,
+      issueNumber,
+      url: `https://github.com/${this.repo}/issues/${issueNumber}`,
+      state: this.closedIssues.has(issueNumber) ? "closed" : "open",
+      labels: ["reddwarf-ticket"],
+      assignees: [],
+      milestone: null,
+      defaultBranch: "main",
+      updatedAt: null
+    };
   }
 }
 
@@ -850,6 +922,205 @@ export function createRestGitHubAdapter(
     ...(options.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: options.requestTimeoutMs }
       : {})
+  });
+}
+
+// ============================================================
+// RestGitHubIssuesAdapter — project mode sub-issue operations
+// ============================================================
+
+export function formatTicketSpecBody(ticketSpec: TicketSpec, parentIssueNumber: number): string {
+  const lines: string[] = [];
+  lines.push(`Parent issue: #${parentIssueNumber}`);
+  lines.push("");
+  lines.push(ticketSpec.description);
+  lines.push("");
+  lines.push("## Acceptance Criteria");
+  lines.push("");
+  for (const criterion of ticketSpec.acceptanceCriteria) {
+    lines.push(`- [ ] ${criterion}`);
+  }
+  if (ticketSpec.dependsOn.length > 0) {
+    lines.push("");
+    lines.push("## Dependencies");
+    lines.push("");
+    for (const dep of ticketSpec.dependsOn) {
+      lines.push(`- ${dep}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export interface RestGitHubIssuesAdapterOptions {
+  token: string;
+  repo: string;
+  baseUrl?: string;
+  requestTimeoutMs?: number;
+}
+
+export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
+  private readonly token: string;
+  private readonly repo: string;
+  private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: RestGitHubIssuesAdapterOptions) {
+    this.token = options.token;
+    this.repo = options.repo;
+    this.baseUrl = options.baseUrl ?? "https://api.github.com";
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+  }
+
+  private parseRepo(): { owner: string; repoName: string } {
+    const slash = this.repo.indexOf("/");
+    if (slash <= 0 || slash >= this.repo.length - 1) {
+      throw new Error(`Invalid repo format: "${this.repo}". Expected "owner/name".`);
+    }
+    return { owner: this.repo.slice(0, slash), repoName: this.repo.slice(slash + 1) };
+  }
+
+  private apiHeaders(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "reddwarf/0.1.0"
+    };
+  }
+
+  private async apiGet<T>(path: string): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "GET",
+        headers: this.apiHeaders(),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API GET ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async apiPost<T>(path: string, payload: unknown): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API POST ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async apiPatch<T>(path: string, payload: unknown): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "PATCH",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API PATCH ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API PATCH ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number> {
+    const { owner, repoName } = this.parseRepo();
+    const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
+    const created = await this.apiPost<GitHubApiCreatedIssue>(
+      `/repos/${owner}/${repoName}/issues`,
+      {
+        title: ticketSpec.title,
+        body,
+        labels: ["reddwarf-ticket"]
+      }
+    );
+    return created.number;
+  }
+
+  async closeIssue(issueNumber: number): Promise<void> {
+    const { owner, repoName } = this.parseRepo();
+    await this.apiPatch<GitHubApiIssue>(
+      `/repos/${owner}/${repoName}/issues/${issueNumber}`,
+      { state: "closed" }
+    );
+  }
+
+  async getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot> {
+    const { owner, repoName } = this.parseRepo();
+    const [issue, repoData] = await Promise.all([
+      this.apiGet<GitHubApiIssue>(`/repos/${owner}/${repoName}/issues/${issueNumber}`),
+      this.apiGet<GitHubApiRepository>(`/repos/${owner}/${repoName}`)
+    ]);
+    return {
+      repo: this.repo,
+      issueNumber: issue.number,
+      url: issue.html_url,
+      state: issue.state === "open" ? "open" : "closed",
+      labels: issue.labels
+        .map((l) => (typeof l === "string" ? l : (l.name ?? "")))
+        .filter((n) => n.length > 0),
+      assignees: issue.assignees.map((a) => a.login),
+      milestone: issue.milestone?.title ?? null,
+      defaultBranch: repoData.default_branch,
+      updatedAt: issue.updated_at ?? null
+    };
+  }
+}
+
+/**
+ * Create a RestGitHubIssuesAdapter from environment variables or explicit options.
+ * Throws V1MutationDisabledError when REDDWARF_GITHUB_ISSUES_ENABLED is not "true".
+ * Requires GITHUB_TOKEN and GITHUB_REPO.
+ */
+export function createGitHubIssuesAdapter(
+  options: { token?: string; repo?: string; baseUrl?: string; requestTimeoutMs?: number } = {}
+): RestGitHubIssuesAdapter {
+  const enabled = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+  if (enabled !== "true") {
+    throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+  }
+
+  const token = options.token ?? process.env["GITHUB_TOKEN"];
+  if (!token) {
+    throw new Error(
+      "GitHubIssuesAdapter requires a GitHub token. Set the GITHUB_TOKEN environment variable or pass token explicitly."
+    );
+  }
+
+  const repo = options.repo ?? process.env["GITHUB_REPO"];
+  if (!repo) {
+    throw new Error(
+      "GitHubIssuesAdapter requires a GitHub repo. Set the GITHUB_REPO environment variable or pass repo explicitly."
+    );
+  }
+
+  return new RestGitHubIssuesAdapter({
+    token,
+    repo,
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {})
   });
 }
 

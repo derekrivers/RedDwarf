@@ -60,6 +60,7 @@ export { buildRuntimeWorkspacePath } from "./workspace-path.js";
 
 // Pipeline phase functions
 export { runPlanningPipeline } from "./planning.js";
+export { runProjectPlanningPhase } from "./project-planning.js";
 export { runDeveloperPhase } from "./development.js";
 export { runArchitectureReviewPhase } from "./architecture-review.js";
 export { runValidationPhase } from "./validation.js";
