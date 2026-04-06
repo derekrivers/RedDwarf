@@ -2,124 +2,88 @@
 
 The board is ordered by implementation priority.
 
-This active board only lists pending work. Completed items are archived in [features_archive/COMPLETED_FEATURES.md](/c:/Dev/RedDwarf/features_archive/COMPLETED_FEATURES.md).
-
-Priority reset note: after the March 29, 2026 hardening audit and the April 2026 UX research pass, pending feature work is intentionally ordered by operator leverage and production blast radius rather than feature-number chronology. Operator onboarding, configuration safety, and day-to-day observability now sit ahead of speculative platform expansion. Read [docs/RedDwarf-UX-Research-Report.md](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md) before picking up features 114-127, and read [docs/pipeline-hardening-audit-2026-03-29.md](/c:/Dev/RedDwarf/docs/pipeline-hardening-audit-2026-03-29.md) before picking up features 90-99.
-
-**OpenClaw platform principle (adopted March 2026):** Use OpenClaw for infrastructure concerns — sandboxing, model failover, notifications, scheduling, browser access. Own RedDwarf's domain logic — eligibility gating, role-scoped context, policy enforcement, pipeline orchestration. Where OpenClaw already provides a capability, configure it rather than build it. See [`docs/openclaw/reddwarf-openclaw-opportunities.md`](/c:/Dev/RedDwarf/docs/openclaw/reddwarf-openclaw-opportunities.md).
-
-Column legend: `Depends On` captures explicit delivery sequencing; `Deployment` is `Local`, `VPS`, or `Both`.
+This active board only lists pending work. Completed items are archived in [features_archive/COMPLETED_FEATURES.md](/home/derek/code/RedDwarf/features_archive/COMPLETED_FEATURES.md).
 
 ---
 
-## M14 — Operator UX
+## M20 — Project Mode
 
-Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md). This milestone is the current top priority because operator friction is now a bigger adoption blocker than core pipeline semantics.
+Source reference: [`docs/reddwarf_project_mode_spec.md`](/home/derek/code/RedDwarf/docs/reddwarf_project_mode_spec.md). **Read the full spec before implementing any feature in this milestone.** It is the authoritative specification for the planning corridor, data model, ticket lifecycle, and acceptance criteria.
 
-| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
-| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
-| 114 | Classify `.env` into boot-time, runtime, and secret tiers; refactor `.env.example` with grouped comment headers | M14 | complete | — | Both | UX report: Section 1.2, Appendix |
-| 115 | Add `operator_config` Drizzle table and startup merge logic so DB-backed runtime config overrides `.env` | M14 | complete | 114 | Both | UX report: Sections 1.5, 2.4 |
-| 116 | Add `GET /config`, `PUT /config`, and `GET /config/schema` Operator API endpoints with Zod contracts | M14 | complete | 115 | Both | UX report: Sections 2.2, 2.4 |
-| 117 | Add `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo`; replace comma-string poll repo config with DB-backed repo management | M14 | complete | 116 | Both | UX report: Sections 1.3, 2.2 |
-| 118 | Expand observability endpoints: filtered `GET /runs`, `GET /runs/:id`, `GET /runs/:id/evidence`, `GET /tasks`, `GET /tasks/:id` | M14 | complete | — | Both | UX report: Section 2.2 |
-| 119 | Add `POST /secrets/:key/rotate` write-only endpoint backed by a permissions-restricted local secrets store | M14 | complete | 115 | Both | UX report: Sections 1.4, 2.2 |
-| 120 | Build and serve a single-file operator configuration panel from `GET /ui` for Polling, DB Pool, Logging, Paths, Status, and secret rotation | M14 | complete | 116, 117, 118, 119 | Both | UX report: Sections 1.3, 2.2 |
-| 121 | Register OpenClaw WebChat operator commands for `status`, `approve`, `reject`, `submit`, and `runs` | M14 | complete | 118 | Both | UX report: Section 4.2 |
-| 122 | Add an MCP bridge over the Operator API so OpenClaw agents can query RedDwarf task history and evidence during context building | M14 | complete | 118 | Both | UX report: Section 4.3 |
+Key design decisions applied to this milestone:
 
----
+- **Rimmer** is implemented as a coordinator module in `packages/control-plane`. He classifies complexity, routes to project mode or the existing single-issue path, and orchestrates the planning lifecycle. He is not a separate execution-plane agent.
+- **Holly** remains the Architect agent. In project mode she produces a `ProjectSpec` with ordered `TicketSpec[]` children instead of a single planning spec.
+- **Clarification loop** uses the operator API (not Discord). When Holly flags missing context, the operator submits answers via API endpoints. OD-02 in the spec is resolved in favour of operator API.
+- **`project_specs` replaces/extends `planning_specs`**. The existing `planning_specs` table is migrated into the new `project_specs` schema. Single-issue plans continue to work through the same table with `project_size: 'small'`.
+- **GitHub Issues** is the execution backlog (OD-01 resolved). No Trello integration.
+- **GitHub Actions** replaces inbound webhooks (OD-03 resolved). Tailscale Funnel provides external reachability for the operator API.
+- **Tickets are serial** in v1. No parallel ticket execution.
 
-## M15 — Pipeline Hardening
+Column legend: `Depends On` captures explicit delivery sequencing.
 
-| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
-| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
-| 91 | **[STALE]** Spec distillation pass. _OpenClaw `/compact` provides session compaction natively; no custom build needed._ | M15 | stale | — | Both | — |
-| 92 | **[STALE]** Project memory compression. _OpenClaw `/compact` covers context/memory compression natively; no custom build needed._ | M15 | stale | — | Both | — |
+### Phase 1 — Foundation (no dependencies, can be worked in parallel)
 
----
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 140 | **Rimmer coordinator: complexity classifier + project mode routing** — Add a `classifyComplexity` function to `packages/control-plane` within a new `rimmer/` module. Accepts a raw request string and optional repo context; returns `{ size: 'small'\|'medium'\|'large', reasoning: string, signals: string[] }`. Integrate into the intake pipeline so medium/large requests enter project mode and small requests continue through the existing single-issue path unchanged. Persist classification result to the project spec record. | pending | — | [Spec T-01](docs/reddwarf_project_mode_spec.md) §6 T-01 |
+| 141 | **ProjectSpec + TicketSpec schema, migration, contracts, and repositories** — Replace/extend `planning_specs` with `project_specs` and add `ticket_specs` table. All fields per spec §4.3. Export `ProjectSpec` and `TicketSpec` TypeScript types from `packages/contracts`. Implement `ProjectSpecRepository` (`create`, `findById`, `updateStatus`, `listByRepo`) and `TicketSpecRepository` (`create`, `findByProject`, `updateStatus`, `resolveNextReady`). `resolveNextReady` returns the first ticket whose all `depends_on` entries are in `merged` status. Existing evidence schema tests must pass without modification. | pending | — | [Spec T-02](docs/reddwarf_project_mode_spec.md) §6 T-02 |
+| 147 | **Tailscale Funnel: operator API external reachability** — Configure Tailscale Funnel so the operator API is reachable from GitHub Actions runners. Document setup in `.env.example` and add a `REDDWARF_OPERATOR_API_URL` config entry used by the GitHub Actions workflow. Verify connectivity from an external network. | pending | — | Prerequisite for 148; see [Spec §4.1 step 11](docs/reddwarf_project_mode_spec.md) |
 
-## Fast-track — OpenClaw Infrastructure Config
+### Phase 2 — Planning corridor (unblocked by Phase 1)
 
-These items are configuration tasks against confirmed OpenClaw platform capabilities. They do not touch pipeline domain logic and can be picked up in any order independent of milestone sequencing.
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 142 | **Holly planning phase: project mode** — Extend Holly's planning phase to accept a mode flag (`single` or `project`). In project mode, Holly produces a `ProjectSpec` with >=2 ordered `TicketSpec[]` children, each with title, description, acceptance_criteria, depends_on, and complexity_class. When context is insufficient, Holly returns a `ClarificationRequest` with specific questions rather than a partial spec. After receiving clarification answers, Holly resumes planning from the same session context with no context loss. Existing single-issue planning path must produce identical output to pre-refactor baseline. Persist `ProjectSpec` to Postgres before submission for approval. | pending | 140, 141 | [Spec T-03](docs/reddwarf_project_mode_spec.md) §6 T-03 |
+| 144 | **GitHub Issues adapter** — Add `GitHubIssuesAdapter` to `packages/integrations` implementing `createSubIssue(parentIssueNumber, ticketSpec)`, `closeIssue(issueNumber)`, and `getIssue(issueNumber)`. Sub-issue bodies include a structured markdown block with the full `acceptance_criteria` array rendered as a checklist. Adapter throws `V1MutationDisabledError` when `REDDWARF_GITHUB_ISSUES_ENABLED` is not set to true. `GITHUB_TOKEN` and `GITHUB_REPO` are required env vars; update `.env.example`. `createSubIssue` returns the GitHub issue number, stored as `github_sub_issue_number` on the TicketSpec record. | pending | 141 | [Spec T-05](docs/reddwarf_project_mode_spec.md) §6 T-05 |
 
-| # | Feature | Status | Depends On | Deployment | Notes |
-| - | ------- | ------ | ---------- | ---------- | ----- |
-| 104 | Telegram channel integration - wire OpenClaw's native Telegram channel support for operators who prefer Telegram for approval and status notifications | pending | — | Both | OpenClaw native Telegram support; config-only, mirrors Discord-style operator notifications without changing RedDwarf domain logic |
-| 105 | **[BLOCKED FOR CURRENT TOPOLOGY]** Docker sandboxing for developer phase - run the Developer phase in a per-session Docker sandbox for execution isolation | blocked | VPS deployment or sandbox-capable host OpenClaw | VPS | Blocked in RedDwarf's current Docker-hosted OpenClaw topology because the seeded gateway container does not have Docker backend access, so sandboxed sessions fail and all agents currently use `sandbox: { mode: "off" }`. This is not a platform-wide OpenClaw limitation. Unblocks if deployment moves to a Linux host-installed OpenClaw gateway that can reach host Docker, or if the Docker deployment is rebuilt around OpenClaw's upstream sandbox-enabled container flow. See TROUBLESHOOTING.md. |
-| 106 | **[NEEDS SCHEMA]** Model failover wiring - configure OpenClaw auth profile rotation between OAuth and API keys with automatic fallbacks so a model outage does not stall the full pipeline | blocked | OpenClaw failover config schema review | Both | OpenClaw failover config schema is not documented in this repo. Current gateway auth is `mode: "token"` only. Do not implement blind. Needs OpenClaw docs review before any config change. |
+### Phase 3 — Approval and clarification (unblocked by Phase 2)
 
----
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 143 | **Operator API: clarification endpoints** — Add endpoints for the clarification loop. `GET /projects/:id/clarifications` returns pending `ClarificationRequest` questions. `POST /projects/:id/clarify` accepts `{ answers: Record<string, string> }` and feeds them back to Holly's planning context for re-run. Add a configurable timeout (`REDDWARF_CLARIFICATION_TIMEOUT_MS`); on expiry, planning session moves to operator API for manual resolution. All endpoints require `REDDWARF_OPERATOR_TOKEN`. | pending | 142 | [Spec T-03 AC-3/4](docs/reddwarf_project_mode_spec.md) §6 T-03; replaces T-04 (Discord) per OD-02 resolution |
+| 145 | **Operator API: project listing + approval flow** — Add `GET /projects` (list with status, pending/merged/failed ticket counts), `GET /projects/:id` (full ProjectSpec with TicketSpec children), and `POST /projects/:id/approve` (accepts `{ decision: 'approve'\|'amend', decidedBy, decisionSummary, amendments? }`). Approve transitions project to sub-issue creation. Amend returns project to draft; amendments text appended to Holly's planning context for re-run. All routes require `REDDWARF_OPERATOR_TOKEN`; unauthenticated requests return 401. | pending | 142 | [Spec T-08](docs/reddwarf_project_mode_spec.md) §6 T-08 |
 
-## M16 — Pipeline Domain Features
+### Phase 4 — Execution kickoff (unblocked by Phase 3)
 
-Source reference: proposed additions in [`docs/REDDWARF_PROPOSED_FEATURES (1).md`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md). Read the linked section before implementation so schema, contract, control-plane, and operator-surface notes stay aligned with the original proposal.
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 146 | **Sub-issue writer on plan approval + first ticket dispatch** — On plan approval, create GitHub sub-issues against the original parent issue for each approved TicketSpec in dependency order. Issue titles prefixed with priority index (e.g. `[1/5]`). Each TicketSpec updated with its `github_sub_issue_number`. Call `resolveNextReady()` and dispatch the first unblocked ticket to the dev squad pipeline. If GitHub Issues adapter is disabled, fall back to Postgres-only state with a warning; dispatch still proceeds. Update project status to `executing`. | pending | 142, 144 | [Spec T-06](docs/reddwarf_project_mode_spec.md) §6 T-06 |
 
-| # | Feature | Milestone | Status | Architecture Trace |
-| - | ------- | --------- | ------ | ------------------ |
-| 107 | Dry-run / simulation mode | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#1-dry-run--simulation-mode`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 108 | Plan confidence gate | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#2-plan-confidence-gate`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 109 | Token budget enforcement | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#3-token-budget-enforcement`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 110 | Pipeline run report export | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#4-pipeline-run-report-export`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 111 | Prompt version tracking | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#5-prompt-version-tracking`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 112 | Phase retry budget | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#6-phase-retry-budget`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
-| 113 | Structured eligibility rejection reasons | M16 | complete | Proposal source: [`docs/REDDWARF_PROPOSED_FEATURES (1).md#7-structured-eligibility-rejection-reasons`](/home/derek/code/RedDwarf/docs/REDDWARF_PROPOSED_FEATURES%20(1).md) |
+### Phase 5 — Merge-driven execution (unblocked by Phase 4)
+
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 148 | **GitHub Actions merge workflow + ticket advance endpoint** — Add `.github/workflows/reddwarf-advance.yml` triggering on `pull_request` closed + merged. Workflow extracts `ticket_id` from PR branch name (`reddwarf/ticket/{ticket_id}`) or PR body. Calls `POST /projects/advance` with `{ ticket_id, github_pr_number }` authenticated via `REDDWARF_OPERATOR_TOKEN` Actions secret against `REDDWARF_OPERATOR_API_URL`. Operator API endpoint sets TicketSpec status to `merged`, closes the linked GitHub sub-issue, and calls `resolveNextReady()`. If next ticket exists, dispatch and label sub-issue `in-progress`; if none remain, set project status to `complete`. On dev squad failure, set project to `blocked`. Workflow is idempotent: re-running on an already-merged ticket logs a warning and exits without mutating state. `REDDWARF_OPERATOR_TOKEN` is the only required secret. | pending | 145, 146, 147 | [Spec T-07](docs/reddwarf_project_mode_spec.md) §6 T-07 |
 
 ---
 
-## M17 — Provider Expansion
+### Dependency graph
 
-| # | Feature | Milestone | Status | Architecture Trace |
-| - | ------- | --------- | ------ | ------------------ |
+```
+140 (Classifier) ──┐
+                   ├──► 142 (Holly planning) ──┬──► 143 (Clarification API)
+141 (Schema)    ──┬┘                            ├──► 145 (Approval API)
+                  │                             └──┬─► 146 (Sub-issue writer) ──► 148 (GH Actions workflow)
+                  └──► 144 (GH Issues adapter) ──┘                                      ▲
+                                                                                         │
+147 (Tailscale) ─────────────────────────────────────────────────────────────────────────┘
+```
 
----
+### Recommended execution order
 
-## M18 — VPS Expansion
+1. **140, 141, 147** — all independent. Start in parallel. 140 + 141 unblock the planning corridor; 147 unblocks the final workflow.
+2. **142** — unblocked once 140 + 141 merge. Core planning refactor.
+3. **144** — unblocked by 141 alone. Can be worked alongside or after 142.
+4. **143, 145** — unblocked by 142. Independent of each other; can be worked in parallel.
+5. **146** — unblocked by 142 + 144. Approval-triggered orchestration.
+6. **148** — final ticket. Requires 145, 146, 147. Merging 148 completes Project Mode.
 
-Source reference: [`docs/RedDwarf-UX-Research-Report.md`](/home/derek/code/RedDwarf/docs/RedDwarf-UX-Research-Report.md). These features are intentionally grouped after Operator UX because they are materially more valuable once the stack is continuously hosted.
+### Non-functional requirements (apply to all features)
 
-| # | Feature | Milestone | Status | Depends On | Deployment | Architecture Trace |
-| - | ------- | --------- | ------ | ---------- | ---------- | ------------------ |
-| 123 | VPS-specific Docker Compose config: internal-only Postgres, no `HOST_DATABASE_URL` workaround, optional TLS reverse proxy | M18 | pending | — | VPS | UX report: Section 5.9 |
-| 124 | GitHub webhook intake endpoint to replace polling; reuse the direct task-intake path instead of duplicating intake logic | M18 | pending | S-4 resolution | VPS | UX report: Section 5.5 |
-| 125 | Tailscale Funnel guide and optional `funnel` compose profile for authenticated remote access to gateway and operator UI | M18 | pending | 123 | VPS | UX report: Sections 5.3, 4.7 |
-| 126 | CI adapter webhook receiver so validation can await real CI status events from GitHub Actions or equivalent | M18 | pending | 123 | VPS | UX report: Section 5.8 |
-| 127 | Multi-provider per-phase failover using Anthropic and OpenAI once provider routing semantics are settled | M18 | pending | 106 | VPS | UX report: Section 5.7 |
-
----
-
-## M19 — Operator Dashboard
-
-Source reference: [`docs/Dashboard.md`](/home/derek/code/RedDwarf/docs/Dashboard.md). **Read `docs/Dashboard.md` in full before implementing any feature in this milestone.** It is the authoritative specification for component markup, API wiring, layout decisions, quality standards, build configuration, and Tabler documentation URLs. Do not rely on memory for Tabler class names or component patterns — fetch the Tabler docs pages linked in the file before writing any markup.
-
-Key constraints that apply to every dashboard feature:
-- Framework: React 18 + TypeScript strict + Vite + Tabler UI (`@tabler/core` + `@tabler/icons-react`) + TanStack Query + React Router v6
-- Auth: `REDDWARF_OPERATOR_TOKEN` stored in `sessionStorage`; `decidedBy` is always the hardcoded string `"operator"` — never exposed as a UI field or accepted as a parameter
-- Every API call must have a loading state (Tabler spinner), error state (Tabler alert), and empty state (Tabler empty state component with icon and message)
-- No inline styles — Tabler utility classes only; no `any` in TypeScript; derive types from `packages/contracts` where possible
-- Vite dev server proxies `/api/*` → `http://127.0.0.1:8080` so the `Authorization` header is forwarded and CORS is not an issue in development
-
-| # | Feature | Milestone | Status | Depends On | Deployment | Notes |
-| - | ------- | --------- | ------ | ---------- | ---------- | ----- |
-| 135 | Evidence browser (`/evidence`) | M19 | pending | 130 | Both | Table: Run ID, Phase, Type, Recorded At, Size; client-side search/filter by run ID; expandable row showing raw JSON in `<pre>`; export row as `.json` file. Full spec in `docs/Dashboard.md` §PRIORITY 4. |
-| 136 | Agent status page (`/agents`) | M19 | pending | 130 | Both | Responsive 3-column card grid; one card per agent definition; each card shows name, role, permission scopes as Tabler badges, last-seen timestamp derived from evidence records, and a healthy/unconfigured status indicator. Full spec in `docs/Dashboard.md` §PRIORITY 5. |
-
----
-
-## Architectural Backlog
-
-Items with confirmed platform support that require a design decision before implementation. Do not pick up without first resolving the stated question.
-
-| # | Feature | Blocking question |
-| - | ------- | ----------------- |
-| S-1 | Agent-to-agent coordination via `sessions_*` tools - replace external control-plane orchestration of the Architect → Developer → Validator handoffs with OpenClaw-native `sessions_list` / `sessions_history` / `sessions_send` so phase coordination is observable through the session graph | Does the control plane become a thin wrapper or is it deprecated? Phase handoff semantics must be validated against OpenClaw session model before implementation begins. |
-| S-4 | GitHub webhook intake (replace polling daemon) - fire the pipeline the moment an issue is labelled rather than waiting up to 30 seconds (`REDDWARF_POLL_INTERVAL_MS`) | Requires a publicly reachable webhook endpoint or tunnel; operator environment and security surface must be confirmed before any implementation work. |
-
----
-
-## Long-term
-
-| # | Feature | Notes |
-| - | ------- | ----- |
-| S-6 | OpenClaw cron for housekeeping - migrate stale run sweeps, workspace cleanup, and health checks from custom setup scripts into OpenClaw's native cron scheduler | Reduces bespoke infrastructure surface; low urgency |
-| S-7 | ClawHub publishing - publish RedDwarf's Architect skills, validation rules, and task intake policy pack to the ClawHub registry for community discoverability | Requires deliberate decision on which internal policy rules are safe to expose publicly |
+- All new Postgres operations must respect the existing `REDDWARF_DB_POOL_*` connection pool configuration.
+- No new required environment variables added without a corresponding entry in `.env.example` with a comment.
+- All new integration adapters follow the existing `V1MutationDisabledError` guard pattern and are disabled by default.
+- TypeScript strict mode must pass across all modified packages after each feature merge.
+- `verify:all` must pass after every feature. No feature may leave the test suite in a failing state.
+- The existing single-issue pipeline must remain fully operational throughout all features.

@@ -141,3 +141,19 @@ Archived from the live board on 2026-04-04. Completed feature count: 134.
 | 99       | Discord approval bot - surface pending approval requests as interactive Discord messages with approve/reject buttons and respond to status queries | Fast-track | completed | Integration Plane, Operator Surface |
 | 100      | Discord notifications for agents - push status updates and approval requests to a Discord channel mid-run for async human oversight | Fast-track | completed | Integration Plane, Operator Surface |
 | 101      | Browser / web search for Architect agent - allow the Architect phase to pull current library docs and API references when formulating the planning spec | Fast-track | completed | Integration Plane, Knowledge & Policy Plane |
+| 114      | Classify `.env` into boot-time, runtime, and secret tiers; refactor `.env.example` with grouped comment headers | M14 | completed | UX report: Section 1.2, Appendix |
+| 115      | Add `operator_config` Drizzle table and startup merge logic so DB-backed runtime config overrides `.env` | M14 | completed | UX report: Sections 1.5, 2.4 |
+| 116      | Add `GET /config`, `PUT /config`, and `GET /config/schema` Operator API endpoints with Zod contracts | M14 | completed | UX report: Sections 2.2, 2.4 |
+| 117      | Add `GET /repos`, `POST /repos`, and `DELETE /repos/:owner/:repo`; replace comma-string poll repo config with DB-backed repo management | M14 | completed | UX report: Sections 1.3, 2.2 |
+| 118      | Expand observability endpoints: filtered `GET /runs`, `GET /runs/:id`, `GET /runs/:id/evidence`, `GET /tasks`, `GET /tasks/:id` | M14 | completed | UX report: Section 2.2 |
+| 119      | Add `POST /secrets/:key/rotate` write-only endpoint backed by a permissions-restricted local secrets store | M14 | completed | UX report: Sections 1.4, 2.2 |
+| 120      | Build and serve a single-file operator configuration panel from `GET /ui` for Polling, DB Pool, Logging, Paths, Status, and secret rotation | M14 | completed | UX report: Sections 1.3, 2.2 |
+| 121      | Register OpenClaw WebChat operator commands for `status`, `approve`, `reject`, `submit`, and `runs` | M14 | completed | UX report: Section 4.2 |
+| 122      | Add an MCP bridge over the Operator API so OpenClaw agents can query RedDwarf task history and evidence during context building | M14 | completed | UX report: Section 4.3 |
+| 107      | Dry-run / simulation mode | M16 | completed | Proposal source |
+| 108      | Plan confidence gate | M16 | completed | Proposal source |
+| 109      | Token budget enforcement | M16 | completed | Proposal source |
+| 110      | Pipeline run report export | M16 | completed | Proposal source |
+| 111      | Prompt version tracking | M16 | completed | Proposal source |
+| 112      | Phase retry budget | M16 | completed | Proposal source |
+| 113      | Structured eligibility rejection reasons | M16 | completed | Proposal source |
