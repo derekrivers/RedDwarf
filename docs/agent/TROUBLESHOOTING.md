@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Project approval creates child issues but no developer workspace starts
+
+- Symptom: `/projects/:id` shows a project in `executing`, ticket 1 is `dispatched`, and GitHub child issues such as `[1/3] ...` exist, but `/runs` has no developer run for the child issue/ticket and `runtime-data/workspaces/` has no `*-workspace` directory for that project ticket.
+- Root cause: older Project Mode approval only mutated `TicketSpec.status = "dispatched"`. It did not materialize a normal RedDwarf task manifest/planning spec/policy snapshot/approved policy-gate row for that ticket, so the existing ready-task dispatcher had nothing to pick up.
+- Failing approach: treating `TicketSpec.status = "dispatched"` as equivalent to a queued developer task, or expecting child issues labeled only `reddwarf-ticket` to be re-ingested through the normal `ai-eligible` GitHub poller.
+- Working workaround: run a build where project-ticket dispatch creates a deterministic ready child task for the dispatched ticket. For an already-`executing` project with child issues but no ticket task, re-run `POST /projects/:id/approve`; the recovery path materializes the missing child task without recreating sub-issues or changing ticket order.
+- Verification: `GET /projects/:id` still shows exactly one dispatched ticket, `GET /tasks?limit=...` or `GET /tasks/<ticket-task-id>/snapshot` shows the child task in `ready`/`development`, the ready-task dispatcher starts a developer workspace on its next cycle, and project-ticket PR bodies include `<!-- reddwarf:ticket_id:... -->` so the merge workflow can call `/projects/advance`.
+
 ## Project approval executes internally but no GitHub child issues appear
 
 - Symptom: `/projects/:id` shows a project in `executing`, at least one ticket is `dispatched`, but every ticket still has `githubSubIssueNumber: null` and GitHub's issue list does not show child issues such as `[1/3] ...`.

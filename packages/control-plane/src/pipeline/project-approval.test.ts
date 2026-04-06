@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { InMemoryPlanningRepository } from "@reddwarf/evidence";
 import { FixtureGitHubIssuesAdapter } from "@reddwarf/integrations";
 import type { ProjectSpec, TicketSpec } from "@reddwarf/contracts";
-import { executeProjectApproval, advanceProjectTicket } from "./project-approval.js";
+import {
+  advanceProjectTicket,
+  createProjectTicketTaskId,
+  executeProjectApproval
+} from "./project-approval.js";
 
 const testTimestamp = "2026-04-06T12:00:00.000Z";
 
@@ -100,6 +104,8 @@ describe("executeProjectApproval", () => {
     // First ticket (no dependencies) should be dispatched
     expect(result.dispatchedTicket).not.toBeNull();
     expect(result.dispatchedTicket?.ticketId).toBe("project:task-100:ticket:1");
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
+    expect(result.dispatchedTaskCreated).toBe(true);
 
     // Verify persisted status
     const persisted = await repository.getProjectSpec("project:task-100");
@@ -110,6 +116,23 @@ describe("executeProjectApproval", () => {
 
     const persistedTicket2 = await repository.getTicketSpec("project:task-100:ticket:2");
     expect(persistedTicket2?.status).toBe("pending");
+
+    const childSnapshot = await repository.getTaskSnapshot("task-100-ticket-1");
+    expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
+    expect(childSnapshot.manifest?.currentPhase).toBe("development");
+    expect(childSnapshot.manifest?.source.issueNumber).toBe(ticket1?.githubSubIssueNumber);
+    expect(childSnapshot.spec?.acceptanceCriteria).toEqual(["Feature works"]);
+    expect(
+      childSnapshot.approvalRequests.some(
+        (request) => request.phase === "policy_gate" && request.status === "approved"
+      )
+    ).toBe(true);
+    expect(
+      childSnapshot.memoryRecords.find((record) => record.key === "project.ticket")?.value
+    ).toMatchObject({
+      projectId: "project:task-100",
+      ticketId: "project:task-100:ticket:1"
+    });
   });
 
   it("creates sub-issues with priority index prefix in dependency order", async () => {
@@ -197,6 +220,8 @@ describe("executeProjectApproval", () => {
     expect(result.dispatchedTicket).not.toBeNull();
     expect(result.dispatchedTicket?.ticketId).toBe("project:task-100:ticket:1");
     expect(result.project.status).toBe("executing");
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
+    expect(result.dispatchedTaskCreated).toBe(true);
   });
 
   it("falls back when no GitHub Issues adapter is provided", async () => {
@@ -218,6 +243,8 @@ describe("executeProjectApproval", () => {
     expect(result.subIssuesFallback).toBe(true);
     expect(result.dispatchedTicket).not.toBeNull();
     expect(result.project.status).toBe("executing");
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
+    expect(result.dispatchedTaskCreated).toBe(true);
   });
 
   it("falls back when project has no source issue number", async () => {
@@ -239,6 +266,7 @@ describe("executeProjectApproval", () => {
     expect(result.subIssuesCreated).toBe(0);
     expect(result.subIssuesFallback).toBe(true);
     expect(result.dispatchedTicket).not.toBeNull();
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
   });
 
   it("backfills missing sub-issues for an already executing project without redispatching tickets", async () => {
@@ -286,6 +314,60 @@ describe("executeProjectApproval", () => {
       "pending"
     );
     expect([...adapter.getCreatedSubIssues().values()].every((issue) => issue.repo === "acme/project-repo")).toBe(true);
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
+    expect(result.dispatchedTaskCreated).toBe(true);
+  });
+
+  it("recovers an executing project whose dispatched ticket has no child task", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({
+        status: "executing",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2999
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        ticketId: "project:task-100:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-100:ticket:1"],
+        githubSubIssueNumber: 3000
+      })
+    );
+
+    const result = await executeProjectApproval(
+      { projectId: "project:task-100", decidedBy: "operator" },
+      {
+        repository,
+        githubIssuesAdapter: null,
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+
+    expect(result.project.status).toBe("executing");
+    expect(result.subIssuesCreated).toBe(0);
+    expect(result.subIssuesFallback).toBe(false);
+    expect(result.dispatchedTicket?.ticketId).toBe("project:task-100:ticket:1");
+    expect(result.dispatchedTaskId).toBe("task-100-ticket-1");
+    expect(result.dispatchedTaskCreated).toBe(true);
+
+    const childSnapshot = await repository.getTaskSnapshot("task-100-ticket-1");
+    expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
+    expect(childSnapshot.manifest?.source.issueNumber).toBe(2999);
+  });
+
+  it("derives stable project ticket task ids", () => {
+    expect(createProjectTicketTaskId("project:derekrivers-firstvoyage-69:ticket:1")).toBe(
+      "derekrivers-firstvoyage-69-ticket-1"
+    );
   });
 
   it("throws when project is not in pending_approval status", async () => {
@@ -444,6 +526,8 @@ describe("advanceProjectTicket", () => {
     expect(result.ticket.status).toBe("merged");
     expect(result.ticket.githubPrNumber).toBe(55);
     expect(result.nextDispatchedTicket?.ticketId).toBe("project:task-100:ticket:2");
+    expect(result.nextDispatchedTaskId).toBe("task-100-ticket-2");
+    expect(result.nextDispatchedTaskCreated).toBe(true);
 
     // Sub-issue should have been closed
     expect(adapter.getClosedIssues().has(2000)).toBe(true);
@@ -454,6 +538,10 @@ describe("advanceProjectTicket", () => {
 
     const persistedTicket2 = await repository.getTicketSpec("project:task-100:ticket:2");
     expect(persistedTicket2?.status).toBe("dispatched");
+
+    const childSnapshot = await repository.getTaskSnapshot("task-100-ticket-2");
+    expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
+    expect(childSnapshot.manifest?.source.issueNumber).toBe(2001);
   });
 
   it("completes the project when all tickets are merged", async () => {
@@ -484,6 +572,7 @@ describe("advanceProjectTicket", () => {
 
     expect(result.outcome).toBe("completed");
     expect(result.project.status).toBe("complete");
+    expect(result.nextDispatchedTaskId).toBeNull();
 
     const persisted = await repository.getProjectSpec("project:task-100");
     expect(persisted?.status).toBe("complete");
@@ -506,6 +595,7 @@ describe("advanceProjectTicket", () => {
 
     expect(result.outcome).toBe("already_merged");
     expect(result.nextDispatchedTicket).toBeNull();
+    expect(result.nextDispatchedTaskCreated).toBe(false);
   });
 
   it("throws when ticket does not exist", async () => {
@@ -543,5 +633,6 @@ describe("advanceProjectTicket", () => {
 
     expect(result.outcome).toBe("completed");
     expect(result.ticket.status).toBe("merged");
+    expect(result.nextDispatchedTaskId).toBeNull();
   });
 });

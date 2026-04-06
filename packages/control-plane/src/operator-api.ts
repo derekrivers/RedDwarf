@@ -64,7 +64,11 @@ import {
   type SweepOrphanedStateResult
 } from "./pipeline.js";
 import { classifyComplexity } from "./rimmer/index.js";
-import { executeProjectApproval, advanceProjectTicket } from "./pipeline/project-approval.js";
+import {
+  advanceProjectTicket,
+  createProjectTicketTaskId,
+  executeProjectApproval
+} from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
@@ -2622,16 +2626,31 @@ async function handleOperatorRequest(
       }
       if (project.status === "executing") {
         const tickets = await repository.listTicketSpecs(projectId);
+        let hasDispatchedTicketWithoutTask = false;
+        for (const ticket of tickets) {
+          if (ticket.status !== "dispatched" || ticket.githubPrNumber !== null) {
+            continue;
+          }
+          const taskId = createProjectTicketTaskId(ticket.ticketId);
+          const snapshot = await repository.getTaskSnapshot(taskId);
+          if (!snapshot.manifest) {
+            hasDispatchedTicketWithoutTask = true;
+            break;
+          }
+        }
         const backfillable = (
           tickets.length > 0 &&
-          tickets.some((ticket) => ticket.githubSubIssueNumber === null) &&
+          (
+            tickets.some((ticket) => ticket.githubSubIssueNumber === null) ||
+            hasDispatchedTicketWithoutTask
+          ) &&
           tickets.some((ticket) => ticket.status !== "pending") &&
           tickets.every((ticket) => ticket.githubPrNumber === null)
         );
         if (!backfillable) {
           writeOperatorJsonResponse(res, 409, {
             error: "conflict",
-            message: `Project ${projectId} is in status 'executing' but cannot be backfilled because no GitHub sub-issues are missing or at least one ticket already has a PR.`
+            message: `Project ${projectId} is in status 'executing' but cannot be recovered because no GitHub sub-issues or dispatched child tasks are missing, or at least one ticket already has a PR.`
           });
           return;
         }
@@ -2656,6 +2675,8 @@ async function handleOperatorRequest(
         subIssuesCreated: result.subIssuesCreated,
         subIssuesFallback: result.subIssuesFallback,
         dispatchedTicket: result.dispatchedTicket,
+        dispatchedTaskId: result.dispatchedTaskId,
+        dispatchedTaskCreated: result.dispatchedTaskCreated,
         message: result.subIssuesFallback
           ? "Project approved and executing (Postgres-only — GitHub sub-issues not created)."
           : `Project approved. ${result.subIssuesCreated} sub-issue(s) created. Executing.`
@@ -2839,6 +2860,8 @@ async function handleOperatorRequest(
         ticket: result.ticket,
         project: result.project,
         nextDispatchedTicket: result.nextDispatchedTicket,
+        nextDispatchedTaskId: result.nextDispatchedTaskId,
+        nextDispatchedTaskCreated: result.nextDispatchedTaskCreated,
         message:
           result.outcome === "already_merged"
             ? `Ticket ${body.ticket_id} is already merged. No state change.`

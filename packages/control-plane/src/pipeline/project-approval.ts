@@ -1,11 +1,30 @@
 import {
   asIsoTimestamp,
+  planningSpecSchema,
+  taskManifestSchema,
+  type Capability,
+  type PlanningTaskInput,
   type ProjectSpec,
+  type TaskManifest,
   type TicketSpec
 } from "@reddwarf/contracts";
-import type { PlanningRepository } from "@reddwarf/evidence";
+import {
+  createApprovalRequest,
+  createEvidenceRecord,
+  createMemoryRecord,
+  deriveOrganizationId,
+  type PlanningRepository
+} from "@reddwarf/evidence";
 import type { GitHubIssuesAdapter } from "@reddwarf/integrations";
 import { V1MutationDisabledError } from "@reddwarf/integrations";
+import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
+import {
+  expandAllowedPathsForGeneratedArtifacts,
+  normalizeAllowedPaths
+} from "../allowed-paths.js";
+import {
+  readPlanningDefaultBranchFromSnapshot
+} from "./shared.js";
 
 export interface ExecuteProjectApprovalInput {
   projectId: string;
@@ -26,6 +45,8 @@ export interface ExecuteProjectApprovalResult {
   subIssuesCreated: number;
   subIssuesFallback: boolean;
   dispatchedTicket: TicketSpec | null;
+  dispatchedTaskId: string | null;
+  dispatchedTaskCreated: boolean;
 }
 
 function canResumeApprovedProject(project: ProjectSpec, tickets: TicketSpec[]): boolean {
@@ -47,6 +68,431 @@ function canBackfillMissingSubIssues(project: ProjectSpec, tickets: TicketSpec[]
     tickets.some((ticket) => ticket.status !== "pending") &&
     tickets.every((ticket) => ticket.githubPrNumber === null)
   );
+}
+
+export function createProjectTicketTaskId(ticketId: string): string {
+  const withoutProjectPrefix = ticketId.replace(/^project:/, "");
+  const normalized = withoutProjectPrefix
+    .replace(/:ticket:/g, "-ticket-")
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+
+  return normalized.length > 0 ? normalized : "project-ticket";
+}
+
+async function listDispatchedTicketsMissingTask(input: {
+  repository: PlanningRepository;
+  project: ProjectSpec;
+  tickets: TicketSpec[];
+}): Promise<TicketSpec[]> {
+  if (
+    input.project.status !== "executing" ||
+    !input.tickets.every((ticket) => ticket.githubPrNumber === null)
+  ) {
+    return [];
+  }
+
+  const missingTasks: TicketSpec[] = [];
+
+  for (const ticket of input.tickets) {
+    if (ticket.status !== "dispatched") {
+      continue;
+    }
+
+    const taskId = createProjectTicketTaskId(ticket.ticketId);
+    const snapshot = await input.repository.getTaskSnapshot(taskId);
+    if (!snapshot.manifest) {
+      missingTasks.push(ticket);
+    }
+  }
+
+  return missingTasks;
+}
+
+function normalizeTicketSummary(ticket: TicketSpec): string {
+  const description = ticket.description.trim();
+  if (description.length >= 20) {
+    return description;
+  }
+
+  const fallback = `Project ticket ${ticket.title}: ${description || "Implement the approved project ticket scope."}`;
+  return fallback.length >= 20
+    ? fallback
+    : `${fallback} Complete the approved ticket scope.`;
+}
+
+function normalizeDecisionSummary(
+  value: string | null | undefined,
+  fallback: string
+): string {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : fallback;
+}
+
+function extractTicketAffectedPaths(ticket: TicketSpec): string[] {
+  const text = [
+    ticket.description,
+    ...ticket.acceptanceCriteria
+  ].join("\n");
+  const candidates = new Set<string>();
+
+  for (const match of text.matchAll(/`([^`]+)`/g)) {
+    const candidate = match[1]?.trim();
+    if (candidate) {
+      candidates.add(candidate);
+    }
+  }
+
+  for (const token of text.split(/\s+/g)) {
+    const candidate = token
+      .replace(/^[("'[]+|[)"'\],.;:]+$/g, "")
+      .trim();
+    if (
+      candidate.length > 0 &&
+      !candidate.includes("://") &&
+      !candidate.startsWith("#") &&
+      (candidate.includes("/") || /\.[a-zA-Z0-9]+$/.test(candidate))
+    ) {
+      candidates.add(candidate);
+    }
+  }
+
+  const normalized = normalizeAllowedPaths(
+    [...candidates].filter((candidate) => !candidate.includes(" "))
+  );
+  return normalized.length > 0 ? normalized : ["**/*"];
+}
+
+function createProjectTicketSource(input: {
+  project: ProjectSpec;
+  ticket: TicketSpec;
+}): PlanningTaskInput["source"] {
+  const issueNumber =
+    input.ticket.githubSubIssueNumber ??
+    (input.project.sourceIssueId
+      ? Number.parseInt(input.project.sourceIssueId, 10)
+      : undefined);
+  const source: PlanningTaskInput["source"] = {
+    provider: "github",
+    repo: input.project.sourceRepo,
+    ...(issueNumber !== undefined && Number.isFinite(issueNumber)
+      ? {
+          issueNumber,
+          issueUrl: `https://github.com/${input.project.sourceRepo}/issues/${issueNumber}`
+        }
+      : {})
+  };
+  return source;
+}
+
+async function readProjectDefaultBranch(
+  repository: PlanningRepository,
+  project: ProjectSpec
+): Promise<string> {
+  const parentTaskId = project.projectId.startsWith("project:")
+    ? project.projectId.slice("project:".length)
+    : null;
+
+  if (!parentTaskId) {
+    return "main";
+  }
+
+  const parentSnapshot = await repository.getTaskSnapshot(parentTaskId);
+  if (!parentSnapshot.manifest) {
+    return "main";
+  }
+
+  return readPlanningDefaultBranchFromSnapshot(parentSnapshot);
+}
+
+const projectTicketCapabilities: Capability[] = [
+  "can_write_code",
+  "can_run_tests",
+  "can_open_pr",
+  "can_archive_evidence"
+];
+
+export interface ProjectTicketTaskMaterializationResult {
+  taskId: string;
+  created: boolean;
+}
+
+async function materializeProjectTicketTask(input: {
+  repository: PlanningRepository;
+  project: ProjectSpec;
+  ticket: TicketSpec;
+  decidedBy: string;
+  decisionSummary?: string | null | undefined;
+  now: () => string;
+}): Promise<ProjectTicketTaskMaterializationResult> {
+  const { repository, project, ticket, now } = input;
+  const taskId = createProjectTicketTaskId(ticket.ticketId);
+  const existingSnapshot = await repository.getTaskSnapshot(taskId);
+  const taskCreatedAt = existingSnapshot.manifest?.createdAt ?? now();
+  const updatedAt = now();
+  const source = createProjectTicketSource({ project, ticket });
+  const affectedPaths = extractTicketAffectedPaths(ticket);
+  const summary = normalizeTicketSummary(ticket);
+  const defaultBranch = await readProjectDefaultBranch(repository, project);
+  const planningInput: PlanningTaskInput = {
+    source,
+    title: ticket.title,
+    summary,
+    priority: 50,
+    dryRun: false,
+    labels: ["ai-eligible", "reddwarf-ticket"],
+    acceptanceCriteria:
+      ticket.acceptanceCriteria.length > 0
+        ? ticket.acceptanceCriteria
+        : [`Complete project ticket ${ticket.ticketId}.`],
+    affectedPaths,
+    requestedCapabilities: projectTicketCapabilities,
+    metadata: {
+      projectId: project.projectId,
+      ticketId: ticket.ticketId,
+      githubSubIssueNumber: ticket.githubSubIssueNumber,
+      githubPrNumber: ticket.githubPrNumber,
+      github: {
+        baseBranch: defaultBranch
+      }
+    }
+  };
+  const policySnapshot = buildPolicySnapshot(
+    planningInput,
+    ticket.riskClass,
+    "human_signoff_required",
+    {
+      level: "high",
+      reason: "Ticket was generated from an approved ProjectSpec."
+    }
+  );
+  const expandedPolicySnapshot = {
+    ...policySnapshot,
+    allowedPaths: expandAllowedPathsForGeneratedArtifacts(
+      normalizeAllowedPaths([
+        ...policySnapshot.allowedPaths,
+        ...affectedPaths
+      ])
+    )
+  };
+  const spec = planningSpecSchema.parse({
+    specId: `${taskId}:planning-spec`,
+    taskId,
+    summary,
+    assumptions: [
+      `This task implements project ticket ${ticket.ticketId} from ${project.projectId}.`
+    ],
+    affectedAreas: affectedPaths,
+    constraints: [
+      `Project ID: ${project.projectId}`,
+      `Ticket ID: ${ticket.ticketId}`,
+      "Keep the pull request scoped to this ticket and include the RedDwarf ticket marker in the PR body."
+    ],
+    acceptanceCriteria: planningInput.acceptanceCriteria,
+    testExpectations: [
+      "Run the most relevant local verification for the changed paths."
+    ],
+    recommendedAgentType: "developer",
+    riskClass: ticket.riskClass,
+    confidenceLevel: "high",
+    confidenceReason: "Ticket was generated from an approved ProjectSpec.",
+    projectSize: "small",
+    createdAt: taskCreatedAt
+  });
+  const manifest = taskManifestSchema.parse({
+    taskId,
+    source,
+    title: ticket.title,
+    summary,
+    priority: planningInput.priority,
+    dryRun: planningInput.dryRun,
+    riskClass: ticket.riskClass,
+    approvalMode: "human_signoff_required",
+    currentPhase: "development",
+    lifecycleStatus: "ready",
+    assignedAgentType: "developer",
+    requestedCapabilities: projectTicketCapabilities,
+    retryCount: 0,
+    evidenceLinks: [
+      `db://manifest/${taskId}:manifest`,
+      `db://planning_spec/${spec.specId}`,
+      `db://gate_decision/${taskId}:approval:project`
+    ],
+    workspaceId: null,
+    branchName: null,
+    prNumber: null,
+    policyVersion: getPolicyVersion(),
+    createdAt: taskCreatedAt,
+    updatedAt
+  }) satisfies TaskManifest;
+  const approval = createApprovalRequest({
+    requestId: `${taskId}:approval:project`,
+    taskId,
+    runId: `${taskId}:project-approval`,
+    phase: "policy_gate",
+    dryRun: false,
+    confidenceLevel: "high",
+    confidenceReason: "Ticket was approved as part of the project plan.",
+    approvalMode: "human_signoff_required",
+    status: "approved",
+    riskClass: ticket.riskClass,
+    summary: `Project ticket ${ticket.ticketId} was approved through ${project.projectId}.`,
+    requestedCapabilities: projectTicketCapabilities,
+    allowedPaths: expandedPolicySnapshot.allowedPaths,
+    blockedPhases: expandedPolicySnapshot.blockedPhases,
+    policyReasons: expandedPolicySnapshot.reasons,
+    requestedBy: "project-approval",
+    decidedBy: input.decidedBy,
+    decision: "approve",
+    decisionSummary:
+      normalizeDecisionSummary(
+        input.decisionSummary,
+        `Approved through project ${project.projectId}.`
+      ),
+    createdAt: taskCreatedAt,
+    updatedAt,
+    resolvedAt: updatedAt
+  });
+
+  if (!existingSnapshot.manifest) {
+    await repository.saveManifest(manifest);
+  }
+  if (!existingSnapshot.spec) {
+    await repository.savePlanningSpec(spec);
+  }
+  if (!existingSnapshot.policySnapshot) {
+    await repository.savePolicySnapshot(taskId, expandedPolicySnapshot);
+  }
+  if (
+    !existingSnapshot.approvalRequests.some(
+      (request) => request.requestId === approval.requestId
+    )
+  ) {
+    await repository.saveApprovalRequest(approval);
+  }
+  if (
+    !existingSnapshot.evidenceRecords.some(
+      (record) => record.recordId === `${taskId}:manifest`
+    )
+  ) {
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:manifest`,
+        taskId,
+        kind: "manifest",
+        title: "Project ticket task manifest",
+        metadata: {
+          phase: "policy_gate" as const,
+          projectId: project.projectId,
+          ticketId: ticket.ticketId
+        },
+        createdAt: taskCreatedAt
+      })
+    );
+  }
+  if (
+    !existingSnapshot.evidenceRecords.some(
+      (record) => record.recordId === `${taskId}:spec`
+    )
+  ) {
+    await repository.saveEvidenceRecord(
+      createEvidenceRecord({
+        recordId: `${taskId}:spec`,
+        taskId,
+        kind: "planning_spec",
+        title: "Project ticket planning specification",
+        metadata: {
+          phase: "planning" as const,
+          projectId: project.projectId,
+          ticketId: ticket.ticketId,
+          specId: spec.specId
+        },
+        createdAt: taskCreatedAt
+      })
+    );
+  }
+
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${taskId}:memory:task:planning`,
+      taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: "planning.brief",
+      title: "Project ticket planning brief",
+      value: {
+        specId: spec.specId,
+        summary: spec.summary,
+        acceptanceCriteria: spec.acceptanceCriteria,
+        affectedAreas: spec.affectedAreas,
+        constraints: spec.constraints,
+        policyReasons: expandedPolicySnapshot.reasons,
+        approvalMode: manifest.approvalMode,
+        confidenceLevel: spec.confidenceLevel,
+        confidenceReason: spec.confidenceReason,
+        allowedSecretScopes: expandedPolicySnapshot.allowedSecretScopes,
+        defaultBranch,
+        projectId: project.projectId,
+        ticketId: ticket.ticketId
+      },
+      repo: project.sourceRepo,
+      organizationId: deriveOrganizationId(project.sourceRepo),
+      tags: ["planning", "project", "ticket"],
+      createdAt: taskCreatedAt,
+      updatedAt
+    })
+  );
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${taskId}:memory:task:project-ticket`,
+      taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: "project.ticket",
+      title: "Project ticket dispatch metadata",
+      value: {
+        projectId: project.projectId,
+        ticketId: ticket.ticketId,
+        githubSubIssueNumber: ticket.githubSubIssueNumber,
+        sourceRepo: project.sourceRepo
+      },
+      repo: project.sourceRepo,
+      organizationId: deriveOrganizationId(project.sourceRepo),
+      tags: ["project", "ticket"],
+      createdAt: taskCreatedAt,
+      updatedAt
+    })
+  );
+  await repository.saveMemoryRecord(
+    createMemoryRecord({
+      memoryId: `${taskId}:memory:task:architect-handoff`,
+      taskId,
+      scope: "task",
+      provenance: "pipeline_derived",
+      key: "architect.handoff",
+      title: "Project ticket architect handoff",
+      value: {
+        summary: spec.summary,
+        affectedAreas: spec.affectedAreas,
+        assumptions: spec.assumptions,
+        constraints: spec.constraints,
+        testExpectations: spec.testExpectations,
+        source: "project-mode"
+      },
+      repo: project.sourceRepo,
+      organizationId: deriveOrganizationId(project.sourceRepo),
+      tags: ["planning", "architect", "project", "ticket"],
+      createdAt: taskCreatedAt,
+      updatedAt
+    })
+  );
+
+  return {
+    taskId,
+    created: !existingSnapshot.manifest
+  };
 }
 
 function hasValidGitHubIssuesAdapter(
@@ -87,14 +533,22 @@ export async function executeProjectApproval(
   const tickets = await repository.listTicketSpecs(input.projectId);
   const resumableApprovedProject = canResumeApprovedProject(project, tickets);
   const backfillingMissingSubIssues = canBackfillMissingSubIssues(project, tickets);
+  const dispatchedTicketsMissingTask = await listDispatchedTicketsMissingTask({
+    repository,
+    project,
+    tickets
+  });
+  const materializingDispatchedTicketTask =
+    dispatchedTicketsMissingTask.length > 0;
 
   if (
     project.status !== "pending_approval" &&
     !resumableApprovedProject &&
-    !backfillingMissingSubIssues
+    !backfillingMissingSubIssues &&
+    !materializingDispatchedTicketTask
   ) {
     throw new Error(
-      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved, unless the project is already 'approved' and all tickets are still pending, or the project is executing with missing GitHub sub-issue links before any PR has opened.`
+      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved, unless the project is already 'approved' and all tickets are still pending, or the project is executing with recoverable missing GitHub sub-issue links or dispatched child tasks before any PR has opened.`
     );
   }
 
@@ -130,6 +584,14 @@ export async function executeProjectApproval(
         decisionSummary: project.decisionSummary ?? input.decisionSummary ?? null,
         updatedAt: now()
       }
+    : materializingDispatchedTicketTask
+    ? {
+        ...project,
+        approvalDecision: project.approvalDecision ?? "approve",
+        decidedBy: project.decidedBy ?? input.decidedBy,
+        decisionSummary: project.decisionSummary ?? input.decisionSummary ?? null,
+        updatedAt: now()
+      }
     : {
         ...project,
         status: "approved",
@@ -144,6 +606,8 @@ export async function executeProjectApproval(
       ? `Resuming approved project ${input.projectId} after an incomplete approval.`
       : backfillingMissingSubIssues
         ? `Backfilling missing GitHub sub-issues for executing project ${input.projectId}.`
+        : materializingDispatchedTicketTask
+          ? `Materializing missing dispatched ticket task for executing project ${input.projectId}.`
       : `Project ${input.projectId} approved by ${input.decidedBy}.`
   );
 
@@ -156,8 +620,13 @@ export async function executeProjectApproval(
   const sourceIssueNumber = project.sourceIssueId
     ? parseInt(project.sourceIssueId, 10)
     : null;
+  const hasMissingSubIssues = orderedTickets.some(
+    (ticket) => ticket.githubSubIssueNumber === null
+  );
 
-  if (
+  if (!hasMissingSubIssues) {
+    subIssuesFallback = false;
+  } else if (
     hasValidGitHubIssuesAdapter(deps.githubIssuesAdapter) &&
     sourceIssueNumber !== null &&
     !isNaN(sourceIssueNumber)
@@ -227,7 +696,7 @@ export async function executeProjectApproval(
   const nextTicket = await repository.resolveNextReadyTicket(input.projectId);
   let dispatchedTicket: TicketSpec | null = null;
 
-  if (backfillingMissingSubIssues) {
+  if (backfillingMissingSubIssues || materializingDispatchedTicketTask) {
     dispatchedTicket =
       orderedTickets.find((ticket) => ticket.status === "dispatched") ?? null;
   } else if (nextTicket) {
@@ -257,6 +726,26 @@ export async function executeProjectApproval(
   await repository.saveProjectSpec(executingProject);
   logger?.info(`Project ${input.projectId} status updated to 'executing'.`);
 
+  let dispatchedTaskId: string | null = null;
+  let dispatchedTaskCreated = false;
+  if (dispatchedTicket) {
+    const materialized = await materializeProjectTicketTask({
+      repository,
+      project: executingProject,
+      ticket: dispatchedTicket,
+      decidedBy: input.decidedBy,
+      decisionSummary: input.decisionSummary,
+      now
+    });
+    dispatchedTaskId = materialized.taskId;
+    dispatchedTaskCreated = materialized.created;
+    logger?.info(
+      materialized.created
+        ? `Materialized ready child task ${materialized.taskId} for project ticket ${dispatchedTicket.ticketId}.`
+        : `Project ticket ${dispatchedTicket.ticketId} already has child task ${materialized.taskId}.`
+    );
+  }
+
   // Return the final ticket states
   const finalTickets = await repository.listTicketSpecs(input.projectId);
 
@@ -265,7 +754,9 @@ export async function executeProjectApproval(
     tickets: finalTickets,
     subIssuesCreated,
     subIssuesFallback,
-    dispatchedTicket
+    dispatchedTicket,
+    dispatchedTaskId,
+    dispatchedTaskCreated
   };
 }
 
@@ -329,6 +820,8 @@ export interface AdvanceProjectTicketResult {
   ticket: TicketSpec;
   project: ProjectSpec;
   nextDispatchedTicket: TicketSpec | null;
+  nextDispatchedTaskId: string | null;
+  nextDispatchedTaskCreated: boolean;
 }
 
 /**
@@ -369,7 +862,9 @@ export async function advanceProjectTicket(
       outcome: "already_merged",
       ticket,
       project,
-      nextDispatchedTicket: null
+      nextDispatchedTicket: null,
+      nextDispatchedTaskId: null,
+      nextDispatchedTaskCreated: false
     };
   }
 
@@ -421,6 +916,14 @@ export async function advanceProjectTicket(
     };
     await repository.saveTicketSpec(dispatched);
     nextDispatchedTicket = dispatched;
+    const materialized = await materializeProjectTicketTask({
+      repository,
+      project,
+      ticket: dispatched,
+      decidedBy: "project-advance",
+      decisionSummary: `Dispatched after merging ${input.ticketId}.`,
+      now
+    });
 
     logger?.info(
       `Dispatched next ticket ${nextTicket.ticketId} (${nextTicket.title}).`
@@ -430,7 +933,9 @@ export async function advanceProjectTicket(
       outcome: "advanced",
       ticket: mergedTicket,
       project,
-      nextDispatchedTicket
+      nextDispatchedTicket,
+      nextDispatchedTaskId: materialized.taskId,
+      nextDispatchedTaskCreated: materialized.created
     };
   }
 
@@ -453,7 +958,9 @@ export async function advanceProjectTicket(
       outcome: "completed",
       ticket: mergedTicket,
       project: completedProject,
-      nextDispatchedTicket: null
+      nextDispatchedTicket: null,
+      nextDispatchedTaskId: null,
+      nextDispatchedTaskCreated: false
     };
   }
 
@@ -466,6 +973,8 @@ export async function advanceProjectTicket(
     outcome: "advanced",
     ticket: mergedTicket,
     project,
-    nextDispatchedTicket: null
+    nextDispatchedTicket: null,
+    nextDispatchedTaskId: null,
+    nextDispatchedTaskCreated: false
   };
 }

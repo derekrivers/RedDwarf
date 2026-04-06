@@ -2368,6 +2368,8 @@ describe("Project Mode — POST /projects/:id/approve", () => {
         project: { status: string; approvalDecision: string; decidedBy: string };
         subIssuesFallback: boolean;
         dispatchedTicket: { ticketId: string } | null;
+        dispatchedTaskId: string | null;
+        dispatchedTaskCreated: boolean;
       };
       // Project transitions all the way to executing (no adapter = fallback)
       expect(body.project.status).toBe("executing");
@@ -2375,6 +2377,8 @@ describe("Project Mode — POST /projects/:id/approve", () => {
       expect(body.project.decidedBy).toBe("derek");
       expect(body.subIssuesFallback).toBe(true);
       expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+      expect(body.dispatchedTaskCreated).toBe(true);
 
       const persisted = await repository.getProjectSpec("project:task-001");
       expect(persisted?.status).toBe("executing");
@@ -2475,6 +2479,7 @@ describe("Project Mode — POST /projects/:id/approve", () => {
         subIssuesFallback: boolean;
         tickets: { githubSubIssueNumber: number | null; status: string }[];
         dispatchedTicket: { ticketId: string } | null;
+        dispatchedTaskId: string | null;
       };
       expect(body.project.status).toBe("executing");
       expect(body.subIssuesCreated).toBe(2);
@@ -2482,6 +2487,59 @@ describe("Project Mode — POST /projects/:id/approve", () => {
       expect(body.tickets.every((t) => t.githubSubIssueNumber !== null)).toBe(true);
       expect(body.tickets.filter((t) => t.status === "dispatched")).toHaveLength(1);
       expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("recovers an executing project whose dispatched ticket is missing a child task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        sourceIssueId: "10",
+        status: "executing",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        dispatchedTaskId: string | null;
+        dispatchedTaskCreated: boolean;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(0);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+      expect(body.dispatchedTaskCreated).toBe(true);
+
+      const childSnapshot = await repository.getTaskSnapshot("task-001-ticket-1");
+      expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
     } finally {
       await server.stop();
     }
@@ -2895,6 +2953,12 @@ describe("Project Mode — POST /projects/advance", () => {
       expect(body.ticket.githubPrNumber).toBe(55);
       expect(body.nextDispatchedTicket).not.toBeNull();
       expect(body.nextDispatchedTicket!.ticketId).toBe("project:task-001:ticket:2");
+      expect((res.body as { nextDispatchedTaskId: string | null }).nextDispatchedTaskId).toBe(
+        "task-001-ticket-2"
+      );
+
+      const childSnapshot = await repository.getTaskSnapshot("task-001-ticket-2");
+      expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
     } finally {
       await server.stop();
     }

@@ -2,6 +2,11 @@
 
 ## 2026-04-06
 
+- Fixed the next Project Mode execution gap after live project `derekrivers/FirstVoyage#69` proved that approval could create GitHub child issues and mark ticket 1 as `dispatched` without launching any developer workspace or run.
+- Project ticket dispatch now materializes a deterministic child task for the dispatched `TicketSpec`, including a ready manifest, ticket-scoped planning spec, policy snapshot, approved policy-gate row, and project-ticket memory. The existing ready-task dispatcher can then start the normal developer/review/validation/SCM pipeline instead of requiring a parallel Project Mode executor.
+- Added recovery for already-`executing` projects whose dispatched ticket has child GitHub issues but no child task: re-running `POST /projects/:id/approve` now materializes the missing ready child task without recreating child issues or changing ticket order. Merge-driven `advanceProjectTicket(...)` now materializes the next ticket task as it dispatches.
+- SCM now appends the `<!-- reddwarf:ticket_id:... -->` marker to project-ticket PR bodies so the existing GitHub Actions workflow can call `/projects/advance` with the original `TicketSpec.ticketId` even though the branch name uses the sanitized child task ID.
+
 - Investigated live project `derekrivers/FirstVoyage#70` after project-level approval moved it to `executing` but GitHub still showed no child issues. The detail endpoint showed ticket 1 as `dispatched` while all `githubSubIssueNumber` values remained `null`, proving the Postgres-only fallback path had advanced internal state without external GitHub sub-issue creation.
 - Project approval now uses the persisted `ProjectSpec.sourceRepo` for sub-issue creation instead of depending on a single global `GITHUB_REPO` value, and the GitHub Issues adapter no longer requires `GITHUB_REPO` at startup when callers pass a repo per operation.
 - Added a recovery path for already-`executing` projects that have missing GitHub sub-issue links and no PRs yet: re-running `POST /projects/:id/approve` with a configured GitHub Issues adapter backfills the missing child issues without redispatching tickets or changing ticket order.

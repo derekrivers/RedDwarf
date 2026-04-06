@@ -6,6 +6,7 @@ import {
 import {
   createEvidenceRecord,
   createMemoryRecord,
+  type PersistedTaskSnapshot,
   createPipelineRun,
   deriveOrganizationId
 } from "@reddwarf/evidence";
@@ -37,6 +38,7 @@ import {
   patchManifest,
   readDevelopmentCodeWriteEnabledFromSnapshot,
   readPlanningDefaultBranchFromSnapshot,
+  readTaskMemoryValue,
   readValidationReportPathFromSnapshot,
   readValidationSummaryFromSnapshot,
   recordRunEvent,
@@ -72,6 +74,36 @@ import {
   renderScmDiffMarkdown,
   renderScmReportMarkdown
 } from "./prompts.js";
+
+export function appendProjectTicketIdMarker(
+  body: string,
+  ticketId: string | null
+): string {
+  if (!ticketId) {
+    return body;
+  }
+
+  const marker = `<!-- reddwarf:ticket_id:${ticketId} -->`;
+  if (body.includes(marker)) {
+    return body;
+  }
+
+  return `${body.trimEnd()}\n\n${marker}\n`;
+}
+
+function readProjectTicketIdFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): string | null {
+  const projectTicket = readTaskMemoryValue(snapshot, "project.ticket");
+  if (!projectTicket || typeof projectTicket !== "object" || Array.isArray(projectTicket)) {
+    return null;
+  }
+
+  const ticketId = (projectTicket as Record<string, unknown>)["ticketId"];
+  return typeof ticketId === "string" && ticketId.trim().length > 0
+    ? ticketId.trim()
+    : null;
+}
 
 export async function runScmPhase(
   input: RunScmPhaseInput,
@@ -551,6 +583,12 @@ export async function runScmPhase(
       }
     });
 
+    const projectTicketId = readProjectTicketIdFromSnapshot(snapshot);
+    const pullRequestBody = appendProjectTicketIdMarker(
+      draft.pullRequestBody,
+      projectTicketId
+    );
+
     const pullRequest = currentManifest.dryRun
       ? null
       : await github.createPullRequest({
@@ -558,7 +596,7 @@ export async function runScmPhase(
           baseBranch: draft.baseBranch,
           headBranch: publication.branch.branchName,
           title: draft.pullRequestTitle,
-          body: draft.pullRequestBody,
+          body: pullRequestBody,
           labels: draft.labels,
           ...(currentManifest.source.issueNumber
             ? { issueNumber: currentManifest.source.issueNumber }
