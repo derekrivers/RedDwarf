@@ -10,6 +10,9 @@ import {
   taskPhaseSchema,
   taskLifecycleStatusSchema,
   agentTypeSchema,
+  projectSizeSchema,
+  projectStatusSchema,
+  ticketStatusSchema,
   QUERY_LIMIT_DEFAULT,
   QUERY_LIMIT_MAX,
   TITLE_MIN_LENGTH,
@@ -153,6 +156,7 @@ export const planningSpecSchema = z.object({
   riskClass: riskClassSchema,
   confidenceLevel: confidenceLevelSchema,
   confidenceReason: z.string().min(1).max(300),
+  projectSize: projectSizeSchema.default("small"),
   createdAt: isoDateTimeSchema
 });
 
@@ -224,6 +228,49 @@ export type PhaseRetryBudgetState = z.infer<typeof phaseRetryBudgetStateSchema>;
 export type TaskManifest = z.infer<typeof taskManifestSchema>;
 export type TaskManifestQuery = z.infer<typeof taskManifestQuerySchema>;
 export type PlanningSpec = z.infer<typeof planningSpecSchema>;
+
+export const complexityClassificationSchema = z.object({
+  size: projectSizeSchema,
+  reasoning: z.string().min(1),
+  signals: z.array(z.string().min(1))
+});
+
+export const ticketSpecSchema = z.object({
+  ticketId: z.string().min(1),
+  projectId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  acceptanceCriteria: z.array(z.string().min(1)),
+  dependsOn: z.array(z.string().min(1)).default([]),
+  status: ticketStatusSchema,
+  complexityClass: riskClassSchema,
+  riskClass: riskClassSchema,
+  githubSubIssueNumber: z.number().int().positive().nullable().default(null),
+  githubPrNumber: z.number().int().positive().nullable().default(null),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema
+});
+
+export const projectSpecSchema = z.object({
+  projectId: z.string().min(1),
+  sourceIssueId: z.string().min(1).nullable().default(null),
+  sourceRepo: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  projectSize: projectSizeSchema,
+  status: projectStatusSchema,
+  complexityClassification: complexityClassificationSchema.nullable().default(null),
+  approvalDecision: z.string().min(1).nullable().default(null),
+  decidedBy: z.string().min(1).nullable().default(null),
+  decisionSummary: z.string().min(1).nullable().default(null),
+  amendments: z.string().min(1).nullable().default(null),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema
+});
+
+export type ComplexityClassification = z.infer<typeof complexityClassificationSchema>;
+export type TicketSpec = z.infer<typeof ticketSpecSchema>;
+export type ProjectSpec = z.infer<typeof projectSpecSchema>;
 
 export interface RetryBudgetConfig {
   maxRetries: Partial<Record<z.infer<typeof taskPhaseSchema>, number>>;

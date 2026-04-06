@@ -25,10 +25,12 @@ import {
   type PipelineRunQuery,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
   type RunSummary,
-  type TaskManifest
+  type TaskManifest,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import pg from "pg";
 import {
@@ -44,7 +46,9 @@ import {
   mapOperatorConfigRow,
   mapApprovalRequestRow,
   mapPromptSnapshotRow,
-  mapEligibilityRejectionRow
+  mapEligibilityRejectionRow,
+  mapProjectSpecRow,
+  mapTicketSpecRow
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -436,8 +440,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           risk_class,
           confidence_level,
           confidence_reason,
+          project_size,
           created_at
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (spec_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           summary = EXCLUDED.summary,
@@ -450,6 +455,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           risk_class = EXCLUDED.risk_class,
           confidence_level = EXCLUDED.confidence_level,
           confidence_reason = EXCLUDED.confidence_reason,
+          project_size = EXCLUDED.project_size,
           created_at = EXCLUDED.created_at
       `,
       [
@@ -465,6 +471,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
         spec.riskClass,
         spec.confidenceLevel,
         spec.confidenceReason,
+        spec.projectSize ?? "small",
         spec.createdAt
       ]
     );
@@ -1420,6 +1427,158 @@ export class PostgresPlanningRepository implements PlanningRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext> {
     return buildMemoryContextForRepository(this, input);
+  }
+
+  async saveProjectSpec(project: ProjectSpec): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO project_specs (
+          project_id, source_issue_id, source_repo, title, summary,
+          project_size, status, complexity_classification,
+          approval_decision, decided_by, decision_summary, amendments,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (project_id) DO UPDATE SET
+          source_issue_id = EXCLUDED.source_issue_id,
+          source_repo = EXCLUDED.source_repo,
+          title = EXCLUDED.title,
+          summary = EXCLUDED.summary,
+          project_size = EXCLUDED.project_size,
+          status = EXCLUDED.status,
+          complexity_classification = EXCLUDED.complexity_classification,
+          approval_decision = EXCLUDED.approval_decision,
+          decided_by = EXCLUDED.decided_by,
+          decision_summary = EXCLUDED.decision_summary,
+          amendments = EXCLUDED.amendments,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        project.projectId,
+        project.sourceIssueId,
+        project.sourceRepo,
+        project.title,
+        project.summary,
+        project.projectSize,
+        project.status,
+        project.complexityClassification
+          ? JSON.stringify(project.complexityClassification)
+          : null,
+        project.approvalDecision,
+        project.decidedBy,
+        project.decisionSummary,
+        project.amendments,
+        project.createdAt,
+        project.updatedAt
+      ]
+    );
+  }
+
+  async saveTicketSpec(ticket: TicketSpec): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO ticket_specs (
+          ticket_id, project_id, title, description,
+          acceptance_criteria, depends_on, status,
+          complexity_class, risk_class,
+          github_sub_issue_number, github_pr_number,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (ticket_id) DO UPDATE SET
+          project_id = EXCLUDED.project_id,
+          title = EXCLUDED.title,
+          description = EXCLUDED.description,
+          acceptance_criteria = EXCLUDED.acceptance_criteria,
+          depends_on = EXCLUDED.depends_on,
+          status = EXCLUDED.status,
+          complexity_class = EXCLUDED.complexity_class,
+          risk_class = EXCLUDED.risk_class,
+          github_sub_issue_number = EXCLUDED.github_sub_issue_number,
+          github_pr_number = EXCLUDED.github_pr_number,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        ticket.ticketId,
+        ticket.projectId,
+        ticket.title,
+        ticket.description,
+        JSON.stringify(ticket.acceptanceCriteria),
+        JSON.stringify(ticket.dependsOn),
+        ticket.status,
+        ticket.complexityClass,
+        ticket.riskClass,
+        ticket.githubSubIssueNumber,
+        ticket.githubPrNumber,
+        ticket.createdAt,
+        ticket.updatedAt
+      ]
+    );
+  }
+
+  async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
+    const now = asIsoTimestamp();
+    await this.pool.query(
+      `UPDATE project_specs SET status = $1, updated_at = $2 WHERE project_id = $3`,
+      [status, now, projectId]
+    );
+  }
+
+  async updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void> {
+    const now = asIsoTimestamp();
+    await this.pool.query(
+      `UPDATE ticket_specs SET status = $1, updated_at = $2 WHERE ticket_id = $3`,
+      [status, now, ticketId]
+    );
+  }
+
+  async getProjectSpec(projectId: string): Promise<ProjectSpec | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM project_specs WHERE project_id = $1`,
+      [projectId]
+    );
+    return result.rows[0] ? mapProjectSpecRow(result.rows[0]) : null;
+  }
+
+  async listProjectSpecs(repo?: string): Promise<ProjectSpec[]> {
+    if (repo) {
+      const result = await this.pool.query(
+        `SELECT * FROM project_specs WHERE source_repo = $1 ORDER BY created_at DESC`,
+        [repo]
+      );
+      return result.rows.map(mapProjectSpecRow);
+    }
+    const result = await this.pool.query(
+      `SELECT * FROM project_specs ORDER BY created_at DESC`
+    );
+    return result.rows.map(mapProjectSpecRow);
+  }
+
+  async getTicketSpec(ticketId: string): Promise<TicketSpec | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM ticket_specs WHERE ticket_id = $1`,
+      [ticketId]
+    );
+    return result.rows[0] ? mapTicketSpecRow(result.rows[0]) : null;
+  }
+
+  async listTicketSpecs(projectId: string): Promise<TicketSpec[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+      [projectId]
+    );
+    return result.rows.map(mapTicketSpecRow);
+  }
+
+  async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
+    const tickets = await this.listTicketSpecs(projectId);
+    const mergedIds = new Set(
+      tickets.filter((t) => t.status === "merged").map((t) => t.ticketId)
+    );
+    for (const ticket of tickets) {
+      if (ticket.status !== "pending") continue;
+      const allDepsResolved = ticket.dependsOn.every((dep) => mergedIds.has(dep));
+      if (allDepsResolved) return ticket;
+    }
+    return null;
   }
 }
 

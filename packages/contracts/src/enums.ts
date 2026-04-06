@@ -144,6 +144,25 @@ export const openClawBootstrapFileKinds = [
 ] as const;
 export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
 export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
+export const projectSizes = ["small", "medium", "large"] as const;
+export const projectStatuses = [
+  "draft",
+  "clarification_pending",
+  "pending_approval",
+  "approved",
+  "executing",
+  "complete",
+  "failed"
+] as const;
+export const ticketStatuses = [
+  "pending",
+  "dispatched",
+  "in_progress",
+  "pr_open",
+  "merged",
+  "failed"
+] as const;
+
 export const architectureReviewVerdicts = ["pass", "fail", "escalate"] as const;
 export const architectureReviewCheckStatuses = [
   "pass",
@@ -209,6 +228,9 @@ export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
 export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
 export const openClawToolProfileSchema = z.enum(openClawToolProfiles);
 export const openClawSandboxModeSchema = z.enum(openClawSandboxModes);
+export const projectSizeSchema = z.enum(projectSizes);
+export const projectStatusSchema = z.enum(projectStatuses);
+export const ticketStatusSchema = z.enum(ticketStatuses);
 export const architectureReviewVerdictSchema = z.enum(
   architectureReviewVerdicts
 );
@@ -244,6 +266,9 @@ export type OpenClawSandboxMode = z.infer<typeof openClawSandboxModeSchema>;
 export type ArchitectureReviewVerdict = z.infer<
   typeof architectureReviewVerdictSchema
 >;
+export type ProjectSize = z.infer<typeof projectSizeSchema>;
+export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+export type TicketStatus = z.infer<typeof ticketStatusSchema>;
 export type ArchitectureReviewCheckStatus = z.infer<
   typeof architectureReviewCheckStatusSchema
 >;

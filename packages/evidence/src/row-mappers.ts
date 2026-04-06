@@ -2,6 +2,7 @@ import {
   asIsoTimestamp,
   type ApprovalDecision,
   type ApprovalRequest,
+  type ComplexityClassification,
   type ConcurrencyStrategy,
   type EvidenceRecord,
   type EligibilityRejectionRecord,
@@ -13,9 +14,11 @@ import {
   type PipelineRun,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
-  type TaskManifest
+  type TaskManifest,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import {
   createApprovalRequest,
@@ -82,6 +85,7 @@ export function mapPlanningSpecRow(row: Record<string, unknown>): PlanningSpec {
     riskClass: row.risk_class as PlanningSpec["riskClass"],
     confidenceLevel: row.confidence_level as PlanningSpec["confidenceLevel"],
     confidenceReason: row.confidence_reason as PlanningSpec["confidenceReason"],
+    projectSize: (row.project_size as PlanningSpec["projectSize"]) ?? "small",
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date))
   };
 }
@@ -244,6 +248,44 @@ export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapsh
     promptPath: row.prompt_path as string,
     capturedAt: asIsoTimestamp(new Date(row.captured_at as string | Date))
   });
+}
+
+export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
+  return {
+    projectId: row.project_id as string,
+    sourceIssueId: (row.source_issue_id as string | null) ?? null,
+    sourceRepo: row.source_repo as string,
+    title: row.title as string,
+    summary: row.summary as string,
+    projectSize: row.project_size as ProjectSpec["projectSize"],
+    status: row.status as ProjectSpec["status"],
+    complexityClassification:
+      (row.complexity_classification as ComplexityClassification | null) ?? null,
+    approvalDecision: (row.approval_decision as string | null) ?? null,
+    decidedBy: (row.decided_by as string | null) ?? null,
+    decisionSummary: (row.decision_summary as string | null) ?? null,
+    amendments: (row.amendments as string | null) ?? null,
+    createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  };
+}
+
+export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
+  return {
+    ticketId: row.ticket_id as string,
+    projectId: row.project_id as string,
+    title: row.title as string,
+    description: row.description as string,
+    acceptanceCriteria: row.acceptance_criteria as string[],
+    dependsOn: row.depends_on as string[],
+    status: row.status as TicketSpec["status"],
+    complexityClass: row.complexity_class as TicketSpec["complexityClass"],
+    riskClass: row.risk_class as TicketSpec["riskClass"],
+    githubSubIssueNumber: (row.github_sub_issue_number as number | null) ?? null,
+    githubPrNumber: (row.github_pr_number as number | null) ?? null,
+    createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  };
 }
 
 export function mapEligibilityRejectionRow(

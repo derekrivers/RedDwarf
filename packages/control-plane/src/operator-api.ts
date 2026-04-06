@@ -62,6 +62,7 @@ import {
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
 } from "./pipeline.js";
+import { classifyComplexity } from "./rimmer/index.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
@@ -2053,16 +2054,20 @@ async function handleOperatorRequest(
       injected,
       defaultPlanningDryRun
     );
-    const result = await runPlanningPipeline(planningInput, {
-      repository,
-      planner,
-      clock
-    });
+    const classification = classifyComplexity(planningInput);
+    const result = await runPlanningPipeline(
+      {
+        ...planningInput,
+        metadata: { ...planningInput.metadata, complexityClassification: classification }
+      },
+      { repository, planner, clock }
+    );
 
     writeOperatorJsonResponse(res, 201, {
       runId: result.runId,
       nextAction: result.nextAction,
       manifest: result.manifest,
+      complexityClassification: classification,
       ...(result.spec ? { spec: result.spec } : {}),
       ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
       ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
@@ -2170,11 +2175,14 @@ async function handleOperatorRequest(
         task,
         defaultPlanningDryRun
       );
-      const result = await runPlanningPipeline(planningInput, {
-        repository,
-        planner,
-        clock
-      });
+      const classification = classifyComplexity(planningInput);
+      const result = await runPlanningPipeline(
+        {
+          ...planningInput,
+          metadata: { ...planningInput.metadata, complexityClassification: classification }
+        },
+        { repository, planner, clock }
+      );
       taskIdByKey.set(task.taskKey, result.manifest.taskId);
       results.push({
         taskKey: task.taskKey,

@@ -1,4 +1,5 @@
 import {
+  asIsoTimestamp,
   pipelineRunSchema,
   type ApprovalRequest,
   type EvidenceRecord,
@@ -11,9 +12,11 @@ import {
   type PipelineRun,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
-  type TaskManifest
+  type TaskManifest,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -50,6 +53,8 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   >();
   public readonly promptSnapshots = new Map<string, PromptSnapshot>();
   public readonly eligibilityRejections: EligibilityRejectionRecord[] = [];
+  public readonly projectSpecs = new Map<string, ProjectSpec>();
+  public readonly ticketSpecs = new Map<string, TicketSpec>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -532,6 +537,60 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext> {
     return buildMemoryContextForRepository(this, input);
+  }
+
+  async saveProjectSpec(project: ProjectSpec): Promise<void> {
+    this.projectSpecs.set(project.projectId, project);
+  }
+
+  async saveTicketSpec(ticket: TicketSpec): Promise<void> {
+    this.ticketSpecs.set(ticket.ticketId, ticket);
+  }
+
+  async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
+    const existing = this.projectSpecs.get(projectId);
+    if (existing) {
+      this.projectSpecs.set(projectId, { ...existing, status, updatedAt: asIsoTimestamp() });
+    }
+  }
+
+  async updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void> {
+    const existing = this.ticketSpecs.get(ticketId);
+    if (existing) {
+      this.ticketSpecs.set(ticketId, { ...existing, status, updatedAt: asIsoTimestamp() });
+    }
+  }
+
+  async getProjectSpec(projectId: string): Promise<ProjectSpec | null> {
+    return this.projectSpecs.get(projectId) ?? null;
+  }
+
+  async listProjectSpecs(repo?: string): Promise<ProjectSpec[]> {
+    const all = [...this.projectSpecs.values()];
+    const filtered = repo ? all.filter((p) => p.sourceRepo === repo) : all;
+    return filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getTicketSpec(ticketId: string): Promise<TicketSpec | null> {
+    return this.ticketSpecs.get(ticketId) ?? null;
+  }
+
+  async listTicketSpecs(projectId: string): Promise<TicketSpec[]> {
+    return [...this.ticketSpecs.values()]
+      .filter((t) => t.projectId === projectId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
+    const tickets = await this.listTicketSpecs(projectId);
+    const mergedIds = new Set(
+      tickets.filter((t) => t.status === "merged").map((t) => t.ticketId)
+    );
+    for (const ticket of tickets) {
+      if (ticket.status !== "pending") continue;
+      if (ticket.dependsOn.every((dep) => mergedIds.has(dep))) return ticket;
+    }
+    return null;
   }
 
   async getRepositoryHealth(): Promise<RepositoryHealthSnapshot> {

@@ -33,6 +33,7 @@ import {
   type DispatchReadyTaskResult,
   type PlanningConcurrencyOptions
 } from "./pipeline.js";
+import { classifyComplexity } from "./rimmer/index.js";
 import { findApprovedPolicyGateRequest } from "./pipeline/shared.js";
 import { resolveUnmetTaskGroupDependencies } from "./task-groups.js";
 
@@ -318,9 +319,22 @@ export function createGitHubIssuePollingDaemon(
           }
 
           const planningInput = await deps.github.convertToPlanningInput(candidate);
+
+          // Rimmer: classify complexity before routing
+          const classification = classifyComplexity(planningInput);
+          const planningMetadata = {
+            ...planningInput.metadata,
+            complexityClassification: classification
+          };
+
+          // TODO(project-mode): when classification.size !== "small",
+          // route to project mode planning pipeline (feature 142).
+          // For now, all sizes continue through the existing single-issue path.
+
           const result = await runPlanningPipeline(
             {
               ...planningInput,
+              metadata: planningMetadata,
               dryRun: config.dryRun ?? planningInput.dryRun
             },
             {
