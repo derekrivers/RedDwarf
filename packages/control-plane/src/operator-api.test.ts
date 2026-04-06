@@ -2427,6 +2427,66 @@ describe("Project Mode — POST /projects/:id/approve", () => {
     }
   });
 
+  it("backfills missing GitHub sub-issues for an already executing project before PRs open", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        sourceIssueId: "10",
+        status: "executing",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "fallback/repo" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        tickets: { githubSubIssueNumber: number | null; status: string }[];
+        dispatchedTicket: { ticketId: string } | null;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(2);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.tickets.every((t) => t.githubSubIssueNumber !== null)).toBe(true);
+      expect(body.tickets.filter((t) => t.status === "dispatched")).toHaveLength(1);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("retries an incomplete approved project when all tickets are still pending", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveProjectSpec(

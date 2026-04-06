@@ -413,6 +413,21 @@ describe("FixtureGitHubIssuesAdapter", () => {
     expect(created!.body).toContain("- [ ] POST /auth/login returns a JWT token");
   });
 
+  it("honors a per-operation repo override", async () => {
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+    const issueNumber = await adapter.createSubIssue(
+      10,
+      sampleTicketSpec,
+      "acme/other-platform"
+    );
+
+    const created = adapter.getCreatedSubIssues().get(issueNumber);
+    expect(created?.repo).toBe("acme/other-platform");
+    await expect(adapter.getIssue(issueNumber, "acme/other-platform")).resolves.toMatchObject({
+      repo: "acme/other-platform"
+    });
+  });
+
   it("closes an issue", async () => {
     const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
     const issueNumber = await adapter.createSubIssue(10, sampleTicketSpec);
@@ -479,7 +494,7 @@ describe("createGitHubIssuesAdapter", () => {
     }
   });
 
-  it("throws when GITHUB_REPO is missing", () => {
+  it("does not require GITHUB_REPO until an operation lacks a repo override", async () => {
     const origEnabled = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
     const origToken = process.env["GITHUB_TOKEN"];
     const origRepo = process.env["GITHUB_REPO"];
@@ -487,7 +502,10 @@ describe("createGitHubIssuesAdapter", () => {
       process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = "true";
       process.env["GITHUB_TOKEN"] = "ghp_test";
       delete process.env["GITHUB_REPO"];
-      expect(() => createGitHubIssuesAdapter()).toThrow("GITHUB_REPO");
+      const adapter = createGitHubIssuesAdapter();
+      await expect(adapter.createSubIssue(10, sampleTicketSpec)).rejects.toThrow(
+        "requires a repo"
+      );
     } finally {
       if (origEnabled !== undefined) process.env["REDDWARF_GITHUB_ISSUES_ENABLED"] = origEnabled;
       else delete process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];

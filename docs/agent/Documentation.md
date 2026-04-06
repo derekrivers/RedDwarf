@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Investigated live project `derekrivers/FirstVoyage#70` after project-level approval moved it to `executing` but GitHub still showed no child issues. The detail endpoint showed ticket 1 as `dispatched` while all `githubSubIssueNumber` values remained `null`, proving the Postgres-only fallback path had advanced internal state without external GitHub sub-issue creation.
+- Project approval now uses the persisted `ProjectSpec.sourceRepo` for sub-issue creation instead of depending on a single global `GITHUB_REPO` value, and the GitHub Issues adapter no longer requires `GITHUB_REPO` at startup when callers pass a repo per operation.
+- Added a recovery path for already-`executing` projects that have missing GitHub sub-issue links and no PRs yet: re-running `POST /projects/:id/approve` with a configured GitHub Issues adapter backfills the missing child issues without redispatching tickets or changing ticket order.
+
 - Fixed a follow-on Holly planning failure after architect repo bootstrapping. Live issue `derekrivers/FirstVoyage#69` proved that Holly still could not reliably inspect the checked-out repo because the `read` tool errors on directories, browser fallback was unavailable, and spawned analyst subagents inherited the same limitation. Holly responded by asking subagents to enumerate the repo, and those children returned incomplete structure summaries.
 - Architect and project-architect workspaces now generate a readable `REPO_INDEX.md` alongside the checkout, and the prompts explicitly instruct Holly to read that file first instead of reading directories or spawning subagents just to enumerate the repository.
 - Added regression coverage proving architect workspaces materialize `REPO_INDEX.md` and that both architect prompt variants mention the repository index path and first-read instruction.

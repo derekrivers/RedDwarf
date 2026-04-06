@@ -2592,11 +2592,14 @@ async function handleOperatorRequest(
 
     if (
       project.status !== "pending_approval" &&
-      !(body.decision === "approve" && project.status === "approved")
+      !(
+        body.decision === "approve" &&
+        (project.status === "approved" || project.status === "executing")
+      )
     ) {
       writeOperatorJsonResponse(res, 409, {
         error: "conflict",
-        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved, unless an already-approved project is being resumed before any ticket dispatch.`
+        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved, unless an already-approved project is being resumed before any ticket dispatch or an executing project is backfilling missing GitHub sub-issues before any PR opens.`
       });
       return;
     }
@@ -2613,6 +2616,22 @@ async function handleOperatorRequest(
           writeOperatorJsonResponse(res, 409, {
             error: "conflict",
             message: `Project ${projectId} is in status 'approved' but cannot be resumed because at least one ticket has already advanced beyond pending.`
+          });
+          return;
+        }
+      }
+      if (project.status === "executing") {
+        const tickets = await repository.listTicketSpecs(projectId);
+        const backfillable = (
+          tickets.length > 0 &&
+          tickets.some((ticket) => ticket.githubSubIssueNumber === null) &&
+          tickets.some((ticket) => ticket.status !== "pending") &&
+          tickets.every((ticket) => ticket.githubPrNumber === null)
+        );
+        if (!backfillable) {
+          writeOperatorJsonResponse(res, 409, {
+            error: "conflict",
+            message: `Project ${projectId} is in status 'executing' but cannot be backfilled because no GitHub sub-issues are missing or at least one ticket already has a PR.`
           });
           return;
         }

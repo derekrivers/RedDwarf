@@ -39,6 +39,16 @@ function canResumeApprovedProject(project: ProjectSpec, tickets: TicketSpec[]): 
   );
 }
 
+function canBackfillMissingSubIssues(project: ProjectSpec, tickets: TicketSpec[]): boolean {
+  return (
+    project.status === "executing" &&
+    tickets.length > 0 &&
+    tickets.some((ticket) => ticket.githubSubIssueNumber === null) &&
+    tickets.some((ticket) => ticket.status !== "pending") &&
+    tickets.every((ticket) => ticket.githubPrNumber === null)
+  );
+}
+
 function hasValidGitHubIssuesAdapter(
   adapter: ExecuteProjectApprovalDependencies["githubIssuesAdapter"]
 ): adapter is NonNullable<ExecuteProjectApprovalDependencies["githubIssuesAdapter"]> {
@@ -76,10 +86,15 @@ export async function executeProjectApproval(
 
   const tickets = await repository.listTicketSpecs(input.projectId);
   const resumableApprovedProject = canResumeApprovedProject(project, tickets);
+  const backfillingMissingSubIssues = canBackfillMissingSubIssues(project, tickets);
 
-  if (project.status !== "pending_approval" && !resumableApprovedProject) {
+  if (
+    project.status !== "pending_approval" &&
+    !resumableApprovedProject &&
+    !backfillingMissingSubIssues
+  ) {
     throw new Error(
-      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved, unless the project is already 'approved' and all tickets are still pending.`
+      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved, unless the project is already 'approved' and all tickets are still pending, or the project is executing with missing GitHub sub-issue links before any PR has opened.`
     );
   }
 
@@ -89,8 +104,25 @@ export async function executeProjectApproval(
     );
   }
 
+  if (
+    backfillingMissingSubIssues &&
+    !hasValidGitHubIssuesAdapter(deps.githubIssuesAdapter)
+  ) {
+    throw new Error(
+      `Project ${input.projectId} is already executing with missing GitHub sub-issues, but no GitHub Issues adapter is configured to backfill them.`
+    );
+  }
+
   // Step 1: Transition to "approved" or resume an incomplete approval.
   const approvedProject: ProjectSpec = resumableApprovedProject
+    ? {
+        ...project,
+        approvalDecision: project.approvalDecision ?? "approve",
+        decidedBy: project.decidedBy ?? input.decidedBy,
+        decisionSummary: project.decisionSummary ?? input.decisionSummary ?? null,
+        updatedAt: now()
+      }
+    : backfillingMissingSubIssues
     ? {
         ...project,
         approvalDecision: project.approvalDecision ?? "approve",
@@ -110,6 +142,8 @@ export async function executeProjectApproval(
   logger?.info(
     resumableApprovedProject
       ? `Resuming approved project ${input.projectId} after an incomplete approval.`
+      : backfillingMissingSubIssues
+        ? `Backfilling missing GitHub sub-issues for executing project ${input.projectId}.`
       : `Project ${input.projectId} approved by ${input.decidedBy}.`
   );
 
@@ -141,7 +175,8 @@ export async function executeProjectApproval(
 
         const issueNumber = await deps.githubIssuesAdapter.createSubIssue(
           sourceIssueNumber,
-          prefixedTicket
+          prefixedTicket,
+          project.sourceRepo
         );
 
         const updatedTicket: TicketSpec = {
@@ -159,6 +194,9 @@ export async function executeProjectApproval(
       }
     } catch (err) {
       if (err instanceof V1MutationDisabledError) {
+        if (backfillingMissingSubIssues) {
+          throw err;
+        }
         logger?.warn(
           `GitHub Issues adapter is disabled. Falling back to Postgres-only state. Dispatch will proceed without GitHub sub-issues.`
         );
@@ -168,6 +206,11 @@ export async function executeProjectApproval(
       }
     }
   } else {
+    if (backfillingMissingSubIssues) {
+      throw new Error(
+        `Project ${input.projectId} is already executing with missing GitHub sub-issues, but sub-issue creation cannot run because the GitHub Issues adapter or source issue number is unavailable.`
+      );
+    }
     if (!deps.githubIssuesAdapter) {
       logger?.warn(
         `No GitHub Issues adapter configured. Falling back to Postgres-only state.`
@@ -184,7 +227,10 @@ export async function executeProjectApproval(
   const nextTicket = await repository.resolveNextReadyTicket(input.projectId);
   let dispatchedTicket: TicketSpec | null = null;
 
-  if (nextTicket) {
+  if (backfillingMissingSubIssues) {
+    dispatchedTicket =
+      orderedTickets.find((ticket) => ticket.status === "dispatched") ?? null;
+  } else if (nextTicket) {
     const dispatched: TicketSpec = {
       ...nextTicket,
       status: "dispatched",
@@ -342,7 +388,10 @@ export async function advanceProjectTicket(
   // Step 2: Close the linked GitHub sub-issue
   if (deps.githubIssuesAdapter && ticket.githubSubIssueNumber !== null) {
     try {
-      await deps.githubIssuesAdapter.closeIssue(ticket.githubSubIssueNumber);
+      await deps.githubIssuesAdapter.closeIssue(
+        ticket.githubSubIssueNumber,
+        project.sourceRepo
+      );
       logger?.info(
         `Closed GitHub sub-issue #${ticket.githubSubIssueNumber} for ticket ${input.ticketId}.`
       );

@@ -120,9 +120,13 @@ export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
 // ============================================================
 
 export interface GitHubIssuesAdapter {
-  createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number>;
-  closeIssue(issueNumber: number): Promise<void>;
-  getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot>;
+  createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number>;
+  closeIssue(issueNumber: number, repo?: string): Promise<void>;
+  getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot>;
 }
 
 export interface GitHubIssueIntakeResult {
@@ -351,7 +355,7 @@ export interface FixtureGitHubIssuesAdapterOptions {
 export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
   private readonly repo: string;
   private readonly enabled: boolean;
-  private readonly createdSubIssues: Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string }>;
+  private readonly createdSubIssues: Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string; repo: string }>;
   private readonly closedIssues: Set<number>;
   private nextIssueNumber: number;
 
@@ -363,7 +367,7 @@ export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
     this.nextIssueNumber = options.issueNumberStart ?? 2_000;
   }
 
-  getCreatedSubIssues(): Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string }> {
+  getCreatedSubIssues(): Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string; repo: string }> {
     return this.createdSubIssues;
   }
 
@@ -371,14 +375,23 @@ export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
     return this.closedIssues;
   }
 
-  async createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number> {
+  async createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number> {
     if (!this.enabled) {
       throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
     }
     const issueNumber = this.nextIssueNumber;
     this.nextIssueNumber += 1;
     const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
-    this.createdSubIssues.set(issueNumber, { parentIssueNumber, ticketSpec, body });
+    this.createdSubIssues.set(issueNumber, {
+      parentIssueNumber,
+      ticketSpec,
+      body,
+      repo: repo ?? this.repo
+    });
     return issueNumber;
   }
 
@@ -389,11 +402,12 @@ export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
     this.closedIssues.add(issueNumber);
   }
 
-  async getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot> {
+  async getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot> {
+    const issueRepo = repo ?? this.repo;
     return {
-      repo: this.repo,
+      repo: issueRepo,
       issueNumber,
-      url: `https://github.com/${this.repo}/issues/${issueNumber}`,
+      url: `https://github.com/${issueRepo}/issues/${issueNumber}`,
       state: this.closedIssues.has(issueNumber) ? "closed" : "open",
       labels: ["reddwarf-ticket"],
       assignees: [],
@@ -953,14 +967,14 @@ export function formatTicketSpecBody(ticketSpec: TicketSpec, parentIssueNumber: 
 
 export interface RestGitHubIssuesAdapterOptions {
   token: string;
-  repo: string;
+  repo?: string;
   baseUrl?: string;
   requestTimeoutMs?: number;
 }
 
 export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
   private readonly token: string;
-  private readonly repo: string;
+  private readonly repo: string | undefined;
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
 
@@ -971,12 +985,18 @@ export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   }
 
-  private parseRepo(): { owner: string; repoName: string } {
-    const slash = this.repo.indexOf("/");
-    if (slash <= 0 || slash >= this.repo.length - 1) {
-      throw new Error(`Invalid repo format: "${this.repo}". Expected "owner/name".`);
+  private parseRepo(repoOverride?: string): { owner: string; repoName: string; repo: string } {
+    const repo = repoOverride ?? this.repo;
+    if (!repo) {
+      throw new Error(
+        "GitHubIssuesAdapter requires a repo for this operation. Pass a repo or set GITHUB_REPO."
+      );
     }
-    return { owner: this.repo.slice(0, slash), repoName: this.repo.slice(slash + 1) };
+    const slash = repo.indexOf("/");
+    if (slash <= 0 || slash >= repo.length - 1) {
+      throw new Error(`Invalid repo format: "${repo}". Expected "owner/name".`);
+    }
+    return { owner: repo.slice(0, slash), repoName: repo.slice(slash + 1), repo };
   }
 
   private apiHeaders(): Record<string, string> {
@@ -1045,8 +1065,12 @@ export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
     return response.json() as Promise<T>;
   }
 
-  async createSubIssue(parentIssueNumber: number, ticketSpec: TicketSpec): Promise<number> {
-    const { owner, repoName } = this.parseRepo();
+  async createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number> {
+    const { owner, repoName } = this.parseRepo(repo);
     const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
     const created = await this.apiPost<GitHubApiCreatedIssue>(
       `/repos/${owner}/${repoName}/issues`,
@@ -1059,22 +1083,23 @@ export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
     return created.number;
   }
 
-  async closeIssue(issueNumber: number): Promise<void> {
-    const { owner, repoName } = this.parseRepo();
+  async closeIssue(issueNumber: number, repo?: string): Promise<void> {
+    const { owner, repoName } = this.parseRepo(repo);
     await this.apiPatch<GitHubApiIssue>(
       `/repos/${owner}/${repoName}/issues/${issueNumber}`,
       { state: "closed" }
     );
   }
 
-  async getIssue(issueNumber: number): Promise<GitHubIssueStatusSnapshot> {
-    const { owner, repoName } = this.parseRepo();
+  async getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot> {
+    const parsedRepo = this.parseRepo(repo);
+    const { owner, repoName } = parsedRepo;
     const [issue, repoData] = await Promise.all([
       this.apiGet<GitHubApiIssue>(`/repos/${owner}/${repoName}/issues/${issueNumber}`),
       this.apiGet<GitHubApiRepository>(`/repos/${owner}/${repoName}`)
     ]);
     return {
-      repo: this.repo,
+      repo: parsedRepo.repo,
       issueNumber: issue.number,
       url: issue.html_url,
       state: issue.state === "open" ? "open" : "closed",
@@ -1092,7 +1117,8 @@ export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
 /**
  * Create a RestGitHubIssuesAdapter from environment variables or explicit options.
  * Throws V1MutationDisabledError when REDDWARF_GITHUB_ISSUES_ENABLED is not "true".
- * Requires GITHUB_TOKEN and GITHUB_REPO.
+ * Requires GITHUB_TOKEN. GITHUB_REPO is optional when callers pass the
+ * source repo per operation.
  */
 export function createGitHubIssuesAdapter(
   options: { token?: string; repo?: string; baseUrl?: string; requestTimeoutMs?: number } = {}
@@ -1110,15 +1136,10 @@ export function createGitHubIssuesAdapter(
   }
 
   const repo = options.repo ?? process.env["GITHUB_REPO"];
-  if (!repo) {
-    throw new Error(
-      "GitHubIssuesAdapter requires a GitHub repo. Set the GITHUB_REPO environment variable or pass repo explicitly."
-    );
-  }
 
   return new RestGitHubIssuesAdapter({
     token,
-    repo,
+    ...(repo !== undefined ? { repo } : {}),
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
     ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {})
   });

@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Project approval executes internally but no GitHub child issues appear
+
+- Symptom: `/projects/:id` shows a project in `executing`, at least one ticket is `dispatched`, but every ticket still has `githubSubIssueNumber: null` and GitHub's issue list does not show child issues such as `[1/3] ...`.
+- Root cause: project approval can fall back to Postgres-only execution when the GitHub Issues adapter is disabled or unavailable. Older builds also required a global `GITHUB_REPO`, even though the project already persisted `sourceRepo`, so a correctly-ingested project could still dispatch internally without external child issue creation.
+- Failing approach: trusting ticket `dispatched` as proof that GitHub child issues exist, or re-approving an already-`executing` project on older builds where the recovery path only handled `approved` projects with all tickets still pending.
+- Working workaround: enable `REDDWARF_GITHUB_ISSUES_ENABLED=true`, run a build where project approval passes `ProjectSpec.sourceRepo` to the GitHub Issues adapter, and re-run `POST /projects/:id/approve` when the project is already `executing` with missing sub-issue links and no ticket PRs yet. The recovery path backfills missing child issues without redispatching tickets.
+- Verification: `GET /projects/:id` should show non-null `githubSubIssueNumber` values after recovery, `subIssuesCreated` should be greater than zero, and GitHub should show the corresponding child issues in the source repo.
+
 ## Holly still gets stuck after repo bootstrap because she cannot enumerate directories
 
 - Symptom: the architect workspace contains `repo/.git`, but Holly still starts by calling `read` on the repo directory, gets `EISDIR`, then falls back to browser inspection or spawns a subagent to enumerate the repo. The subagent returns an incomplete directory summary and the architect handoff never appears.
