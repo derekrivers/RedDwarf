@@ -104,6 +104,13 @@ export async function runProjectPlanningPhase(
     openClawArchitectAwaiter:
       deps.openClawArchitectAwaiter ??
       createArchitectHandoffAwaiter({
+        handoffFileName: "project-architect-handoff.md",
+        requiredHeadings: [
+          "# Project Architecture Handoff",
+          "## Project Title",
+          "## Project Summary",
+          "## Tickets"
+        ],
         ...(deps.timing?.openClawCompletionTimeoutMs !== undefined
           ? { timeoutMs: deps.timing.openClawCompletionTimeoutMs }
           : {}),

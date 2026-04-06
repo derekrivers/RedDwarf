@@ -6634,6 +6634,93 @@ describe("phase timing hardening", () => {
     }
   });
 
+  it("accepts project-mode architect handoffs when configured for the project artifact", async () => {
+    const architectRoot = await mkdtemp(join(tmpdir(), "project-architect-heartbeat-"));
+    const artifactsDir = join(architectRoot, "artifacts");
+    const awaiter = createArchitectHandoffAwaiter({
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+      heartbeatIntervalMs: 50,
+      handoffFileName: "project-architect-handoff.md",
+      requiredHeadings: [
+        "# Project Architecture Handoff",
+        "## Project Title",
+        "## Project Summary",
+        "## Tickets"
+      ]
+    });
+
+    try {
+      const pending = awaiter.waitForCompletion({
+        manifest: {} as never,
+        workspace: {
+          workspaceId: "project-architect-heartbeat",
+          workspaceRoot: architectRoot,
+          artifactsDir,
+          stateFile: join(architectRoot, ".workspace", "workspace.json"),
+          descriptor: {} as never
+        } as never,
+        sessionKey: "github:issue:acme/platform:502",
+        dispatchResult: {
+          accepted: true,
+          sessionKey: "github:issue:acme/platform:502",
+          agentId: "reddwarf-analyst",
+          sessionId: "project-architect-heartbeat-session",
+          respondedAt: new Date().toISOString(),
+          statusMessage: null
+        },
+        onHeartbeat: async () => {
+          await mkdir(artifactsDir, { recursive: true });
+          await writeFile(
+            join(artifactsDir, "project-architect-handoff.md"),
+            [
+              "# Project Architecture Handoff",
+              "",
+              "- Task ID: derekrivers-firstvoyage-64",
+              "- Repository: derekrivers/FirstVoyage",
+              "- Architect: Holly (reddwarf-analyst)",
+              "- Confidence: high",
+              "- Confidence reason: Project mode wrote the expected handoff file.",
+              "",
+              "## Project Title",
+              "",
+              "Persist project-mode planning output",
+              "",
+              "## Project Summary",
+              "",
+              "Wait for the project architect artifact and persist the resulting ProjectSpec.",
+              "",
+              "## Tickets",
+              "",
+              "### Ticket: Persist the project spec",
+              "",
+              "- Complexity: medium",
+              "- Depends on: none",
+              "",
+              "#### Description",
+              "",
+              "Save the generated project specification after the handoff is written.",
+              "",
+              "#### Acceptance Criteria",
+              "",
+              "- Project planning stores a ProjectSpec.",
+              "- /projects returns the saved project."
+            ].join("\n"),
+            "utf8"
+          );
+        },
+        heartbeatIntervalMs: 50
+      });
+
+      await expect(pending).resolves.toMatchObject({
+        handoffPath: join(artifactsDir, "project-architect-handoff.md"),
+        repoRoot: null
+      });
+    } finally {
+      await rm(architectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("classifies timed-out validation commands separately", async () => {
     const repository = new InMemoryPlanningRepository();
     const targetRoot = await mkdtemp(join(tmpdir(), "validation-timeout-"));

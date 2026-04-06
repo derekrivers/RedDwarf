@@ -447,3 +447,19 @@
 - Failing approach: only generating `openclaw.json` and assuming that file controls host exec approval policy, or fixing the gateway once with `openclaw approvals set` and expecting the change to survive future local bootstrap resets.
 - Working workaround: set `REDDWARF_OPENCLAW_TRUSTED_AUTOMATION=true` in `.env` and restart through the standard `setup` / `start` flows. RedDwarf now seeds `runtime-data/openclaw-home/exec-approvals.json` with `defaults: { security: "full", ask: "off" }` while preserving any existing OpenClaw `socket` metadata.
 - Verification: restart the stack, then run `docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'cat /home/node/.openclaw/exec-approvals.json'` and confirm the defaults block contains `security: "full"` and `ask: "off"`; rerun the approved task and confirm the `exec denied` log line no longer appears.
+## Symptom: Medium issues finish Holly project planning but `/projects` stays empty
+
+- Symptom:
+  - The task snapshot shows `spec.projectSize: "medium"` and an `OPENCLAW_DISPATCH` event with `mode: "project"`, but `/projects` remains empty.
+  - The project architect workspace contains `artifacts/project-architect-handoff.md`, yet no `ProjectSpec` is persisted.
+- Root cause:
+  - Project-mode planning reused `createArchitectHandoffAwaiter(...)`, but that awaiter only watched for `architect-handoff.md` and single-task architecture headings.
+  - Holly correctly wrote `project-architect-handoff.md`, so the control plane never consumed the finished project handoff.
+- Failing approach:
+  - Assuming the project planner is still running just because `/projects` is empty.
+- Working workaround:
+  - Check whether `runtime-data/workspaces/<task>-project-architect/artifacts/project-architect-handoff.md` exists.
+  - If it does, verify the control plane build includes the configurable architect awaiter fix that watches `project-architect-handoff.md`.
+- Verification:
+  - Run the project-mode awaiter regression test in `packages/control-plane/src/index.test.ts`.
+  - Re-run intake for a medium issue and confirm `/projects` returns a persisted `ProjectSpec`.

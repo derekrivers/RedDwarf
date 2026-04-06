@@ -553,6 +553,8 @@ export interface ArchitectHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  handoffFileName?: string;
+  requiredHeadings?: readonly string[];
 }
 
 export function createArchitectHandoffAwaiter(
@@ -562,10 +564,19 @@ export function createArchitectHandoffAwaiter(
   const pollIntervalMs = options.pollIntervalMs ?? 2000;
   const defaultHeartbeatIntervalMs =
     options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
+  const handoffFileName = options.handoffFileName ?? "architect-handoff.md";
+  const requiredHeadings = options.requiredHeadings ?? [
+    "# Architecture Handoff",
+    "## Summary",
+    "## Implementation Approach",
+    "## Affected Files",
+    "## Risks and Assumptions",
+    "## Test Strategy"
+  ];
 
   return {
     async waitForCompletion(input) {
-      const handoffPath = join(input.workspace.artifactsDir, "architect-handoff.md");
+      const handoffPath = join(input.workspace.artifactsDir, handoffFileName);
       const deadline = Date.now() + timeoutMs;
       let lastHeartbeatAt = Date.now();
       const heartbeatIntervalMs =
@@ -574,15 +585,9 @@ export function createArchitectHandoffAwaiter(
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
           const handoff = await readFile(handoffPath, "utf8");
-          const headings = [
-            "# Architecture Handoff",
-            "## Summary",
-            "## Implementation Approach",
-            "## Affected Files",
-            "## Risks and Assumptions",
-            "## Test Strategy"
-          ];
-          const hasAllHeadings = headings.every((heading) => handoff.includes(heading));
+          const hasAllHeadings = requiredHeadings.every((heading) =>
+            handoff.includes(heading)
+          );
 
           if (hasAllHeadings) {
             return { handoffPath, repoRoot: null };
