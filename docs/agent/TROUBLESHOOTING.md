@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Medium/large GitHub issues from the poller skip Project Mode and go straight into the single-task pipeline
+
+- Symptom: a polled GitHub issue that should decompose into tickets instead creates only a normal `PlanningSpec`, lands in the standard approval/development flow, and `/projects` remains empty. Task snapshots may misleadingly show `spec.projectSize: "small"` even though the issue looks broader than that.
+- Root cause: the issue poller was classifying complexity correctly, but it only passed `repository` and `planner` into `runPlanningPipeline(...)`. Without the OpenClaw planning dependencies (`openClawDispatch` plus an architect target root), the planning pipeline could never enter project mode. Separately, single-issue planning specs defaulted `projectSize` to `"small"` when the classification metadata was not copied onto the persisted spec.
+- Failing approach: inspecting only the generated planning spec or live task snapshot and assuming the classifier itself returned `small`, or restarting the stack without changing the poller wiring.
+- Working workaround: forward the available OpenClaw planning dependencies from the live intake surface into `runPlanningPipeline(...)` so medium/large issues can dispatch Holly in project mode. Also persist `metadata.complexityClassification.size` onto the saved planning spec so diagnostics reflect the actual routing decision.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; confirm a medium GitHub issue creates both a `ProjectSpec` and `PlanningSpec.projectSize = "medium"`, and confirm live `/projects` is non-empty after re-ingesting the issue.
+
 ## `verify:package` fails in the packaged control plane with `TypeError: Cannot read properties of undefined (reading 'length')`
 
 - Symptom: `node scripts/verify-packaged-policy-pack.mjs` or the GitHub Actions packaging workflow fails inside `packages/control-plane/dist/workspace.js` while rendering runtime instructions, with a stack through `formatLiteralList(...)` and `renderRuntimeSoulMarkdown(...)`.

@@ -817,6 +817,7 @@ export async function runPlanningPipeline(
 
     const planningCompletedAt = clock();
     const planningCompletedAtIso = asIsoTimestamp(planningCompletedAt);
+    const classification = (input.metadata as Record<string, unknown>)?.complexityClassification as ComplexityClassification | undefined;
     const spec = planningSpecSchema.parse({
       specId: `${taskId}:planning-spec`,
       taskId,
@@ -830,6 +831,7 @@ export async function runPlanningPipeline(
       riskClass,
       confidenceLevel: draft.confidence.level,
       confidenceReason: normalizePlanningConfidenceReason(draft.confidence.reason),
+      projectSize: classification?.size ?? "small",
       createdAt: planningCompletedAtIso
     });
 
@@ -953,7 +955,6 @@ export async function runPlanningPipeline(
     let projectPlanningResult: import("@reddwarf/contracts").ProjectPlanningResult | undefined;
     let projectHandoffMarkdown: string | undefined;
 
-    const classification = (input.metadata as Record<string, unknown>)?.complexityClassification as ComplexityClassification | undefined;
     if (
       classification &&
       classification.size !== "small" &&

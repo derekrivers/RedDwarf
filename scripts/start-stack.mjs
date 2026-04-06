@@ -429,7 +429,18 @@ daemon = createGitHubIssuePollingDaemon(
     dryRun,
     runOnStart: true
   },
-  { repository, github, planner, logger: runtimeLogger }
+  {
+    repository,
+    github,
+    planner,
+    ...(dispatchDeps
+      ? {
+          openClawDispatch: dispatchDeps.openClawDispatch,
+          architectTargetRoot: workspaceTargetRoot
+        }
+      : {}),
+    logger: runtimeLogger
+  }
 );
 
 // Phase 3d: Operator API

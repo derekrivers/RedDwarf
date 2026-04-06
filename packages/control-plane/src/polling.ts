@@ -111,6 +111,10 @@ export interface GitHubIssuePollingDependencies {
   repository: PlanningRepository;
   github: GitHubAdapter;
   planner: PlanningAgent;
+  openClawDispatch?: OpenClawDispatchAdapter;
+  openClawArchitectAgentId?: string;
+  openClawArchitectAwaiter?: OpenClawCompletionAwaiter;
+  architectTargetRoot?: string;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -336,12 +340,24 @@ export function createGitHubIssuePollingDaemon(
               dryRun: config.dryRun ?? planningInput.dryRun
             },
             {
-            repository: deps.repository,
-            planner: deps.planner,
-            ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-            clock,
-            ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
-            ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
+              repository: deps.repository,
+              planner: deps.planner,
+              ...(deps.openClawDispatch !== undefined
+                ? { openClawDispatch: deps.openClawDispatch }
+                : {}),
+              ...(deps.openClawArchitectAgentId !== undefined
+                ? { openClawArchitectAgentId: deps.openClawArchitectAgentId }
+                : {}),
+              ...(deps.openClawArchitectAwaiter !== undefined
+                ? { openClawArchitectAwaiter: deps.openClawArchitectAwaiter }
+                : {}),
+              ...(deps.architectTargetRoot !== undefined
+                ? { architectTargetRoot: deps.architectTargetRoot }
+                : {}),
+              ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+              clock,
+              ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
+              ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
             }
           );
 

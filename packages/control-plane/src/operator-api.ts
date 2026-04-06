@@ -2066,7 +2066,17 @@ async function handleOperatorRequest(
         ...planningInput,
         metadata: { ...planningInput.metadata, complexityClassification: classification }
       },
-      { repository, planner, clock }
+      {
+        repository,
+        planner,
+        ...(dispatchDependencies && managedTargetRoot
+          ? {
+              openClawDispatch: dispatchDependencies.openClawDispatch,
+              architectTargetRoot: managedTargetRoot
+            }
+          : {}),
+        clock
+      }
     );
 
     writeOperatorJsonResponse(res, 201, {
@@ -2187,7 +2197,17 @@ async function handleOperatorRequest(
           ...planningInput,
           metadata: { ...planningInput.metadata, complexityClassification: classification }
         },
-        { repository, planner, clock }
+        {
+          repository,
+          planner,
+          ...(dispatchDependencies && managedTargetRoot
+            ? {
+                openClawDispatch: dispatchDependencies.openClawDispatch,
+                architectTargetRoot: managedTargetRoot
+              }
+            : {}),
+          clock
+        }
       );
       taskIdByKey.set(task.taskKey, result.manifest.taskId);
       results.push({

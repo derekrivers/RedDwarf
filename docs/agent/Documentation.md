@@ -1,5 +1,13 @@
 # Agent Documentation
 
+## 2026-04-06
+
+- Investigated live GitHub issue intake for `derekrivers/FirstVoyage#63` after it unexpectedly entered the single-task developer pipeline instead of Project Mode.
+- Confirmed the deterministic classifier rates that issue as `medium` (`2` affected paths, `4` acceptance criteria, no package fan-out required), so it should be eligible for project-mode planning.
+- Fixed the live intake wiring so GitHub polling now forwards OpenClaw project-planning dependencies into `runPlanningPipeline(...)` when they are available, which allows medium/large polled issues to create `ProjectSpec` records instead of silently staying on the single-issue path.
+- Also started persisting the classified `projectSize` onto the normal planning spec so snapshots no longer default medium/large issues to `small` during diagnostics.
+- Added focused regression coverage proving a medium GitHub issue routed through the poller now persists both a `PlanningSpec.projectSize = "medium"` value and a pending-approval `ProjectSpec` with ticket decomposition.
+
 ## 2026-04-05
 
 - Fixed packaged policy-pack verification so exported control-plane workspace helpers now normalize raw JavaScript bundle inputs through `workspaceContextBundleSchema` before rendering JSON artifacts or runtime instruction markdown. This restores defaults like `policySnapshot.deniedPaths` and `policySnapshot.allowedSecretScopes` for package-verification callers that do not pre-parse a full `WorkspaceContextBundle`.
