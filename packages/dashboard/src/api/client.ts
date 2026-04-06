@@ -10,6 +10,12 @@ import type {
   ApprovalListFilters,
   ApprovalListResponse,
   DashboardApiClient,
+  ProjectApproveResponse,
+  ProjectClarificationsResponse,
+  ProjectClarifyResponse,
+  ProjectDetailResponse,
+  ProjectListFilters,
+  ProjectListResponse,
   RunDetailResponse,
   TaskDetailResponse
 } from "../types/dashboard";
@@ -235,6 +241,53 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
         method: "POST",
         body: JSON.stringify(req)
       });
+    },
+    getProjects(filters: ProjectListFilters = {}) {
+      return request<ProjectListResponse>(
+        `/projects${buildQueryString({
+          ...(filters.repo !== undefined ? { repo: filters.repo } : {}),
+          ...(filters.status !== undefined ? { status: filters.status } : {})
+        })}`
+      );
+    },
+    getProject(id: string) {
+      return request<ProjectDetailResponse>(
+        `/projects/${encodeURIComponent(id)}`
+      );
+    },
+    approveProject(
+      id: string,
+      decision: "approve" | "amend",
+      decidedBy: string,
+      decisionSummary?: string,
+      amendments?: string
+    ) {
+      return request<ProjectApproveResponse>(
+        `/projects/${encodeURIComponent(id)}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            decision,
+            decidedBy,
+            ...(decisionSummary ? { decisionSummary } : {}),
+            ...(amendments ? { amendments } : {})
+          })
+        }
+      );
+    },
+    getClarifications(id: string) {
+      return request<ProjectClarificationsResponse>(
+        `/projects/${encodeURIComponent(id)}/clarifications`
+      );
+    },
+    submitClarifications(id: string, answers: Record<string, string>) {
+      return request<ProjectClarifyResponse>(
+        `/projects/${encodeURIComponent(id)}/clarify`,
+        {
+          method: "POST",
+          body: JSON.stringify({ answers })
+        }
+      );
     }
   };
 }

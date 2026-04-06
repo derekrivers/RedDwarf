@@ -14,6 +14,7 @@ import {
   IconCloudUpload,
   IconDatabase,
   IconFileSearch,
+  IconFolder,
   IconGauge,
   IconLogout,
   IconMoon,
@@ -29,6 +30,8 @@ import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
 import { PipelinePage } from "./pages/pipeline-page";
+import { ProjectDetailPage } from "./pages/project-detail-page";
+import { ProjectsPage } from "./pages/projects-page";
 import { SubmitIssuePage } from "./pages/submit-issue-page";
 import {
   createApiClient,
@@ -54,6 +57,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: IconGauge },
+  { to: "/projects", label: "Projects", icon: IconFolder },
   { to: "/approvals", label: "Approvals", icon: IconChecklist },
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
@@ -289,6 +293,14 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/dashboard"
                 element={<DashboardHomePage apiClient={apiClient} />}
+              />
+              <Route
+                path="/projects"
+                element={<ProjectsPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/projects/:projectId"
+                element={<ProjectDetailPage apiClient={apiClient} />}
               />
               <Route
                 path="/approvals"

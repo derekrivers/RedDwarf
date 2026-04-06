@@ -3,12 +3,15 @@ import type {
   ApprovalRequestStatus,
   MemoryRecord,
   PhaseRecord,
+  ProjectSpec,
+  ProjectStatus,
   RunEvent,
   PipelineRun,
   PlanningSpec,
   PolicySnapshot,
   TaskManifest,
-  RunSummary
+  RunSummary,
+  TicketSpec
 } from "@reddwarf/contracts";
 import type {
   ApprovalResponse,
@@ -57,6 +60,60 @@ export interface RunDetailResponse {
   };
 }
 
+export interface TicketCounts {
+  total: number;
+  pending: number;
+  dispatched: number;
+  in_progress: number;
+  pr_open: number;
+  merged: number;
+  failed: number;
+}
+
+export interface ProjectSummary extends ProjectSpec {
+  ticketCounts: TicketCounts;
+}
+
+export interface ProjectListFilters {
+  repo?: string;
+  status?: ProjectStatus;
+}
+
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+  total: number;
+}
+
+export interface ProjectDetailResponse {
+  project: ProjectSpec;
+  tickets: TicketSpec[];
+  ticketCounts: TicketCounts;
+}
+
+export interface ProjectApproveResponse {
+  project: ProjectSpec;
+  tickets?: TicketSpec[];
+  subIssuesCreated?: number;
+  subIssuesFallback?: boolean;
+  dispatchedTicket?: TicketSpec | null;
+  message: string;
+}
+
+export interface ProjectClarificationsResponse {
+  projectId: string;
+  status: string;
+  questions: string[];
+  answers: Record<string, string> | null;
+  clarificationRequestedAt: string | null;
+  timeoutMs: number;
+  timedOut: boolean;
+}
+
+export interface ProjectClarifyResponse {
+  project: ProjectSpec;
+  message: string;
+}
+
 export interface DashboardApiClient {
   getHealth(): Promise<HealthResponse>;
   getPipelineRuns(filters?: {
@@ -78,4 +135,18 @@ export interface DashboardApiClient {
   ): Promise<ResolveApprovalResponse>;
   getRepos(): Promise<ReposResponse>;
   submitIssue(req: SubmitIssueRequest): Promise<SubmitIssueResponse>;
+  getProjects(filters?: ProjectListFilters): Promise<ProjectListResponse>;
+  getProject(id: string): Promise<ProjectDetailResponse>;
+  approveProject(
+    id: string,
+    decision: "approve" | "amend",
+    decidedBy: string,
+    decisionSummary?: string,
+    amendments?: string
+  ): Promise<ProjectApproveResponse>;
+  getClarifications(id: string): Promise<ProjectClarificationsResponse>;
+  submitClarifications(
+    id: string,
+    answers: Record<string, string>
+  ): Promise<ProjectClarifyResponse>;
 }
