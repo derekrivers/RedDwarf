@@ -231,6 +231,69 @@ describe("executeProjectApproval", () => {
     ).rejects.toThrow(/pending_approval/);
   });
 
+  it("resumes an already-approved project when all tickets are still pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({
+        status: "approved",
+        approvalDecision: "approve",
+        decidedBy: "derek",
+        updatedAt: "2026-04-06T12:30:00.000Z"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        githubSubIssueNumber: 2999
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({
+        ticketId: "project:task-100:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-100:ticket:1"]
+      })
+    );
+
+    const result = await executeProjectApproval(
+      { projectId: "project:task-100", decidedBy: "operator" },
+      {
+        repository,
+        githubIssuesAdapter: adapter,
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+
+    expect(result.project.status).toBe("executing");
+    expect(result.subIssuesCreated).toBe(1);
+
+    const ticket1 = result.tickets.find((t) => t.ticketId === "project:task-100:ticket:1");
+    const ticket2 = result.tickets.find((t) => t.ticketId === "project:task-100:ticket:2");
+    expect(ticket1?.githubSubIssueNumber).toBe(2999);
+    expect(ticket2?.githubSubIssueNumber).not.toBeNull();
+    expect(result.dispatchedTicket?.ticketId).toBe("project:task-100:ticket:1");
+  });
+
+  it("rejects malformed GitHub issues adapters before mutating project state", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildProjectSpec());
+    await repository.saveTicketSpec(buildTicketSpec());
+
+    await expect(
+      executeProjectApproval(
+        { projectId: "project:task-100", decidedBy: "derek" },
+        {
+          repository,
+          githubIssuesAdapter: {} as never
+        }
+      )
+    ).rejects.toThrow(/createSubIssue\/closeIssue/);
+
+    const persisted = await repository.getProjectSpec("project:task-100");
+    expect(persisted?.status).toBe("pending_approval");
+  });
+
   it("throws when project does not exist", async () => {
     const repository = new InMemoryPlanningRepository();
 

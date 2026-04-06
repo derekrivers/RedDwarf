@@ -28,6 +28,28 @@ export interface ExecuteProjectApprovalResult {
   dispatchedTicket: TicketSpec | null;
 }
 
+function canResumeApprovedProject(project: ProjectSpec, tickets: TicketSpec[]): boolean {
+  return (
+    project.status === "approved" &&
+    tickets.every(
+      (ticket) =>
+        ticket.status === "pending" &&
+        ticket.githubPrNumber === null
+    )
+  );
+}
+
+function hasValidGitHubIssuesAdapter(
+  adapter: ExecuteProjectApprovalDependencies["githubIssuesAdapter"]
+): adapter is NonNullable<ExecuteProjectApprovalDependencies["githubIssuesAdapter"]> {
+  return (
+    adapter !== null &&
+    adapter !== undefined &&
+    typeof adapter.createSubIssue === "function" &&
+    typeof adapter.closeIssue === "function"
+  );
+}
+
 /**
  * Execute the post-approval workflow for a project plan:
  *
@@ -52,26 +74,46 @@ export async function executeProjectApproval(
     throw new Error(`Project ${input.projectId} not found.`);
   }
 
-  if (project.status !== "pending_approval") {
+  const tickets = await repository.listTicketSpecs(input.projectId);
+  const resumableApprovedProject = canResumeApprovedProject(project, tickets);
+
+  if (project.status !== "pending_approval" && !resumableApprovedProject) {
     throw new Error(
-      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved.`
+      `Project ${input.projectId} is in status '${project.status}'. Only projects in 'pending_approval' can be approved, unless the project is already 'approved' and all tickets are still pending.`
     );
   }
 
-  // Step 1: Transition to "approved"
-  const approvedProject: ProjectSpec = {
-    ...project,
-    status: "approved",
-    approvalDecision: "approve",
-    decidedBy: input.decidedBy,
-    decisionSummary: input.decisionSummary ?? null,
-    updatedAt: now()
-  };
-  await repository.saveProjectSpec(approvedProject);
-  logger?.info(`Project ${input.projectId} approved by ${input.decidedBy}.`);
+  if (deps.githubIssuesAdapter && !hasValidGitHubIssuesAdapter(deps.githubIssuesAdapter)) {
+    throw new Error(
+      "Configured githubIssuesAdapter does not implement createSubIssue/closeIssue."
+    );
+  }
 
-  // Step 2: Load tickets and sort in dependency order
-  const tickets = await repository.listTicketSpecs(input.projectId);
+  // Step 1: Transition to "approved" or resume an incomplete approval.
+  const approvedProject: ProjectSpec = resumableApprovedProject
+    ? {
+        ...project,
+        approvalDecision: project.approvalDecision ?? "approve",
+        decidedBy: project.decidedBy ?? input.decidedBy,
+        decisionSummary: project.decisionSummary ?? input.decisionSummary ?? null,
+        updatedAt: now()
+      }
+    : {
+        ...project,
+        status: "approved",
+        approvalDecision: "approve",
+        decidedBy: input.decidedBy,
+        decisionSummary: input.decisionSummary ?? null,
+        updatedAt: now()
+      };
+  await repository.saveProjectSpec(approvedProject);
+  logger?.info(
+    resumableApprovedProject
+      ? `Resuming approved project ${input.projectId} after an incomplete approval.`
+      : `Project ${input.projectId} approved by ${input.decidedBy}.`
+  );
+
+  // Step 2: Sort tickets in dependency order
   const orderedTickets = sortTicketsByDependencyOrder(tickets);
 
   // Step 3: Create GitHub sub-issues (if adapter enabled)
@@ -81,10 +123,17 @@ export async function executeProjectApproval(
     ? parseInt(project.sourceIssueId, 10)
     : null;
 
-  if (deps.githubIssuesAdapter && sourceIssueNumber !== null && !isNaN(sourceIssueNumber)) {
+  if (
+    hasValidGitHubIssuesAdapter(deps.githubIssuesAdapter) &&
+    sourceIssueNumber !== null &&
+    !isNaN(sourceIssueNumber)
+  ) {
     try {
       for (let i = 0; i < orderedTickets.length; i++) {
         const ticket = orderedTickets[i]!;
+        if (ticket.githubSubIssueNumber !== null) {
+          continue;
+        }
         const prefixedTicket: TicketSpec = {
           ...ticket,
           title: `[${i + 1}/${orderedTickets.length}] ${ticket.title}`

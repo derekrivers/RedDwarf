@@ -8,13 +8,13 @@
 - Working workaround: run a build where `packages/control-plane/src/polling.ts` applies the timeout only to GitHub batch fetch and cursor persistence, not to the full planning pipeline. Slow planning will then complete normally, while genuinely hung GitHub reads still fail fast.
 - Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; confirm the timeout test for a hung `listIssueCandidates(...)` still fails fast, and confirm the slow-planner regression passes with `cycleTimeoutMs` shorter than the planner delay.
 
-## Project approval succeeds but no GitHub sub-issues appear
+## Project approval gets stuck in `approved` with all tickets still pending
 
-- Symptom: `/projects` shows a project moved to `executing` and one ticket may already be marked `dispatched`, but no child issues are created in GitHub for the source repo.
-- Root cause: the live operator API can approve a project without a `githubIssuesAdapter`. In that mode `executeProjectApproval(...)` intentionally falls back to Postgres-only state, so the project advances internally but GitHub sub-issue creation is skipped.
-- Failing approach: assuming `githubWriter` is enough for all GitHub-backed operator actions. `POST /issues/submit` works with only `githubWriter`, but `POST /projects/:id/approve` requires `githubIssuesAdapter` as well.
-- Working workaround: start the operator API through a build where both `scripts/start-stack.mjs` and `scripts/start-operator-api.mjs` pass the shared REST adapter as `githubWriter` and `githubIssuesAdapter`, then approve a fresh pending project. Older already-approved projects will not retroactively mint child issues.
-- Verification: confirm the startup scripts pass both dependency keys into `createOperatorApiServer(...)`; approve a new pending project and verify the API response reports `subIssuesFallback: false` with `subIssuesCreated > 0`, then confirm the child issues exist in GitHub.
+- Symptom: `/projects` shows a project in `approved` rather than `executing`, all ticket counts remain `pending`, and no GitHub child issues with titles like `[1/3] ...` exist.
+- Root cause: the operator API can be miswired with a generic `RestGitHubAdapter` in the `githubIssuesAdapter` slot. That object lacks `createSubIssue(...)`, so project approval can persist `status = "approved"` and then crash before any ticket dispatch.
+- Failing approach: passing the same generic REST GitHub adapter into both `githubWriter` and `githubIssuesAdapter`, or assuming an already-approved stuck project cannot be resumed.
+- Working workaround: start the API through a build that creates a real `createGitHubIssuesAdapter()` for project sub-issue mutations, and allow `POST /projects/:id/approve` to resume projects that are already `approved` but whose tickets are all still pending.
+- Verification: approve or re-approve a pending/stuck project and confirm it transitions to `executing`, `subIssuesCreated` is greater than zero when the issues adapter is enabled, and at least one ticket moves to `dispatched`.
 
 ## Approving a project-mode task through `/approvals/:requestId/resolve` bypasses project approval and no GitHub sub-issues get created
 

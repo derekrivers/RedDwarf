@@ -2560,14 +2560,6 @@ async function handleOperatorRequest(
       return;
     }
 
-    if (project.status !== "pending_approval") {
-      writeOperatorJsonResponse(res, 409, {
-        error: "conflict",
-        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved.`
-      });
-      return;
-    }
-
     const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
     if (
       !rawBody ||
@@ -2598,9 +2590,34 @@ async function handleOperatorRequest(
       return;
     }
 
+    if (
+      project.status !== "pending_approval" &&
+      !(body.decision === "approve" && project.status === "approved")
+    ) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved, unless an already-approved project is being resumed before any ticket dispatch.`
+      });
+      return;
+    }
+
     const now = clock().toISOString();
 
     if (body.decision === "approve") {
+      if (project.status === "approved") {
+        const tickets = await repository.listTicketSpecs(projectId);
+        const resumable = tickets.every(
+          (ticket) => ticket.status === "pending" && ticket.githubPrNumber === null
+        );
+        if (!resumable) {
+          writeOperatorJsonResponse(res, 409, {
+            error: "conflict",
+            message: `Project ${projectId} is in status 'approved' but cannot be resumed because at least one ticket has already advanced beyond pending.`
+          });
+          return;
+        }
+      }
+
       const result = await executeProjectApproval(
         {
           projectId,

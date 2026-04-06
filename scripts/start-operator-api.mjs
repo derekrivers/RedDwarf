@@ -10,7 +10,11 @@
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
 import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
-import { createRestGitHubAdapter } from "../packages/integrations/dist/index.js";
+import {
+  V1MutationDisabledError,
+  createGitHubIssuesAdapter,
+  createRestGitHubAdapter
+} from "../packages/integrations/dist/index.js";
 import {
   applyOperatorRuntimeConfig,
   connectionString,
@@ -52,6 +56,15 @@ try {
 }
 
 const github = createRestGitHubAdapter();
+let githubIssuesAdapter = null;
+try {
+  githubIssuesAdapter = createGitHubIssuesAdapter();
+} catch (error) {
+  if (!(error instanceof V1MutationDisabledError)) {
+    throw error;
+  }
+  console.log("GitHub sub-issue creation disabled; project approvals will fall back to Postgres-only mode.");
+}
 
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
@@ -60,7 +73,7 @@ const server = createOperatorApiServer(
     planner,
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
-    githubIssuesAdapter: github
+    ...(githubIssuesAdapter ? { githubIssuesAdapter } : {})
   }
 );
 

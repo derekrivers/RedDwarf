@@ -35,6 +35,11 @@ import { execFileSync, execSync, spawn } from "node:child_process";
 import { readdir, stat, rm, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
+import {
+  V1MutationDisabledError,
+  createGitHubIssuesAdapter,
+  createRestGitHubAdapter
+} from "../packages/integrations/dist/index.js";
 
 import {
   applyOperatorRuntimeConfig,
@@ -88,6 +93,17 @@ const dryRun = process.env.REDDWARF_DRY_RUN === "true";
 if (operatorApiToken.length === 0) {
   logError("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
   process.exit(1);
+}
+
+const github = createRestGitHubAdapter();
+let githubIssuesAdapter = null;
+try {
+  githubIssuesAdapter = createGitHubIssuesAdapter();
+} catch (error) {
+  if (!(error instanceof V1MutationDisabledError)) {
+    throw error;
+  }
+  log("GitHub sub-issue creation disabled; project approvals will fall back to Postgres-only mode.");
 }
 
 if (dryRun) {
@@ -358,8 +374,6 @@ try {
 log("Phase 3: Starting services...");
 
 // Phase 3a: Shared adapters
-
-const github = createRestGitHubAdapter();
 const workspaceTargetRoot = resolve(repoRoot, "runtime-data", "workspaces");
 const evidenceRoot = resolve(repoRoot, "runtime-data", "evidence");
 const dispatchIntervalMs = parseInt(
@@ -456,7 +470,7 @@ const server = createOperatorApiServer(
     repository,
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
-    githubIssuesAdapter: github,
+    ...(githubIssuesAdapter ? { githubIssuesAdapter } : {}),
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),
     ...(daemon ? { pollingDaemon: daemon } : {}),

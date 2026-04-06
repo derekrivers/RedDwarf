@@ -2427,6 +2427,60 @@ describe("Project Mode — POST /projects/:id/approve", () => {
     }
   });
 
+  it("retries an incomplete approved project when all tickets are still pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "approved",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        githubSubIssueNumber: 2001
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        dispatchedTicket: { ticketId: string } | null;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(1);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("amends a project with amendments text", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveProjectSpec(buildTestProjectSpec());
