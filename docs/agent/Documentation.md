@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Ran a second architecture-level Project Mode audit before service restart and found three more end-to-end hardening points. Holly dependency validation now rejects dependency cycles in addition to unknown, duplicate, and self references, preventing a no-ready-ticket deadlock after approval.
+- Added project-ticket failure state propagation for child task escalations: when a dispatched ticket task exhausts its retry budget and creates a failure-automation approval, RedDwarf now marks the originating `TicketSpec` and `ProjectSpec` as `failed`. Approving the failure retry restores the project to `executing` and the ticket to `dispatched`, so recovery does not strand the project in failed state.
+- Hardened `/projects/advance` so merge callbacks can only advance tickets that are already `dispatched` or `pr_open` on an `executing` project. Already-merged callbacks stay idempotent, but bad workflow markers or manual calls can no longer mark dependency-blocked pending tickets as merged.
+
 - Performed a deeper end-to-end Project Mode audit before restarting the service onto the project-ticket execution fixes. Found and fixed two additional state-consistency gaps: final ticket merge now completes the parent project-planning task manifest, and intermediate ticket advancement refreshes the owning `ProjectSpec.updatedAt` so the project list reflects merge-driven activity.
 - Hardened Holly project decomposition parsing so ticket dependencies must reference another generated ticket title exactly, ticket titles must be unique, and self-dependencies are rejected before `TicketSpec` rows are persisted. This prevents dependency graph deadlocks where a ticket can stay `pending` forever because `resolveNextReadyTicket(...)` can never match an unknown or ambiguous dependency.
 - Added regression coverage at both the lower-level project approval helper and the operator `/projects/advance` endpoint for parent task completion on final merge, plus parser coverage for unknown and duplicated dependencies.

@@ -811,6 +811,39 @@ function parseTicketsFromMarkdown(markdown: string): ProjectTicketDraft[] {
     }
   }
 
+  const dependencyGraph = new Map(
+    tickets.map((ticket) => [ticket.title, ticket.dependsOn])
+  );
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(title: string, path: string[]): void {
+    if (visited.has(title)) {
+      return;
+    }
+    if (visiting.has(title)) {
+      const cycleStart = path.indexOf(title);
+      const cyclePath = [
+        ...path.slice(cycleStart >= 0 ? cycleStart : 0),
+        title
+      ];
+      throw new Error(
+        `Project ticket dependency cycle detected: ${cyclePath.join(" -> ")}. Dependencies must form an acyclic graph.`
+      );
+    }
+
+    visiting.add(title);
+    for (const dependencyTitle of dependencyGraph.get(title) ?? []) {
+      visit(dependencyTitle, [...path, title]);
+    }
+    visiting.delete(title);
+    visited.add(title);
+  }
+
+  for (const ticket of tickets) {
+    visit(ticket.title, []);
+  }
+
   return tickets;
 }
 

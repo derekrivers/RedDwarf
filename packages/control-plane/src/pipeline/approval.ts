@@ -20,6 +20,9 @@ import {
   recordRunEvent
 } from "./shared.js";
 import { getPhaseRetryBudgetMemoryKey, readPhaseRetryBudgetState } from "./retry-budget.js";
+import {
+  restoreProjectTicketExecutionFromSnapshot
+} from "./project-ticket-state.js";
 import { failureAutomationRequestedBy } from "./types.js";
 import {
   type ResolveApprovalRequestDependencies,
@@ -158,6 +161,13 @@ export async function resolveApprovalRequest(
   await repository.runInTransaction(async (transactionalRepository) => {
     await transactionalRepository.saveApprovalRequest(updatedApprovalRequest);
     await transactionalRepository.updateManifest(finalManifest);
+    if (resetRetryBudgetOnApproval) {
+      await restoreProjectTicketExecutionFromSnapshot({
+        repository: transactionalRepository,
+        snapshot,
+        updatedAt: resolvedAtIso
+      });
+    }
     if (resetRetryBudgetOnApproval && retryBudgetState !== null) {
       const phase = recoverableApprovalPhase!;
       await transactionalRepository.saveMemoryRecord(

@@ -648,6 +648,24 @@ describe("advanceProjectTicket", () => {
     ).rejects.toThrow(/not found/);
   });
 
+  it("rejects merge advancement for dependency-blocked pending tickets", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "executing" })
+    );
+    await repository.saveTicketSpec(
+      buildTicketSpec({ status: "pending" })
+    );
+
+    await expect(
+      advanceProjectTicket(
+        { ticketId: "project:task-100:ticket:1", githubPrNumber: 55 },
+        { repository }
+      )
+    ).rejects.toThrow(/cannot be advanced/);
+  });
+
   it("handles advance without GitHub Issues adapter", async () => {
     const repository = new InMemoryPlanningRepository();
 

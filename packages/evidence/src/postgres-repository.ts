@@ -982,7 +982,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
         this.saveOperatorConfigEntryWithExecutor(client, entry),
       savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot),
       saveEligibilityRejection: (record) =>
-        this.saveEligibilityRejectionWithExecutor(client, record)
+        this.saveEligibilityRejectionWithExecutor(client, record),
+      getProjectSpec: (projectId) => this.getProjectSpecWithExecutor(client, projectId),
+      saveProjectSpec: (project) => this.saveProjectSpecWithExecutor(client, project),
+      getTicketSpec: (ticketId) => this.getTicketSpecWithExecutor(client, ticketId),
+      saveTicketSpec: (ticket) => this.saveTicketSpecWithExecutor(client, ticket)
     };
 
     try {
@@ -1429,8 +1433,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return buildMemoryContextForRepository(this, input);
   }
 
-  async saveProjectSpec(project: ProjectSpec): Promise<void> {
-    await this.pool.query(
+  private async saveProjectSpecWithExecutor(
+    executor: QueryExecutor,
+    project: ProjectSpec
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO project_specs (
           project_id, source_issue_id, source_repo, title, summary,
@@ -1484,8 +1491,15 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async saveTicketSpec(ticket: TicketSpec): Promise<void> {
-    await this.pool.query(
+  async saveProjectSpec(project: ProjectSpec): Promise<void> {
+    await this.saveProjectSpecWithExecutor(this.pool, project);
+  }
+
+  private async saveTicketSpecWithExecutor(
+    executor: QueryExecutor,
+    ticket: TicketSpec
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO ticket_specs (
           ticket_id, project_id, title, description,
@@ -1525,6 +1539,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
+  async saveTicketSpec(ticket: TicketSpec): Promise<void> {
+    await this.saveTicketSpecWithExecutor(this.pool, ticket);
+  }
+
   async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
     const now = asIsoTimestamp();
     await this.pool.query(
@@ -1541,12 +1559,19 @@ export class PostgresPlanningRepository implements PlanningRepository {
     );
   }
 
-  async getProjectSpec(projectId: string): Promise<ProjectSpec | null> {
-    const result = await this.pool.query(
+  private async getProjectSpecWithExecutor(
+    executor: QueryExecutor,
+    projectId: string
+  ): Promise<ProjectSpec | null> {
+    const result = await executor.query(
       `SELECT * FROM project_specs WHERE project_id = $1`,
       [projectId]
     );
     return result.rows[0] ? mapProjectSpecRow(result.rows[0]) : null;
+  }
+
+  async getProjectSpec(projectId: string): Promise<ProjectSpec | null> {
+    return this.getProjectSpecWithExecutor(this.pool, projectId);
   }
 
   async listProjectSpecs(repo?: string): Promise<ProjectSpec[]> {
@@ -1563,12 +1588,19 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapProjectSpecRow);
   }
 
-  async getTicketSpec(ticketId: string): Promise<TicketSpec | null> {
-    const result = await this.pool.query(
+  private async getTicketSpecWithExecutor(
+    executor: QueryExecutor,
+    ticketId: string
+  ): Promise<TicketSpec | null> {
+    const result = await executor.query(
       `SELECT * FROM ticket_specs WHERE ticket_id = $1`,
       [ticketId]
     );
     return result.rows[0] ? mapTicketSpecRow(result.rows[0]) : null;
+  }
+
+  async getTicketSpec(ticketId: string): Promise<TicketSpec | null> {
+    return this.getTicketSpecWithExecutor(this.pool, ticketId);
   }
 
   async listTicketSpecs(projectId: string): Promise<TicketSpec[]> {

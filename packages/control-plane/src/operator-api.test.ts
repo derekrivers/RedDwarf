@@ -3076,6 +3076,30 @@ describe("Project Mode — POST /projects/advance", () => {
     }
   });
 
+  it("returns 409 when advancing a ticket that is not dispatched or pr_open", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "pending" })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe("conflict");
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("returns 400 for invalid payload", async () => {
     const repository = new InMemoryPlanningRepository();
     const server = createOperatorApiServer(

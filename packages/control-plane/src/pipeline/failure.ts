@@ -52,6 +52,9 @@ import {
   readPhaseRetryBudgetState,
   resolvePhaseRetryLimit
 } from "./retry-budget.js";
+import {
+  markProjectTicketFailedFromSnapshot
+} from "./project-ticket-state.js";
 
 import { sanitizeSecretBearingText } from "../live-workflow.js";
 
@@ -740,6 +743,11 @@ export async function handleAutomatedPhaseFailure(input: {
       retryBudgetState,
       recoveryMetadata,
       createdAt: input.failedAtIso
+    });
+    await markProjectTicketFailedFromSnapshot({
+      repository: transactionalRepository,
+      snapshot,
+      updatedAt: input.failedAtIso
     });
     await recordRunEvent({
       repository: transactionalRepository,

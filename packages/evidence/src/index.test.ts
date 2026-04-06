@@ -649,6 +649,70 @@ describe("evidence memory partitions", () => {
     expect(ticket?.status).toBe("dispatched");
   });
 
+  it("rolls back project and ticket writes in memory transactions", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-rollback",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Rollback project",
+      summary: "Test project transaction rollback.",
+      projectSize: "medium",
+      status: "executing",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveTicketSpec({
+      ticketId: "t-rollback",
+      projectId: "proj-rollback",
+      title: "Rollback ticket",
+      description: "Test ticket transaction rollback.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: [],
+      status: "dispatched",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await expect(
+      repository.runInTransaction(async (transaction) => {
+        await transaction.saveProjectSpec({
+          ...(await transaction.getProjectSpec("proj-rollback"))!,
+          status: "failed",
+          updatedAt: "2026-03-25T20:30:00.000Z"
+        });
+        await transaction.saveTicketSpec({
+          ...(await transaction.getTicketSpec("t-rollback"))!,
+          status: "failed",
+          updatedAt: "2026-03-25T20:30:00.000Z"
+        });
+        throw new Error("rollback");
+      })
+    ).rejects.toThrow(/rollback/);
+
+    await expect(repository.getProjectSpec("proj-rollback")).resolves.toMatchObject({
+      status: "executing",
+      updatedAt: timestamp
+    });
+    await expect(repository.getTicketSpec("t-rollback")).resolves.toMatchObject({
+      status: "dispatched",
+      updatedAt: timestamp
+    });
+  });
+
   it("claims active runs atomically in memory, retiring stale overlaps and blocking fresh ones", async () => {
     const repository = new InMemoryPlanningRepository();
     const concurrencyKey = "github:acme/platform:55";

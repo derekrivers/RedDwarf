@@ -395,6 +395,55 @@ describe("parseProjectArchitectHandoff", () => {
     );
   });
 
+  it("throws when ticket dependencies contain a cycle", () => {
+    const handoff = [
+      "# Project Architecture Handoff",
+      "",
+      "- Confidence: medium",
+      "- Confidence reason: Decomposed into cyclic tickets.",
+      "",
+      "## Project Title",
+      "",
+      "Cycle validation",
+      "",
+      "## Project Summary",
+      "",
+      "A project with a dependency cycle.",
+      "",
+      "## Tickets",
+      "",
+      "### Ticket: First ticket",
+      "",
+      "- Complexity: low",
+      "- Depends on: Second ticket",
+      "",
+      "#### Description",
+      "",
+      "First.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Works",
+      "",
+      "### Ticket: Second ticket",
+      "",
+      "- Complexity: low",
+      "- Depends on: First ticket",
+      "",
+      "#### Description",
+      "",
+      "Second.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Also works"
+    ].join("\n");
+
+    expect(() => parseProjectArchitectHandoff(handoff)).toThrow(
+      /dependency cycle/
+    );
+  });
+
   it("parses numbered list clarification questions", () => {
     const handoff = [
       "# Project Architecture Handoff",

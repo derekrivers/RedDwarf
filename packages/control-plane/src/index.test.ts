@@ -3636,6 +3636,63 @@ describe("control-plane", () => {
           idGenerator: () => "run-validation-escalation-dev"
         }
       );
+      const projectId = `project:${planningResult.manifest.taskId}`;
+      const ticketId = `${projectId}:ticket:1`;
+      await repository.saveProjectSpec({
+        projectId,
+        sourceIssueId: String(planningResult.manifest.source.issueNumber ?? 99),
+        sourceRepo: planningResult.manifest.source.repo,
+        title: "Validation escalation project",
+        summary: "Project state should reflect child task escalation.",
+        projectSize: "medium",
+        status: "executing",
+        complexityClassification: null,
+        approvalDecision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved.",
+        amendments: null,
+        clarificationQuestions: null,
+        clarificationAnswers: null,
+        clarificationRequestedAt: null,
+        createdAt: "2026-03-25T18:09:00.000Z",
+        updatedAt: "2026-03-25T18:09:00.000Z"
+      });
+      await repository.saveTicketSpec({
+        ticketId,
+        projectId,
+        title: "Validation escalation ticket",
+        description: "Ticket should follow child task failure state.",
+        acceptanceCriteria: ["Validation failure is visible on the project."],
+        dependsOn: [],
+        status: "dispatched",
+        complexityClass: "low",
+        riskClass: "low",
+        githubSubIssueNumber: 2000,
+        githubPrNumber: null,
+        createdAt: "2026-03-25T18:09:00.000Z",
+        updatedAt: "2026-03-25T18:09:00.000Z"
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${planningResult.manifest.taskId}:memory:task:project-ticket`,
+          taskId: planningResult.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "project.ticket",
+          title: "Project ticket dispatch metadata",
+          value: {
+            projectId,
+            ticketId,
+            githubSubIssueNumber: 2000,
+            sourceRepo: planningResult.manifest.source.repo
+          },
+          repo: planningResult.manifest.source.repo,
+          organizationId: "acme",
+          tags: ["project", "ticket"],
+          createdAt: "2026-03-25T18:09:00.000Z",
+          updatedAt: "2026-03-25T18:09:00.000Z"
+        })
+      );
 
       const failingValidator = {
         async createPlan() {
@@ -3713,10 +3770,14 @@ describe("control-plane", () => {
       const followUpIssue = repository.memoryRecords.find(
         (record) => record.key === "failure.follow_up_issue.validation"
       );
+      const failedProject = await repository.getProjectSpec(projectId);
+      const failedTicket = await repository.getTicketSpec(ticketId);
 
       expect(persistedManifest?.lifecycleStatus).toBe("blocked");
       expect(persistedManifest?.currentPhase).toBe("validation");
       expect(persistedManifest?.retryCount).toBe(1);
+      expect(failedProject?.status).toBe("failed");
+      expect(failedTicket?.status).toBe("failed");
       expect(runSummary?.status).toBe("blocked");
       expect(failureRequest?.status).toBe("pending");
       expect(failureRequest?.requestedBy).toBe("failure-automation");
@@ -3730,6 +3791,24 @@ describe("control-plane", () => {
       expect(
         repository.runEvents.some((event) => event.code === "FOLLOW_UP_ISSUE_CREATED")
       ).toBe(true);
+
+      await resolveApprovalRequest(
+        {
+          requestId: failureRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Retry the failed project ticket validation."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:25:00.000Z")
+        }
+      );
+
+      const restoredProject = await repository.getProjectSpec(projectId);
+      const restoredTicket = await repository.getTicketSpec(ticketId);
+      expect(restoredProject?.status).toBe("executing");
+      expect(restoredTicket?.status).toBe("dispatched");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

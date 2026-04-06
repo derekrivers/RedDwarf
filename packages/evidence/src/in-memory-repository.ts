@@ -221,6 +221,8 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     const operatorConfigEntries = cloneInMemoryMap(this.operatorConfigEntries);
     const promptSnapshots = cloneInMemoryMap(this.promptSnapshots);
     const eligibilityRejections = cloneInMemoryArray(this.eligibilityRejections);
+    const projectSpecs = cloneInMemoryMap(this.projectSpecs);
+    const ticketSpecs = cloneInMemoryMap(this.ticketSpecs);
 
     try {
       return await operation(this);
@@ -276,6 +278,16 @@ export class InMemoryPlanningRepository implements PlanningRepository {
         this.eligibilityRejections.length,
         ...eligibilityRejections
       );
+
+      this.projectSpecs.clear();
+      for (const [key, value] of projectSpecs.entries()) {
+        this.projectSpecs.set(key, value);
+      }
+
+      this.ticketSpecs.clear();
+      for (const [key, value] of ticketSpecs.entries()) {
+        this.ticketSpecs.set(key, value);
+      }
 
       throw error;
     }

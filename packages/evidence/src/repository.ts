@@ -63,6 +63,10 @@ export interface PlanningTransactionRepository {
   savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot>;
   saveEligibilityRejection(record: EligibilityRejectionRecord): Promise<void>;
   saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void>;
+  getProjectSpec(projectId: string): Promise<ProjectSpec | null>;
+  saveProjectSpec(project: ProjectSpec): Promise<void>;
+  getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
+  saveTicketSpec(ticket: TicketSpec): Promise<void>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {

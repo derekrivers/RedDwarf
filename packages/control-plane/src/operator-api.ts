@@ -2884,6 +2884,17 @@ async function handleOperatorRequest(
         });
         return;
       }
+      if (
+        err instanceof Error &&
+        (err.message.includes("cannot advance ticket") ||
+          err.message.includes("cannot be advanced from a PR merge callback"))
+      ) {
+        writeOperatorJsonResponse(res, 409, {
+          error: "conflict",
+          message: err.message
+        });
+        return;
+      }
       throw err;
     }
   }

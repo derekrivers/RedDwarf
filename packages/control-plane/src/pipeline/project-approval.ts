@@ -903,6 +903,18 @@ export async function advanceProjectTicket(
     };
   }
 
+  if (project.status !== "executing") {
+    throw new Error(
+      `Project ${project.projectId} is in status '${project.status}' and cannot advance ticket ${input.ticketId}.`
+    );
+  }
+
+  if (ticket.status !== "dispatched" && ticket.status !== "pr_open") {
+    throw new Error(
+      `Ticket ${input.ticketId} is in status '${ticket.status}' and cannot be advanced from a PR merge callback.`
+    );
+  }
+
   // Step 1: Mark ticket as merged with PR number
   const mergedTicket: TicketSpec = {
     ...ticket,
