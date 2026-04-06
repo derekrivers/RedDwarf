@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Project approval succeeds but no GitHub sub-issues appear
+
+- Symptom: `/projects` shows a project moved to `executing` and one ticket may already be marked `dispatched`, but no child issues are created in GitHub for the source repo.
+- Root cause: the live operator API can approve a project without a `githubIssuesAdapter`. In that mode `executeProjectApproval(...)` intentionally falls back to Postgres-only state, so the project advances internally but GitHub sub-issue creation is skipped.
+- Failing approach: assuming `githubWriter` is enough for all GitHub-backed operator actions. `POST /issues/submit` works with only `githubWriter`, but `POST /projects/:id/approve` requires `githubIssuesAdapter` as well.
+- Working workaround: start the operator API through a build where both `scripts/start-stack.mjs` and `scripts/start-operator-api.mjs` pass the shared REST adapter as `githubWriter` and `githubIssuesAdapter`, then approve a fresh pending project. Older already-approved projects will not retroactively mint child issues.
+- Verification: confirm the startup scripts pass both dependency keys into `createOperatorApiServer(...)`; approve a new pending project and verify the API response reports `subIssuesFallback: false` with `subIssuesCreated > 0`, then confirm the child issues exist in GitHub.
+
 ## Approving a project-mode task through `/approvals/:requestId/resolve` bypasses project approval and no GitHub sub-issues get created
 
 - Symptom: `/projects` shows a pending project with ticket decomposition, but an operator approval click or API call against the generic approvals route starts a normal whole-task development run instead of creating project sub-issues. The project can remain `pending_approval` while the parent task unexpectedly advances to `development`.

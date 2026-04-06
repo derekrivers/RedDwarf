@@ -2,6 +2,9 @@
 
 ## 2026-04-06
 
+- Fixed live project approval startup wiring after approved project `#66` transitioned to `executing` with one dispatched ticket but still created no GitHub child issues. The root cause was that both `scripts/start-stack.mjs` and `scripts/start-operator-api.mjs` passed `githubWriter` into `createOperatorApiServer(...)` but forgot `githubIssuesAdapter`, so `POST /projects/:id/approve` fell back to Postgres-only execution with `subIssuesFallback = true`.
+- Both startup paths now pass the shared REST GitHub adapter as `githubWriter` and `githubIssuesAdapter`, so project approval can create GitHub sub-issues as documented instead of only updating local project state.
+
 - Fixed project-mode approval routing after live issue `#65` showed the operator could approve the generic policy-gate request and accidentally resume the legacy whole-task pipeline instead of the documented project approval flow.
 - Project-mode planning no longer queues a normal `policy_gate` approval request when it already persisted a pending `ProjectSpec`; those runs now stay blocked and wait for `POST /projects/:id/approve`.
 - Hardened the generic approval resolver so stale legacy approval rows now fail with a clear conflict pointing operators at `/projects/:id/approve` instead of silently bypassing sub-issue creation.

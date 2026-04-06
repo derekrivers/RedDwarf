@@ -55,7 +55,13 @@ const github = createRestGitHubAdapter();
 
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
-  { repository, planner, defaultPlanningDryRun: dryRun, githubWriter: github }
+  {
+    repository,
+    planner,
+    defaultPlanningDryRun: dryRun,
+    githubWriter: github,
+    githubIssuesAdapter: github
+  }
 );
 
 await server.start();
