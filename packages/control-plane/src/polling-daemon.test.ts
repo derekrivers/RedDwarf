@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { PlanningAgent } from "@reddwarf/contracts";
 import {
   DeterministicPlanningAgent,
   createBufferedPlanningLogger,
@@ -644,6 +645,81 @@ describe("GitHub issue polling daemon backoff", () => {
       const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
       expect(cursor?.lastPollStatus).toBe("failed");
       expect(cursor?.lastPollError).toContain("timed out after 2000ms");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fail a poll cycle just because planning takes longer than the fetch timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const github = new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo: "acme/platform",
+            issueNumber: 75,
+            title: "Slow planning should still complete",
+            body: [
+              "This issue simulates a slow architect pass.",
+              "",
+              "Acceptance Criteria:",
+              "- Polling still completes successfully",
+              "",
+              "Affected Paths:",
+              "- docs/polling-timeouts.md",
+              "",
+              "Requested Capabilities:",
+              "- can_plan",
+              "- can_archive_evidence"
+            ].join("\n"),
+            labels: ["ai-eligible"],
+            url: "https://github.com/acme/platform/issues/75",
+            state: "open",
+            updatedAt: "2026-03-29T13:00:00.000Z"
+          }
+        ]
+      });
+      const deterministicPlanner = new DeterministicPlanningAgent();
+      const slowPlanner: PlanningAgent = {
+        async createSpec(input, context) {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          return deterministicPlanner.createSpec(input, context);
+        }
+      };
+
+      const daemon = createGitHubIssuePollingDaemon(
+        {
+          intervalMs: 5_000,
+          cycleTimeoutMs: 2_000,
+          repositories: [{ repo: "acme/platform" }],
+          runOnStart: false
+        },
+        {
+          repository,
+          github,
+          planner: slowPlanner,
+          clock: () => new Date("2026-03-29T13:00:00.000Z"),
+          idGenerator: () => "slow-plan-001"
+        }
+      );
+
+      const pending = daemon.pollOnce();
+      await vi.advanceTimersByTimeAsync(3_000);
+      const cycle = await pending;
+
+      expect(cycle.plannedIssueCount).toBe(1);
+      expect(cycle.decisions[0]).toMatchObject({
+        repo: "acme/platform",
+        issueNumber: 75,
+        action: "planned"
+      });
+
+      const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
+      expect(cursor?.lastSeenIssueNumber).toBe(75);
+      expect(cursor?.lastPollStatus).toBe("succeeded");
+      expect(daemon.consecutiveFailures).toBe(0);
     } finally {
       vi.useRealTimers();
     }

@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Medium project-mode GitHub issues can time out the poller before the cursor advances
+
+- Symptom: `/health` shows polling degraded with `GitHub issue polling cycle for <repo> timed out after 120000ms`, `lastSeenIssueNumber` stays on the previous issue, and the new GitHub issue never appears in `/projects` even though the repo poll is otherwise healthy.
+- Root cause: the repo poll timeout used to wrap the entire per-repo intake loop, including `runPlanningPipeline(...)`. A medium/large issue that triggered Holly project planning could legitimately take longer than the poll timeout, so the repo cursor never advanced and the same issue stayed stuck behind a failed cycle.
+- Failing approach: treating the 120s poll timeout as evidence that GitHub listing is hung, then only increasing the timeout or recreating the issue.
+- Working workaround: run a build where `packages/control-plane/src/polling.ts` applies the timeout only to GitHub batch fetch and cursor persistence, not to the full planning pipeline. Slow planning will then complete normally, while genuinely hung GitHub reads still fail fast.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; confirm the timeout test for a hung `listIssueCandidates(...)` still fails fast, and confirm the slow-planner regression passes with `cycleTimeoutMs` shorter than the planner delay.
+
 ## Project approval succeeds but no GitHub sub-issues appear
 
 - Symptom: `/projects` shows a project moved to `executing` and one ticket may already be marked `dispatched`, but no child issues are created in GitHub for the source repo.

@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Fixed GitHub issue polling timeouts that were blocking medium project-mode intake such as `derekrivers/FirstVoyage#67`. The poller used to wrap the entire per-repo loop, including `runPlanningPipeline(...)`, inside the 120s cycle timeout. Slow Holly/project-planning work could therefore mark polling degraded before the repo cursor advanced, even when the underlying planning work was healthy.
+- The poller now applies the timeout only to GitHub batch fetch and cursor persistence, while planning runs outside that narrow fetch timeout. This keeps hung GitHub reads failing fast without treating a long planning pass as a repo polling failure.
+- Added regression coverage proving a hung `listIssueCandidates(...)` call still times out, while a slow planner no longer fails the cycle or prevents cursor advancement.
+
 - Fixed live project approval startup wiring after approved project `#66` transitioned to `executing` with one dispatched ticket but still created no GitHub child issues. The root cause was that both `scripts/start-stack.mjs` and `scripts/start-operator-api.mjs` passed `githubWriter` into `createOperatorApiServer(...)` but forgot `githubIssuesAdapter`, so `POST /projects/:id/approve` fell back to Postgres-only execution with `subIssuesFallback = true`.
 - Both startup paths now pass the shared REST GitHub adapter as `githubWriter` and `githubIssuesAdapter`, so project approval can create GitHub sub-issues as documented instead of only updating local project state.
 

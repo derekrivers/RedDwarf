@@ -257,6 +257,8 @@ export function createGitHubIssuePollingDaemon(
       ? bindPlanningLogger(logger, { sourceRepo: repoConfig.repo })
       : undefined;
 
+    let unseenCandidates: GitHubIssueCandidate[] = [];
+
     try {
       await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
         existingCursor = await deps.repository.getGitHubIssuePollingCursor(repoConfig.repo);
@@ -273,7 +275,7 @@ export function createGitHubIssuePollingDaemon(
         };
         const candidates = await deps.github.listIssueCandidates(query);
         const batchSize = repoConfig.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
-        const unseenCandidates = selectUnseenCandidates(
+        unseenCandidates = selectUnseenCandidates(
           candidates,
           existingCursor?.lastSeenIssueNumber ?? null
         ).slice(0, batchSize);
@@ -284,94 +286,96 @@ export function createGitHubIssuePollingDaemon(
           unseenCandidateCount: unseenCandidates.length,
           batchSize
         });
+      });
 
-        const effectiveAllowlist = resolveEffectiveAllowlist(repoConfig, config);
+      const effectiveAllowlist = resolveEffectiveAllowlist(repoConfig, config);
 
-        for (const candidate of unseenCandidates) {
-          if (!isAuthorAllowed(candidate, effectiveAllowlist)) {
-            repoLogger?.info("GitHub issue rejected: author not in allowlist.", {
-              code: "INTAKE_AUTHOR_REJECTED",
-              repo: candidate.repo,
-              issueNumber: candidate.issueNumber,
-              author: candidate.author ?? null
-            });
-            decisions.push({
-              repo: candidate.repo,
-              issueNumber: candidate.issueNumber,
-              action: "rejected",
-              reason: "author_not_allowlisted"
-            });
-            continue;
-          }
-
-          const source: TaskManifest["source"] = {
-            provider: "github",
+      for (const candidate of unseenCandidates) {
+        if (!isAuthorAllowed(candidate, effectiveAllowlist)) {
+          repoLogger?.info("GitHub issue rejected: author not in allowlist.", {
+            code: "INTAKE_AUTHOR_REJECTED",
             repo: candidate.repo,
             issueNumber: candidate.issueNumber,
-            issueUrl: candidate.url
-          };
-          const existingSpec = await deps.repository.hasPlanningSpecForSource(source);
-
-          if (existingSpec) {
-            decisions.push({
-              repo: candidate.repo,
-              issueNumber: candidate.issueNumber,
-              action: "skipped",
-              reason: "existing_planning_spec"
-            });
-            continue;
-          }
-
-          const planningInput = await deps.github.convertToPlanningInput(candidate);
-
-          // Rimmer: classify complexity before routing
-          const classification = classifyComplexity(planningInput);
-          const planningMetadata = {
-            ...planningInput.metadata,
-            complexityClassification: classification
-          };
-
-          // The planning pipeline detects project mode from metadata.complexityClassification
-          // and runs project-mode planning when OpenClaw deps are available and size !== 'small'.
-          const result = await runPlanningPipeline(
-            {
-              ...planningInput,
-              metadata: planningMetadata,
-              dryRun: config.dryRun ?? planningInput.dryRun
-            },
-            {
-              repository: deps.repository,
-              planner: deps.planner,
-              ...(deps.openClawDispatch !== undefined
-                ? { openClawDispatch: deps.openClawDispatch }
-                : {}),
-              ...(deps.openClawArchitectAgentId !== undefined
-                ? { openClawArchitectAgentId: deps.openClawArchitectAgentId }
-                : {}),
-              ...(deps.openClawArchitectAwaiter !== undefined
-                ? { openClawArchitectAwaiter: deps.openClawArchitectAwaiter }
-                : {}),
-              ...(deps.architectTargetRoot !== undefined
-                ? { architectTargetRoot: deps.architectTargetRoot }
-                : {}),
-              ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-              clock,
-              ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
-              ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
-            }
-          );
-
+            author: candidate.author ?? null
+          });
           decisions.push({
             repo: candidate.repo,
             issueNumber: candidate.issueNumber,
-            action: "planned",
-            taskId: result.manifest.taskId,
-            runId: result.runId
+            action: "rejected",
+            reason: "author_not_allowlisted"
           });
+          continue;
         }
 
-        const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
-        const pollCompletedAtIso = asIsoTimestamp(clock());
+        const source: TaskManifest["source"] = {
+          provider: "github",
+          repo: candidate.repo,
+          issueNumber: candidate.issueNumber,
+          issueUrl: candidate.url
+        };
+        const existingSpec = await deps.repository.hasPlanningSpecForSource(source);
+
+        if (existingSpec) {
+          decisions.push({
+            repo: candidate.repo,
+            issueNumber: candidate.issueNumber,
+            action: "skipped",
+            reason: "existing_planning_spec"
+          });
+          continue;
+        }
+
+        const planningInput = await deps.github.convertToPlanningInput(candidate);
+
+        // Rimmer: classify complexity before routing
+        const classification = classifyComplexity(planningInput);
+        const planningMetadata = {
+          ...planningInput.metadata,
+          complexityClassification: classification
+        };
+
+        // The planning pipeline detects project mode from metadata.complexityClassification
+        // and runs project-mode planning when OpenClaw deps are available and size !== 'small'.
+        const result = await runPlanningPipeline(
+          {
+            ...planningInput,
+            metadata: planningMetadata,
+            dryRun: config.dryRun ?? planningInput.dryRun
+          },
+          {
+            repository: deps.repository,
+            planner: deps.planner,
+            ...(deps.openClawDispatch !== undefined
+              ? { openClawDispatch: deps.openClawDispatch }
+              : {}),
+            ...(deps.openClawArchitectAgentId !== undefined
+              ? { openClawArchitectAgentId: deps.openClawArchitectAgentId }
+              : {}),
+            ...(deps.openClawArchitectAwaiter !== undefined
+              ? { openClawArchitectAwaiter: deps.openClawArchitectAwaiter }
+              : {}),
+            ...(deps.architectTargetRoot !== undefined
+              ? { architectTargetRoot: deps.architectTargetRoot }
+              : {}),
+            ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+            clock,
+            ...(deps.idGenerator !== undefined ? { idGenerator: deps.idGenerator } : {}),
+            ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
+          }
+        );
+
+        decisions.push({
+          repo: candidate.repo,
+          issueNumber: candidate.issueNumber,
+          action: "planned",
+          taskId: result.manifest.taskId,
+          runId: result.runId
+        });
+      }
+
+      const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
+      const pollCompletedAtIso = asIsoTimestamp(clock());
+      await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
         await deps.repository.saveGitHubIssuePollingCursor(
           createGitHubIssuePollingCursor({
             repo: repoConfig.repo,
