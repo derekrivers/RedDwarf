@@ -2605,6 +2605,43 @@ describe("control-plane", () => {
           idGenerator: () => "run-scm-validation"
         }
       );
+      const projectTicketId = "project:run-scm:ticket:1";
+      await repository.saveTicketSpec({
+        ticketId: projectTicketId,
+        projectId: "project:run-scm",
+        title: "SCM ticket",
+        description: "Verify project ticket PR-open state recording.",
+        acceptanceCriteria: ["The ticket records the opened PR number."],
+        dependsOn: [],
+        status: "dispatched",
+        complexityClass: "low",
+        riskClass: "low",
+        githubSubIssueNumber: 2000,
+        githubPrNumber: null,
+        createdAt: "2026-03-25T18:00:00.000Z",
+        updatedAt: "2026-03-25T18:00:00.000Z"
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${planningResult.manifest.taskId}:memory:task:project-ticket`,
+          taskId: planningResult.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "project.ticket",
+          title: "Project ticket dispatch metadata",
+          value: {
+            projectId: "project:run-scm",
+            ticketId: projectTicketId,
+            githubSubIssueNumber: 2000,
+            sourceRepo: planningResult.manifest.source.repo
+          },
+          repo: planningResult.manifest.source.repo,
+          organizationId: "acme",
+          tags: ["project", "ticket"],
+          createdAt: "2026-03-25T18:00:00.000Z",
+          updatedAt: "2026-03-25T18:00:00.000Z"
+        })
+      );
       const scm = await runScmPhase(
         {
           taskId: planningResult.manifest.taskId,
@@ -2634,6 +2671,7 @@ describe("control-plane", () => {
           record.taskId === planningResult.manifest.taskId &&
           typeof record.metadata.archivePath === "string"
       );
+      const persistedProjectTicket = await repository.getTicketSpec(projectTicketId);
 
       expect(validation.nextAction).toBe("await_scm");
       expect(scm.nextAction).toBe("complete");
@@ -2644,6 +2682,8 @@ describe("control-plane", () => {
       expect(persistedManifest?.lifecycleStatus).toBe("completed");
       expect(persistedManifest?.branchName).toBe(scm.branch?.branchName ?? null);
       expect(persistedManifest?.prNumber).toBe(71);
+      expect(persistedProjectTicket?.status).toBe("pr_open");
+      expect(persistedProjectTicket?.githubPrNumber).toBe(71);
       expect(runSummary?.status).toBe("completed");
       expect(runSummary?.latestPhase).toBe("scm");
       expect(reportMarkdown).toContain("SCM Report");

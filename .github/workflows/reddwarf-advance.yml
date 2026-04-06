@@ -8,7 +8,7 @@
 # Required secrets:
 #   REDDWARF_OPERATOR_TOKEN — the operator API bearer token
 #
-# Required variables (set in repo or environment settings):
+# Required variable or secret (set in repo or environment settings):
 #   REDDWARF_OPERATOR_API_URL — the operator API base URL reachable from
 #     GitHub Actions runners (e.g. https://<machine>.tail<net>.ts.net:8080)
 
@@ -53,12 +53,12 @@ jobs:
         if: steps.extract.outputs.skip != 'true'
         env:
           REDDWARF_OPERATOR_TOKEN: ${{ secrets.REDDWARF_OPERATOR_TOKEN }}
-          REDDWARF_OPERATOR_API_URL: ${{ vars.REDDWARF_OPERATOR_API_URL }}
+          REDDWARF_OPERATOR_API_URL: ${{ vars.REDDWARF_OPERATOR_API_URL || secrets.REDDWARF_OPERATOR_API_URL }}
           TICKET_ID: ${{ steps.extract.outputs.ticket_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [ -z "$REDDWARF_OPERATOR_API_URL" ]; then
-            echo "::error::REDDWARF_OPERATOR_API_URL is not set. Configure it in repository variables."
+            echo "::error::REDDWARF_OPERATOR_API_URL is not set. Configure it in repository variables or secrets."
             exit 1
           fi
 
@@ -68,13 +68,14 @@ jobs:
           fi
 
           echo "Advancing ticket $TICKET_ID (PR #$PR_NUMBER)..."
+          REDDWARF_OPERATOR_API_BASE_URL="${REDDWARF_OPERATOR_API_URL%/}"
 
           HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
             -X POST \
             -H "Authorization: Bearer $REDDWARF_OPERATOR_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"ticket_id\": \"$TICKET_ID\", \"github_pr_number\": $PR_NUMBER}" \
-            "$REDDWARF_OPERATOR_API_URL/projects/advance")
+            "$REDDWARF_OPERATOR_API_BASE_URL/projects/advance")
 
           cat response.json
           echo ""

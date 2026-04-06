@@ -3058,6 +3058,24 @@ describe("Project Mode — POST /projects/advance", () => {
     }
   });
 
+  it("returns 400 for a non-integer PR number", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55.5
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("returns 401 without auth token", async () => {
     const repository = new InMemoryPlanningRepository();
     const server = createOperatorApiServer(

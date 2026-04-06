@@ -2833,7 +2833,11 @@ async function handleOperatorRequest(
       return;
     }
 
-    if (typeof body.github_pr_number !== "number" || body.github_pr_number <= 0) {
+    if (
+      typeof body.github_pr_number !== "number" ||
+      !Number.isInteger(body.github_pr_number) ||
+      body.github_pr_number <= 0
+    ) {
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
         message: "github_pr_number must be a positive integer."

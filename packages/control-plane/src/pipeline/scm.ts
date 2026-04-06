@@ -1,12 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  asIsoTimestamp
+  asIsoTimestamp,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import {
   createEvidenceRecord,
   createMemoryRecord,
   type PersistedTaskSnapshot,
+  type PlanningRepository,
   createPipelineRun,
   deriveOrganizationId
 } from "@reddwarf/evidence";
@@ -103,6 +105,41 @@ function readProjectTicketIdFromSnapshot(
   return typeof ticketId === "string" && ticketId.trim().length > 0
     ? ticketId.trim()
     : null;
+}
+
+export async function markProjectTicketPullRequestOpen(input: {
+  repository: Pick<PlanningRepository, "getTicketSpec" | "saveTicketSpec">;
+  ticketId: string;
+  pullRequestNumber: number;
+  updatedAt: string;
+  logger?: { info: (msg: string) => void; warn: (msg: string) => void };
+}): Promise<TicketSpec | null> {
+  const ticket = await input.repository.getTicketSpec(input.ticketId);
+  if (!ticket) {
+    input.logger?.warn(
+      `Project ticket ${input.ticketId} was not found while recording PR #${input.pullRequestNumber}.`
+    );
+    return null;
+  }
+
+  if (ticket.status === "merged") {
+    input.logger?.warn(
+      `Project ticket ${input.ticketId} is already merged; leaving PR #${input.pullRequestNumber} as historical state.`
+    );
+    return ticket;
+  }
+
+  const updatedTicket: TicketSpec = {
+    ...ticket,
+    status: "pr_open",
+    githubPrNumber: input.pullRequestNumber,
+    updatedAt: input.updatedAt
+  };
+  await input.repository.saveTicketSpec(updatedTicket);
+  input.logger?.info(
+    `Project ticket ${input.ticketId} marked pr_open for PR #${input.pullRequestNumber}.`
+  );
+  return updatedTicket;
 }
 
 export async function runScmPhase(
@@ -604,6 +641,15 @@ export async function runScmPhase(
         });
     const scmCompletedAt = clock();
     const scmCompletedAtIso = asIsoTimestamp(scmCompletedAt);
+    if (projectTicketId && pullRequest) {
+      await markProjectTicketPullRequestOpen({
+        repository,
+        ticketId: projectTicketId,
+        pullRequestNumber: pullRequest.number,
+        updatedAt: scmCompletedAtIso,
+        logger: runLogger
+      });
+    }
     const reportPath = join(workspace.artifactsDir, "scm-report.md");
     await writeFile(
       reportPath,

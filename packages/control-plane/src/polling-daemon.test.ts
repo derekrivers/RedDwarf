@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -17,6 +17,35 @@ import {
 import {
   InMemoryPlanningRepository
 } from "@reddwarf/evidence";
+
+function createFixtureWorkspaceRepoBootstrapper() {
+  return {
+    async ensureRepo(input: {
+      workspace: { workspaceRoot: string };
+      baseBranch: string;
+      manifest: { source: { repo: string } };
+    }) {
+      const repoRoot = join(input.workspace.workspaceRoot, "repo");
+      await mkdir(join(repoRoot, "docs"), { recursive: true });
+      await writeFile(join(repoRoot, "README.md"), "# Fixture repo\n", "utf8");
+      await writeFile(
+        join(repoRoot, "docs", "rollout-plan.md"),
+        "# Rollout plan\n",
+        "utf8"
+      );
+      await writeFile(
+        join(repoRoot, "docs", "rollout-checklist.md"),
+        "# Rollout checklist\n",
+        "utf8"
+      );
+      return {
+        repoRoot,
+        baseBranch: input.baseBranch,
+        remoteUrl: `https://github.com/${input.manifest.source.repo}.git`
+      };
+    }
+  };
+}
 
 describe("GitHub issue polling daemon", () => {
   it("polls configured repositories and runs planning for new issue candidates", async () => {
@@ -253,6 +282,7 @@ describe("GitHub issue polling daemon", () => {
           fixedSessionId: "session-project-mode-001"
         }),
         architectTargetRoot,
+        workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
         openClawArchitectAwaiter: {
           async waitForCompletion(input: {
             workspace: { workspaceId: string; artifactsDir: string };

@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Audited the full Project Mode flow before restarting onto the ticket-materialization build. Found and fixed the next SCM-state gap: project-ticket PR creation now marks the originating `TicketSpec` as `pr_open` and records `githubPrNumber` immediately after the PR opens, instead of leaving the project dashboard stuck on `dispatched` until the merge-driven `/projects/advance` callback.
+- Hardened the merge workflow for operator setup drift: `.github/workflows/reddwarf-advance.yml` now accepts `REDDWARF_OPERATOR_API_URL` from either GitHub Actions variables or secrets, trims a trailing slash before posting to `/projects/advance`, and the operator API now rejects non-integer `github_pr_number` payloads.
+- Fixed the project-mode intake dependency surface so GitHub polling forwards `workspaceRepoBootstrapper` into `runPlanningPipeline(...)`. This keeps architect repo checkout behavior injectable and testable instead of falling back to live `git clone` when the poller is exercising OpenClaw project planning.
+
 - Fixed the next Project Mode execution gap after live project `derekrivers/FirstVoyage#69` proved that approval could create GitHub child issues and mark ticket 1 as `dispatched` without launching any developer workspace or run.
 - Project ticket dispatch now materializes a deterministic child task for the dispatched `TicketSpec`, including a ready manifest, ticket-scoped planning spec, policy snapshot, approved policy-gate row, and project-ticket memory. The existing ready-task dispatcher can then start the normal developer/review/validation/SCM pipeline instead of requiring a parallel Project Mode executor.
 - Added recovery for already-`executing` projects whose dispatched ticket has child GitHub issues but no child task: re-running `POST /projects/:id/approve` now materializes the missing ready child task without recreating child issues or changing ticket order. Merge-driven `advanceProjectTicket(...)` now materializes the next ticket task as it dispatches.

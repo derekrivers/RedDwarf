@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## Project-ticket PR opens but the project still shows only `dispatched`
+
+- Symptom: a project ticket reaches SCM and opens a pull request, but `/projects/:id` still shows the ticket as `dispatched` with `githubPrNumber: null` and the dashboard has no PR number to display before merge.
+- Root cause: project-ticket SCM previously only updated the child task manifest with the PR number. It appended the `reddwarf:ticket_id` merge marker to the PR body, but it did not update the originating `TicketSpec` until the later merge-driven `/projects/advance` callback.
+- Failing approach: waiting for the dashboard to infer the ticket PR from the child task manifest, or assuming `dispatched` means “PR is open” during manual recovery.
+- Working workaround: run a build where `runScmPhase(...)` reads `project.ticket` memory, then marks the originating `TicketSpec` as `pr_open` and records `githubPrNumber` immediately after `github.createPullRequest(...)` succeeds. The merge callback still transitions that ticket from `pr_open` to `merged`.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/scm.test.ts`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "routes approved PR tasks from validation into SCM and completes the task"`; confirm `/projects/:id` shows `pr_open` and the PR number while review is pending.
+
+## Merge workflow cannot call `/projects/advance` because the operator API URL was stored in the wrong GitHub Actions namespace
+
+- Symptom: a project-ticket PR merges, but the `RedDwarf Ticket Advance` workflow fails with `REDDWARF_OPERATOR_API_URL is not set` even though the URL was added during setup, or it posts to a malformed URL when the configured base URL includes a trailing slash.
+- Root cause: the workflow originally read `REDDWARF_OPERATOR_API_URL` only from GitHub Actions variables, while setup guidance could lead operators to store it as a secret. It also appended `/projects/advance` directly to the configured value, so a trailing slash could produce a double-slash path.
+- Failing approach: moving the URL back and forth between secrets and variables without changing the workflow, or requiring operators to remember an exact no-trailing-slash format.
+- Working workaround: run a workflow version that falls back from `vars.REDDWARF_OPERATOR_API_URL` to `secrets.REDDWARF_OPERATOR_API_URL` and trims one trailing slash before calling `/projects/advance`.
+- Verification: inspect `.github/workflows/reddwarf-advance.yml` for `${{ vars.REDDWARF_OPERATOR_API_URL || secrets.REDDWARF_OPERATOR_API_URL }}` and `REDDWARF_OPERATOR_API_BASE_URL="${REDDWARF_OPERATOR_API_URL%/}"`; then merge a project-ticket PR and confirm `/projects/advance` receives a positive integer `github_pr_number`.
+
+## Project-mode poller tests try to clone `https://github.com/acme/platform.git`
+
+- Symptom: `packages/control-plane/src/polling-daemon.test.ts` fails in the medium/project-mode case with `git clone --depth 1 --branch main https://github.com/acme/platform.git ... fatal: could not read Username for 'https://github.com'`.
+- Root cause: architect repo bootstrapping became injectable through `workspaceRepoBootstrapper`, but the GitHub issue poller did not forward that dependency into `runPlanningPipeline(...)`. The planning path therefore fell back to the default live GitHub bootstrapper in a fixture test.
+- Failing approach: allowing project-mode poller tests to rely on live network clone access for `acme/platform`, or fixing only the test without forwarding the dependency in production wiring.
+- Working workaround: declare `workspaceRepoBootstrapper` on `GitHubIssuePollingDependencies`, pass it through to `runPlanningPipeline(...)`, and use a fixture bootstrapper in the project-mode polling regression.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; `corepack pnpm typecheck`.
+
 ## Project approval creates child issues but no developer workspace starts
 
 - Symptom: `/projects/:id` shows a project in `executing`, ticket 1 is `dispatched`, and GitHub child issues such as `[1/3] ...` exist, but `/runs` has no developer run for the child issue/ticket and `runtime-data/workspaces/` has no `*-workspace` directory for that project ticket.

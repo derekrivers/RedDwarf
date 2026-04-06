@@ -82,16 +82,20 @@ Add the Funnel URL to your `.env`:
 REDDWARF_OPERATOR_API_URL=https://<machine-name>.<tailnet>.ts.net
 ```
 
-## 6. Configure GitHub Actions secrets
+## 6. Configure GitHub Actions settings
 
-In your GitHub repository settings, add these secrets:
+In your GitHub repository settings, add the operator token as a secret and the
+operator API URL as either a repository variable or a secret:
 
-| Secret | Value |
-|--------|-------|
-| `REDDWARF_OPERATOR_TOKEN` | Your operator API token (same as in `.env`) |
-| `REDDWARF_OPERATOR_API_URL` | The Tailscale Funnel URL from step 5 |
+| Setting | Recommended location | Value |
+|---------|----------------------|-------|
+| `REDDWARF_OPERATOR_TOKEN` | Secret | Your operator API token (same as in `.env`) |
+| `REDDWARF_OPERATOR_API_URL` | Variable, or Secret if you prefer | The Tailscale Funnel URL from step 5 |
 
-These are consumed by the `.github/workflows/reddwarf-advance.yml` workflow (Feature 148).
+These are consumed by the `.github/workflows/reddwarf-advance.yml` workflow
+(Feature 148). The workflow accepts `REDDWARF_OPERATOR_API_URL` from either
+repository variables or secrets and trims a trailing slash before calling
+`/projects/advance`.
 
 ## 7. Verify end-to-end connectivity
 

@@ -115,6 +115,7 @@ export interface GitHubIssuePollingDependencies {
   openClawArchitectAgentId?: string;
   openClawArchitectAwaiter?: OpenClawCompletionAwaiter;
   architectTargetRoot?: string;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   logger?: PlanningPipelineLogger;
   clock?: () => Date;
   idGenerator?: () => string;
@@ -356,6 +357,9 @@ export function createGitHubIssuePollingDaemon(
               : {}),
             ...(deps.architectTargetRoot !== undefined
               ? { architectTargetRoot: deps.architectTargetRoot }
+              : {}),
+            ...(deps.workspaceRepoBootstrapper !== undefined
+              ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper }
               : {}),
             ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
             clock,
