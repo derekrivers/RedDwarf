@@ -22,7 +22,8 @@ describe("generateOpenClawConfig", () => {
         "reddwarf-analyst",
         "reddwarf-arch-reviewer",
         "reddwarf-validator",
-        "reddwarf-developer"
+        "reddwarf-developer",
+        "reddwarf-developer-opus"
       ],
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
@@ -66,7 +67,8 @@ describe("generateOpenClawConfig", () => {
     expect(agentIds).toContain("reddwarf-arch-reviewer");
     expect(agentIds).toContain("reddwarf-validator");
     expect(agentIds).toContain("reddwarf-developer");
-    expect(agentIds).toHaveLength(5);
+    expect(agentIds).toContain("reddwarf-developer-opus");
+    expect(agentIds).toHaveLength(6);
     expect(config.agents.list[0]?.default).toBe(true);
   });
 

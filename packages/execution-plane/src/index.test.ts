@@ -399,7 +399,7 @@ describe("openClawAgentRoleDefinitions", () => {
       openClawAgentRoleDefinitionSchema.parse(definition).role
     );
 
-    expect(roles).toEqual(["coordinator", "analyst", "reviewer", "validator", "developer"]);
+    expect(roles).toEqual(["coordinator", "analyst", "reviewer", "validator", "developer", "developer"]);
   });
 
   it("looks up a single role definition by role", () => {
@@ -445,6 +445,18 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(developer.runtimePolicy.allow).toContain("group:runtime");
     expect(developer.runtimePolicy.deny).toContain("group:automation");
     expect(developer.runtimePolicy.deny).toContain("group:messaging");
+  });
+
+  it("includes a developer-opus variant with Opus model for complex tasks", () => {
+    const devOpus = openClawAgentRoleDefinitions.find(
+      (d) => d.agentId === "reddwarf-developer-opus"
+    );
+
+    expect(devOpus).toBeDefined();
+    expect(devOpus!.role).toBe("developer");
+    expect(devOpus!.runtimePolicy.model.model).toBe("anthropic/claude-opus-4-6");
+    expect(devOpus!.runtimePolicy.sandboxMode).toBe("workspace_write");
+    expect(devOpus!.bootstrapFiles[0]?.relativePath).toContain("lister/IDENTITY.md");
   });
 
   it("can build the default OpenClaw role roster with OpenAI models", () => {
@@ -665,7 +677,7 @@ describe("bootstrap alignment", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.totalViolations).toBe(0);
-    expect(result.agents).toHaveLength(5);
+    expect(result.agents).toHaveLength(6);
     for (const agent of result.agents) {
       expect(agent.valid).toBe(true);
       expect(agent.filesChecked).toBe(5);

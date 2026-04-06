@@ -366,6 +366,52 @@ export function createOpenClawAgentRoleDefinitions(
       }
     ],
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/developer.md"]
+  },
+  {
+    agentId: "reddwarf-developer-opus",
+    role: "developer",
+    displayName: "RedDwarf Developer (Opus)",
+    purpose:
+      "Opus-class developer agent for elevated and high complexity tasks. Same capabilities as the standard developer but uses a more capable model for complex multi-file, cross-package implementations.",
+    runtimePolicy: {
+      toolProfile: "full",
+      allow: ["group:fs", "group:runtime", "group:sessions", "group:openclaw"],
+      deny: ["group:automation", "group:messaging", "sessions_spawn", "sessions_yield", "subagents"],
+      sandboxMode: "workspace_write",
+      model: {
+        provider,
+        model: openClawRoleModelMap["analyst"][provider]
+      }
+    },
+    bootstrapFiles: [
+      {
+        kind: "identity",
+        relativePath: "agents/openclaw/lister/IDENTITY.md",
+        description: "Dave Lister identity and developer persona."
+      },
+      {
+        kind: "soul",
+        relativePath: "agents/openclaw/lister/SOUL.md",
+        description: "Operating posture and implementation principles."
+      },
+      {
+        kind: "agents",
+        relativePath: "agents/openclaw/lister/AGENTS.md",
+        description: "Runtime roster and developer standing orders."
+      },
+      {
+        kind: "tools",
+        relativePath: "agents/openclaw/lister/TOOLS.md",
+        description: "Tool-usage guardrails for scoped implementation work."
+      },
+      {
+        kind: "skill",
+        relativePath: "agents/openclaw/lister/skills/implement_architecture_plan/SKILL.md",
+        description:
+          "Primary implementation skill for architecture-plan-to-code work."
+      }
+    ],
+    canonicalSources: [...sharedOpenClawCanonicalSources, "agents/developer.md"]
   }
 ];
 }

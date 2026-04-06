@@ -92,5 +92,22 @@ export const dashboardAgentRoleDefinitions: Pick<
         model: "anthropic/claude-sonnet-4-6"
       }
     }
+  },
+  {
+    agentId: "reddwarf-developer-opus",
+    role: "developer",
+    displayName: "RedDwarf Developer (Opus)",
+    purpose:
+      "Opus-class developer agent for elevated and high complexity tasks. Same capabilities as the standard developer but uses a more capable model for complex multi-file, cross-package implementations.",
+    runtimePolicy: {
+      toolProfile: "full",
+      allow: ["group:fs", "group:runtime", "group:openclaw"],
+      deny: ["group:automation", "group:messaging"],
+      sandboxMode: "workspace_write",
+      model: {
+        provider: "anthropic",
+        model: "anthropic/claude-opus-4-6"
+      }
+    }
   }
 ];

@@ -4340,6 +4340,100 @@ describe("development complexity budgets", () => {
     expect(profile.reasons).toContain("single-file frontend scaffolding");
     expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBeGreaterThan(600_000);
   });
+
+  it("standard complexity selects reddwarf-developer, elevated/high selects reddwarf-developer-opus", () => {
+    function selectDeveloperAgent(level: string): string {
+      return level === "elevated" || level === "high"
+        ? "reddwarf-developer-opus"
+        : "reddwarf-developer";
+    }
+
+    // Standard complexity: simple task
+    const simpleManifest = taskManifestSchema.parse({
+      taskId: "acme-platform-model-select-simple",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 1 },
+      title: "Simple edit",
+      summary: "A focused single-file change to the application.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_write_code"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const simpleSpec = planningSpecSchema.parse({
+      specId: "simple-spec",
+      taskId: simpleManifest.taskId,
+      summary: "Simple change.",
+      assumptions: [],
+      affectedAreas: ["src/app.ts"],
+      constraints: [],
+      acceptanceCriteria: ["One file updated."],
+      testExpectations: [],
+      recommendedAgentType: "developer",
+      riskClass: "low",
+      confidenceLevel: "high",
+      confidenceReason: "Narrow scope.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const standardProfile = buildDevelopmentComplexityProfile(simpleManifest, simpleSpec);
+    expect(standardProfile.level).toBe("standard");
+    expect(selectDeveloperAgent(standardProfile.level)).toBe("reddwarf-developer");
+
+    // High complexity: many criteria, areas, high risk, low confidence
+    const complexManifest = taskManifestSchema.parse({
+      taskId: "acme-platform-model-select-complex",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 2 },
+      title: "Cross-package refactor",
+      summary: "Major cross-cutting change spanning multiple subsystems.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "high",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_write_code", "can_run_tests", "can_open_pr"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const complexSpec = planningSpecSchema.parse({
+      specId: "complex-spec",
+      taskId: complexManifest.taskId,
+      summary: "Cross-package refactor.",
+      assumptions: [],
+      affectedAreas: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+      constraints: [],
+      acceptanceCriteria: ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"],
+      testExpectations: ["t1", "t2", "t3", "t4"],
+      recommendedAgentType: "developer",
+      riskClass: "high",
+      confidenceLevel: "low",
+      confidenceReason: "Spans many subsystems.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const highProfile = buildDevelopmentComplexityProfile(complexManifest, complexSpec);
+    expect(highProfile.level).toBe("high");
+    expect(selectDeveloperAgent(highProfile.level)).toBe("reddwarf-developer-opus");
+  });
 });
 
 describe("createDeveloperHandoffAwaiter", () => {
