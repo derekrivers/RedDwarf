@@ -786,6 +786,31 @@ function parseTicketsFromMarkdown(markdown: string): ProjectTicketDraft[] {
     });
   }
 
+  const ticketTitles = new Set<string>();
+  for (const ticket of tickets) {
+    if (ticketTitles.has(ticket.title)) {
+      throw new Error(
+        `Project ticket title "${ticket.title}" is duplicated. Ticket titles must be unique so dependencies can be resolved safely.`
+      );
+    }
+    ticketTitles.add(ticket.title);
+  }
+
+  for (const ticket of tickets) {
+    for (const dependencyTitle of ticket.dependsOn) {
+      if (!ticketTitles.has(dependencyTitle)) {
+        throw new Error(
+          `Project ticket "${ticket.title}" depends on unknown ticket "${dependencyTitle}". Dependencies must match another ticket title exactly.`
+        );
+      }
+      if (dependencyTitle === ticket.title) {
+        throw new Error(
+          `Project ticket "${ticket.title}" cannot depend on itself.`
+        );
+      }
+    }
+  }
+
   return tickets;
 }
 

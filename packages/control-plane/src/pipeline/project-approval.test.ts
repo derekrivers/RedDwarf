@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryPlanningRepository } from "@reddwarf/evidence";
 import { FixtureGitHubIssuesAdapter } from "@reddwarf/integrations";
-import type { ProjectSpec, TicketSpec } from "@reddwarf/contracts";
+import type { ProjectSpec, TaskManifest, TicketSpec } from "@reddwarf/contracts";
 import {
   advanceProjectTicket,
   createProjectTicketTaskId,
@@ -54,6 +54,39 @@ function buildTicketSpec(
     riskClass: "low",
     githubSubIssueNumber: null,
     githubPrNumber: null,
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+function buildParentManifest(
+  overrides: Partial<TaskManifest> = {}
+): TaskManifest {
+  return {
+    taskId: "task-100",
+    source: {
+      provider: "github",
+      repo: "acme/platform",
+      issueNumber: 42,
+      issueUrl: "https://github.com/acme/platform/issues/42"
+    },
+    title: "Parent project task",
+    summary: "Parent task that produced a ProjectSpec.",
+    priority: 50,
+    dryRun: false,
+    riskClass: "medium",
+    approvalMode: "human_signoff_required",
+    currentPhase: "archive",
+    lifecycleStatus: "blocked",
+    assignedAgentType: "architect",
+    requestedCapabilities: ["can_plan"],
+    retryCount: 0,
+    evidenceLinks: ["db://project_spec/project:task-100"],
+    workspaceId: null,
+    branchName: null,
+    prNumber: null,
+    policyVersion: "test-policy",
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -538,6 +571,8 @@ describe("advanceProjectTicket", () => {
 
     const persistedTicket2 = await repository.getTicketSpec("project:task-100:ticket:2");
     expect(persistedTicket2?.status).toBe("dispatched");
+    const persistedProject = await repository.getProjectSpec("project:task-100");
+    expect(persistedProject?.updatedAt).toBe("2026-04-06T14:00:00.000Z");
 
     const childSnapshot = await repository.getTaskSnapshot("task-100-ticket-2");
     expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
@@ -550,6 +585,7 @@ describe("advanceProjectTicket", () => {
     await repository.saveProjectSpec(
       buildProjectSpec({ status: "executing" })
     );
+    await repository.saveManifest(buildParentManifest());
     await repository.saveTicketSpec(
       buildTicketSpec({ status: "merged" })
     );
@@ -576,6 +612,9 @@ describe("advanceProjectTicket", () => {
 
     const persisted = await repository.getProjectSpec("project:task-100");
     expect(persisted?.status).toBe("complete");
+    const parentManifest = await repository.getManifest("task-100");
+    expect(parentManifest?.lifecycleStatus).toBe("completed");
+    expect(parentManifest?.currentPhase).toBe("archive");
   });
 
   it("is idempotent for already-merged tickets", async () => {

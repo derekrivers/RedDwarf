@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Performed a deeper end-to-end Project Mode audit before restarting the service onto the project-ticket execution fixes. Found and fixed two additional state-consistency gaps: final ticket merge now completes the parent project-planning task manifest, and intermediate ticket advancement refreshes the owning `ProjectSpec.updatedAt` so the project list reflects merge-driven activity.
+- Hardened Holly project decomposition parsing so ticket dependencies must reference another generated ticket title exactly, ticket titles must be unique, and self-dependencies are rejected before `TicketSpec` rows are persisted. This prevents dependency graph deadlocks where a ticket can stay `pending` forever because `resolveNextReadyTicket(...)` can never match an unknown or ambiguous dependency.
+- Added regression coverage at both the lower-level project approval helper and the operator `/projects/advance` endpoint for parent task completion on final merge, plus parser coverage for unknown and duplicated dependencies.
+
 - Audited the full Project Mode flow before restarting onto the ticket-materialization build. Found and fixed the next SCM-state gap: project-ticket PR creation now marks the originating `TicketSpec` as `pr_open` and records `githubPrNumber` immediately after the PR opens, instead of leaving the project dashboard stuck on `dispatched` until the merge-driven `/projects/advance` callback.
 - Hardened the merge workflow for operator setup drift: `.github/workflows/reddwarf-advance.yml` now accepts `REDDWARF_OPERATOR_API_URL` from either GitHub Actions variables or secrets, trims a trailing slash before posting to `/projects/advance`, and the operator API now rejects non-integer `github_pr_number` payloads.
 - Fixed the project-mode intake dependency surface so GitHub polling forwards `workspaceRepoBootstrapper` into `runPlanningPipeline(...)`. This keeps architect repo checkout behavior injectable and testable instead of falling back to live `git clone` when the poller is exercising OpenClaw project planning.

@@ -297,6 +297,104 @@ describe("parseProjectArchitectHandoff", () => {
     );
   });
 
+  it("throws when a ticket dependency does not match another ticket title", () => {
+    const handoff = [
+      "# Project Architecture Handoff",
+      "",
+      "- Confidence: medium",
+      "- Confidence reason: Decomposed into dependent tickets.",
+      "",
+      "## Project Title",
+      "",
+      "Dependency validation",
+      "",
+      "## Project Summary",
+      "",
+      "A project with an invalid dependency reference.",
+      "",
+      "## Tickets",
+      "",
+      "### Ticket: First ticket",
+      "",
+      "- Complexity: low",
+      "- Depends on: none",
+      "",
+      "#### Description",
+      "",
+      "First.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Works",
+      "",
+      "### Ticket: Second ticket",
+      "",
+      "- Complexity: low",
+      "- Depends on: Missing ticket",
+      "",
+      "#### Description",
+      "",
+      "Second.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Also works"
+    ].join("\n");
+
+    expect(() => parseProjectArchitectHandoff(handoff)).toThrow(
+      /depends on unknown ticket/
+    );
+  });
+
+  it("throws when ticket titles are duplicated", () => {
+    const handoff = [
+      "# Project Architecture Handoff",
+      "",
+      "- Confidence: medium",
+      "- Confidence reason: Decomposed into tickets.",
+      "",
+      "## Project Title",
+      "",
+      "Duplicate validation",
+      "",
+      "## Project Summary",
+      "",
+      "A project with duplicated ticket titles.",
+      "",
+      "## Tickets",
+      "",
+      "### Ticket: Shared title",
+      "",
+      "- Complexity: low",
+      "- Depends on: none",
+      "",
+      "#### Description",
+      "",
+      "First.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Works",
+      "",
+      "### Ticket: Shared title",
+      "",
+      "- Complexity: low",
+      "- Depends on: none",
+      "",
+      "#### Description",
+      "",
+      "Second.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Also works"
+    ].join("\n");
+
+    expect(() => parseProjectArchitectHandoff(handoff)).toThrow(
+      /duplicated/
+    );
+  });
+
   it("parses numbered list clarification questions", () => {
     const handoff = [
       "# Project Architecture Handoff",

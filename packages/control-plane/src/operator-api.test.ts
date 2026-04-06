@@ -2205,6 +2205,37 @@ function buildTestTicketSpec(overrides: Partial<import("@reddwarf/contracts").Ti
   };
 }
 
+function buildTestParentManifest(overrides: Partial<import("@reddwarf/contracts").TaskManifest> = {}): import("@reddwarf/contracts").TaskManifest {
+  return {
+    taskId: "task-001",
+    source: {
+      provider: "github",
+      repo: "acme/platform",
+      issueNumber: 10,
+      issueUrl: "https://github.com/acme/platform/issues/10"
+    },
+    title: "Parent project task",
+    summary: "Parent task that produced the project.",
+    priority: 50,
+    dryRun: false,
+    riskClass: "medium",
+    approvalMode: "human_signoff_required",
+    currentPhase: "archive",
+    lifecycleStatus: "blocked",
+    assignedAgentType: "architect",
+    requestedCapabilities: ["can_plan"],
+    retryCount: 0,
+    evidenceLinks: ["db://project_spec/project:task-001"],
+    workspaceId: null,
+    branchName: null,
+    prNumber: null,
+    policyVersion: "test-policy",
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
 describe("Project Mode — GET /projects", () => {
   it("returns an empty list when no projects exist", async () => {
     const repository = new InMemoryPlanningRepository();
@@ -2967,6 +2998,7 @@ describe("Project Mode — POST /projects/advance", () => {
   it("completes project when all tickets are merged", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveManifest(buildTestParentManifest());
     await repository.saveTicketSpec(
       buildTestTicketSpec({ status: "merged" })
     );
@@ -2993,6 +3025,9 @@ describe("Project Mode — POST /projects/advance", () => {
       const body = res.body as { outcome: string; project: { status: string } };
       expect(body.outcome).toBe("completed");
       expect(body.project.status).toBe("complete");
+      const parentManifest = await repository.getManifest("task-001");
+      expect(parentManifest?.lifecycleStatus).toBe("completed");
+      expect(parentManifest?.currentPhase).toBe("archive");
     } finally {
       await server.stop();
     }

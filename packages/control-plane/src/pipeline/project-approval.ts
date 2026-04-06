@@ -82,6 +82,41 @@ export function createProjectTicketTaskId(ticketId: string): string {
   return normalized.length > 0 ? normalized : "project-ticket";
 }
 
+function createParentTaskIdFromProjectId(projectId: string): string | null {
+  if (!projectId.startsWith("project:")) {
+    return null;
+  }
+
+  const taskId = projectId.slice("project:".length).trim();
+  return taskId.length > 0 ? taskId : null;
+}
+
+async function completeParentProjectTask(input: {
+  repository: Pick<PlanningRepository, "getManifest" | "updateManifest">;
+  project: ProjectSpec;
+  completedAt: string;
+}): Promise<boolean> {
+  const parentTaskId = createParentTaskIdFromProjectId(input.project.projectId);
+  if (!parentTaskId) {
+    return false;
+  }
+
+  const manifest = await input.repository.getManifest(parentTaskId);
+  if (!manifest || manifest.lifecycleStatus === "completed") {
+    return false;
+  }
+
+  await input.repository.updateManifest(
+    taskManifestSchema.parse({
+      ...manifest,
+      currentPhase: "archive",
+      lifecycleStatus: "completed",
+      updatedAt: input.completedAt
+    })
+  );
+  return true;
+}
+
 async function listDispatchedTicketsMissingTask(input: {
   repository: PlanningRepository;
   project: ProjectSpec;
@@ -909,6 +944,11 @@ export async function advanceProjectTicket(
 
   if (nextTicket) {
     // Dispatch the next ticket
+    const updatedProject: ProjectSpec = {
+      ...project,
+      updatedAt: now()
+    };
+    await repository.saveProjectSpec(updatedProject);
     const dispatched: TicketSpec = {
       ...nextTicket,
       status: "dispatched",
@@ -932,7 +972,7 @@ export async function advanceProjectTicket(
     return {
       outcome: "advanced",
       ticket: mergedTicket,
-      project,
+      project: updatedProject,
       nextDispatchedTicket,
       nextDispatchedTaskId: materialized.taskId,
       nextDispatchedTaskCreated: materialized.created
@@ -944,12 +984,18 @@ export async function advanceProjectTicket(
   const allMerged = allTickets.every((t) => t.status === "merged");
 
   if (allMerged) {
+    const completedAt = now();
     const completedProject: ProjectSpec = {
       ...project,
       status: "complete",
-      updatedAt: now()
+      updatedAt: completedAt
     };
     await repository.saveProjectSpec(completedProject);
+    await completeParentProjectTask({
+      repository,
+      project: completedProject,
+      completedAt
+    });
     logger?.info(
       `All tickets merged. Project ${ticket.projectId} marked as complete.`
     );

@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## Project is complete but the parent task still looks blocked
+
+- Symptom: all project tickets have merged and `/projects/:id` shows `status: "complete"`, but task views or snapshots for the original parent task still show `lifecycleStatus: "blocked"` from the project-planning approval gate.
+- Root cause: `/projects/advance` previously completed only the `ProjectSpec`. It did not update the parent task manifest (`project:<taskId>` -> `<taskId>`) after the final ticket merge, so task-level observability kept reporting the old blocked planning run even though the project was done.
+- Failing approach: treating the stale parent task state as evidence that another approval is needed, or restarting the service to clear the blocked state.
+- Working workaround: run a build where `advanceProjectTicket(...)` completes the parent manifest when all tickets are merged. The manifest should move to `currentPhase: "archive"` and `lifecycleStatus: "completed"` at the same timestamp as the completed project.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-approval.test.ts packages/control-plane/src/operator-api.test.ts`; after the final merge callback, confirm `/projects/:id` is `complete` and `GET /tasks/<parent-task-id>` or the task snapshot shows `lifecycleStatus: "completed"`.
+
+## Project ticket stays pending forever because a dependency cannot resolve
+
+- Symptom: a project approval or merge callback succeeds, but a later ticket remains `pending` forever even though the tickets it visibly depends on appear to be merged. `resolveNextReadyTicket(...)` returns no next ticket and `/projects/advance` reports no next ticket ready.
+- Root cause: Holly project handoffs express dependencies by ticket title before RedDwarf converts them to `TicketSpec.ticketId` refs. If a dependency title is misspelled, duplicated, or self-referential, the persisted dependency graph can become unsatisfiable or ambiguous.
+- Failing approach: persisting raw dependency text and relying on `resolveNextReadyTicket(...)` to recover later, or manually re-approving the project without fixing the malformed ticket graph.
+- Working workaround: reject malformed project handoffs before persistence. Ticket titles must be unique, each dependency must match another generated ticket title exactly, and a ticket cannot depend on itself.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; malformed handoffs should fail during project planning instead of producing a permanently pending `TicketSpec`.
+
 ## Project-ticket PR opens but the project still shows only `dispatched`
 
 - Symptom: a project ticket reaches SCM and opens a pull request, but `/projects/:id` still shows the ticket as `dispatched` with `githubPrNumber: null` and the dashboard has no PR number to display before merge.
