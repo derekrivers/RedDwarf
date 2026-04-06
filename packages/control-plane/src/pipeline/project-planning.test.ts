@@ -64,6 +64,72 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
     expect(prompt).toContain("## Untrusted GitHub Issue Data");
     expect(prompt).toContain("Add project mode");
   });
+
+  it("includes clarification context when provided", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      sampleInput,
+      sampleManifest,
+      "/workspace",
+      "/workspace/handoff.md",
+      {
+        questions: ["What framework?", "What database?"],
+        answers: {
+          "What framework?": "React with Vite",
+          "What database?": "PostgreSQL"
+        }
+      }
+    );
+
+    expect(prompt).toContain("## Prior Clarification Round");
+    expect(prompt).toContain("What framework?");
+    expect(prompt).toContain("React with Vite");
+    expect(prompt).toContain("What database?");
+    expect(prompt).toContain("PostgreSQL");
+  });
+
+  it("omits clarification block when no context provided", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      sampleInput,
+      sampleManifest,
+      "/workspace",
+      "/workspace/handoff.md",
+      null
+    );
+
+    expect(prompt).not.toContain("## Prior Clarification Round");
+  });
+
+  it("includes amendments context when provided", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      sampleInput,
+      sampleManifest,
+      "/workspace",
+      "/workspace/handoff.md",
+      null,
+      "Please add more detail to ticket 2's acceptance criteria."
+    );
+
+    expect(prompt).toContain("## Prior Review Amendments");
+    expect(prompt).toContain("more detail to ticket 2");
+  });
+
+  it("includes both clarification and amendments context", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      sampleInput,
+      sampleManifest,
+      "/workspace",
+      "/workspace/handoff.md",
+      {
+        questions: ["What framework?"],
+        answers: { "What framework?": "React" }
+      },
+      "Add more tickets for testing."
+    );
+
+    expect(prompt).toContain("## Prior Clarification Round");
+    expect(prompt).toContain("## Prior Review Amendments");
+    expect(prompt).toContain("Add more tickets for testing");
+  });
 });
 
 describe("parseProjectArchitectHandoff", () => {

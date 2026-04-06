@@ -265,6 +265,11 @@ export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
     decidedBy: (row.decided_by as string | null) ?? null,
     decisionSummary: (row.decision_summary as string | null) ?? null,
     amendments: (row.amendments as string | null) ?? null,
+    clarificationQuestions: (row.clarification_questions as string[] | null) ?? null,
+    clarificationAnswers: (row.clarification_answers as Record<string, string> | null) ?? null,
+    clarificationRequestedAt: row.clarification_requested_at
+      ? asIsoTimestamp(new Date(row.clarification_requested_at as string | Date))
+      : null,
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };

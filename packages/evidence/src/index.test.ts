@@ -439,6 +439,9 @@ describe("evidence memory partitions", () => {
       decidedBy: null,
       decisionSummary: null,
       amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -500,6 +503,9 @@ describe("evidence memory partitions", () => {
       decidedBy: "operator",
       decisionSummary: "Approved",
       amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -570,6 +576,9 @@ describe("evidence memory partitions", () => {
       decidedBy: null,
       decisionSummary: null,
       amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -609,6 +618,9 @@ describe("evidence memory partitions", () => {
       decidedBy: null,
       decisionSummary: null,
       amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });

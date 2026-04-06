@@ -264,6 +264,9 @@ export const projectSpecSchema = z.object({
   decidedBy: z.string().min(1).nullable().default(null),
   decisionSummary: z.string().min(1).nullable().default(null),
   amendments: z.string().min(1).nullable().default(null),
+  clarificationQuestions: z.array(z.string().min(1)).nullable().default(null),
+  clarificationAnswers: z.record(z.string(), z.string()).nullable().default(null),
+  clarificationRequestedAt: isoDateTimeSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema
 });

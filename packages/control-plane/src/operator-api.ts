@@ -2437,6 +2437,268 @@ async function handleOperatorRequest(
     return;
   }
 
+  // ============================================================
+  // Project Mode routes (Phase 3)
+  // ============================================================
+
+  // GET /projects — list projects with ticket counts
+  if (method === "GET" && path === "/projects") {
+    const repoFilter = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
+    const statusFilter = typeof qp["status"] === "string" ? qp["status"] : undefined;
+
+    let projects = await repository.listProjectSpecs(repoFilter);
+    if (statusFilter) {
+      projects = projects.filter((p) => p.status === statusFilter);
+    }
+
+    const projectSummaries = await Promise.all(
+      projects.map(async (project) => {
+        const tickets = await repository.listTicketSpecs(project.projectId);
+        return {
+          ...project,
+          ticketCounts: {
+            total: tickets.length,
+            pending: tickets.filter((t) => t.status === "pending").length,
+            dispatched: tickets.filter((t) => t.status === "dispatched").length,
+            in_progress: tickets.filter((t) => t.status === "in_progress").length,
+            pr_open: tickets.filter((t) => t.status === "pr_open").length,
+            merged: tickets.filter((t) => t.status === "merged").length,
+            failed: tickets.filter((t) => t.status === "failed").length
+          }
+        };
+      })
+    );
+
+    writeOperatorJsonResponse(res, 200, {
+      projects: projectSummaries,
+      total: projectSummaries.length
+    });
+    return;
+  }
+
+  // GET /projects/:id — full project with ticket children
+  const projectDetailMatch = /^\/projects\/([^/]+)$/.exec(path);
+  if (method === "GET" && projectDetailMatch) {
+    const projectId = decodeURIComponent(projectDetailMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    const tickets = await repository.listTicketSpecs(projectId);
+    writeOperatorJsonResponse(res, 200, {
+      project,
+      tickets,
+      ticketCounts: {
+        total: tickets.length,
+        pending: tickets.filter((t) => t.status === "pending").length,
+        dispatched: tickets.filter((t) => t.status === "dispatched").length,
+        in_progress: tickets.filter((t) => t.status === "in_progress").length,
+        pr_open: tickets.filter((t) => t.status === "pr_open").length,
+        merged: tickets.filter((t) => t.status === "merged").length,
+        failed: tickets.filter((t) => t.status === "failed").length
+      }
+    });
+    return;
+  }
+
+  // POST /projects/:id/approve — approve or amend a project plan
+  const projectApproveMatch = /^\/projects\/([^/]+)\/approve$/.exec(path);
+  if (method === "POST" && projectApproveMatch) {
+    const projectId = decodeURIComponent(projectApproveMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    if (project.status !== "pending_approval") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved.`
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("decision" in rawBody) ||
+      !("decidedBy" in rawBody)
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { decision: 'approve' | 'amend', decidedBy: string, decisionSummary?: string, amendments?: string }."
+      });
+      return;
+    }
+
+    const body = rawBody as {
+      decision: string;
+      decidedBy: string;
+      decisionSummary?: string;
+      amendments?: string;
+    };
+
+    if (body.decision !== "approve" && body.decision !== "amend") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "decision must be 'approve' or 'amend'."
+      });
+      return;
+    }
+
+    const now = clock().toISOString();
+
+    if (body.decision === "approve") {
+      const updatedProject = {
+        ...project,
+        status: "approved" as const,
+        approvalDecision: "approve",
+        decidedBy: body.decidedBy,
+        decisionSummary: body.decisionSummary ?? null,
+        updatedAt: now
+      };
+      await repository.saveProjectSpec(updatedProject);
+
+      writeOperatorJsonResponse(res, 200, {
+        project: updatedProject,
+        message: "Project approved. Ready for sub-issue creation and execution."
+      });
+      return;
+    }
+
+    // Amend decision — return project to draft for re-planning
+    if (!body.amendments || body.amendments.trim().length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "amendments text is required when decision is 'amend'."
+      });
+      return;
+    }
+
+    const existingAmendments = project.amendments
+      ? `${project.amendments}\n\n---\n\n${body.amendments}`
+      : body.amendments;
+
+    const updatedProject = {
+      ...project,
+      status: "draft" as const,
+      approvalDecision: "amend",
+      decidedBy: body.decidedBy,
+      decisionSummary: body.decisionSummary ?? null,
+      amendments: existingAmendments,
+      updatedAt: now
+    };
+    await repository.saveProjectSpec(updatedProject);
+
+    writeOperatorJsonResponse(res, 200, {
+      project: updatedProject,
+      message:
+        "Project returned to draft for re-planning with amendments. Amendments have been appended to the planning context."
+    });
+    return;
+  }
+
+  // GET /projects/:id/clarifications — pending clarification questions
+  const projectClarificationsMatch =
+    /^\/projects\/([^/]+)\/clarifications$/.exec(path);
+  if (method === "GET" && projectClarificationsMatch) {
+    const projectId = decodeURIComponent(projectClarificationsMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    const clarificationTimeoutMs = Number(
+      process.env.REDDWARF_CLARIFICATION_TIMEOUT_MS ?? "1800000"
+    );
+    const timedOut =
+      project.status === "clarification_pending" &&
+      project.clarificationRequestedAt !== null &&
+      clock().getTime() - new Date(project.clarificationRequestedAt).getTime() >
+        clarificationTimeoutMs;
+
+    writeOperatorJsonResponse(res, 200, {
+      projectId: project.projectId,
+      status: project.status,
+      questions: project.clarificationQuestions ?? [],
+      answers: project.clarificationAnswers ?? null,
+      clarificationRequestedAt: project.clarificationRequestedAt,
+      timeoutMs: clarificationTimeoutMs,
+      timedOut
+    });
+    return;
+  }
+
+  // POST /projects/:id/clarify — submit clarification answers
+  const projectClarifyMatch = /^\/projects\/([^/]+)\/clarify$/.exec(path);
+  if (method === "POST" && projectClarifyMatch) {
+    const projectId = decodeURIComponent(projectClarifyMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    if (project.status !== "clarification_pending") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Project ${projectId} is in status '${project.status}'. Clarification answers can only be submitted when status is 'clarification_pending'.`
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("answers" in rawBody) ||
+      typeof (rawBody as Record<string, unknown>).answers !== "object"
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { answers: Record<string, string> }."
+      });
+      return;
+    }
+
+    const body = rawBody as { answers: Record<string, string> };
+    const now = clock().toISOString();
+
+    const updatedProject = {
+      ...project,
+      status: "draft" as const,
+      clarificationAnswers: body.answers,
+      updatedAt: now
+    };
+    await repository.saveProjectSpec(updatedProject);
+
+    writeOperatorJsonResponse(res, 200, {
+      project: updatedProject,
+      message:
+        "Clarification answers recorded. Project returned to draft for re-planning with answers included in the planning context."
+    });
+    return;
+  }
+
   writeOperatorJsonResponse(res, 404, {
     error: "not_found",
     message: "Route not found."

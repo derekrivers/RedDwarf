@@ -1436,8 +1436,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           project_id, source_issue_id, source_repo, title, summary,
           project_size, status, complexity_classification,
           approval_decision, decided_by, decision_summary, amendments,
+          clarification_questions, clarification_answers, clarification_requested_at,
           created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
         ON CONFLICT (project_id) DO UPDATE SET
           source_issue_id = EXCLUDED.source_issue_id,
           source_repo = EXCLUDED.source_repo,
@@ -1450,6 +1451,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           decided_by = EXCLUDED.decided_by,
           decision_summary = EXCLUDED.decision_summary,
           amendments = EXCLUDED.amendments,
+          clarification_questions = EXCLUDED.clarification_questions,
+          clarification_answers = EXCLUDED.clarification_answers,
+          clarification_requested_at = EXCLUDED.clarification_requested_at,
           updated_at = EXCLUDED.updated_at
       `,
       [
@@ -1467,6 +1471,13 @@ export class PostgresPlanningRepository implements PlanningRepository {
         project.decidedBy,
         project.decisionSummary,
         project.amendments,
+        project.clarificationQuestions
+          ? JSON.stringify(project.clarificationQuestions)
+          : null,
+        project.clarificationAnswers
+          ? JSON.stringify(project.clarificationAnswers)
+          : null,
+        project.clarificationRequestedAt,
         project.createdAt,
         project.updatedAt
       ]

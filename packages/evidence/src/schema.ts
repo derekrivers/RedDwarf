@@ -223,6 +223,9 @@ export const projectSpecsTable = pgTable("project_specs", {
   decidedBy: text("decided_by"),
   decisionSummary: text("decision_summary"),
   amendments: text("amendments"),
+  clarificationQuestions: jsonb("clarification_questions"),
+  clarificationAnswers: jsonb("clarification_answers"),
+  clarificationRequestedAt: timestamp("clarification_requested_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });

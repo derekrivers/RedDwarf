@@ -2091,3 +2091,544 @@ describe("OperatorRateLimiter", () => {
     expect(limiter.allow("2.2.2.2", 2000)).toBe(false);
   });
 });
+
+// ============================================================
+// Phase 3 — Project Mode operator API routes
+// ============================================================
+
+const testTimestamp = "2026-04-06T12:00:00.000Z";
+
+function buildTestProjectSpec(overrides: Partial<import("@reddwarf/contracts").ProjectSpec> = {}): import("@reddwarf/contracts").ProjectSpec {
+  return {
+    projectId: "project:task-001",
+    sourceIssueId: "10",
+    sourceRepo: "acme/platform",
+    title: "Test project",
+    summary: "A test project for operator API endpoints.",
+    projectSize: "medium",
+    status: "pending_approval",
+    complexityClassification: {
+      size: "medium",
+      reasoning: "Spans 3 packages.",
+      signals: ["multi-package"]
+    },
+    approvalDecision: null,
+    decidedBy: null,
+    decisionSummary: null,
+    amendments: null,
+    clarificationQuestions: null,
+    clarificationAnswers: null,
+    clarificationRequestedAt: null,
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+function buildTestTicketSpec(overrides: Partial<import("@reddwarf/contracts").TicketSpec> = {}): import("@reddwarf/contracts").TicketSpec {
+  return {
+    ticketId: "project:task-001:ticket:1",
+    projectId: "project:task-001",
+    title: "First ticket",
+    description: "Implement the first feature.",
+    acceptanceCriteria: ["Feature works"],
+    dependsOn: [],
+    status: "pending",
+    complexityClass: "low",
+    riskClass: "low",
+    githubSubIssueNumber: null,
+    githubPrNumber: null,
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+describe("Project Mode — GET /projects", () => {
+  it("returns an empty list when no projects exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects");
+      expect(res.status).toBe(200);
+      const body = res.body as { projects: unknown[]; total: number };
+      expect(body.total).toBe(0);
+      expect(body.projects).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns projects with ticket counts", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        status: "merged",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects");
+      expect(res.status).toBe(200);
+      const body = res.body as { projects: { ticketCounts: Record<string, number> }[]; total: number };
+      expect(body.total).toBe(1);
+      expect(body.projects[0]!.ticketCounts.total).toBe(2);
+      expect(body.projects[0]!.ticketCounts.pending).toBe(1);
+      expect(body.projects[0]!.ticketCounts.merged).toBe(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("filters projects by repo query parameter", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        projectId: "project:task-002",
+        sourceRepo: "other/repo"
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects?repo=acme/platform");
+      const body = res.body as { projects: { projectId: string }[]; total: number };
+      expect(body.total).toBe(1);
+      expect(body.projects[0]!.projectId).toBe("project:task-001");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects", null);
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — GET /projects/:id", () => {
+  it("returns full project with ticket children", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { projectId: string };
+        tickets: { ticketId: string }[];
+        ticketCounts: Record<string, number>;
+      };
+      expect(body.project.projectId).toBe("project:task-001");
+      expect(body.tickets).toHaveLength(1);
+      expect(body.ticketCounts.total).toBe(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects/nonexistent");
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — POST /projects/:id/approve", () => {
+  it("approves a project in pending_approval status", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          decisionSummary: "Looks good."
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { project: { status: string; approvalDecision: string; decidedBy: string } };
+      expect(body.project.status).toBe("approved");
+      expect(body.project.approvalDecision).toBe("approve");
+      expect(body.project.decidedBy).toBe("derek");
+
+      // Verify persisted
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("approved");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("amends a project with amendments text", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "amend",
+          decidedBy: "derek",
+          decisionSummary: "Needs more detail on ticket 2.",
+          amendments: "Please add more detail to the second ticket's acceptance criteria."
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { project: { status: string; amendments: string } };
+      expect(body.project.status).toBe("draft");
+      expect(body.project.amendments).toContain("more detail");
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("draft");
+      expect(persisted?.amendments).toContain("more detail");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rejects amend without amendments text", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "amend", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when project is not in pending_approval status", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "draft" }));
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        "/projects/nonexistent/approve",
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" },
+        null
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — GET /projects/:id/clarifications", () => {
+  it("returns pending clarification questions", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: [
+          "What framework should the frontend use?",
+          "Is there a preferred database?"
+        ],
+        clarificationRequestedAt: testTimestamp
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        questions: string[];
+        status: string;
+        timedOut: boolean;
+        timeoutMs: number;
+      };
+      expect(body.questions).toHaveLength(2);
+      expect(body.status).toBe("clarification_pending");
+      expect(body.timedOut).toBe(false);
+      expect(body.timeoutMs).toBe(1800000);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("reports timeout when clarification has expired", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const longAgo = "2026-04-05T10:00:00.000Z";
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: ["What framework?"],
+        clarificationRequestedAt: longAgo
+      })
+    );
+
+    // Clock is well past the 30-minute timeout
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T12:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { timedOut: boolean };
+      expect(body.timedOut).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns empty questions for project not in clarification_pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { questions: string[] };
+      expect(body.questions).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — POST /projects/:id/clarify", () => {
+  it("accepts clarification answers and transitions project to draft", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: ["What framework?", "What database?"],
+        clarificationRequestedAt: testTimestamp
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        {
+          answers: {
+            "What framework?": "React with Vite",
+            "What database?": "PostgreSQL"
+          }
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { project: { status: string; clarificationAnswers: Record<string, string> } };
+      expect(body.project.status).toBe("draft");
+      expect(body.project.clarificationAnswers).toEqual({
+        "What framework?": "React with Vite",
+        "What database?": "PostgreSQL"
+      });
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("draft");
+      expect(persisted?.clarificationAnswers).toEqual({
+        "What framework?": "React with Vite",
+        "What database?": "PostgreSQL"
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when project is not in clarification_pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        { answers: { q1: "a1" } }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 400 with missing answers field", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ status: "clarification_pending" })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        { notAnswers: "wrong field" }
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        "/projects/nonexistent/clarify",
+        { answers: { q1: "a1" } }
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+});

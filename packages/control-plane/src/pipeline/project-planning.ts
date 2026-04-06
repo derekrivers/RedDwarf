@@ -145,6 +145,8 @@ export async function runProjectPlanningPhase(
       projectSize: classification.size,
       status: "clarification_pending",
       complexityClassification: classification,
+      clarificationQuestions: planningResult.clarification.questions,
+      clarificationRequestedAt: planningCompletedAtIso,
       createdAt: planningCompletedAtIso,
       updatedAt: planningCompletedAtIso
     });
