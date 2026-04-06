@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Project handoff exists but `/projects` is empty and the task falls back to a generic approval
+
+- Symptom: a medium/large issue creates both architect workspaces and `project-architect-handoff.md`, but `/projects` stays empty. The task list shows the parent task blocked on a generic `policy_gate` approval instead of `projectApprovalRequired`.
+- Root cause: Holly may generate ticket titles containing commas and then use that exact title in a dependency line. Older parsing split dependency text on every comma before checking known ticket titles, so a dependency such as `Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision` became `Implement frightened mode` and failed unknown-dependency validation. The planning pipeline then swallowed the Project Mode error and fell back to the legacy single-task approval path.
+- Failing approach: approving the generic task approval, recreating the issue without changing the parser, or assuming the missing `/projects` row means project planning never ran.
+- Working workaround: run a build where project dependency parsing checks exact known ticket titles before comma-splitting, ticket markdown sections stop at same-or-higher heading levels, and Project Mode planning errors are rethrown instead of creating a generic approval fallback. Existing issues that already fell back, such as `derekrivers/FirstVoyage#74`, should be requeued or recreated after restart.
+- Verification: run `corepack pnpm exec tsx -e "import { readFileSync } from 'node:fs'; import { parseProjectArchitectHandoff } from './packages/control-plane/src/pipeline/prompts.ts'; const markdown=readFileSync('runtime-data/workspaces/derekrivers-firstvoyage-74-project-architect/artifacts/project-architect-handoff.md','utf8'); console.log(JSON.stringify(parseProjectArchitectHandoff(markdown), null, 2));"` against the live handoff, plus `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts` and the focused Project Mode planning regression in `packages/control-plane/src/index.test.ts`.
+
 ## Project ticket child task fails but the project dashboard still looks healthy
 
 - Symptom: a project-ticket child task exhausts its retry budget and shows a pending `failure-automation` approval, but `/projects/:id` still shows the project as `executing` and the ticket as `dispatched` or `pr_open` instead of surfacing the failure.

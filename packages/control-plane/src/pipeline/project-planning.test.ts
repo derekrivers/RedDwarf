@@ -220,11 +220,77 @@ describe("parseProjectArchitectHandoff", () => {
     expect(ticket1!.dependsOn).toEqual([]);
     expect(ticket1!.description).toContain("classifyComplexity");
     expect(ticket1!.acceptanceCriteria).toContain("Function returns size, reasoning, and signals");
+    expect(ticket1!.acceptanceCriteria).toHaveLength(2);
 
     expect(ticket2!.title).toBe("Add ProjectSpec schema");
     expect(ticket2!.complexityClass).toBe("medium");
     expect(ticket2!.dependsOn).toEqual(["Add complexity classifier"]);
     expect(ticket2!.acceptanceCriteria).toHaveLength(3);
+  });
+
+  it("treats an exact dependency title containing commas as a single dependency", () => {
+    const handoff = [
+      "# Project Architecture Handoff",
+      "",
+      "- Confidence: high",
+      "- Confidence reason: Clear browser-game decomposition.",
+      "",
+      "## Project Title",
+      "",
+      "Complete Pac-Man game",
+      "",
+      "## Project Summary",
+      "",
+      "Complete the existing browser game implementation.",
+      "",
+      "## Tickets",
+      "",
+      "### Ticket: Add four ghosts with movement and wall-respecting AI",
+      "",
+      "- Complexity: high",
+      "- Depends on: none",
+      "",
+      "#### Description",
+      "",
+      "Add the ghost entities.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Four ghosts move through the maze.",
+      "",
+      "### Ticket: Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision",
+      "",
+      "- Complexity: medium",
+      "- Depends on: Add four ghosts with movement and wall-respecting AI",
+      "",
+      "#### Description",
+      "",
+      "Add power-pellet and collision interactions.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Frightened ghosts can be eaten.",
+      "",
+      "### Ticket: Add game-over screen, victory screen, and restart flow",
+      "",
+      "- Complexity: low",
+      "- Depends on: Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision",
+      "",
+      "#### Description",
+      "",
+      "Add end-state screens.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Restart works without a page reload."
+    ].join("\n");
+
+    const result = parseProjectArchitectHandoff(handoff);
+    if (result.outcome !== "project_spec") throw new Error("Expected project_spec");
+
+    expect(result.draft.tickets[2]!.dependsOn).toEqual([
+      "Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision"
+    ]);
   });
 
   it("detects clarification requests and returns clarification_needed outcome", () => {

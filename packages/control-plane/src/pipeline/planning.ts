@@ -1008,11 +1008,12 @@ export async function runPlanningPipeline(
           outcome: projectPlanningResult.outcome
         });
       } catch (projectError) {
-        runLogger.warn("Project mode planning failed; single-issue plan remains as fallback.", {
+        runLogger.error("Project mode planning failed; refusing to fall back to the single-issue approval path.", {
           taskId,
           runId,
           error: projectError instanceof Error ? projectError.message : String(projectError)
         });
+        throw projectError;
       }
     }
 

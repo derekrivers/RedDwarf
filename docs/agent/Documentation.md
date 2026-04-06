@@ -2,6 +2,11 @@
 
 ## 2026-04-06
 
+- Followed live GitHub issue `derekrivers/FirstVoyage#74` after restart onto the Project Mode hardening build. Intake reached both Holly architect passes and wrote `project-architect-handoff.md`, but `/projects` stayed empty and the task fell back to a generic policy-gate approval.
+- Root-caused the failure to project handoff parsing: Holly generated a dependency on the exact ticket title `Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision`, and the parser split dependency text on every comma before checking known ticket titles. That turned the dependency into `Implement frightened mode` and threw an unknown-dependency error.
+- Hardened project handoff parsing so exact dependency-title matches win before comma splitting, and fixed markdown section extraction to stop ticket `#### Description` / `#### Acceptance Criteria` sections at same-or-higher heading levels instead of bleeding across later tickets.
+- Removed the unsafe Project Mode fallback to the single-issue approval path. If project planning throws after a medium/large issue enters Project Mode, RedDwarf now fails that planning run instead of creating a legacy generic approval that can bypass `/projects/:id/approve`.
+
 - Ran a second architecture-level Project Mode audit before service restart and found three more end-to-end hardening points. Holly dependency validation now rejects dependency cycles in addition to unknown, duplicate, and self references, preventing a no-ready-ticket deadlock after approval.
 - Added project-ticket failure state propagation for child task escalations: when a dispatched ticket task exhausts its retry budget and creates a failure-automation approval, RedDwarf now marks the originating `TicketSpec` and `ProjectSpec` as `failed`. Approving the failure retry restores the project to `executing` and the ticket to `dispatched`, so recovery does not strand the project in failed state.
 - Hardened `/projects/advance` so merge callbacks can only advance tickets that are already `dispatched` or `pr_open` on an `executing` project. Already-merged callbacks stay idempotent, but bad workflow markers or manual calls can no longer mark dependency-blocked pending tickets as merged.

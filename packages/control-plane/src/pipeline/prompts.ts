@@ -550,7 +550,7 @@ export function parseArchitectConfidence(markdown: string): { level: "low" | "me
  */
 export function readMarkdownSection(markdown: string, heading: string, options?: { required?: boolean }): string {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = markdown.match(new RegExp(`${escapedHeading}\\n\\n([\\s\\S]*?)(?:\\n## |$)`));
+  const match = new RegExp(`^${escapedHeading}[ \\t]*$`, "m").exec(markdown);
 
   if (!match) {
     if (options?.required) {
@@ -559,7 +559,13 @@ export function readMarkdownSection(markdown: string, heading: string, options?:
     return "";
   }
 
-  return match[1]!.trim();
+  const headingLevel = heading.match(/^#+/)?.[0].length ?? 2;
+  const sectionStart = match.index + match[0].length;
+  const sectionTail = markdown.slice(sectionStart).replace(/^(?:\r?\n)+/, "");
+  const nextHeadingMatch = new RegExp(`^#{1,${headingLevel}}\\s+`, "m").exec(sectionTail);
+  const sectionEnd = nextHeadingMatch?.index ?? sectionTail.length;
+
+  return sectionTail.slice(0, sectionEnd).trim();
 }
 
 /** Extract bullet list items from a markdown section. Returns [] when absent. */
@@ -773,9 +779,8 @@ function parseTicketsFromMarkdown(markdown: string): ProjectTicketDraft[] {
     const acceptanceCriteria = readMarkdownBulletSection(section, "#### Acceptance Criteria");
 
     const dependsOnRaw = dependsMatch?.[1]?.trim() ?? "none";
-    const dependsOn = dependsOnRaw.toLowerCase() === "none"
-      ? []
-      : dependsOnRaw.split(",").map((d) => d.trim()).filter((d) => d.length > 0);
+    const knownTicketTitles = positions.map((position) => position.title);
+    const dependsOn = parseProjectTicketDependencies(dependsOnRaw, knownTicketTitles);
 
     tickets.push({
       title: pos.title,
@@ -845,6 +850,25 @@ function parseTicketsFromMarkdown(markdown: string): ProjectTicketDraft[] {
   }
 
   return tickets;
+}
+
+function parseProjectTicketDependencies(
+  dependsOnRaw: string,
+  knownTicketTitles: readonly string[]
+): string[] {
+  const normalized = dependsOnRaw.trim();
+  if (normalized.toLowerCase() === "none") {
+    return [];
+  }
+
+  if (knownTicketTitles.includes(normalized)) {
+    return [normalized];
+  }
+
+  return normalized
+    .split(",")
+    .map((dependencyTitle) => dependencyTitle.trim())
+    .filter((dependencyTitle) => dependencyTitle.length > 0);
 }
 
 export function buildOpenClawDeveloperPrompt(

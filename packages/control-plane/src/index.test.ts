@@ -7050,6 +7050,158 @@ describe("phase timing hardening", () => {
     }
   });
 
+  it("fails project-mode planning instead of falling back to a generic approval when the project handoff is invalid", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const targetRoot = await mkdtemp(join(tmpdir(), "project-plan-invalid-handoff-"));
+    const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+      fixedSessionId: "session-project-plan-invalid-handoff"
+    });
+
+    let architectCallCount = 0;
+    const projectAwaiter = {
+      async waitForCompletion(input: {
+        manifest: { taskId: string; source: { repo: string } };
+        workspace: { artifactsDir: string };
+      }) {
+        await mkdir(input.workspace.artifactsDir, { recursive: true });
+        architectCallCount += 1;
+        const isProjectPlanningCall = architectCallCount > 1;
+        const handoffPath = join(
+          input.workspace.artifactsDir,
+          isProjectPlanningCall
+            ? "project-architect-handoff.md"
+            : "architect-handoff.md"
+        );
+        await writeFile(
+          handoffPath,
+          (isProjectPlanningCall
+            ? [
+                "# Project Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: This handoff intentionally contains a malformed dependency.",
+                "",
+                "## Project Title",
+                "",
+                "Invalid project handoff",
+                "",
+                "## Project Summary",
+                "",
+                "This should not fall back to the single-task approval path.",
+                "",
+                "## Tickets",
+                "",
+                "### Ticket: First ticket",
+                "",
+                "- Complexity: low",
+                "- Depends on: none",
+                "",
+                "#### Description",
+                "",
+                "First.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Works.",
+                "",
+                "### Ticket: Second ticket",
+                "",
+                "- Complexity: medium",
+                "- Depends on: Missing ticket",
+                "",
+                "#### Description",
+                "",
+                "Second.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Also works."
+              ]
+            : [
+                "# Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Single-task planning completed before project decomposition.",
+                "",
+                "## Summary",
+                "",
+                "Plan enough detail for project decomposition.",
+                "",
+                "## Implementation Approach",
+                "",
+                "Decompose into project tickets.",
+                "",
+                "## Affected Files",
+                "",
+                "- packages/control-plane/src/pipeline/planning.ts",
+                "",
+                "## Risks and Assumptions",
+                "",
+                "- Project-mode planning should not silently fall back.",
+                "",
+                "## Test Strategy",
+                "",
+                "- Verify invalid project handoffs fail the task.",
+                "",
+                "## Non-Goals",
+                "",
+                "- Do not queue a generic approval request."
+              ]).join("\n"),
+          "utf8"
+        );
+        return { handoffPath, repoRoot: null };
+      }
+    };
+
+    try {
+      await expect(
+        runPlanningPipeline(
+          {
+            ...eligibleInput,
+            source: {
+              provider: "github",
+              repo: "acme/platform",
+              issueNumber: 615,
+              issueUrl: "https://github.com/acme/platform/issues/615"
+            },
+            requestedCapabilities: ["can_write_code"],
+            affectedPaths: ["packages/control-plane/src/pipeline/planning.ts"],
+            metadata: {
+              complexityClassification: {
+                size: "medium",
+                reasoning: "Requires project decomposition.",
+                signals: ["project-mode"]
+              }
+            }
+          },
+          {
+            repository,
+            planner: new DeterministicPlanningAgent(),
+            openClawDispatch: dispatchAdapter,
+            openClawArchitectAwaiter: projectAwaiter as never,
+            architectTargetRoot: targetRoot,
+            workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+            clock: () => new Date("2026-04-06T20:00:00.000Z"),
+            idGenerator: () => "project-plan-invalid-handoff"
+          }
+        )
+      ).rejects.toThrow(/depends on unknown ticket/);
+
+      const approvals = await repository.listApprovalRequests({
+        taskId: "acme-platform-615"
+      });
+      expect(approvals).toHaveLength(0);
+    } finally {
+      await rm(targetRoot, { recursive: true, force: true });
+    }
+  });
+
   it("classifies timed-out validation commands separately", async () => {
     const repository = new InMemoryPlanningRepository();
     const targetRoot = await mkdtemp(join(tmpdir(), "validation-timeout-"));
