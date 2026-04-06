@@ -48,7 +48,7 @@ Column legend: `Depends On` captures explicit delivery sequencing.
 
 | # | Feature | Status | Depends On | Spec Reference |
 | - | ------- | ------ | ---------- | -------------- |
-| 146 | **Sub-issue writer on plan approval + first ticket dispatch** — On plan approval, create GitHub sub-issues against the original parent issue for each approved TicketSpec in dependency order. Issue titles prefixed with priority index (e.g. `[1/5]`). Each TicketSpec updated with its `github_sub_issue_number`. Call `resolveNextReady()` and dispatch the first unblocked ticket to the dev squad pipeline. If GitHub Issues adapter is disabled, fall back to Postgres-only state with a warning; dispatch still proceeds. Update project status to `executing`. | pending | 142, 144 | [Spec T-06](docs/reddwarf_project_mode_spec.md) §6 T-06 |
+| 146 | **Sub-issue writer on plan approval + first ticket dispatch** — On plan approval, create GitHub sub-issues against the original parent issue for each approved TicketSpec in dependency order. Issue titles prefixed with priority index (e.g. `[1/5]`). Each TicketSpec updated with its `github_sub_issue_number`. Call `resolveNextReady()` and dispatch the first unblocked ticket to the dev squad pipeline. If GitHub Issues adapter is disabled, fall back to Postgres-only state with a warning; dispatch still proceeds. Update project status to `executing`. | complete | 142, 144 | [Spec T-06](docs/reddwarf_project_mode_spec.md) §6 T-06 |
 
 ### Phase 5 — Merge-driven execution (unblocked by Phase 4)
 

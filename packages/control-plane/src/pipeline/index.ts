@@ -68,6 +68,12 @@ export { runScmPhase } from "./scm.js";
 export { resolveApprovalRequest } from "./approval.js";
 export { sweepStaleRuns, sweepOrphanedDispatcherState } from "./sweep.js";
 export { dispatchReadyTask } from "./dispatch.js";
+export { executeProjectApproval } from "./project-approval.js";
+export type {
+  ExecuteProjectApprovalInput,
+  ExecuteProjectApprovalDependencies,
+  ExecuteProjectApprovalResult
+} from "./project-approval.js";
 export * from "./token-budget.js";
 export * from "./retry-budget.js";
 export * from "./run-report.js";

@@ -42,7 +42,7 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
-import type { GitHubWriter } from "@reddwarf/integrations";
+import type { GitHubWriter, GitHubIssuesAdapter } from "@reddwarf/integrations";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -63,6 +63,7 @@ import {
   type SweepOrphanedStateResult
 } from "./pipeline.js";
 import { classifyComplexity } from "./rimmer/index.js";
+import { executeProjectApproval } from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
@@ -132,6 +133,8 @@ export interface OperatorApiDependencies {
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
   /** When provided, enables POST /issues/submit to create GitHub issues for polling to intercept. */
   githubWriter?: GitHubWriter;
+  /** When provided, enables sub-issue creation on project approval. */
+  githubIssuesAdapter?: GitHubIssuesAdapter;
 }
 
 export interface OperatorBlockedSummary {
@@ -250,7 +253,8 @@ export function createOperatorApiServer(
     dispatcher,
     pollingDaemon,
     dispatchDependencies,
-    githubWriter
+    githubWriter,
+    githubIssuesAdapter
   } = deps;
   let boundPort = config.port;
 
@@ -302,7 +306,8 @@ export function createOperatorApiServer(
           managedTargetRoot,
           managedEvidenceRoot,
           localSecretsPath,
-          githubWriter
+          githubWriter,
+          githubIssuesAdapter
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -1538,7 +1543,8 @@ async function handleOperatorRequest(
   managedTargetRoot?: string,
   managedEvidenceRoot?: string,
   localSecretsPath?: string,
-  githubWriter?: GitHubWriter
+  githubWriter?: GitHubWriter,
+  githubIssuesAdapter?: GitHubIssuesAdapter
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2560,19 +2566,28 @@ async function handleOperatorRequest(
     const now = clock().toISOString();
 
     if (body.decision === "approve") {
-      const updatedProject = {
-        ...project,
-        status: "approved" as const,
-        approvalDecision: "approve",
-        decidedBy: body.decidedBy,
-        decisionSummary: body.decisionSummary ?? null,
-        updatedAt: now
-      };
-      await repository.saveProjectSpec(updatedProject);
+      const result = await executeProjectApproval(
+        {
+          projectId,
+          decidedBy: body.decidedBy,
+          decisionSummary: body.decisionSummary
+        },
+        {
+          repository,
+          githubIssuesAdapter: githubIssuesAdapter ?? null,
+          clock
+        }
+      );
 
       writeOperatorJsonResponse(res, 200, {
-        project: updatedProject,
-        message: "Project approved. Ready for sub-issue creation and execution."
+        project: result.project,
+        tickets: result.tickets,
+        subIssuesCreated: result.subIssuesCreated,
+        subIssuesFallback: result.subIssuesFallback,
+        dispatchedTicket: result.dispatchedTicket,
+        message: result.subIssuesFallback
+          ? "Project approved and executing (Postgres-only — GitHub sub-issues not created)."
+          : `Project approved. ${result.subIssuesCreated} sub-issue(s) created. Executing.`
       });
       return;
     }

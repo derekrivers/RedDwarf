@@ -2282,9 +2282,10 @@ describe("Project Mode — GET /projects/:id", () => {
 });
 
 describe("Project Mode — POST /projects/:id/approve", () => {
-  it("approves a project in pending_approval status", async () => {
+  it("approves a project, creates sub-issues, and transitions to executing", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
 
     const server = createOperatorApiServer(
       { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
@@ -2302,14 +2303,64 @@ describe("Project Mode — POST /projects/:id/approve", () => {
         }
       );
       expect(res.status).toBe(200);
-      const body = res.body as { project: { status: string; approvalDecision: string; decidedBy: string } };
-      expect(body.project.status).toBe("approved");
+      const body = res.body as {
+        project: { status: string; approvalDecision: string; decidedBy: string };
+        subIssuesFallback: boolean;
+        dispatchedTicket: { ticketId: string } | null;
+      };
+      // Project transitions all the way to executing (no adapter = fallback)
+      expect(body.project.status).toBe("executing");
       expect(body.project.approvalDecision).toBe("approve");
       expect(body.project.decidedBy).toBe("derek");
+      expect(body.subIssuesFallback).toBe(true);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
 
-      // Verify persisted
       const persisted = await repository.getProjectSpec("project:task-001");
-      expect(persisted?.status).toBe("approved");
+      expect(persisted?.status).toBe("executing");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("creates GitHub sub-issues when adapter is provided", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ sourceIssueId: "10" }));
+    await repository.saveTicketSpec(buildTestTicketSpec());
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        tickets: { githubSubIssueNumber: number | null }[];
+      };
+      expect(body.subIssuesCreated).toBe(2);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.tickets.every((t) => t.githubSubIssueNumber !== null)).toBe(true);
     } finally {
       await server.stop();
     }
