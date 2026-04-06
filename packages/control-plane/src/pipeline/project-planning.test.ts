@@ -42,6 +42,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/var/lib/reddwarf/workspaces/test",
       "/var/lib/reddwarf/workspaces/test/repo",
+      "/var/lib/reddwarf/workspaces/test/REPO_INDEX.md",
       "/var/lib/reddwarf/workspaces/test/artifacts/project-architect-handoff.md"
     );
 
@@ -53,6 +54,8 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
     expect(prompt).toContain("at least 2 tickets");
     expect(prompt).toContain("Task ID: task:acme-platform:10:run-001");
     expect(prompt).toContain("Repository: acme/platform");
+    expect(prompt).toContain("Repository index: /var/lib/reddwarf/workspaces/test/REPO_INDEX.md");
+    expect(prompt).toContain("Start by reading the repository index file above");
   });
 
   it("includes untrusted issue data block", () => {
@@ -61,6 +64,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/workspace",
       "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
       "/workspace/handoff.md"
     );
     expect(prompt).toContain("## Untrusted GitHub Issue Data");
@@ -73,6 +77,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/workspace",
       "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
       "/workspace/handoff.md",
       {
         questions: ["What framework?", "What database?"],
@@ -96,6 +101,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/workspace",
       "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
       "/workspace/handoff.md",
       null
     );
@@ -109,6 +115,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/workspace",
       "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
       "/workspace/handoff.md",
       null,
       "Please add more detail to ticket 2's acceptance criteria."
@@ -124,6 +131,7 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
       sampleManifest,
       "/workspace",
       "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
       "/workspace/handoff.md",
       {
         questions: ["What framework?"],

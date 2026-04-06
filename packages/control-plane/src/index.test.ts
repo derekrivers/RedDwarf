@@ -5349,6 +5349,9 @@ describe("developer phase with OpenClaw dispatch", () => {
         await expect(
           access(join(input.workspace.workspaceRoot, "repo", ".git"))
         ).resolves.toBeUndefined();
+        await expect(
+          access(join(input.workspace.workspaceRoot, "REPO_INDEX.md"))
+        ).resolves.toBeUndefined();
         await mkdir(input.workspace.artifactsDir, { recursive: true });
         const handoffPath = join(
           input.workspace.artifactsDir,
@@ -5461,9 +5464,13 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(architectPrompt).toContain("## Untrusted GitHub Issue Data");
       expect(architectPrompt).toContain("## Required Handoff Format");
       expect(architectPrompt).toContain("Repository checkout:");
+      expect(architectPrompt).toContain("Repository index:");
       expect(architectPrompt).toContain(maliciousSummary);
       expect(architectPrompt).toContain(
         "Inspect the checked-out repository at the repository checkout path above"
+      );
+      expect(architectPrompt).toContain(
+        "Start by reading the repository index file above"
       );
       expect(architectPrompt).toContain(
         "you may use the managed OpenClaw browser to inspect current framework docs and API references"
@@ -6753,6 +6760,9 @@ describe("phase timing hardening", () => {
         await expect(
           access(join(input.workspace.workspaceRoot, "repo", ".git"))
         ).resolves.toBeUndefined();
+        await expect(
+          access(join(input.workspace.workspaceRoot, "REPO_INDEX.md"))
+        ).resolves.toBeUndefined();
         await mkdir(input.workspace.artifactsDir, { recursive: true });
         architectCallCount += 1;
         const isProjectPlanningCall = architectCallCount > 1;
@@ -6899,8 +6909,14 @@ describe("phase timing hardening", () => {
       expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
         "Repository checkout:"
       );
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "Repository index:"
+      );
       expect(dispatchAdapter.dispatches[1]?.prompt ?? "").toContain(
         "Repository checkout:"
+      );
+      expect(dispatchAdapter.dispatches[1]?.prompt ?? "").toContain(
+        "Repository index:"
       );
 
       const manifest = await repository.getManifest(planningResult.manifest.taskId);

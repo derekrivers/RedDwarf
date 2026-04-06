@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Holly still gets stuck after repo bootstrap because she cannot enumerate directories
+
+- Symptom: the architect workspace contains `repo/.git`, but Holly still starts by calling `read` on the repo directory, gets `EISDIR`, then falls back to browser inspection or spawns a subagent to enumerate the repo. The subagent returns an incomplete directory summary and the architect handoff never appears.
+- Root cause: the repo checkout alone is not enough when the analyst runtime lacks a directory-listing primitive. The `read` tool can open files but cannot list directories, and spawned analyst subagents inherit the same limitation.
+- Failing approach: relying on Holly or analyst subagents to discover the repo structure by reading directories directly, or assuming the browser fallback will be available in the runtime.
+- Working workaround: generate a readable `REPO_INDEX.md` file in architect and project-architect workspaces and instruct Holly to read it first. That gives the analyst a file-based repo tree she can inspect with the existing `read` tool.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "fences untrusted GitHub issue content in architect and developer prompts|keeps project-mode plans blocked without creating a legacy policy-gate approval request"`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; `corepack pnpm typecheck`.
+
 ## Holly architect sessions stall because the planning workspace has no repo checkout
 
 - Symptom: a GitHub issue creates an `*-architect` workspace and OpenClaw session, but no `architect-handoff.md` appears. The Holly transcript shows `read` failing with `EISDIR` on workspace directories, browser fallbacks reporting `No supported browser found`, and `web_fetch` calls against GitHub HTML/raw URLs instead of grounded local repo inspection.

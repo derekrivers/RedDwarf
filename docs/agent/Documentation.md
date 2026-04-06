@@ -2,6 +2,10 @@
 
 ## 2026-04-06
 
+- Fixed a follow-on Holly planning failure after architect repo bootstrapping. Live issue `derekrivers/FirstVoyage#69` proved that Holly still could not reliably inspect the checked-out repo because the `read` tool errors on directories, browser fallback was unavailable, and spawned analyst subagents inherited the same limitation. Holly responded by asking subagents to enumerate the repo, and those children returned incomplete structure summaries.
+- Architect and project-architect workspaces now generate a readable `REPO_INDEX.md` alongside the checkout, and the prompts explicitly instruct Holly to read that file first instead of reading directories or spawning subagents just to enumerate the repository.
+- Added regression coverage proving architect workspaces materialize `REPO_INDEX.md` and that both architect prompt variants mention the repository index path and first-read instruction.
+
 - Fixed Holly architect sessions getting stuck before project creation because planning dispatch only created an `artifacts/` directory and pointed Holly at a generic `/var/lib/reddwarf/workspaces` root. In live issue `derekrivers/FirstVoyage#68`, that left Holly with no concrete repo checkout to inspect, so the analyst session bounced between `read`-on-directory failures, unavailable browser fallbacks, and GitHub HTML/raw fetches instead of producing `architect-handoff.md`.
 - Planning and project-mode architect dispatch now bootstrap a real `repo/` checkout inside the architect workspace before OpenClaw dispatch, pass the checkout path through the prompt, and instruct Holly to search and read within that specific checkout rather than the shared workspace root.
 - Added regression coverage proving architect and project-mode planning workspaces contain a repo checkout before the awaiter runs, and updated the project prompt unit suite for the new repository-checkout prompt contract.
