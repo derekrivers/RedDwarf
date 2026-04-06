@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## `node scripts/start-stack.mjs` fails immediately with `Identifier 'createRestGitHubAdapter' has already been declared`
+
+- Symptom: Node aborts before any stack startup work begins and points at `scripts/start-stack.mjs` with a parse-time `SyntaxError` for `createRestGitHubAdapter`.
+- Root cause: the script imported `createRestGitHubAdapter` at module scope and then redeclared the same identifier inside a later dynamic import destructure.
+- Failing approach: retrying the same startup command or debugging Docker/Postgres, since the process never reaches runtime initialization.
+- Working workaround: remove `createRestGitHubAdapter` from the later dynamic import and keep only the top-level binding.
+- Verification: `node --check scripts/start-stack.mjs`; then rerun `node scripts/start-stack.mjs`.
+
 ## Medium project-mode GitHub issues can time out the poller before the cursor advances
 
 - Symptom: `/health` shows polling degraded with `GitHub issue polling cycle for <repo> timed out after 120000ms`, `lastSeenIssueNumber` stays on the previous issue, and the new GitHub issue never appears in `/projects` even though the repo poll is otherwise healthy.

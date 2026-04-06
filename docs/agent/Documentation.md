@@ -2,6 +2,9 @@
 
 ## 2026-04-06
 
+- Fixed a startup regression in `scripts/start-stack.mjs` after the project sub-issue adapter wiring landed. The script imported `createRestGitHubAdapter` at module scope and then destructured the same identifier again from a later dynamic import, causing Node to abort at parse time with `SyntaxError: Identifier 'createRestGitHubAdapter' has already been declared`.
+- The dynamic import now only pulls `createHttpOpenClawDispatchAdapter`, leaving the shared REST GitHub adapter bound once at module scope.
+
 - Fixed live project approval recovery for stuck project `#67`. The first startup fix for sub-issues was incomplete: the scripts were passing `createRestGitHubAdapter()` into `githubIssuesAdapter`, but that object does not implement `createSubIssue(...)`. In live approval, the project could be persisted as `approved` and then die before any ticket dispatch, leaving all tickets pending.
 - Startup now keeps `githubWriter` on the generic REST adapter and instantiates a real `createGitHubIssuesAdapter()` separately for project sub-issue mutations. When GitHub sub-issues are disabled, startup logs the fallback and omits the adapter cleanly instead of wiring the wrong object shape.
 - Hardened `executeProjectApproval(...)` so malformed adapters are rejected before any project mutation, and incomplete approvals can be resumed when a project is already `approved` but all tickets are still pending. Existing ticket sub-issue numbers are preserved on retry so partially completed approvals do not duplicate GitHub child issues.

@@ -310,7 +310,7 @@ const {
 } = await import("../packages/control-plane/dist/index.js");
 const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
-const { createRestGitHubAdapter, createHttpOpenClawDispatchAdapter } =
+const { createHttpOpenClawDispatchAdapter } =
   await import("../packages/integrations/dist/index.js");
 const { createPlanningAgent } =
   await import("../packages/execution-plane/dist/index.js");
