@@ -152,7 +152,7 @@ The current generated runtime defines five RedDwarf agents:
 | `reddwarf-validator` | Kryten | validation and evidence-oriented checking | provider-selected validator model | `full` profile with runtime tooling |
 | `reddwarf-developer` | Lister | development-phase execution | provider-selected developer model | `full` profile with runtime tooling |
 
-`REDDWARF_MODEL_PROVIDER` selects the model provider for this roster. Anthropic mode emits `anthropic/claude-*` model refs; OpenAI mode emits `openai/gpt-5` model refs. The provider value is validated config and is safe to expose through operator config surfaces. Provider API keys remain secrets (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) and are not persisted into operator config.
+`REDDWARF_MODEL_PROVIDER` selects the model provider for this roster. Anthropic mode emits `anthropic/claude-*` model refs. OpenAI mode emits `openai/gpt-5.4` for the analyst/architect and developer roles, and `openai/gpt-5` for coordinator, reviewer, and validator roles. The provider value is validated config and is safe to expose through operator config surfaces. Provider API keys remain secrets (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) and are not persisted into operator config.
 
 ### 6.2 Dispatch contract
 

@@ -900,7 +900,7 @@ export class OpenAIPlanningAgent implements PlanningAgent {
       );
     }
     this.apiKey = apiKey;
-    this.model = options.model ?? "gpt-5";
+    this.model = options.model ?? "gpt-5.4";
     this.maxTokens = options.maxTokens ?? 2048;
     this.systemPrompt = options.systemPrompt ?? DEFAULT_PLANNING_SYSTEM_PROMPT;
     this.baseUrl = options.baseUrl ?? "https://api.openai.com";

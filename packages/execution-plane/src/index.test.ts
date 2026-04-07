@@ -470,13 +470,18 @@ describe("openClawAgentRoleDefinitions", () => {
 
     expect(analyst?.runtimePolicy.model).toEqual({
       provider: "openai",
-      model: "openai/gpt-5"
+      model: "openai/gpt-5.4"
     });
     expect(developer?.runtimePolicy.model).toEqual({
       provider: "openai",
+      model: "openai/gpt-5.4"
+    });
+    const reviewer = roles.find((role) => role.role === "reviewer");
+    expect(reviewer?.runtimePolicy.model).toEqual({
+      provider: "openai",
       model: "openai/gpt-5"
     });
-    expect(MODEL_PROVIDER_ROLE_MAP.openai.developer).toBe("openai/gpt-5");
+    expect(MODEL_PROVIDER_ROLE_MAP.openai.developer).toBe("openai/gpt-5.4");
     expect(resolveOpenClawModelProvider("openai")).toBe("openai");
     expect(() => resolveOpenClawModelProvider("bedrock")).toThrow();
   });
@@ -703,7 +708,7 @@ describe("createPlanningAgent", () => {
       input: string;
       max_output_tokens: number;
     };
-    expect(requestBody.model).toBe("gpt-5");
+    expect(requestBody.model).toBe("gpt-5.4");
     expect(requestBody.instructions).toContain("RedDwarf Dev Squad");
     expect(requestBody.input).toContain("## Untrusted GitHub Issue Data");
     expect(requestBody.max_output_tokens).toBe(2048);

@@ -191,8 +191,11 @@ describe("generateOpenClawConfig", () => {
     const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
     const developer = config.agents.list.find((agent) => agent.id === "reddwarf-developer");
 
-    expect(analyst?.model).toBe("openai/gpt-5");
-    expect(developer?.model).toBe("openai/gpt-5");
+    const reviewer = config.agents.list.find((agent) => agent.id === "reddwarf-arch-reviewer");
+
+    expect(analyst?.model).toBe("openai/gpt-5.4");
+    expect(developer?.model).toBe("openai/gpt-5.4");
+    expect(reviewer?.model).toBe("openai/gpt-5");
   });
 
   it("rejects unsupported model providers before emitting a roster", () => {

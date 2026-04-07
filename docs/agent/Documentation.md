@@ -714,6 +714,7 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Centralized OpenClaw provider-to-role model refs in `MODEL_PROVIDER_ROLE_MAP`, added validated operator-config coverage for provider selection, and added `OPENAI_API_KEY` to the secret rotation allowlist without exposing raw provider secrets through operator config.
 - Extended direct planning startup paths so the selected provider determines whether RedDwarf requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, while generated OpenClaw config uses the same provider to bind the RedDwarf agent roster.
 - While verifying the change, fixed `scripts/verify-openclaw-context.mjs` to expect `.context/denied_paths.json`, matching the current denylist-first workspace materialization contract.
+- Updated the OpenAI mapping so analyst/architect and developer roles use GPT 5.4 (`openai/gpt-5.4` in OpenClaw config, `gpt-5.4` for direct OpenAI planning), while coordinator, reviewer, and validator remain on `openai/gpt-5`.
 
 - Completed feature 99 from `FEATURE_BOARD.md`: Discord approval bot via native OpenClaw channel config.
 - Extended `packages/control-plane/src/openclaw-config.ts` so RedDwarf can emit a typed `channels.discord` block with conservative DM pairing, server allowlisting, and native command support instead of requiring hand-edited OpenClaw JSON.
