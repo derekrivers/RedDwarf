@@ -6342,7 +6342,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6452,7 +6453,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6560,7 +6562,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6728,7 +6731,7 @@ describe("developer phase with OpenClaw dispatch", () => {
                 ].join("\n"),
                 "utf8"
               );
-              return { handoffPath, repoRoot };
+              return { handoffPath, repoRoot, sessionTranscriptPath: null };
             }
           },
           clock: () => new Date("2026-03-30T09:04:00.000Z"),

@@ -43,6 +43,10 @@ import {
   type PipelineRun
 } from "@reddwarf/contracts";
 import type { GitHubWriter, GitHubIssuesAdapter } from "@reddwarf/integrations";
+import {
+  buildOpenClawIssueSessionKeyFromManifest,
+  normalizeOpenClawSessionKey
+} from "./openclaw-session-key.js";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -211,6 +215,24 @@ export interface OperatorRunDetailResponse {
   tokenUsage: ReturnType<typeof summarizeRunTokenUsage>;
 }
 
+/**
+ * Represents an in-flight tool-level approval request raised by the
+ * reddwarf-operator plugin's before_tool_call hook (Feature 152).
+ * Stored in memory — not persisted to Postgres. Expires when the session ends.
+ */
+export interface ToolApprovalRequest {
+  id: string;
+  sessionKey: string;
+  taskId: string | null;
+  toolName: string;
+  targetPath: string | null;
+  reason: string;
+  status: "pending" | "approved" | "denied";
+  decidedBy: string | null;
+  decidedAt: string | null;
+  requestedAt: string;
+}
+
 class OperatorApiRequestError extends Error {
   readonly status: number;
   readonly error: string;
@@ -261,6 +283,8 @@ export function createOperatorApiServer(
     githubWriter,
     githubIssuesAdapter
   } = deps;
+  /** In-memory store for pending tool-level approval requests (Feature 152). */
+  const toolApprovals = new Map<string, ToolApprovalRequest>();
   let boundPort = config.port;
 
   if (authToken.length === 0) {
@@ -312,7 +336,8 @@ export function createOperatorApiServer(
           managedEvidenceRoot,
           localSecretsPath,
           githubWriter,
-          githubIssuesAdapter
+          githubIssuesAdapter,
+          toolApprovals
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -1549,7 +1574,8 @@ async function handleOperatorRequest(
   managedEvidenceRoot?: string,
   localSecretsPath?: string,
   githubWriter?: GitHubWriter,
-  githubIssuesAdapter?: GitHubIssuesAdapter
+  githubIssuesAdapter?: GitHubIssuesAdapter,
+  toolApprovals?: Map<string, ToolApprovalRequest>
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2915,6 +2941,117 @@ async function handleOperatorRequest(
       }
       throw err;
     }
+  }
+
+  // ── Feature 152: Plugin approval hook endpoints ─────────────────────────────
+
+  // GET /sessions/policy?sessionKey=<key>
+  // Returns the policy snapshot for the active task whose session key matches.
+  // Used by the reddwarf-operator before_tool_call hook to check allowed/denied paths.
+  if (method === "GET" && path === "/sessions/policy") {
+    const rawKey = typeof qp["sessionKey"] === "string" ? qp["sessionKey"] : "";
+    const normalizedKey = normalizeOpenClawSessionKey(rawKey);
+    if (!normalizedKey) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "sessionKey query parameter is required."
+      });
+      return;
+    }
+    const activeManifests = await repository.listManifestsByLifecycleStatus("active", 50);
+    const matched = activeManifests.find(
+      (m) => normalizeOpenClawSessionKey(buildOpenClawIssueSessionKeyFromManifest(m)) === normalizedKey
+    );
+    if (!matched) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: "No active task found for the given session key."
+      });
+      return;
+    }
+    const policySnapshot = await repository.getPolicySnapshot(matched.taskId);
+    writeOperatorJsonResponse(res, 200, {
+      taskId: matched.taskId,
+      sessionKey: normalizedKey,
+      policySnapshot
+    });
+    return;
+  }
+
+  // GET /tool-approvals — list tool approval requests (Feature 152)
+  if (method === "GET" && path === "/tool-approvals") {
+    const statusFilter = typeof qp["status"] === "string" ? qp["status"] : undefined;
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const items = Array.from(store.values()).filter(
+      (a) => !statusFilter || a.status === statusFilter
+    );
+    writeOperatorJsonResponse(res, 200, { toolApprovals: items, total: items.length });
+    return;
+  }
+
+  // POST /tool-approvals — create a pending tool approval request (Feature 152)
+  if (method === "POST" && path === "/tool-approvals") {
+    const parsed = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null ?? {};
+    const sessionKey = typeof parsed.sessionKey === "string" ? parsed.sessionKey.trim() : "";
+    const toolName = typeof parsed.toolName === "string" ? parsed.toolName.trim() : "";
+    const targetPath = typeof parsed.targetPath === "string" ? parsed.targetPath : null;
+    const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "requires approval";
+    const taskId = typeof parsed.taskId === "string" ? parsed.taskId : null;
+    if (!sessionKey || !toolName) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "sessionKey and toolName are required."
+      });
+      return;
+    }
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const id = randomUUID();
+    const approval: ToolApprovalRequest = {
+      id,
+      sessionKey,
+      taskId,
+      toolName,
+      targetPath,
+      reason,
+      status: "pending",
+      decidedBy: null,
+      decidedAt: null,
+      requestedAt: clock().toISOString()
+    };
+    store.set(id, approval);
+    writeOperatorJsonResponse(res, 201, { toolApproval: approval });
+    return;
+  }
+
+  // POST /tool-approvals/:id/decide — approve or deny a tool approval (Feature 152)
+  const toolApprovalDecideMatch = /^\/tool-approvals\/([^/]+)\/decide$/.exec(path);
+  if (method === "POST" && toolApprovalDecideMatch) {
+    const approvalId = decodeURIComponent(toolApprovalDecideMatch[1]!);
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const approval = store.get(approvalId);
+    if (!approval) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Tool approval ${approvalId} not found.`
+      });
+      return;
+    }
+    if (approval.status !== "pending") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Tool approval ${approvalId} is already ${approval.status}.`
+      });
+      return;
+    }
+    const parsedDecide = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null ?? {};
+    const decision = parsedDecide.decision === "deny" ? "denied" : "approved";
+    const decidedBy = typeof parsedDecide.decidedBy === "string" ? parsedDecide.decidedBy : "operator";
+    approval.status = decision;
+    approval.decidedBy = decidedBy;
+    approval.decidedAt = clock().toISOString();
+    store.set(approvalId, approval);
+    writeOperatorJsonResponse(res, 200, { toolApproval: approval });
+    return;
   }
 
   writeOperatorJsonResponse(res, 404, {

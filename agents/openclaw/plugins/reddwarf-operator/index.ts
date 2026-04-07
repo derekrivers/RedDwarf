@@ -8,6 +8,16 @@ type OperatorPluginConfig = {
   operatorApiBaseUrl?: unknown;
 };
 
+type ToolCallHookContext = {
+  toolName: string;
+  args: Record<string, unknown>;
+  sessionKey: string;
+};
+
+type ToolCallHookResult =
+  | { allow: true }
+  | { deny: true; reason: string };
+
 type OpenClawPluginApi = {
   config?: {
     plugins?: {
@@ -25,9 +35,244 @@ type OpenClawPluginApi = {
     acceptsArgs?: boolean;
     handler: (ctx: OperatorCommandContext) => Promise<{ text: string }>;
   }) => void;
+  /** Register a hook that fires before every tool call in this session. Available from OpenClaw v2026.3.28+. */
+  registerHook?: (
+    event: "before_tool_call",
+    handler: (ctx: ToolCallHookContext) => Promise<ToolCallHookResult>
+  ) => void;
 };
 
 const PLUGIN_ID = "reddwarf-operator";
+
+// ── File write tool names and argument key resolution ─────────────────────────
+
+const FILE_WRITE_TOOLS = new Set(["write", "edit", "create", "patch", "replace"]);
+const SENSITIVE_TOOLS = new Set(["bash", "shell", "run", "exec"]);
+
+/**
+ * Heuristically extract the file path from a tool call's args.
+ * Returns null if the tool does not appear to touch a specific file.
+ */
+function extractTargetPath(toolName: string, args: Record<string, unknown>): string | null {
+  const lower = toolName.toLowerCase();
+  if (FILE_WRITE_TOOLS.has(lower)) {
+    const path = args["path"] ?? args["file_path"] ?? args["filename"] ?? args["target"];
+    return typeof path === "string" ? path : null;
+  }
+  if (SENSITIVE_TOOLS.has(lower)) {
+    // Check for shell redirections that suggest file writes
+    const command = args["command"] ?? args["cmd"] ?? args["input"];
+    if (typeof command === "string" && /[>|]/.test(command)) {
+      return null; // Flag as sensitive but no specific path
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Returns true if the candidate path matches any of the glob-style denied paths.
+ * Supports simple prefix matching and exact matching. The deny check uses the
+ * resolved list of denied paths from the policy snapshot.
+ */
+function matchesDeniedPath(filePath: string, deniedPaths: string[]): boolean {
+  for (const denied of deniedPaths) {
+    const pattern = denied.replace(/\/\*\*$/, "").replace(/\/$/, "");
+    if (filePath === denied || filePath.startsWith(`${pattern}/`) || filePath === pattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Returns true if the candidate path is within the allowedPaths list.
+ * Allowed paths are guidance, not strict blocklist — a match confirms it is safe.
+ */
+function matchesAllowedPath(filePath: string, allowedPaths: string[]): boolean {
+  for (const allowed of allowedPaths) {
+    const pattern = allowed.replace(/\/\*\*$/, "").replace(/\/$/, "");
+    if (
+      filePath === allowed ||
+      filePath.startsWith(`${pattern}/`) ||
+      filePath === pattern ||
+      filePath.endsWith(`/${allowed}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ── Per-session policy snapshot cache ────────────────────────────────────────
+
+interface CachedPolicy {
+  taskId: string | null;
+  allowedPaths: string[];
+  deniedPaths: string[];
+  fetchedAt: number;
+}
+
+const policyCache = new Map<string, CachedPolicy>();
+const POLICY_CACHE_TTL_MS = 60_000;
+
+async function getOrFetchPolicy(
+  api: OpenClawPluginApi,
+  sessionKey: string
+): Promise<CachedPolicy> {
+  const cached = policyCache.get(sessionKey);
+  if (cached && Date.now() - cached.fetchedAt < POLICY_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  try {
+    const response = await operatorJson<{
+      taskId?: string | null;
+      policySnapshot?: {
+        allowedPaths?: string[];
+        deniedPaths?: string[];
+      } | null;
+    }>(api, `/sessions/policy?sessionKey=${encodeURIComponent(sessionKey)}`);
+
+    const policy: CachedPolicy = {
+      taskId: response.taskId ?? null,
+      allowedPaths: response.policySnapshot?.allowedPaths ?? [],
+      deniedPaths: response.policySnapshot?.deniedPaths ?? [],
+      fetchedAt: Date.now()
+    };
+    policyCache.set(sessionKey, policy);
+    return policy;
+  } catch {
+    // If policy lookup fails (e.g. session not yet registered), return a permissive
+    // fallback so we don't block legitimate tool calls.
+    return { taskId: null, allowedPaths: [], deniedPaths: [], fetchedAt: Date.now() };
+  }
+}
+
+async function requestToolApproval(
+  api: OpenClawPluginApi,
+  sessionKey: string,
+  taskId: string | null,
+  toolName: string,
+  targetPath: string | null,
+  reason: string,
+  timeoutMs: number
+): Promise<"approved" | "denied"> {
+  let approvalId: string | null = null;
+  try {
+    const created = await operatorJson<{ toolApproval?: { id?: string } }>(
+      api,
+      "/tool-approvals",
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionKey, taskId, toolName, targetPath, reason })
+      }
+    );
+    approvalId = created.toolApproval?.id ?? null;
+  } catch {
+    // If we can't create an approval request, default to deny for safety
+    return "denied";
+  }
+
+  if (!approvalId) {
+    return "denied";
+  }
+
+  // Poll for a decision
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+    try {
+      const detail = await operatorJson<{
+        toolApprovals?: Array<{ id: string; status: string }>;
+      }>(api, `/tool-approvals?status=approved`);
+      const found = (detail.toolApprovals ?? []).find((a) => a.id === approvalId);
+      if (found) {
+        return "approved";
+      }
+      // Also check for denied
+      const denied = await operatorJson<{
+        toolApprovals?: Array<{ id: string; status: string }>;
+      }>(api, `/tool-approvals?status=denied`);
+      const foundDenied = (denied.toolApprovals ?? []).find((a) => a.id === approvalId);
+      if (foundDenied) {
+        return "denied";
+      }
+    } catch {
+      // polling error — continue
+    }
+  }
+
+  return "denied"; // timeout → deny
+}
+
+async function handleBeforeToolCall(
+  api: OpenClawPluginApi,
+  ctx: ToolCallHookContext
+): Promise<ToolCallHookResult> {
+  const { toolName, args, sessionKey } = ctx;
+  const targetPath = extractTargetPath(toolName, args);
+
+  // Non-file and non-sensitive ops pass through immediately
+  if (!FILE_WRITE_TOOLS.has(toolName.toLowerCase()) && !SENSITIVE_TOOLS.has(toolName.toLowerCase())) {
+    return { allow: true };
+  }
+
+  // Fetch cached policy snapshot (fast path — cache hit is < 1ms)
+  const policy = await getOrFetchPolicy(api, sessionKey);
+
+  // Hard deny if path matches a denied path
+  if (targetPath && matchesDeniedPath(targetPath, policy.deniedPaths)) {
+    api.logger.warn?.(
+      `reddwarf-operator: blocked ${toolName} on denied path ${targetPath} for session ${sessionKey}`
+    );
+    return {
+      deny: true,
+      reason: `This path (${targetPath}) is blocked by the task policy. Consult the RedDwarf operator dashboard for allowed paths.`
+    };
+  }
+
+  // Auto-approve if path is within allowed paths
+  if (targetPath && matchesAllowedPath(targetPath, policy.allowedPaths)) {
+    return { allow: true };
+  }
+
+  // Sensitive shell commands with redirections → route for approval
+  if (SENSITIVE_TOOLS.has(toolName.toLowerCase())) {
+    const command = args["command"] ?? args["cmd"];
+    if (typeof command === "string" && /[>]/.test(command)) {
+      const decision = await requestToolApproval(
+        api,
+        sessionKey,
+        policy.taskId,
+        toolName,
+        null,
+        `Shell command with file redirect: ${command.slice(0, 120)}`,
+        120_000
+      );
+      return decision === "approved" ? { allow: true } : { deny: true, reason: "Operator denied this shell redirect." };
+    }
+    return { allow: true }; // non-redirect shell ops pass through
+  }
+
+  // File write to an unlisted path — route for explicit approval
+  if (targetPath) {
+    const decision = await requestToolApproval(
+      api,
+      sessionKey,
+      policy.taskId,
+      toolName,
+      targetPath,
+      `File write to path not in task allowed-path list: ${targetPath}`,
+      120_000
+    );
+    return decision === "approved"
+      ? { allow: true }
+      : { deny: true, reason: `Operator denied write to ${targetPath}. Use an approved path or request a scope amendment.` };
+  }
+
+  return { allow: true };
+}
 const DEFAULT_OPERATOR_API_BASE_URL = "http://host.docker.internal:8080";
 const DEFAULT_SUBMIT_ACCEPTANCE =
   "The delivered change satisfies the operator-provided description and is verified before handoff.";
@@ -416,6 +661,22 @@ export default definePluginEntry({
       description: "List recent RedDwarf pipeline runs with their status.",
       handler: async () => handleRunsCommand(api)
     });
+    // Feature 152: register before_tool_call hook for agent-side safety rails.
+    // Gate behind REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED so existing deployments
+    // are unaffected unless opted in.
+    if (process.env["REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED"] === "true") {
+      if (api.registerHook) {
+        api.registerHook("before_tool_call", (ctx) => handleBeforeToolCall(api, ctx));
+        api.logger.info?.(
+          "reddwarf-operator: registered before_tool_call approval hook"
+        );
+      } else {
+        api.logger.warn?.(
+          "reddwarf-operator: REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED is set but this OpenClaw version does not support before_tool_call hooks (requires >= v2026.3.28)"
+        );
+      }
+    }
+
     api.logger.info?.(
       "reddwarf-operator: registered /rdstatus, /rdapprove, /rdreject, /submit, and /runs"
     );
