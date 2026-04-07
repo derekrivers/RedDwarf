@@ -169,10 +169,16 @@ export function CrewFeedPanel(props: { apiClient: DashboardApiClient }) {
       detail.events.forEach((event) => {
         if (
           event.code === "AGENT_PROGRESS_ITEM" ||
-          event.code === "PHASE_STARTED" ||
-          event.code === "PHASE_COMPLETED" ||
-          event.code === "WORKSPACE_PROVIDED" ||
-          event.code === "HEARTBEAT"
+          event.code === "PHASE_RUNNING" ||
+          event.code === "PHASE_PASSED" ||
+          event.code === "PHASE_FAILED" ||
+          event.code === "PHASE_BLOCKED" ||
+          event.code === "WORKSPACE_PROVISIONED" ||
+          event.code === "BRANCH_CREATED" ||
+          event.code === "PULL_REQUEST_CREATED" ||
+          event.code === "OPENCLAW_DISPATCH" ||
+          event.code === "PIPELINE_STARTED" ||
+          event.code === "PIPELINE_COMPLETED"
         ) {
           messages.push(eventToMessage(event));
         }
