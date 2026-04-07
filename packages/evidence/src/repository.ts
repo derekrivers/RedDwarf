@@ -67,6 +67,12 @@ export interface PlanningTransactionRepository {
   saveProjectSpec(project: ProjectSpec): Promise<void>;
   getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
   saveTicketSpec(ticket: TicketSpec): Promise<void>;
+  listTicketSpecs(projectId: string): Promise<TicketSpec[]>;
+  resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null>;
+  getManifest(taskId: string): Promise<TaskManifest | null>;
+  getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
+  savePlanningSpec(spec: PlanningSpec): Promise<void>;
+  savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {

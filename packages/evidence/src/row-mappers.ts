@@ -1,5 +1,7 @@
 import {
   asIsoTimestamp,
+  projectSpecSchema,
+  ticketSpecSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type ComplexityClassification,
@@ -251,7 +253,7 @@ export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapsh
 }
 
 export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
-  return {
+  const mapped = {
     projectId: row.project_id as string,
     sourceIssueId: (row.source_issue_id as string | null) ?? null,
     sourceRepo: row.source_repo as string,
@@ -273,10 +275,12 @@ export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };
+  // Validate against schema to catch corrupt data early
+  return projectSpecSchema.parse(mapped);
 }
 
 export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
-  return {
+  const mapped = {
     ticketId: row.ticket_id as string,
     projectId: row.project_id as string,
     title: row.title as string,
@@ -291,6 +295,8 @@ export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };
+  // Validate against schema to catch corrupt data early
+  return ticketSpecSchema.parse(mapped);
 }
 
 export function mapEligibilityRejectionRow(

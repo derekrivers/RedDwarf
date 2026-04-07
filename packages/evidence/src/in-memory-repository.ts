@@ -16,7 +16,9 @@ import {
   type PromptSnapshot,
   type RunEvent,
   type TaskManifest,
-  type TicketSpec
+  type TicketSpec,
+  assertValidProjectStatusTransition,
+  assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -552,16 +554,27 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   }
 
   async saveProjectSpec(project: ProjectSpec): Promise<void> {
+    const existing = this.projectSpecs.get(project.projectId);
+    if (existing && existing.status !== project.status) {
+      assertValidProjectStatusTransition(existing.status, project.status);
+    }
     this.projectSpecs.set(project.projectId, project);
   }
 
   async saveTicketSpec(ticket: TicketSpec): Promise<void> {
+    const existing = this.ticketSpecs.get(ticket.ticketId);
+    if (existing && existing.status !== ticket.status) {
+      assertValidTicketStatusTransition(existing.status, ticket.status);
+    }
     this.ticketSpecs.set(ticket.ticketId, ticket);
   }
 
   async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
     const existing = this.projectSpecs.get(projectId);
     if (existing) {
+      if (existing.status !== status) {
+        assertValidProjectStatusTransition(existing.status, status);
+      }
       this.projectSpecs.set(projectId, { ...existing, status, updatedAt: asIsoTimestamp() });
     }
   }
@@ -569,6 +582,9 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   async updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void> {
     const existing = this.ticketSpecs.get(ticketId);
     if (existing) {
+      if (existing.status !== status) {
+        assertValidTicketStatusTransition(existing.status, status);
+      }
       this.ticketSpecs.set(ticketId, { ...existing, status, updatedAt: asIsoTimestamp() });
     }
   }

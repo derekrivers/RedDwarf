@@ -13,7 +13,8 @@ import {
   createEvidenceRecord,
   createMemoryRecord,
   deriveOrganizationId,
-  type PlanningRepository
+  type PlanningRepository,
+  type PlanningTransactionRepository
 } from "@reddwarf/evidence";
 import type { GitHubIssuesAdapter } from "@reddwarf/integrations";
 import { V1MutationDisabledError } from "@reddwarf/integrations";
@@ -92,7 +93,7 @@ function createParentTaskIdFromProjectId(projectId: string): string | null {
 }
 
 async function completeParentProjectTask(input: {
-  repository: Pick<PlanningRepository, "getManifest" | "updateManifest">;
+  repository: Pick<PlanningTransactionRepository, "getManifest" | "updateManifest">;
   project: ProjectSpec;
   completedAt: string;
 }): Promise<boolean> {
@@ -223,7 +224,7 @@ function createProjectTicketSource(input: {
 }
 
 async function readProjectDefaultBranch(
-  repository: PlanningRepository,
+  repository: Pick<PlanningTransactionRepository, "getTaskSnapshot">,
   project: ProjectSpec
 ): Promise<string> {
   const parentTaskId = project.projectId.startsWith("project:")
@@ -255,7 +256,7 @@ export interface ProjectTicketTaskMaterializationResult {
 }
 
 async function materializeProjectTicketTask(input: {
-  repository: PlanningRepository;
+  repository: PlanningTransactionRepository;
   project: ProjectSpec;
   ticket: TicketSpec;
   decidedBy: string;
@@ -449,80 +450,91 @@ async function materializeProjectTicketTask(input: {
     );
   }
 
-  await repository.saveMemoryRecord(
-    createMemoryRecord({
-      memoryId: `${taskId}:memory:task:planning`,
-      taskId,
-      scope: "task",
-      provenance: "pipeline_derived",
-      key: "planning.brief",
-      title: "Project ticket planning brief",
-      value: {
-        specId: spec.specId,
-        summary: spec.summary,
-        acceptanceCriteria: spec.acceptanceCriteria,
-        affectedAreas: spec.affectedAreas,
-        constraints: spec.constraints,
-        policyReasons: expandedPolicySnapshot.reasons,
-        approvalMode: manifest.approvalMode,
-        confidenceLevel: spec.confidenceLevel,
-        confidenceReason: spec.confidenceReason,
-        allowedSecretScopes: expandedPolicySnapshot.allowedSecretScopes,
-        defaultBranch,
-        projectId: project.projectId,
-        ticketId: ticket.ticketId
-      },
-      repo: project.sourceRepo,
-      organizationId: deriveOrganizationId(project.sourceRepo),
-      tags: ["planning", "project", "ticket"],
-      createdAt: taskCreatedAt,
-      updatedAt
-    })
+  // Idempotency: only create memory records if they don't already exist
+  const existingMemoryIds = new Set(
+    existingSnapshot.memoryRecords.map((r) => r.memoryId)
   );
-  await repository.saveMemoryRecord(
-    createMemoryRecord({
-      memoryId: `${taskId}:memory:task:project-ticket`,
-      taskId,
-      scope: "task",
-      provenance: "pipeline_derived",
-      key: "project.ticket",
-      title: "Project ticket dispatch metadata",
-      value: {
-        projectId: project.projectId,
-        ticketId: ticket.ticketId,
-        githubSubIssueNumber: ticket.githubSubIssueNumber,
-        sourceRepo: project.sourceRepo
-      },
-      repo: project.sourceRepo,
-      organizationId: deriveOrganizationId(project.sourceRepo),
-      tags: ["project", "ticket"],
-      createdAt: taskCreatedAt,
-      updatedAt
-    })
-  );
-  await repository.saveMemoryRecord(
-    createMemoryRecord({
-      memoryId: `${taskId}:memory:task:architect-handoff`,
-      taskId,
-      scope: "task",
-      provenance: "pipeline_derived",
-      key: "architect.handoff",
-      title: "Project ticket architect handoff",
-      value: {
-        summary: spec.summary,
-        affectedAreas: spec.affectedAreas,
-        assumptions: spec.assumptions,
-        constraints: spec.constraints,
-        testExpectations: spec.testExpectations,
-        source: "project-mode"
-      },
-      repo: project.sourceRepo,
-      organizationId: deriveOrganizationId(project.sourceRepo),
-      tags: ["planning", "architect", "project", "ticket"],
-      createdAt: taskCreatedAt,
-      updatedAt
-    })
-  );
+
+  if (!existingMemoryIds.has(`${taskId}:memory:task:planning`)) {
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:planning`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "planning.brief",
+        title: "Project ticket planning brief",
+        value: {
+          specId: spec.specId,
+          summary: spec.summary,
+          acceptanceCriteria: spec.acceptanceCriteria,
+          affectedAreas: spec.affectedAreas,
+          constraints: spec.constraints,
+          policyReasons: expandedPolicySnapshot.reasons,
+          approvalMode: manifest.approvalMode,
+          confidenceLevel: spec.confidenceLevel,
+          confidenceReason: spec.confidenceReason,
+          allowedSecretScopes: expandedPolicySnapshot.allowedSecretScopes,
+          defaultBranch,
+          projectId: project.projectId,
+          ticketId: ticket.ticketId
+        },
+        repo: project.sourceRepo,
+        organizationId: deriveOrganizationId(project.sourceRepo),
+        tags: ["planning", "project", "ticket"],
+        createdAt: taskCreatedAt,
+        updatedAt
+      })
+    );
+  }
+  if (!existingMemoryIds.has(`${taskId}:memory:task:project-ticket`)) {
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:project-ticket`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "project.ticket",
+        title: "Project ticket dispatch metadata",
+        value: {
+          projectId: project.projectId,
+          ticketId: ticket.ticketId,
+          githubSubIssueNumber: ticket.githubSubIssueNumber,
+          sourceRepo: project.sourceRepo
+        },
+        repo: project.sourceRepo,
+        organizationId: deriveOrganizationId(project.sourceRepo),
+        tags: ["project", "ticket"],
+        createdAt: taskCreatedAt,
+        updatedAt
+      })
+    );
+  }
+  if (!existingMemoryIds.has(`${taskId}:memory:task:architect-handoff`)) {
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${taskId}:memory:task:architect-handoff`,
+        taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "architect.handoff",
+        title: "Project ticket architect handoff",
+        value: {
+          summary: spec.summary,
+          affectedAreas: spec.affectedAreas,
+          assumptions: spec.assumptions,
+          constraints: spec.constraints,
+          testExpectations: spec.testExpectations,
+          source: "project-mode"
+        },
+        repo: project.sourceRepo,
+        organizationId: deriveOrganizationId(project.sourceRepo),
+        tags: ["planning", "architect", "project", "ticket"],
+        createdAt: taskCreatedAt,
+        updatedAt
+      })
+    );
+  }
 
   return {
     taskId,
@@ -602,7 +614,7 @@ export async function executeProjectApproval(
     );
   }
 
-  // Step 1: Transition to "approved" or resume an incomplete approval.
+  // Step 1: Build the approved project state
   const approvedProject: ProjectSpec = resumableApprovedProject
     ? {
         ...project,
@@ -629,13 +641,12 @@ export async function executeProjectApproval(
       }
     : {
         ...project,
-        status: "approved",
+        status: "approved" as const,
         approvalDecision: "approve",
         decidedBy: input.decidedBy,
         decisionSummary: input.decisionSummary ?? null,
         updatedAt: now()
       };
-  await repository.saveProjectSpec(approvedProject);
   logger?.info(
     resumableApprovedProject
       ? `Resuming approved project ${input.projectId} after an incomplete approval.`
@@ -649,7 +660,8 @@ export async function executeProjectApproval(
   // Step 2: Sort tickets in dependency order
   const orderedTickets = sortTicketsByDependencyOrder(tickets);
 
-  // Step 3: Create GitHub sub-issues (if adapter enabled)
+  // Step 3: Create GitHub sub-issues BEFORE the transaction (external side effect).
+  // Collect issue numbers to persist atomically inside the transaction.
   let subIssuesCreated = 0;
   let subIssuesFallback = false;
   const sourceIssueNumber = project.sourceIssueId
@@ -658,6 +670,7 @@ export async function executeProjectApproval(
   const hasMissingSubIssues = orderedTickets.some(
     (ticket) => ticket.githubSubIssueNumber === null
   );
+  const subIssueResults: Array<{ index: number; issueNumber: number }> = [];
 
   if (!hasMissingSubIssues) {
     subIssuesFallback = false;
@@ -683,13 +696,13 @@ export async function executeProjectApproval(
           project.sourceRepo
         );
 
-        const updatedTicket: TicketSpec = {
+        subIssueResults.push({ index: i, issueNumber });
+        // Update local state for dependency resolution
+        orderedTickets[i] = {
           ...ticket,
           githubSubIssueNumber: issueNumber,
           updatedAt: now()
         };
-        await repository.saveTicketSpec(updatedTicket);
-        orderedTickets[i] = updatedTicket;
         subIssuesCreated++;
 
         logger?.info(
@@ -727,71 +740,98 @@ export async function executeProjectApproval(
     subIssuesFallback = true;
   }
 
-  // Step 4: Resolve first ready ticket and dispatch
-  const nextTicket = await repository.resolveNextReadyTicket(input.projectId);
-  let dispatchedTicket: TicketSpec | null = null;
+  // Step 4-6: All DB mutations inside a single transaction for atomicity
+  const txResult = await repository.runInTransaction(async (txRepo) => {
+    // Persist approved project
+    await txRepo.saveProjectSpec(approvedProject);
 
-  if (backfillingMissingSubIssues || materializingDispatchedTicketTask) {
-    dispatchedTicket =
-      orderedTickets.find((ticket) => ticket.status === "dispatched") ?? null;
-  } else if (nextTicket) {
-    const dispatched: TicketSpec = {
-      ...nextTicket,
-      status: "dispatched",
+    // Persist sub-issue numbers on tickets
+    for (const { index, issueNumber } of subIssueResults) {
+      const ticket = orderedTickets[index]!;
+      const updatedTicket: TicketSpec = {
+        ...ticket,
+        githubSubIssueNumber: issueNumber,
+        updatedAt: now()
+      };
+      await txRepo.saveTicketSpec(updatedTicket);
+      orderedTickets[index] = updatedTicket;
+    }
+
+    // Resolve first ready ticket and dispatch (with row-level locking in tx)
+    const nextTicket = await txRepo.resolveNextReadyTicket(input.projectId);
+    let dispatchedTicket: TicketSpec | null = null;
+
+    if (backfillingMissingSubIssues || materializingDispatchedTicketTask) {
+      dispatchedTicket =
+        orderedTickets.find((ticket) => ticket.status === "dispatched") ?? null;
+    } else if (nextTicket) {
+      const dispatched: TicketSpec = {
+        ...nextTicket,
+        status: "dispatched",
+        updatedAt: now()
+      };
+      await txRepo.saveTicketSpec(dispatched);
+      dispatchedTicket = dispatched;
+
+      logger?.info(
+        `Dispatched ticket ${nextTicket.ticketId} (${nextTicket.title}) to dev squad pipeline.`
+      );
+    } else {
+      logger?.warn(
+        `No ready tickets found for project ${input.projectId} after approval.`
+      );
+    }
+
+    // Transition project to "executing"
+    const executingProject: ProjectSpec = {
+      ...approvedProject,
+      status: "executing",
       updatedAt: now()
     };
-    await repository.saveTicketSpec(dispatched);
-    dispatchedTicket = dispatched;
+    await txRepo.saveProjectSpec(executingProject);
+    logger?.info(`Project ${input.projectId} status updated to 'executing'.`);
 
-    logger?.info(
-      `Dispatched ticket ${nextTicket.ticketId} (${nextTicket.title}) to dev squad pipeline.`
-    );
-  } else {
-    logger?.warn(
-      `No ready tickets found for project ${input.projectId} after approval.`
-    );
-  }
+    // Materialize child task for dispatched ticket
+    let dispatchedTaskId: string | null = null;
+    let dispatchedTaskCreated = false;
+    if (dispatchedTicket) {
+      const materialized = await materializeProjectTicketTask({
+        repository: txRepo,
+        project: executingProject,
+        ticket: dispatchedTicket,
+        decidedBy: input.decidedBy,
+        decisionSummary: input.decisionSummary,
+        now
+      });
+      dispatchedTaskId = materialized.taskId;
+      dispatchedTaskCreated = materialized.created;
+      logger?.info(
+        materialized.created
+          ? `Materialized ready child task ${materialized.taskId} for project ticket ${dispatchedTicket.ticketId}.`
+          : `Project ticket ${dispatchedTicket.ticketId} already has child task ${materialized.taskId}.`
+      );
+    }
 
-  // Step 5: Transition project to "executing"
-  const executingProject: ProjectSpec = {
-    ...approvedProject,
-    status: "executing",
-    updatedAt: now()
-  };
-  await repository.saveProjectSpec(executingProject);
-  logger?.info(`Project ${input.projectId} status updated to 'executing'.`);
+    // Read final ticket states inside the transaction
+    const finalTickets = await txRepo.listTicketSpecs(input.projectId);
 
-  let dispatchedTaskId: string | null = null;
-  let dispatchedTaskCreated = false;
-  if (dispatchedTicket) {
-    const materialized = await materializeProjectTicketTask({
-      repository,
-      project: executingProject,
-      ticket: dispatchedTicket,
-      decidedBy: input.decidedBy,
-      decisionSummary: input.decisionSummary,
-      now
-    });
-    dispatchedTaskId = materialized.taskId;
-    dispatchedTaskCreated = materialized.created;
-    logger?.info(
-      materialized.created
-        ? `Materialized ready child task ${materialized.taskId} for project ticket ${dispatchedTicket.ticketId}.`
-        : `Project ticket ${dispatchedTicket.ticketId} already has child task ${materialized.taskId}.`
-    );
-  }
-
-  // Return the final ticket states
-  const finalTickets = await repository.listTicketSpecs(input.projectId);
+    return {
+      executingProject,
+      finalTickets,
+      dispatchedTicket,
+      dispatchedTaskId,
+      dispatchedTaskCreated
+    };
+  });
 
   return {
-    project: executingProject,
-    tickets: finalTickets,
+    project: txResult.executingProject,
+    tickets: txResult.finalTickets,
     subIssuesCreated,
     subIssuesFallback,
-    dispatchedTicket,
-    dispatchedTaskId,
-    dispatchedTaskCreated
+    dispatchedTicket: txResult.dispatchedTicket,
+    dispatchedTaskId: txResult.dispatchedTaskId,
+    dispatchedTaskCreated: txResult.dispatchedTaskCreated
   };
 }
 
@@ -878,6 +918,17 @@ export async function advanceProjectTicket(
   const { repository, clock = () => new Date(), logger } = deps;
   const now = () => asIsoTimestamp(clock());
 
+  // Validate PR number before any state mutation
+  if (
+    !Number.isFinite(input.githubPrNumber) ||
+    !Number.isInteger(input.githubPrNumber) ||
+    input.githubPrNumber <= 0
+  ) {
+    throw new Error(
+      `Invalid GitHub PR number: ${input.githubPrNumber}. Must be a positive integer.`
+    );
+  }
+
   const ticket = await repository.getTicketSpec(input.ticketId);
   if (!ticket) {
     throw new Error(`Ticket ${input.ticketId} not found.`);
@@ -915,19 +966,110 @@ export async function advanceProjectTicket(
     );
   }
 
-  // Step 1: Mark ticket as merged with PR number
-  const mergedTicket: TicketSpec = {
-    ...ticket,
-    status: "merged",
-    githubPrNumber: input.githubPrNumber,
-    updatedAt: now()
-  };
-  await repository.saveTicketSpec(mergedTicket);
-  logger?.info(
-    `Ticket ${input.ticketId} marked as merged (PR #${input.githubPrNumber}).`
-  );
+  // All DB mutations inside a single transaction for atomicity.
+  // GitHub API call (close sub-issue) is performed after the transaction
+  // since it's an external side effect that shouldn't block the commit.
+  const txResult = await repository.runInTransaction(async (txRepo) => {
+    // Step 1: Mark ticket as merged with PR number
+    const mergedTicket: TicketSpec = {
+      ...ticket,
+      status: "merged",
+      githubPrNumber: input.githubPrNumber,
+      updatedAt: now()
+    };
+    await txRepo.saveTicketSpec(mergedTicket);
+    logger?.info(
+      `Ticket ${input.ticketId} marked as merged (PR #${input.githubPrNumber}).`
+    );
 
-  // Step 2: Close the linked GitHub sub-issue
+    // Step 2: Resolve next ready ticket (with row-level locking in tx)
+    const nextTicket = await txRepo.resolveNextReadyTicket(ticket.projectId);
+    let nextDispatchedTicket: TicketSpec | null = null;
+
+    if (nextTicket) {
+      // Dispatch the next ticket
+      const updatedProject: ProjectSpec = {
+        ...project,
+        updatedAt: now()
+      };
+      await txRepo.saveProjectSpec(updatedProject);
+      const dispatched: TicketSpec = {
+        ...nextTicket,
+        status: "dispatched",
+        updatedAt: now()
+      };
+      await txRepo.saveTicketSpec(dispatched);
+      nextDispatchedTicket = dispatched;
+      const materialized = await materializeProjectTicketTask({
+        repository: txRepo,
+        project,
+        ticket: dispatched,
+        decidedBy: "project-advance",
+        decisionSummary: `Dispatched after merging ${input.ticketId}.`,
+        now
+      });
+
+      logger?.info(
+        `Dispatched next ticket ${nextTicket.ticketId} (${nextTicket.title}).`
+      );
+
+      return {
+        outcome: "advanced" as const,
+        ticket: mergedTicket,
+        project: updatedProject,
+        nextDispatchedTicket,
+        nextDispatchedTaskId: materialized.taskId,
+        nextDispatchedTaskCreated: materialized.created
+      };
+    }
+
+    // No more tickets — check if all are merged
+    const allTickets = await txRepo.listTicketSpecs(ticket.projectId);
+    const allMerged = allTickets.every((t) => t.status === "merged");
+
+    if (allMerged) {
+      const completedAt = now();
+      const completedProject: ProjectSpec = {
+        ...project,
+        status: "complete",
+        updatedAt: completedAt
+      };
+      await txRepo.saveProjectSpec(completedProject);
+      await completeParentProjectTask({
+        repository: txRepo,
+        project: completedProject,
+        completedAt
+      });
+      logger?.info(
+        `All tickets merged. Project ${ticket.projectId} marked as complete.`
+      );
+
+      return {
+        outcome: "completed" as const,
+        ticket: mergedTicket,
+        project: completedProject,
+        nextDispatchedTicket: null,
+        nextDispatchedTaskId: null,
+        nextDispatchedTaskCreated: false
+      };
+    }
+
+    // Some tickets remain but none are ready (could be blocked/failed)
+    logger?.warn(
+      `No ready tickets found for project ${ticket.projectId} but not all tickets are merged.`
+    );
+
+    return {
+      outcome: "advanced" as const,
+      ticket: mergedTicket,
+      project,
+      nextDispatchedTicket: null,
+      nextDispatchedTaskId: null,
+      nextDispatchedTaskCreated: false
+    };
+  });
+
+  // Step 3: Close the linked GitHub sub-issue (external side effect, after tx commit)
   if (deps.githubIssuesAdapter && ticket.githubSubIssueNumber !== null) {
     try {
       await deps.githubIssuesAdapter.closeIssue(
@@ -943,96 +1085,16 @@ export async function advanceProjectTicket(
           `GitHub Issues adapter is disabled. Skipping sub-issue close for #${ticket.githubSubIssueNumber}.`
         );
       } else {
+        // M2: Log at error level — operator should be alerted that GitHub state is inconsistent
+        const errMsg = err instanceof Error ? err.message : String(err);
         logger?.warn(
-          `Failed to close GitHub sub-issue #${ticket.githubSubIssueNumber}: ${err instanceof Error ? err.message : String(err)}`
+          `ERROR: Failed to close GitHub sub-issue #${ticket.githubSubIssueNumber} for ticket ${input.ticketId}. ` +
+          `The ticket is marked as merged in the database but the GitHub issue remains open. ` +
+          `Manual intervention required: ${errMsg}`
         );
       }
     }
   }
 
-  // Step 3: Resolve next ready ticket
-  const nextTicket = await repository.resolveNextReadyTicket(ticket.projectId);
-  let nextDispatchedTicket: TicketSpec | null = null;
-
-  if (nextTicket) {
-    // Dispatch the next ticket
-    const updatedProject: ProjectSpec = {
-      ...project,
-      updatedAt: now()
-    };
-    await repository.saveProjectSpec(updatedProject);
-    const dispatched: TicketSpec = {
-      ...nextTicket,
-      status: "dispatched",
-      updatedAt: now()
-    };
-    await repository.saveTicketSpec(dispatched);
-    nextDispatchedTicket = dispatched;
-    const materialized = await materializeProjectTicketTask({
-      repository,
-      project,
-      ticket: dispatched,
-      decidedBy: "project-advance",
-      decisionSummary: `Dispatched after merging ${input.ticketId}.`,
-      now
-    });
-
-    logger?.info(
-      `Dispatched next ticket ${nextTicket.ticketId} (${nextTicket.title}).`
-    );
-
-    return {
-      outcome: "advanced",
-      ticket: mergedTicket,
-      project: updatedProject,
-      nextDispatchedTicket,
-      nextDispatchedTaskId: materialized.taskId,
-      nextDispatchedTaskCreated: materialized.created
-    };
-  }
-
-  // No more tickets — check if all are merged
-  const allTickets = await repository.listTicketSpecs(ticket.projectId);
-  const allMerged = allTickets.every((t) => t.status === "merged");
-
-  if (allMerged) {
-    const completedAt = now();
-    const completedProject: ProjectSpec = {
-      ...project,
-      status: "complete",
-      updatedAt: completedAt
-    };
-    await repository.saveProjectSpec(completedProject);
-    await completeParentProjectTask({
-      repository,
-      project: completedProject,
-      completedAt
-    });
-    logger?.info(
-      `All tickets merged. Project ${ticket.projectId} marked as complete.`
-    );
-
-    return {
-      outcome: "completed",
-      ticket: mergedTicket,
-      project: completedProject,
-      nextDispatchedTicket: null,
-      nextDispatchedTaskId: null,
-      nextDispatchedTaskCreated: false
-    };
-  }
-
-  // Some tickets remain but none are ready (could be blocked/failed)
-  logger?.warn(
-    `No ready tickets found for project ${ticket.projectId} but not all tickets are merged.`
-  );
-
-  return {
-    outcome: "advanced",
-    ticket: mergedTicket,
-    project,
-    nextDispatchedTicket: null,
-    nextDispatchedTaskId: null,
-    nextDispatchedTaskCreated: false
-  };
+  return txResult;
 }

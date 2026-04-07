@@ -275,6 +275,69 @@ export type ArchitectureReviewCheckStatus = z.infer<
   typeof architectureReviewCheckStatusSchema
 >;
 
+// Status transition maps
+
+/**
+ * Valid state transitions for ProjectSpec.status.
+ * Any transition not listed here is illegal and should be rejected.
+ */
+export const validProjectStatusTransitions: Record<ProjectStatus, readonly ProjectStatus[]> = {
+  draft: ["clarification_pending", "pending_approval", "failed"],
+  clarification_pending: ["draft", "pending_approval", "failed"],
+  pending_approval: ["approved", "draft", "failed"],
+  approved: ["executing", "failed"],
+  executing: ["complete", "failed"],
+  complete: [],
+  failed: ["executing", "draft"]
+};
+
+/**
+ * Valid state transitions for TicketSpec.status.
+ * Any transition not listed here is illegal and should be rejected.
+ */
+export const validTicketStatusTransitions: Record<TicketStatus, readonly TicketStatus[]> = {
+  pending: ["dispatched", "failed"],
+  dispatched: ["in_progress", "pr_open", "merged", "failed"],
+  in_progress: ["pr_open", "merged", "failed"],
+  pr_open: ["merged", "failed"],
+  merged: [],
+  failed: ["dispatched", "pending"]
+};
+
+/**
+ * Validate that a project status transition is legal.
+ * Throws if the transition is not allowed.
+ */
+export function assertValidProjectStatusTransition(
+  from: ProjectStatus,
+  to: ProjectStatus
+): void {
+  if (from === to) return;
+  const allowed = validProjectStatusTransitions[from];
+  if (!allowed.includes(to)) {
+    throw new Error(
+      `Invalid project status transition: '${from}' → '${to}'. Allowed transitions from '${from}': [${allowed.join(", ")}].`
+    );
+  }
+}
+
+/**
+ * Validate that a ticket status transition is legal.
+ * Throws if the transition is not allowed.
+ */
+export function assertValidTicketStatusTransition(
+  from: TicketStatus,
+  to: TicketStatus
+): void {
+  if (from === to) return;
+  const allowed = validTicketStatusTransitions[from];
+  if (!allowed.includes(to)) {
+    throw new Error(
+      `Invalid ticket status transition: '${from}' → '${to}'. Allowed transitions from '${from}': [${allowed.join(", ")}].`
+    );
+  }
+}
+
 // Utility
 
 export function asIsoTimestamp(date: Date = new Date()): string {

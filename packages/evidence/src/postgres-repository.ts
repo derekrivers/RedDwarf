@@ -30,7 +30,9 @@ import {
   type RunEvent,
   type RunSummary,
   type TaskManifest,
-  type TicketSpec
+  type TicketSpec,
+  assertValidProjectStatusTransition,
+  assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
 import pg from "pg";
 import {
@@ -424,8 +426,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.savePhaseRecordWithExecutor(this.pool, record);
   }
 
-  async savePlanningSpec(spec: PlanningSpec): Promise<void> {
-    await this.pool.query(
+  private async savePlanningSpecWithExecutor(
+    executor: QueryExecutor,
+    spec: PlanningSpec
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO planning_specs (
           spec_id,
@@ -476,12 +481,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
       ]
     );
   }
-  async savePolicySnapshot(
+
+  async savePlanningSpec(spec: PlanningSpec): Promise<void> {
+    await this.savePlanningSpecWithExecutor(this.pool, spec);
+  }
+
+  private async savePolicySnapshotWithExecutor(
+    executor: QueryExecutor,
     taskId: string,
     snapshot: PolicySnapshot
   ): Promise<void> {
     const now = asIsoTimestamp();
-    await this.pool.query(
+    await executor.query(
       `
         INSERT INTO policy_snapshots (
           task_id,
@@ -495,6 +506,13 @@ export class PostgresPlanningRepository implements PlanningRepository {
       `,
       [taskId, JSON.stringify(snapshot), now, now]
     );
+  }
+
+  async savePolicySnapshot(
+    taskId: string,
+    snapshot: PolicySnapshot
+  ): Promise<void> {
+    await this.savePolicySnapshotWithExecutor(this.pool, taskId, snapshot);
   }
 
   private async saveEvidenceRecordWithExecutor(
@@ -986,7 +1004,27 @@ export class PostgresPlanningRepository implements PlanningRepository {
       getProjectSpec: (projectId) => this.getProjectSpecWithExecutor(client, projectId),
       saveProjectSpec: (project) => this.saveProjectSpecWithExecutor(client, project),
       getTicketSpec: (ticketId) => this.getTicketSpecWithExecutor(client, ticketId),
-      saveTicketSpec: (ticket) => this.saveTicketSpecWithExecutor(client, ticket)
+      saveTicketSpec: (ticket) => this.saveTicketSpecWithExecutor(client, ticket),
+      listTicketSpecs: async (projectId) => {
+        const result = await client.query(
+          `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+          [projectId]
+        );
+        return result.rows.map(mapTicketSpecRow);
+      },
+      resolveNextReadyTicket: (projectId) =>
+        this.resolveNextReadyTicketWithExecutor(client, projectId),
+      getManifest: async (taskId) => {
+        const result = await client.query(
+          "SELECT * FROM task_manifests WHERE task_id = $1",
+          [taskId]
+        );
+        return result.rows[0] ? mapManifestRow(result.rows[0]) : null;
+      },
+      getTaskSnapshot: (taskId) => this.getTaskSnapshot(taskId),
+      savePlanningSpec: (spec) => this.savePlanningSpecWithExecutor(client, spec),
+      savePolicySnapshot: (taskId, snapshot) =>
+        this.savePolicySnapshotWithExecutor(client, taskId, snapshot)
     };
 
     try {
@@ -1437,6 +1475,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     executor: QueryExecutor,
     project: ProjectSpec
   ): Promise<void> {
+    // Validate status transition if updating an existing record
+    const existing = await this.getProjectSpecWithExecutor(executor, project.projectId);
+    if (existing && existing.status !== project.status) {
+      assertValidProjectStatusTransition(existing.status, project.status);
+    }
     await executor.query(
       `
         INSERT INTO project_specs (
@@ -1499,6 +1542,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     executor: QueryExecutor,
     ticket: TicketSpec
   ): Promise<void> {
+    // Validate status transition if updating an existing record
+    const existing = await this.getTicketSpecWithExecutor(executor, ticket.ticketId);
+    if (existing && existing.status !== ticket.status) {
+      assertValidTicketStatusTransition(existing.status, ticket.status);
+    }
     await executor.query(
       `
         INSERT INTO ticket_specs (
@@ -1544,6 +1592,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
+    const existing = await this.getProjectSpec(projectId);
+    if (existing && existing.status !== status) {
+      assertValidProjectStatusTransition(existing.status, status);
+    }
     const now = asIsoTimestamp();
     await this.pool.query(
       `UPDATE project_specs SET status = $1, updated_at = $2 WHERE project_id = $3`,
@@ -1552,6 +1604,10 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void> {
+    const existing = await this.getTicketSpec(ticketId);
+    if (existing && existing.status !== status) {
+      assertValidTicketStatusTransition(existing.status, status);
+    }
     const now = asIsoTimestamp();
     await this.pool.query(
       `UPDATE ticket_specs SET status = $1, updated_at = $2 WHERE ticket_id = $3`,
@@ -1611,17 +1667,41 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapTicketSpecRow);
   }
 
-  async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
-    const tickets = await this.listTicketSpecs(projectId);
+  private async resolveNextReadyTicketWithExecutor(
+    executor: QueryExecutor,
+    projectId: string
+  ): Promise<TicketSpec | null> {
+    // Use FOR UPDATE SKIP LOCKED to prevent concurrent dispatch of the same ticket.
+    // When called inside a transaction, this acquires a row-level lock on the
+    // selected ticket, ensuring only one caller can dispatch it.
+    const ticketsResult = await executor.query(
+      `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+      [projectId]
+    );
+    const tickets = ticketsResult.rows.map(mapTicketSpecRow);
     const mergedIds = new Set(
       tickets.filter((t) => t.status === "merged").map((t) => t.ticketId)
     );
     for (const ticket of tickets) {
       if (ticket.status !== "pending") continue;
       const allDepsResolved = ticket.dependsOn.every((dep) => mergedIds.has(dep));
-      if (allDepsResolved) return ticket;
+      if (allDepsResolved) {
+        // Attempt to lock this specific ticket row; skip if already locked
+        const lockResult = await executor.query(
+          `SELECT * FROM ticket_specs WHERE ticket_id = $1 AND status = 'pending' FOR UPDATE SKIP LOCKED`,
+          [ticket.ticketId]
+        );
+        if (lockResult.rows.length > 0) {
+          return mapTicketSpecRow(lockResult.rows[0]);
+        }
+        // Row was locked by another transaction — skip and try next candidate
+      }
     }
     return null;
+  }
+
+  async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
+    return this.resolveNextReadyTicketWithExecutor(this.pool, projectId);
   }
 }
 

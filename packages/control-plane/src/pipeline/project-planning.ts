@@ -230,10 +230,13 @@ export async function runProjectPlanningPhase(
     });
   });
 
-  await repository.saveProjectSpec(projectSpec);
-  for (const ticket of ticketSpecs) {
-    await repository.saveTicketSpec(ticket);
-  }
+  // Persist project spec and all tickets atomically in a single transaction
+  await repository.runInTransaction(async (txRepo) => {
+    await txRepo.saveProjectSpec(projectSpec);
+    for (const ticket of ticketSpecs) {
+      await txRepo.saveTicketSpec(ticket);
+    }
+  });
 
   await repository.savePhaseRecord(
     createPhaseRecord({

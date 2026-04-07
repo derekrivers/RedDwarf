@@ -2788,6 +2788,24 @@ async function handleOperatorRequest(
     }
 
     const body = rawBody as { answers: Record<string, string> };
+
+    // Validate that answers are non-empty and correspond to the pending questions
+    const answerValues = Object.values(body.answers);
+    if (answerValues.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Answers must not be empty."
+      });
+      return;
+    }
+    if (answerValues.some((v) => typeof v !== "string" || v.trim().length === 0)) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "All answer values must be non-empty strings."
+      });
+      return;
+    }
+
     const now = clock().toISOString();
 
     const updatedProject = {

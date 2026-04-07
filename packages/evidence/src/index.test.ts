@@ -640,6 +640,9 @@ describe("evidence memory partitions", () => {
       updatedAt: timestamp
     });
 
+    // Use valid transition path: draft → pending_approval → approved → executing
+    await repository.updateProjectStatus("proj-004", "pending_approval");
+    await repository.updateProjectStatus("proj-004", "approved");
     await repository.updateProjectStatus("proj-004", "executing");
     await repository.updateTicketStatus("t-status", "dispatched");
 

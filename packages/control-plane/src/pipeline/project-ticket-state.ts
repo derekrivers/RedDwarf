@@ -4,7 +4,7 @@ import type {
 } from "@reddwarf/contracts";
 import type {
   PersistedTaskSnapshot,
-  PlanningRepository
+  PlanningTransactionRepository
 } from "@reddwarf/evidence";
 
 interface ProjectTicketMemory {
@@ -13,7 +13,7 @@ interface ProjectTicketMemory {
 }
 
 type ProjectTicketStateRepository = Pick<
-  PlanningRepository,
+  PlanningTransactionRepository,
   "getProjectSpec" | "getTicketSpec" | "saveProjectSpec" | "saveTicketSpec"
 >;
 
