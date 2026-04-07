@@ -1,5 +1,18 @@
 # Agent Documentation
 
+## 2026-04-07
+
+- Completed M21 OpenClaw Platform Integration milestone — all 7 features (150–156) implemented, verified, and committed.
+- Feature 153: Model failover profiles — cross-provider failover chains in generated `openclaw.json`, gated by `REDDWARF_MODEL_FAILOVER_ENABLED`.
+- Feature 151: Structured execution items — JSONL plan_update/execution_item parsing, AGENT_PROGRESS_ITEM run events, dashboard AgentProgressTimeline component, agent bootstrap files updated. Gated by `REDDWARF_EXECUTION_ITEMS_ENABLED`.
+- Feature 152: Plugin approval hook — `before_tool_call` hook in `reddwarf-operator` plugin; auto-approve/deny via policy with operator API routing for uncertain calls. Gated by `REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED`.
+- Feature 150: Task Flow mirrored mode — `OpenClawTaskFlowAdapter` interface + `HttpOpenClawTaskFlowAdapter`; project approval creates a Task Flow when enabled; `advanceProjectTicket` signals flow state transitions. Gated by `REDDWARF_TASKFLOW_ENABLED`.
+- Feature 154: ACPX embedded dispatch — `AcpxOpenClawDispatchAdapter` calling `POST /acpx/sessions`; coexists with HTTP hook dispatch. Gated by `REDDWARF_ACPX_DISPATCH_ENABLED`.
+- Feature 155: ClawHub skill publishing — published 4 governance skills to `clawhub/skills/`; Holly bootstrap updated for dynamic skill discovery with verified-publisher allowlist. Gated by `REDDWARF_CLAWHUB_ENABLED`.
+- Feature 156: Dreaming memory integration — `parseDreamsMarkdown` + `captureDreamingMemory` with SHA256 deduplication; new `repo` scope and `agent_observed` provenance enum values; SQL migration `0016_dreaming_memory_enums.sql`. Gated by `REDDWARF_DREAMING_MEMORY_ENABLED`.
+- OpenClaw Docker Compose image pinned to `ghcr.io/openclaw/openclaw:v2026.4.5` (was `latest`).
+- All 533 tests pass, typecheck clean.
+
 ## 2026-04-06
 
 - Followed live GitHub issue `derekrivers/FirstVoyage#74` after restart onto the Project Mode hardening build. Intake reached both Holly architect passes and wrote `project-architect-handoff.md`, but `/projects` stayed empty and the task fell back to a generic policy-gate approval.
