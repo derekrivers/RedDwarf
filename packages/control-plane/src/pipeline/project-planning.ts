@@ -93,6 +93,20 @@ export async function runProjectPlanningPhase(
     throw new Error("Project-mode planning requires OpenClaw dispatch. Direct mode is not supported for project planning.");
   }
 
+  // Look up existing project to carry forward clarification answers and amendments
+  // from a prior planning round into Holly's re-planning prompt.
+  const existingProject = await repository.getProjectSpec(`project:${taskId}`);
+  const clarificationContext =
+    existingProject?.clarificationQuestions &&
+    existingProject.clarificationAnswers &&
+    Object.keys(existingProject.clarificationAnswers).length > 0
+      ? {
+          questions: existingProject.clarificationQuestions,
+          answers: existingProject.clarificationAnswers
+        }
+      : null;
+  const amendmentsContext = existingProject?.amendments ?? null;
+
   const projectResult = await dispatchHollyProjectPhase({
     input,
     manifest,
@@ -136,7 +150,9 @@ export async function runProjectPlanningPhase(
       deps.timing?.heartbeatIntervalMs ?? PHASE_HEARTBEAT_INTERVAL_MS,
     ...(deps.runtimeConfig !== undefined
       ? { runtimeConfig: deps.runtimeConfig }
-      : {})
+      : {}),
+    clarificationContext,
+    amendmentsContext
   });
 
   const { result: planningResult, hollyHandoffMarkdown } = projectResult;

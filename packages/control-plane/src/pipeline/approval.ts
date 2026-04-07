@@ -93,6 +93,18 @@ export async function resolveApprovalRequest(
     if (project?.status === "pending_approval") {
       throw new ProjectApprovalRequiredError(projectId);
     }
+    // Block approval resolution when the project exists but has no tickets yet
+    // (e.g. after clarification answers were submitted and the project returned
+    // to draft — re-planning must run before execution can proceed).
+    if (project && project.status !== "approved" && project.status !== "executing" && project.status !== "complete") {
+      const tickets = await repository.listTicketSpecs(projectId);
+      if (tickets.length === 0) {
+        throw new Error(
+          `Project ${projectId} is in status '${project.status}' with no tickets. ` +
+          `Re-planning must complete before the approval can be resolved.`
+        );
+      }
+    }
   }
 
   const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";

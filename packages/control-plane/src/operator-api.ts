@@ -51,6 +51,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
+  createApprovalRequest,
   createGitHubIssuePollingCursor,
   type PlanningRepository,
   type RepositoryHealthSnapshot
@@ -2924,10 +2925,98 @@ async function handleOperatorRequest(
     };
     await repository.saveProjectSpec(updatedProject);
 
+    // Invalidate any pending policy-gate approval for this task so it cannot be
+    // resolved before re-planning completes.  The taskId is derived from the
+    // projectId by stripping the "project:" prefix.
+    const clarifyTaskId = projectId.startsWith("project:")
+      ? projectId.slice("project:".length)
+      : projectId;
+    const pendingApprovals = await repository.listApprovalRequests({
+      taskId: clarifyTaskId,
+      statuses: ["pending"]
+    });
+    for (const approval of pendingApprovals) {
+      if (approval.phase === "policy_gate") {
+        await repository.saveApprovalRequest(
+          createApprovalRequest({
+            ...approval,
+            status: "rejected",
+            decidedBy: "system",
+            decision: "reject",
+            decisionSummary: "Superseded: clarification answers submitted; re-planning required.",
+            updatedAt: now,
+            resolvedAt: now
+          })
+        );
+      }
+    }
+
+    // Re-trigger the planning pipeline so Holly runs again with clarification
+    // answers included in the prompt context.  Project-mode re-planning
+    // requires OpenClaw dispatch; skip automatic re-trigger when unavailable.
+    const replanOpenClawDispatch = dispatchDependencies?.openClawDispatch;
+    if (replanOpenClawDispatch && managedTargetRoot && planner) {
+      const manifest = await repository.getManifest(clarifyTaskId);
+      const planningSpec = await repository.getPlanningSpec(clarifyTaskId);
+      if (manifest && planningSpec) {
+        const replanInput: PlanningTaskInput = {
+          source: manifest.source,
+          title: manifest.title,
+          summary: manifest.summary,
+          priority: manifest.priority,
+          dryRun: manifest.dryRun,
+          labels: [],
+          acceptanceCriteria: planningSpec.acceptanceCriteria,
+          affectedPaths: planningSpec.affectedAreas,
+          requestedCapabilities: manifest.requestedCapabilities,
+          metadata: {
+            replanReason: "clarification_answers_submitted",
+            originalProjectId: projectId
+          }
+        };
+        const classification = classifyComplexity(replanInput);
+        try {
+          const replanResult = await runPlanningPipeline(
+            {
+              ...replanInput,
+              metadata: {
+                ...replanInput.metadata,
+                complexityClassification: classification
+              }
+            },
+            {
+              repository,
+              planner,
+              openClawDispatch: replanOpenClawDispatch,
+              architectTargetRoot: managedTargetRoot,
+              clock
+            }
+          );
+          writeOperatorJsonResponse(res, 200, {
+            project: updatedProject,
+            replanRunId: replanResult.runId,
+            replanNextAction: replanResult.nextAction,
+            message:
+              "Clarification answers recorded. Re-planning dispatched with answers included in the planning context."
+          });
+        } catch (replanError) {
+          // Re-planning failed — still return success for the clarification submission
+          // but include the error so the operator knows re-planning needs manual retry.
+          writeOperatorJsonResponse(res, 200, {
+            project: updatedProject,
+            replanError: replanError instanceof Error ? replanError.message : String(replanError),
+            message:
+              "Clarification answers recorded. Automatic re-planning failed; use POST /tasks/inject to retry."
+          });
+        }
+        return;
+      }
+    }
+
     writeOperatorJsonResponse(res, 200, {
       project: updatedProject,
       message:
-        "Clarification answers recorded. Project returned to draft for re-planning with answers included in the planning context."
+        "Clarification answers recorded. Project returned to draft. Re-planning could not be triggered automatically — dispatch dependencies not available."
     });
     return;
   }
