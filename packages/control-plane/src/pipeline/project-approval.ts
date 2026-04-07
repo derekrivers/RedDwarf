@@ -16,7 +16,7 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository
 } from "@reddwarf/evidence";
-import type { GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import type { GitHubWriter, GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import { V1MutationDisabledError } from "@reddwarf/integrations";
 import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
 import {
@@ -38,6 +38,11 @@ export interface ExecuteProjectApprovalDependencies {
   githubIssuesAdapter?: GitHubIssuesAdapter | null;
   /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates a Task Flow on approval. Requires OpenClaw >= v2026.4.2. */
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
+  /**
+   * When provided, installs the reddwarf-advance workflow file in the target repo on fresh project
+   * approval. Best-effort: failure logs a warning but does not block the approval.
+   */
+  github?: GitHubWriter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -680,6 +685,27 @@ export async function executeProjectApproval(
       // Mark as approved under lock to prevent concurrent approvals from proceeding
       await txRepo.saveProjectSpec({ ...approvedProject });
     });
+  }
+
+  // Ensure reddwarf-advance.yml is present in the target repo on fresh approval.
+  // Best-effort: failure warns but does not block the approval flow.
+  if (
+    deps.github &&
+    !resumableApprovedProject &&
+    !backfillingMissingSubIssues &&
+    !materializingDispatchedTicketTask
+  ) {
+    try {
+      const wfResult = await deps.github.ensureWorkflowFile(project.sourceRepo);
+      if (wfResult.created) {
+        logger?.info(`Installed reddwarf-advance.yml workflow in ${project.sourceRepo}.`);
+      } else {
+        logger?.info(`reddwarf-advance.yml already present in ${project.sourceRepo} — skipped installation.`);
+      }
+    } catch (wfErr) {
+      const wfErrMsg = wfErr instanceof Error ? wfErr.message : String(wfErr);
+      logger?.warn(`Failed to install reddwarf-advance.yml in ${project.sourceRepo}: ${wfErrMsg}`);
+    }
   }
 
   // Collect issue numbers to persist atomically inside the final transaction.

@@ -2756,6 +2756,7 @@ async function handleOperatorRequest(
           repository,
           githubIssuesAdapter: githubIssuesAdapter ?? null,
           taskFlowAdapter: taskFlowAdapter ?? null,
+          github: githubWriter ?? null,
           clock
         }
       );

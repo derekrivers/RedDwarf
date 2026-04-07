@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryPlanningRepository } from "@reddwarf/evidence";
-import { FixtureGitHubIssuesAdapter } from "@reddwarf/integrations";
+import { FixtureGitHubAdapter, FixtureGitHubIssuesAdapter, type GitHubWriter } from "@reddwarf/integrations";
 import type { ProjectSpec, TaskManifest, TicketSpec } from "@reddwarf/contracts";
 import {
   advanceProjectTicket,
@@ -691,5 +691,81 @@ describe("advanceProjectTicket", () => {
     expect(result.outcome).toBe("completed");
     expect(result.ticket.status).toBe("merged");
     expect(result.nextDispatchedTaskId).toBeNull();
+  });
+});
+
+describe("executeProjectApproval — workflow installation", () => {
+  it("installs reddwarf-advance.yml in the target repo on fresh approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildProjectSpec());
+    await repository.saveTicketSpec(buildTicketSpec());
+
+    const github = new FixtureGitHubAdapter({
+      candidates: [],
+      mutations: {}
+    });
+    const ensureWorkflowFile = vi.spyOn(github, "ensureWorkflowFile");
+    ensureWorkflowFile.mockResolvedValue({ created: true, skipped: false });
+
+    await executeProjectApproval(
+      { projectId: "project:task-100", decidedBy: "derek" },
+      {
+        repository,
+        github,
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+
+    expect(ensureWorkflowFile).toHaveBeenCalledOnce();
+    expect(ensureWorkflowFile).toHaveBeenCalledWith("acme/platform");
+  });
+
+  it("does not install workflow on resumable-approved or backfill paths", async () => {
+    const repository = new InMemoryPlanningRepository();
+    // Project already approved with one ticket dispatched — triggers the resume path
+    await repository.saveProjectSpec(
+      buildProjectSpec({ status: "approved", approvalDecision: "approve", decidedBy: "derek" })
+    );
+    await repository.saveTicketSpec(buildTicketSpec({ status: "pending" }));
+
+    const github = new FixtureGitHubAdapter({ candidates: [], mutations: {} });
+    const ensureWorkflowFile = vi.spyOn(github, "ensureWorkflowFile");
+
+    await executeProjectApproval(
+      { projectId: "project:task-100", decidedBy: "derek" },
+      { repository, github, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+
+    expect(ensureWorkflowFile).not.toHaveBeenCalled();
+  });
+
+  it("warns but does not fail when workflow installation throws", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildProjectSpec());
+    await repository.saveTicketSpec(buildTicketSpec());
+
+    const github = new FixtureGitHubAdapter({ candidates: [], mutations: {} });
+    vi.spyOn(github, "ensureWorkflowFile").mockRejectedValue(
+      new Error("GitHub API PUT returned 403: insufficient permissions")
+    );
+
+    const warnings: string[] = [];
+    const result = await executeProjectApproval(
+      { projectId: "project:task-100", decidedBy: "derek" },
+      {
+        repository,
+        github,
+        logger: {
+          info: () => {},
+          warn: (msg) => warnings.push(msg)
+        },
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+
+    // Approval should succeed despite workflow install failure
+    expect(result.project.status).toBe("executing");
+    expect(warnings.some((w) => w.includes("reddwarf-advance.yml"))).toBe(true);
+    expect(warnings.some((w) => w.includes("403"))).toBe(true);
   });
 });

@@ -2910,6 +2910,7 @@ describe("control-plane", () => {
         createIssue: github.createIssue.bind(github),
         createBranch: github.createBranch.bind(github),
         commentOnIssue: github.commentOnIssue.bind(github),
+        ensureWorkflowFile: github.ensureWorkflowFile.bind(github),
         async createPullRequest(input: Parameters<typeof github.createPullRequest>[0]) {
           const pullRequest = await github.createPullRequest(input);
           if (shouldDropFirstPullRequestResponse) {
