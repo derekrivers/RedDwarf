@@ -3,6 +3,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import type { PipelineRun } from "@reddwarf/contracts";
 import { getApprovalUiCopy } from "../lib/approval-presenters";
+import { CrewFeedPanel } from "../components/crew-feed";
 import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
 
 function formatDateTime(value: string): string {
@@ -155,79 +156,87 @@ export function DashboardHomePage(props: { apiClient: DashboardApiClient }) {
         </div>
       </div>
 
-      <div className="col-lg-7">
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Recent Pipeline Runs</h3>
-          </div>
-          <div className="list-group list-group-flush">
-            {recentRuns.length === 0 ? (
-              <div className="empty py-5">
-                <p className="empty-title">No pipeline runs yet.</p>
-              </div>
-            ) : (
-              recentRuns.map((run) => (
-                <div className="list-group-item" key={run.runId}>
-                  <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
-                    <div>
-                      <div className="fw-medium">{formatTaskSource(taskMap.get(run.taskId), run.taskId)}</div>
-                      <div className="text-secondary">
-                        {run.runId} • {formatDateTime(run.startedAt)}
-                      </div>
-                    </div>
-                    <span className={`badge ${statusBadgeClass(run.status)} text-capitalize`}>
-                      {run.status}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      <div className="col-xl-5 col-lg-12 order-xl-last">
+        <CrewFeedPanel apiClient={apiClient} />
       </div>
 
-      <div className="col-lg-5">
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Pending Approvals</h3>
-          </div>
-          <div className="list-group list-group-flush">
-            {pendingApprovals.length === 0 ? (
-              <div className="empty py-5">
-                <p className="empty-title">Nothing is waiting for approval.</p>
+      <div className="col-xl-7 col-lg-12">
+        <div className="row g-4">
+          <div className="col-12">
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Recent Pipeline Runs</h3>
               </div>
-            ) : (
-              pendingApprovals.map((approval) => {
-                const uiCopy = getApprovalUiCopy(approval);
-
-                return (
-                  <div className="list-group-item" key={approval.requestId}>
-                    <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
-                      <div>
-                        <div className="d-flex align-items-center gap-2 flex-wrap mb-1">
-                          <div className="fw-medium">{approval.summary}</div>
-                          {uiCopy.reviewBadgeLabel ? (
-                            <span className="badge badge-outline text-uppercase">
-                              {uiCopy.reviewBadgeLabel}
-                            </span>
-                          ) : null}
+              <div className="list-group list-group-flush">
+                {recentRuns.length === 0 ? (
+                  <div className="empty py-5">
+                    <p className="empty-title">No pipeline runs yet.</p>
+                  </div>
+                ) : (
+                  recentRuns.map((run) => (
+                    <div className="list-group-item" key={run.runId}>
+                      <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                        <div>
+                          <div className="fw-medium">{formatTaskSource(taskMap.get(run.taskId), run.taskId)}</div>
+                          <div className="text-secondary">
+                            {run.runId} • {formatDateTime(run.startedAt)}
+                          </div>
                         </div>
-                        <div className="text-secondary">
-                          {approval.taskId} • {uiCopy.phaseLabel}
+                        <span className={`badge ${statusBadgeClass(run.status)} text-capitalize`}>
+                          {run.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-12">
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Pending Approvals</h3>
+              </div>
+              <div className="list-group list-group-flush">
+                {pendingApprovals.length === 0 ? (
+                  <div className="empty py-5">
+                    <p className="empty-title">Nothing is waiting for approval.</p>
+                  </div>
+                ) : (
+                  pendingApprovals.map((approval) => {
+                    const uiCopy = getApprovalUiCopy(approval);
+
+                    return (
+                      <div className="list-group-item" key={approval.requestId}>
+                        <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                          <div>
+                            <div className="d-flex align-items-center gap-2 flex-wrap mb-1">
+                              <div className="fw-medium">{approval.summary}</div>
+                              {uiCopy.reviewBadgeLabel ? (
+                                <span className="badge badge-outline text-uppercase">
+                                  {uiCopy.reviewBadgeLabel}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-secondary">
+                              {approval.taskId} • {uiCopy.phaseLabel}
+                            </div>
+                          </div>
+                          <Link
+                            className="btn btn-sm btn-primary"
+                            state={{ runId: approval.runId, taskId: approval.taskId }}
+                            to={`/approvals/${approval.requestId}`}
+                          >
+                            {uiCopy.reviewCtaLabel}
+                          </Link>
                         </div>
                       </div>
-                      <Link
-                        className="btn btn-sm btn-primary"
-                        state={{ runId: approval.runId, taskId: approval.taskId }}
-                        to={`/approvals/${approval.requestId}`}
-                      >
-                        {uiCopy.reviewCtaLabel}
-                      </Link>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
