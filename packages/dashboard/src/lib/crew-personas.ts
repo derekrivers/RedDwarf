@@ -7,6 +7,7 @@ export interface CrewPersona {
   name: string;
   role: string;
   initial: string;
+  avatar: string;
   accentColor: string;
   accentBg: string;
 }
@@ -15,6 +16,7 @@ const holly: CrewPersona = {
   name: "Holly",
   role: "Architect",
   initial: "H",
+  avatar: "/crew/holly.jpg",
   accentColor: "#206bc4",
   accentBg: "rgba(32, 107, 196, 0.15)"
 };
@@ -23,6 +25,7 @@ const rimmer: CrewPersona = {
   name: "Rimmer",
   role: "Coordinator",
   initial: "R",
+  avatar: "/crew/rimmer.jpg",
   accentColor: "#d63939",
   accentBg: "rgba(214, 57, 57, 0.15)"
 };
@@ -31,6 +34,7 @@ const lister: CrewPersona = {
   name: "Lister",
   role: "Developer",
   initial: "L",
+  avatar: "/crew/lister.jpg",
   accentColor: "#2fb344",
   accentBg: "rgba(47, 179, 68, 0.15)"
 };
@@ -39,6 +43,7 @@ const kryten: CrewPersona = {
   name: "Kryten",
   role: "Validator",
   initial: "K",
+  avatar: "/crew/Kryten.jpg",
   accentColor: "#ae3ec9",
   accentBg: "rgba(174, 62, 201, 0.15)"
 };
@@ -47,6 +52,7 @@ const cat: CrewPersona = {
   name: "Cat",
   role: "Reviewer",
   initial: "C",
+  avatar: "/crew/cat.jpg",
   accentColor: "#f76707",
   accentBg: "rgba(247, 103, 7, 0.15)"
 };

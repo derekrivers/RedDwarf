@@ -80,7 +80,18 @@ function CrewAvatar(props: { persona: CrewPersona }) {
         borderColor: persona.accentColor
       }}
     >
-      {persona.initial}
+      <img
+        alt={persona.name}
+        className="crew-feed-avatar-img"
+        src={persona.avatar}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+          (e.currentTarget.nextElementSibling as HTMLElement).style.display = "";
+        }}
+      />
+      <span className="crew-feed-avatar-fallback" style={{ display: "none" }}>
+        {persona.initial}
+      </span>
     </div>
   );
 }
