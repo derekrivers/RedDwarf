@@ -16,7 +16,7 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository
 } from "@reddwarf/evidence";
-import type { GitHubIssuesAdapter } from "@reddwarf/integrations";
+import type { GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import { V1MutationDisabledError } from "@reddwarf/integrations";
 import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
 import {
@@ -36,6 +36,8 @@ export interface ExecuteProjectApprovalInput {
 export interface ExecuteProjectApprovalDependencies {
   repository: PlanningRepository;
   githubIssuesAdapter?: GitHubIssuesAdapter | null;
+  /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates a Task Flow on approval. Requires OpenClaw >= v2026.4.2. */
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -845,6 +847,45 @@ export async function executeProjectApproval(
     };
   });
 
+  // Feature 150: Create a Task Flow in mirrored mode when enabled and adapter is available.
+  // This is a best-effort external side effect — failure does not block approval.
+  if (
+    process.env["REDDWARF_TASKFLOW_ENABLED"] === "true" &&
+    deps.taskFlowAdapter
+  ) {
+    try {
+      const sortedTickets = sortTicketsByDependencyOrder(txResult.finalTickets);
+      const flowResult = await deps.taskFlowAdapter.createFlow({
+        externalId: input.projectId,
+        label: txResult.executingProject.title ?? `Project ${input.projectId}`,
+        mode: "mirrored",
+        children: sortedTickets.map((t) => ({
+          externalId: t.ticketId,
+          label: t.title,
+          dependsOn: t.dependsOn
+        }))
+      });
+      // Store the flowId in a memory record on the parent task for recovery
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `taskflow:${input.projectId}`,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: `project.taskflow.flowId:${input.projectId}`,
+          title: `Task Flow ID for project ${input.projectId}`,
+          value: { flowId: flowResult.flowId, projectId: input.projectId },
+          createdAt: flowResult.createdAt
+        })
+      );
+      logger?.info(
+        `Created Task Flow ${flowResult.flowId} for project ${input.projectId} (${sortedTickets.length} children).`
+      );
+    } catch (flowErr) {
+      const flowErrMsg = flowErr instanceof Error ? flowErr.message : String(flowErr);
+      logger?.warn(`Failed to create Task Flow for project ${input.projectId}: ${flowErrMsg}`);
+    }
+  }
+
   return {
     project: txResult.executingProject,
     tickets: txResult.finalTickets,
@@ -902,6 +943,8 @@ export interface AdvanceProjectTicketInput {
 export interface AdvanceProjectTicketDependencies {
   repository: PlanningRepository;
   githubIssuesAdapter?: GitHubIssuesAdapter | null;
+  /** When provided and REDDWARF_TASKFLOW_ENABLED=true, signals Task Flow state transitions. */
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -1114,6 +1157,29 @@ export async function advanceProjectTicket(
           `Manual intervention required: ${errMsg}`
         );
       }
+    }
+  }
+
+  // Feature 150: Signal Task Flow state transition when enabled.
+  if (
+    process.env["REDDWARF_TASKFLOW_ENABLED"] === "true" &&
+    deps.taskFlowAdapter
+  ) {
+    try {
+      const flowMemory = await deps.repository.listMemoryRecords({
+        scope: "task",
+        keyPrefix: `project.taskflow.flowId:${ticket.projectId}`
+      });
+      const flowId = flowMemory.length > 0
+        ? (flowMemory[0]!.value as Record<string, unknown>)["flowId"] as string | null
+        : null;
+      if (flowId) {
+        await deps.taskFlowAdapter.advanceFlow(flowId, input.ticketId);
+        logger?.info(`Advanced Task Flow ${flowId} past ticket ${input.ticketId}.`);
+      }
+    } catch (flowErr) {
+      const flowErrMsg = flowErr instanceof Error ? flowErr.message : String(flowErr);
+      logger?.warn(`Failed to advance Task Flow for ticket ${input.ticketId}: ${flowErrMsg}`);
     }
   }
 
