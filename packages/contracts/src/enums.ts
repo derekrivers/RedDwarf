@@ -76,12 +76,16 @@ export const memoryScopes = [
   "task",
   "project",
   "organization",
-  "external"
+  "external",
+  /** Repository-scoped memories — persist across tasks for the same repo (Feature 156). */
+  "repo"
 ] as const;
 export const memoryProvenances = [
   "human_curated",
   "pipeline_derived",
-  "external_retrieval"
+  "external_retrieval",
+  /** Observations extracted from agent session outputs such as OpenClaw dreaming passes (Feature 156). */
+  "agent_observed"
 ] as const;
 export const policyPackEntryKinds = ["directory", "file"] as const;
 export const concurrencyStrategies = ["serialize", "escalate"] as const;

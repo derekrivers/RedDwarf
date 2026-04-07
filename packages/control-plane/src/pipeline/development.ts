@@ -87,7 +87,7 @@ import {
   processWorkspaceCiRequests
 } from "../ci-tool.js";
 import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
-import { persistExecutionItems, readSessionTranscript } from "../openclaw-session.js";
+import { captureDreamingMemory, persistExecutionItems, readSessionTranscript } from "../openclaw-session.js";
 
 export async function runDeveloperPhase(
   input: RunDeveloperPhaseInput,
@@ -654,6 +654,29 @@ export async function runDeveloperPhase(
         } catch (itemError) {
           runLogger?.warn?.(
             `Failed to persist execution items for developer session ${sessionKey}: ${serializeError(itemError)}`
+          );
+        }
+      }
+
+      // Feature 156: Capture dreaming memory from the OpenClaw session workspace.
+      if (process.env["REDDWARF_DREAMING_MEMORY_ENABLED"] === "true") {
+        try {
+          const dreamingResult = await captureDreamingMemory({
+            repository,
+            workspaceRoot: workspace.workspaceRoot,
+            taskId,
+            repo: currentManifest.source.repo,
+            agentRole: "developer",
+            createdAt: asIsoTimestamp(clock())
+          });
+          if (dreamingResult.dreamsFound) {
+            runLogger?.info?.(
+              `Dreaming memory: persisted ${dreamingResult.persisted}, skipped ${dreamingResult.skipped} (duplicates) from developer session.`
+            );
+          }
+        } catch (dreamErr) {
+          runLogger?.warn?.(
+            `Failed to capture dreaming memory from developer session: ${serializeError(dreamErr)}`
           );
         }
       }

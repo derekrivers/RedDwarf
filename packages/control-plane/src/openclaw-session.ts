@@ -1,9 +1,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { asIsoTimestamp } from "@reddwarf/contracts";
 import type { OpenClawDispatchResult } from "@reddwarf/integrations";
 import type { PlanningRepository } from "@reddwarf/evidence";
-import { createRunEvent } from "@reddwarf/evidence";
+import { createMemoryRecord, createRunEvent } from "@reddwarf/evidence";
 import { archiveEvidenceArtifact, buildArchivedArtifactMetadata } from "./workspace.js";
 import type { ArchivedArtifactClass, ArchivedEvidenceArtifact } from "./workspace.js";
 import { EventCodes } from "./pipeline/types.js";
@@ -475,4 +476,175 @@ export async function persistExecutionItems(
   }
 
   return items.length;
+}
+
+// ── Dreaming memory integration (Feature 156) ────────────────────────────────
+
+/**
+ * A single learning extracted from an OpenClaw dreaming pass (dreams.md).
+ */
+export interface DreamingLearning {
+  /** Short title — first line or heading of the observation. */
+  title: string;
+  /** Full observation text. */
+  body: string;
+  /** Topic tags inferred from the content (e.g. "architecture", "testing", "react"). */
+  tags: string[];
+}
+
+/**
+ * Parse an OpenClaw dreams.md file and extract structured learnings.
+ * The dreams.md format is a markdown document with optional sections;
+ * each top-level heading (##) is treated as a distinct learning.
+ *
+ * Returns an empty array if the content is empty or unparseable.
+ */
+export function parseDreamsMarkdown(content: string): DreamingLearning[] {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  // Split on top-level headings (## or ###)
+  const headingRegex = /^#{2,3}\s+(.+)$/m;
+  const sections = trimmed.split(/^(?=#{2,3}\s)/m).filter(Boolean);
+
+  const learnings: DreamingLearning[] = [];
+
+  for (const section of sections) {
+    const lines = section.split("\n");
+    const headingLine = lines[0] ?? "";
+    const headingMatch = headingRegex.exec(headingLine);
+    const title = headingMatch ? headingMatch[1]!.trim() : headingLine.replace(/^#+\s*/, "").trim();
+    const body = lines.slice(1).join("\n").trim();
+
+    if (!title && !body) {
+      continue;
+    }
+
+    // Infer tags from keywords in title and body
+    const combined = `${title} ${body}`.toLowerCase();
+    const tags: string[] = ["dreaming"];
+    const tagKeywords: [string, string][] = [
+      ["architecture", "architecture"],
+      ["test", "testing"],
+      ["react", "react"],
+      ["typescript", "typescript"],
+      ["database", "database"],
+      ["performance", "performance"],
+      ["security", "security"],
+      ["api", "api"],
+      ["migration", "migration"],
+      ["pattern", "patterns"]
+    ];
+    for (const [keyword, tag] of tagKeywords) {
+      if (combined.includes(keyword) && !tags.includes(tag)) {
+        tags.push(tag);
+      }
+    }
+
+    learnings.push({ title: title || "Observation", body, tags });
+  }
+
+  // If no headings were found, treat the whole document as one learning
+  if (learnings.length === 0 && trimmed) {
+    const firstLine = trimmed.split("\n")[0] ?? "Dreaming observation";
+    learnings.push({
+      title: firstLine.replace(/^#+\s*/, "").trim().slice(0, 120),
+      body: trimmed,
+      tags: ["dreaming"]
+    });
+  }
+
+  return learnings;
+}
+
+export interface CaptureDreamingMemoryInput {
+  repository: Pick<PlanningRepository, "saveMemoryRecord" | "listMemoryRecords">;
+  workspaceRoot: string;
+  taskId: string;
+  repo: string;
+  agentRole: string;
+  createdAt: string;
+}
+
+export interface CaptureDreamingMemoryResult {
+  persisted: number;
+  skipped: number;
+  dreamsFound: boolean;
+}
+
+/**
+ * After an agent session completes, check for a dreams.md file written by
+ * OpenClaw's dreaming pass and capture structured learnings as repo-scoped
+ * memory records. Requires OpenClaw >= v2026.4.5 and
+ * REDDWARF_DREAMING_MEMORY_ENABLED=true on the caller side.
+ *
+ * Deduplicates observations by content hash so repeated sessions on the same
+ * repository do not accumulate identical memories.
+ *
+ * The dreams.md file is expected at `{workspaceRoot}/dreams.md`.
+ */
+export async function captureDreamingMemory(
+  input: CaptureDreamingMemoryInput
+): Promise<CaptureDreamingMemoryResult> {
+  const dreamsPath = join(input.workspaceRoot, "dreams.md");
+  let content: string;
+  try {
+    content = await readFile(dreamsPath, "utf8");
+  } catch {
+    // No dreams.md — the agent did not run a dreaming pass or OpenClaw version < v2026.4.5
+    return { persisted: 0, skipped: 0, dreamsFound: false };
+  }
+
+  const learnings = parseDreamsMarkdown(content);
+  if (learnings.length === 0) {
+    return { persisted: 0, skipped: 0, dreamsFound: true };
+  }
+
+  // Fetch existing dreaming memories for this repo to deduplicate
+  const existingMemories = await input.repository.listMemoryRecords({
+    scope: "repo",
+    tags: ["dreaming"]
+  });
+  const existingKeys = new Set(existingMemories.map((m) => m.key));
+
+  let persisted = 0;
+  let skipped = 0;
+
+  for (const learning of learnings) {
+    // Key is a hash of the title + body so identical observations are deduplicated
+    const contentHash = createHash("sha256")
+      .update(`${learning.title}\n${learning.body}`)
+      .digest("hex")
+      .slice(0, 16);
+    const memoryKey = `dreaming:${input.repo}:${contentHash}`;
+
+    if (existingKeys.has(memoryKey)) {
+      skipped++;
+      continue;
+    }
+
+    await input.repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${input.taskId}:dreaming:${contentHash}`,
+        scope: "repo" as "repo",
+        provenance: "agent_observed" as "agent_observed",
+        key: memoryKey,
+        title: learning.title,
+        value: {
+          body: learning.body,
+          agentRole: input.agentRole,
+          sourceTaskId: input.taskId
+        },
+        repo: input.repo,
+        tags: learning.tags,
+        createdAt: input.createdAt
+      })
+    );
+    existingKeys.add(memoryKey);
+    persisted++;
+  }
+
+  return { persisted, skipped, dreamsFound: true };
 }
