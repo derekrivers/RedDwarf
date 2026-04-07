@@ -732,6 +732,9 @@ describe("operator API server", () => {
       expect(ui.body).toContain("GET /ui");
       expect(ui.body).toContain("RedDwarf Operator Panel");
       expect(ui.body).toContain("Polling & Dispatch");
+      expect(ui.body).toContain("Pending Approvals");
+      expect(ui.body).toContain("/approvals?statuses=pending");
+      expect(ui.body).toContain("data-decision=\"approve\"");
 
       const bootstrap = await operatorGet(port, "/ui/bootstrap");
       expect(bootstrap.status).toBe(200);

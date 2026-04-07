@@ -1051,6 +1051,16 @@ function renderOperatorUiHtml(): string {
           </div>
           <div id="path-list" class="path-list"></div>
         </article>
+        <article class="panel span-4">
+          <div class="section-head">
+            <div>
+              <h2>Pending Approvals</h2>
+              <p>Review queued human gates without leaving the operator panel.</p>
+            </div>
+          </div>
+          <div id="approval-list" class="recent-list"></div>
+          <div id="approvals-notice" class="notice"></div>
+        </article>
         <article class="panel span-8">
           <div class="section-head">
             <div>
@@ -1136,7 +1146,8 @@ function renderOperatorUiHtml(): string {
         repos: [],
         health: null,
         runs: [],
-        tasks: []
+        tasks: [],
+        approvals: []
       };
 
       const tokenInput = document.getElementById("token-input");
@@ -1388,11 +1399,55 @@ function renderOperatorUiHtml(): string {
             ).join("");
       }
 
+      function renderApprovals() {
+        const list = document.getElementById("approval-list");
+        if (!state.approvals.length) {
+          list.innerHTML = '<div class="empty">No pending approvals.</div>';
+          return;
+        }
+        list.innerHTML = state.approvals.map((approval) =>
+          '<div class="record">' +
+            '<div><strong>' + approval.taskId + '</strong><p>' + (approval.summary || "Human approval required.") + '</p></div>' +
+            '<div class="row"><span class="inline-code">' + approval.phase + '</span><span class="label">' + approval.riskClass + ' risk</span></div>' +
+            '<div class="label">' + approval.requestId + '</div>' +
+            '<div class="button-row">' +
+              '<button class="button-primary" data-approval="' + approval.requestId + '" data-decision="approve">Approve</button>' +
+              '<button class="button-danger" data-approval="' + approval.requestId + '" data-decision="reject">Reject</button>' +
+            '</div>' +
+          '</div>'
+        ).join("");
+        list.querySelectorAll("button[data-approval]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const approvalId = button.getAttribute("data-approval");
+            const decision = button.getAttribute("data-decision");
+            button.disabled = true;
+            try {
+              await api("/approvals/" + encodeURIComponent(approvalId) + "/resolve", {
+                method: "POST",
+                body: {
+                  decision,
+                  decidedBy: "operator",
+                  decisionSummary: decision === "approve"
+                    ? "Approved from the operator panel."
+                    : "Rejected from the operator panel."
+                }
+              });
+              setNotice("approvals-notice", "ok", decision === "approve" ? "Approval approved." : "Approval rejected.");
+              await refreshData();
+            } catch (error) {
+              button.disabled = false;
+              setNotice("approvals-notice", "error", error instanceof Error ? error.message : String(error));
+            }
+          });
+        });
+      }
+
       async function refreshData() {
         if (!state.token) {
           renderBootstrapMeta();
           renderPaths();
           renderStatus();
+          renderApprovals();
           renderRepos();
           renderSecrets();
           renderConfigForm("polling-form", CONFIG_GROUPS.polling);
@@ -1401,13 +1456,14 @@ function renderOperatorUiHtml(): string {
           return;
         }
         try {
-          const [bootstrap, health, config, repos, runs, tasks] = await Promise.all([
+          const [bootstrap, health, config, repos, runs, tasks, approvals] = await Promise.all([
             api("/ui/bootstrap"),
             api("/health"),
             api("/config"),
             api("/repos"),
             api("/runs?limit=6"),
-            api("/tasks?limit=6")
+            api("/tasks?limit=6"),
+            api("/approvals?statuses=pending")
           ]);
           state.bootstrap = bootstrap;
           state.health = health;
@@ -1415,9 +1471,11 @@ function renderOperatorUiHtml(): string {
           state.repos = repos.repos || [];
           state.runs = runs.runs || [];
           state.tasks = tasks.tasks || [];
+          state.approvals = approvals.approvals || [];
           renderBootstrapMeta();
           renderPaths();
           renderStatus();
+          renderApprovals();
           renderRepos();
           renderSecrets();
           renderConfigForm("polling-form", CONFIG_GROUPS.polling);
@@ -1443,6 +1501,7 @@ function renderOperatorUiHtml(): string {
         state.health = null;
         state.runs = [];
         state.tasks = [];
+        state.approvals = [];
         tokenInput.value = "";
         sessionStorage.removeItem(TOKEN_STORAGE_KEY);
         setNotice("global-notice", "warn", "Cleared the operator token from this tab.");
