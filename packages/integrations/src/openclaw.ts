@@ -271,6 +271,106 @@ export function createOpenClawSecretsAdapter(
   });
 }
 
+// ── ACPX embedded dispatch adapter (Feature 154) ────────────────────────────
+
+export interface AcpxOpenClawDispatchAdapterOptions {
+  baseUrl?: string;
+  hookToken?: string;
+  requestTimeoutMs?: number;
+}
+
+/**
+ * ACPX-backed OpenClawDispatchAdapter that creates bound sessions via the
+ * OpenClaw ACPX session endpoint instead of firing a fire-and-forget webhook.
+ *
+ * Benefits over HTTP hook dispatch:
+ * - Returns a real sessionId immediately for heartbeat and transcript lookup
+ * - Supports streaming progress events (used by Feature 151 in real-time)
+ * - Enables graceful cancellation via session signals
+ *
+ * The OpenClawDispatchAdapter interface is unchanged — only the implementation
+ * changes. Coexists with HttpOpenClawDispatchAdapter via REDDWARF_ACPX_DISPATCH_ENABLED.
+ *
+ * Requires OpenClaw >= v2026.4.5.
+ */
+export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
+  private readonly baseUrl: string;
+  private readonly hookToken: string;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: AcpxOpenClawDispatchAdapterOptions = {}) {
+    const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
+    if (!baseUrl) {
+      throw new Error(
+        "AcpxOpenClawDispatchAdapter requires a base URL. " +
+          `Set the ${OPENCLAW_BASE_URL_ENV} environment variable or pass baseUrl explicitly.`
+      );
+    }
+    const hookToken = options.hookToken ?? process.env[OPENCLAW_HOOK_TOKEN_ENV];
+    if (!hookToken) {
+      throw new Error(
+        "AcpxOpenClawDispatchAdapter requires a hook token. " +
+          `Set the ${OPENCLAW_HOOK_TOKEN_ENV} environment variable or pass hookToken explicitly.`
+      );
+    }
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.hookToken = hookToken;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS;
+  }
+
+  async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
+    const url = `${this.baseUrl}/acpx/sessions`;
+    const body = JSON.stringify({
+      prompt: request.prompt,
+      sessionKey: request.sessionKey,
+      agentId: request.agentId,
+      ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.hookToken}`,
+          "Content-Type": "application/json"
+        },
+        body,
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (err) {
+      throw normalizeFetchTimeoutError(err, "ACPX session creation", this.requestTimeoutMs);
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(
+        `OpenClaw ACPX session creation returned ${response.status}${text ? `: ${text}` : ""}`
+      );
+    }
+
+    const result = (await response.json()) as Record<string, unknown>;
+    return {
+      accepted: true,
+      sessionKey: request.sessionKey,
+      agentId: request.agentId,
+      sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
+      respondedAt: asIsoTimestamp(),
+      statusMessage: typeof result["message"] === "string" ? result["message"] : null
+    };
+  }
+}
+
+/**
+ * Create an ACPX dispatch adapter from environment variables or explicit options.
+ * Reads OPENCLAW_BASE_URL and OPENCLAW_HOOK_TOKEN from the environment.
+ */
+export function createAcpxOpenClawDispatchAdapter(
+  options: AcpxOpenClawDispatchAdapterOptions = {}
+): AcpxOpenClawDispatchAdapter {
+  return new AcpxOpenClawDispatchAdapter(options);
+}
+
 function normalizeFetchTimeoutError(
   error: unknown,
   context: string,

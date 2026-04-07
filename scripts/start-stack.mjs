@@ -313,7 +313,7 @@ const {
 } = await import("../packages/control-plane/dist/index.js");
 const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
-const { createHttpOpenClawDispatchAdapter } =
+const { createHttpOpenClawDispatchAdapter, createAcpxOpenClawDispatchAdapter, HttpOpenClawTaskFlowAdapter } =
   await import("../packages/integrations/dist/index.js");
 const { createPlanningAgentForModelProvider } =
   await import("../packages/execution-plane/dist/index.js");
@@ -408,9 +408,20 @@ if (pollRepos.length > 0) {
 
 let dispatcher = null;
 let dispatchDeps = null;
+let taskFlowAdapter = null;
 
 if (!skipOpenClaw) {
-  const openClawDispatch = createHttpOpenClawDispatchAdapter();
+  // Feature 154: Use ACPX session binding when enabled; fall back to HTTP hook dispatch.
+  const openClawDispatch =
+    process.env.REDDWARF_ACPX_DISPATCH_ENABLED === "true"
+      ? createAcpxOpenClawDispatchAdapter()
+      : createHttpOpenClawDispatchAdapter();
+
+  // Feature 150: Create Task Flow adapter when enabled.
+  taskFlowAdapter =
+    process.env.REDDWARF_TASKFLOW_ENABLED === "true"
+      ? new HttpOpenClawTaskFlowAdapter()
+      : null;
 
   dispatchDeps = {
     developer: new DeterministicDeveloperAgent(),
@@ -478,7 +489,8 @@ const server = createOperatorApiServer(
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),
     ...(daemon ? { pollingDaemon: daemon } : {}),
-    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {}),
+    ...(taskFlowAdapter ? { taskFlowAdapter } : {})
   }
 );
 await server.start();

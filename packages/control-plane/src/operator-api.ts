@@ -42,7 +42,7 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
-import type { GitHubWriter, GitHubIssuesAdapter } from "@reddwarf/integrations";
+import type { GitHubWriter, GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
@@ -144,6 +144,8 @@ export interface OperatorApiDependencies {
   githubWriter?: GitHubWriter;
   /** When provided, enables sub-issue creation on project approval. */
   githubIssuesAdapter?: GitHubIssuesAdapter;
+  /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates/advances Task Flows on project approval/advance. */
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
 }
 
 export interface OperatorBlockedSummary {
@@ -281,7 +283,8 @@ export function createOperatorApiServer(
     pollingDaemon,
     dispatchDependencies,
     githubWriter,
-    githubIssuesAdapter
+    githubIssuesAdapter,
+    taskFlowAdapter
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
@@ -337,7 +340,8 @@ export function createOperatorApiServer(
           localSecretsPath,
           githubWriter,
           githubIssuesAdapter,
-          toolApprovals
+          toolApprovals,
+          taskFlowAdapter
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -1575,7 +1579,8 @@ async function handleOperatorRequest(
   localSecretsPath?: string,
   githubWriter?: GitHubWriter,
   githubIssuesAdapter?: GitHubIssuesAdapter,
-  toolApprovals?: Map<string, ToolApprovalRequest>
+  toolApprovals?: Map<string, ToolApprovalRequest>,
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2691,6 +2696,7 @@ async function handleOperatorRequest(
         {
           repository,
           githubIssuesAdapter: githubIssuesAdapter ?? null,
+          taskFlowAdapter: taskFlowAdapter ?? null,
           clock
         }
       );
@@ -2898,6 +2904,7 @@ async function handleOperatorRequest(
         {
           repository,
           githubIssuesAdapter: githubIssuesAdapter ?? null,
+          taskFlowAdapter: taskFlowAdapter ?? null,
           clock
         }
       );
