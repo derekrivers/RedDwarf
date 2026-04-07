@@ -230,6 +230,17 @@ export async function runProjectPlanningPhase(
     });
   });
 
+  // Validate all depends_on references resolve to actual ticket IDs
+  const ticketIdSet = new Set(ticketSpecs.map((t) => t.ticketId));
+  for (const ticket of ticketSpecs) {
+    const unresolvedDeps = ticket.dependsOn.filter((dep) => !ticketIdSet.has(dep));
+    if (unresolvedDeps.length > 0) {
+      throw new Error(
+        `Ticket ${ticket.ticketId} has unresolved depends_on references: [${unresolvedDeps.join(", ")}]. All dependencies must match a ticket title in the plan.`
+      );
+    }
+  }
+
   // Persist project spec and all tickets atomically in a single transaction
   await repository.runInTransaction(async (txRepo) => {
     await txRepo.saveProjectSpec(projectSpec);

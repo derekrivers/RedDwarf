@@ -14,7 +14,7 @@ interface ProjectTicketMemory {
 
 type ProjectTicketStateRepository = Pick<
   PlanningTransactionRepository,
-  "getProjectSpec" | "getTicketSpec" | "saveProjectSpec" | "saveTicketSpec"
+  "getProjectSpec" | "getTicketSpec" | "saveProjectSpec" | "saveTicketSpec" | "listTicketSpecs"
 >;
 
 export interface ProjectTicketStateSyncResult {
@@ -104,6 +104,24 @@ export async function restoreProjectTicketExecutionFromSnapshot(input: {
   let updatedProject = project;
 
   if (ticket?.status === "failed") {
+    // Verify all dependencies are merged before restoring to dispatched
+    if (ticket.dependsOn.length > 0) {
+      const allTickets = await input.repository.listTicketSpecs(memory.projectId);
+      const mergedIds = new Set(
+        allTickets.filter((t) => t.status === "merged").map((t) => t.ticketId)
+      );
+      const unmetDeps = ticket.dependsOn.filter((dep) => !mergedIds.has(dep));
+      if (unmetDeps.length > 0) {
+        // Dependencies not satisfied — restore to pending instead of dispatched
+        updatedTicket = {
+          ...ticket,
+          status: "pending",
+          updatedAt: input.updatedAt
+        };
+        await input.repository.saveTicketSpec(updatedTicket);
+        return { project: updatedProject, ticket: updatedTicket };
+      }
+    }
     updatedTicket = {
       ...ticket,
       status: "dispatched",

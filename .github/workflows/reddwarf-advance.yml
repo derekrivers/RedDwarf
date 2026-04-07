@@ -31,15 +31,21 @@ jobs:
         run: |
           # Try branch name first: reddwarf/ticket/{ticket_id}
           if [[ "$PR_BRANCH" =~ ^reddwarf/ticket/(.+)$ ]]; then
-            echo "ticket_id=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-            echo "source=branch" >> "$GITHUB_OUTPUT"
-            echo "Extracted ticket_id from branch: ${BASH_REMATCH[1]}"
-            exit 0
+            TICKET_ID="${BASH_REMATCH[1]}"
+            # Validate ticket ID is non-empty and contains only safe characters
+            if [[ -n "$TICKET_ID" && "$TICKET_ID" =~ ^[a-zA-Z0-9._:/-]+$ ]]; then
+              echo "ticket_id=$TICKET_ID" >> "$GITHUB_OUTPUT"
+              echo "source=branch" >> "$GITHUB_OUTPUT"
+              echo "Extracted ticket_id from branch: $TICKET_ID"
+              exit 0
+            fi
+            echo "::warning::Ticket ID from branch contained invalid characters: $TICKET_ID"
           fi
 
           # Fall back to PR body: look for <!-- reddwarf:ticket_id:VALUE -->
-          TICKET_ID=$(echo "$PR_BODY" | grep -oP '<!-- reddwarf:ticket_id:(.+?) -->' | head -1 | sed 's/<!-- reddwarf:ticket_id:\(.*\) -->/\1/')
-          if [ -n "$TICKET_ID" ]; then
+          # Use sed for portability (grep -oP is not available on all runners)
+          TICKET_ID=$(echo "$PR_BODY" | sed -n 's/.*<!-- reddwarf:ticket_id:\([^ ]*\) -->.*/\1/p' | head -1)
+          if [[ -n "$TICKET_ID" && "$TICKET_ID" =~ ^[a-zA-Z0-9._:/-]+$ ]]; then
             echo "ticket_id=$TICKET_ID" >> "$GITHUB_OUTPUT"
             echo "source=body" >> "$GITHUB_OUTPUT"
             echo "Extracted ticket_id from PR body: $TICKET_ID"
@@ -70,30 +76,60 @@ jobs:
           echo "Advancing ticket $TICKET_ID (PR #$PR_NUMBER)..."
           REDDWARF_OPERATOR_API_BASE_URL="${REDDWARF_OPERATOR_API_URL%/}"
 
-          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer $REDDWARF_OPERATOR_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"ticket_id\": \"$TICKET_ID\", \"github_pr_number\": $PR_NUMBER}" \
-            "$REDDWARF_OPERATOR_API_BASE_URL/projects/advance")
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          ATTEMPT=0
+          SUCCESS=false
+
+          while [ $ATTEMPT -lt $MAX_RETRIES ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT of $MAX_RETRIES..."
+
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -X POST \
+              -H "Authorization: Bearer $REDDWARF_OPERATOR_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"ticket_id\": \"$TICKET_ID\", \"github_pr_number\": $PR_NUMBER}" \
+              "$REDDWARF_OPERATOR_API_BASE_URL/projects/advance")
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              SUCCESS=true
+              break
+            fi
+
+            # Don't retry on 4xx client errors (except 429 rate limit)
+            if [ "$HTTP_CODE" -ge 400 ] && [ "$HTTP_CODE" -lt 500 ] && [ "$HTTP_CODE" -ne 429 ]; then
+              echo "::error::Advance API call failed with HTTP $HTTP_CODE (not retryable)"
+              cat response.json
+              exit 1
+            fi
+
+            if [ $ATTEMPT -lt $MAX_RETRIES ]; then
+              echo "::warning::Attempt $ATTEMPT failed with HTTP $HTTP_CODE. Retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+              RETRY_DELAY=$((RETRY_DELAY * 2))
+            fi
+          done
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::Advance API call failed after $MAX_RETRIES attempts (last HTTP $HTTP_CODE)"
+            cat response.json
+            exit 1
+          fi
 
           cat response.json
           echo ""
 
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            OUTCOME=$(jq -r '.outcome // "unknown"' response.json)
-            echo "Advance succeeded. Outcome: $OUTCOME"
+          OUTCOME=$(jq -r '.outcome // "unknown"' response.json)
+          echo "Advance succeeded. Outcome: $OUTCOME"
 
-            if [ "$OUTCOME" = "already_merged" ]; then
-              echo "::warning::Ticket $TICKET_ID was already merged. No state change."
-            elif [ "$OUTCOME" = "completed" ]; then
-              echo "All tickets merged. Project complete."
-            else
-              NEXT_TICKET=$(jq -r '.nextDispatchedTicket.ticketId // "none"' response.json)
-              echo "Next dispatched ticket: $NEXT_TICKET"
-            fi
+          if [ "$OUTCOME" = "already_merged" ]; then
+            echo "::warning::Ticket $TICKET_ID was already merged. No state change."
+          elif [ "$OUTCOME" = "completed" ]; then
+            echo "All tickets merged. Project complete."
           else
-            echo "::error::Advance API call failed with HTTP $HTTP_CODE"
-            cat response.json
-            exit 1
+            NEXT_TICKET=$(jq -r '.nextDispatchedTicket.ticketId // "none"' response.json)
+            echo "Next dispatched ticket: $NEXT_TICKET"
           fi

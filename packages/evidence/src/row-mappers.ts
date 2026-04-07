@@ -276,7 +276,13 @@ export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };
   // Validate against schema to catch corrupt data early
-  return projectSpecSchema.parse(mapped);
+  const result = projectSpecSchema.safeParse(mapped);
+  if (!result.success) {
+    throw new Error(
+      `Corrupt project_specs row (project_id=${mapped.projectId}): ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+    );
+  }
+  return result.data;
 }
 
 export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
@@ -296,7 +302,13 @@ export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };
   // Validate against schema to catch corrupt data early
-  return ticketSpecSchema.parse(mapped);
+  const result = ticketSpecSchema.safeParse(mapped);
+  if (!result.success) {
+    throw new Error(
+      `Corrupt ticket_specs row (ticket_id=${mapped.ticketId}): ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+    );
+  }
+  return result.data;
 }
 
 export function mapEligibilityRejectionRow(

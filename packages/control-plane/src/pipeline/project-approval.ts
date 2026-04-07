@@ -661,7 +661,26 @@ export async function executeProjectApproval(
   const orderedTickets = sortTicketsByDependencyOrder(tickets);
 
   // Step 3: Create GitHub sub-issues BEFORE the transaction (external side effect).
-  // Collect issue numbers to persist atomically inside the transaction.
+  // Guard against concurrent approvals by atomically checking + marking the project
+  // status inside a short transaction before starting external work.
+  if (
+    !resumableApprovedProject &&
+    !backfillingMissingSubIssues &&
+    !materializingDispatchedTicketTask
+  ) {
+    await repository.runInTransaction(async (txRepo) => {
+      const freshProject = await txRepo.getProjectSpec(input.projectId);
+      if (!freshProject || freshProject.status !== "pending_approval") {
+        throw new Error(
+          `Concurrent approval detected: project ${input.projectId} is no longer in 'pending_approval' status (current: '${freshProject?.status ?? "not found"}').`
+        );
+      }
+      // Mark as approved under lock to prevent concurrent approvals from proceeding
+      await txRepo.saveProjectSpec({ ...approvedProject });
+    });
+  }
+
+  // Collect issue numbers to persist atomically inside the final transaction.
   let subIssuesCreated = 0;
   let subIssuesFallback = false;
   const sourceIssueNumber = project.sourceIssueId
@@ -742,8 +761,10 @@ export async function executeProjectApproval(
 
   // Step 4-6: All DB mutations inside a single transaction for atomicity
   const txResult = await repository.runInTransaction(async (txRepo) => {
-    // Persist approved project
-    await txRepo.saveProjectSpec(approvedProject);
+    // Persist approved project (skip if already saved by concurrency guard above)
+    if (resumableApprovedProject || backfillingMissingSubIssues || materializingDispatchedTicketTask) {
+      await txRepo.saveProjectSpec(approvedProject);
+    }
 
     // Persist sub-issue numbers on tickets
     for (const { index, issueNumber } of subIssueResults) {

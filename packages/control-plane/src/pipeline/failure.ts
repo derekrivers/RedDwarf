@@ -684,10 +684,10 @@ export async function handleAutomatedPhaseFailure(input: {
         taskId: manifest.taskId,
         runId,
         phase,
-        level: "warn",
+        level: "error",
         code: EventCodes.FOLLOW_UP_ISSUE_SKIPPED,
         failureClass: failure.failureClass,
-        message: `Failed to create a follow-up issue for the ${phase} failure.`,
+        message: `Failed to create a follow-up issue for the ${phase} failure. Manual follow-up may be required.`,
         data: {
           error: followUpIssueError
         },

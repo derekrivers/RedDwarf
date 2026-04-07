@@ -112,13 +112,16 @@ export async function markProjectTicketPullRequestOpen(input: {
   ticketId: string;
   pullRequestNumber: number;
   updatedAt: string;
-  logger?: { info: (msg: string) => void; warn: (msg: string) => void };
+  logger?: { info: (msg: string) => void; warn: (msg: string) => void; error?: (msg: string) => void };
 }): Promise<TicketSpec | null> {
   const ticket = await input.repository.getTicketSpec(input.ticketId);
   if (!ticket) {
-    input.logger?.warn(
-      `Project ticket ${input.ticketId} was not found while recording PR #${input.pullRequestNumber}.`
-    );
+    const msg = `ERROR: Project ticket ${input.ticketId} was not found while recording PR #${input.pullRequestNumber}. This may indicate orphaned state — manual investigation required.`;
+    if (input.logger?.error) {
+      input.logger.error(msg);
+    } else {
+      input.logger?.warn(msg);
+    }
     return null;
   }
 
@@ -498,6 +501,14 @@ export async function runScmPhase(
       throw new Error(`SCM draft for ${taskId} did not provide a branch name.`);
     }
 
+    // Validate branch name contains only git-legal characters
+    const gitBranchPattern = /^[a-zA-Z0-9._\-/]+$/;
+    if (!gitBranchPattern.test(draft.branchName)) {
+      throw new Error(
+        `SCM draft for ${taskId} contains invalid branch name characters: '${draft.branchName}'. Branch names must match ${gitBranchPattern}.`
+      );
+    }
+
     if (draft.baseBranch.trim().length === 0) {
       throw new Error(`SCM draft for ${taskId} did not provide a base branch.`);
     }
@@ -619,6 +630,13 @@ export async function runScmPhase(
         commitSha: publication.commitSha
       }
     });
+
+    // Record branch on manifest before PR creation so it's recoverable if PR creation fails
+    currentManifest = patchManifest(currentManifest, {
+      branchName: publication.branch.branchName,
+      updatedAt: asIsoTimestamp(clock())
+    });
+    await repository.saveManifest(currentManifest);
 
     const projectTicketId = readProjectTicketIdFromSnapshot(snapshot);
     const pullRequestBody = appendProjectTicketIdMarker(
