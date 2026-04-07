@@ -145,6 +145,6 @@ Based on analysis of OpenClaw releases v2026.3.28 through v2026.4.5. All feature
 
 - All features gated behind environment variables, disabled by default.
 - Features 150, 152, 154 require OpenClaw >= v2026.4.2. Features 151, 155, 156 require >= v2026.4.5.
-- Docker Compose config should pin to a minimum OpenClaw version rather than `latest`.
+- Docker Compose config uses `latest`; the registry does not publish semver tags so pinning is not currently possible.
 - Existing HTTP hook dispatch, polling-based completion, and static skill bootstrap must continue to work when new features are disabled.
 - No feature may break the existing single-issue or project mode pipelines.
