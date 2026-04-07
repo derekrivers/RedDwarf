@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## New GitHub issue fails planning immediately with `OpenClaw ACPX session creation returned 404`
+
+- Symptom: a new `ai-eligible` GitHub issue is ingested, the task manifest is created, and planning fails within about a second. `/health` shows polling degraded with `lastPollError: OpenClaw ACPX session creation returned 404: Not Found`. The task snapshot has no `PlanningSpec` or approvals, only intake/eligibility passed and planning failed.
+- Root cause: `REDDWARF_ACPX_DISPATCH_ENABLED=true` makes RedDwarf dispatch Holly/Lister through `POST /acpx/sessions`, but the currently running OpenClaw gateway image may not expose that endpoint even though `/health` and the Control UI are healthy. A `GET /acpx/sessions` can return the Control UI HTML while `POST /acpx/sessions` returns `404 Not Found`.
+- Failing approach: treating this as a stuck agent session, approval blockage, or GitHub polling freeze. Holly never starts; the failure happens before OpenClaw session creation.
+- Working workaround: set `REDDWARF_ACPX_DISPATCH_ENABLED=false` in `.env`, restart the stack through the standard start flow, and use the working `/hooks/agent` dispatch path until the deployed OpenClaw gateway supports ACPX sessions. Confirm hook ingress with a safe empty-body probe: `POST /hooks/agent` should return `400 {"ok":false,"error":"message required"}` rather than `404`.
+- Verification: after restart, `GET /health` should stop reporting the ACPX 404 for the polled repo, `POST /acpx/sessions` no longer appears in failed task evidence, and re-running issue intake should produce an architect dispatch or a normal planning/project approval result.
+
 ## Project handoff exists but `/projects` is empty and the task falls back to a generic approval
 
 - Symptom: a medium/large issue creates both architect workspaces and `project-architect-handoff.md`, but `/projects` stays empty. The task list shows the parent task blocked on a generic `policy_gate` approval instead of `projectApprovalRequired`.

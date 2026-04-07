@@ -2,6 +2,7 @@
 
 ## 2026-04-07
 
+- Investigated live GitHub issue `derekrivers/FirstVoyage#84` after it appeared stuck. Intake created task `derekrivers-firstvoyage-84`, but planning failed in under one second before Holly started because local `.env` had `REDDWARF_ACPX_DISPATCH_ENABLED=true` while the running `ghcr.io/openclaw/openclaw:latest` gateway returned `404 Not Found` for `POST /acpx/sessions`. Confirmed `/hooks/agent` is healthy, switched the untracked local `.env` flag back to `false`, cleared a persisted `REDDWARF_SKIP_OPENCLAW=true` operator-config override, and removed stale fake `operator-api-*` poll repos from the managed roster. After restart, `#84` replanned successfully and is blocked only on the normal pending `policy_gate` approval; `/health` reports healthy polling and dispatcher state.
 - Completed M21 OpenClaw Platform Integration milestone — all 7 features (150–156) implemented, verified, and committed.
 - Feature 153: Model failover profiles — cross-provider failover chains in generated `openclaw.json`, gated by `REDDWARF_MODEL_FAILOVER_ENABLED`.
 - Feature 151: Structured execution items — JSONL plan_update/execution_item parsing, AGENT_PROGRESS_ITEM run events, dashboard AgentProgressTimeline component, agent bootstrap files updated. Gated by `REDDWARF_EXECUTION_ITEMS_ENABLED`.
