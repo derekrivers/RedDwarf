@@ -42,6 +42,8 @@ export interface WorkspaceRepoBootstrapper {
 export interface OpenClawCompletionResult {
   handoffPath: string;
   repoRoot: string | null;
+  /** Path to the OpenClaw session JSONL transcript, if it could be located. */
+  sessionTranscriptPath: string | null;
 }
 
 export interface ArchitectureReviewCompletionResult {
@@ -590,7 +592,7 @@ export function createArchitectHandoffAwaiter(
           );
 
           if (hasAllHeadings) {
-            return { handoffPath, repoRoot: null };
+            return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
           }
         }
 
@@ -721,7 +723,7 @@ export function createDeveloperHandoffAwaiter(
             expectedCodeWritingDeclaration &&
             (codeWriteEnabled ? repoHasChanges : true)
           ) {
-            return { handoffPath, repoRoot };
+            return { handoffPath, repoRoot, sessionTranscriptPath };
           }
         }
 

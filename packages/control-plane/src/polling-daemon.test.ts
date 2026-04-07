@@ -385,7 +385,7 @@ describe("GitHub issue polling daemon", () => {
               ).join("\n"),
               "utf8"
             );
-            return { handoffPath, repoRoot: null };
+            return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
           }
         } as never,
         clock: () => new Date("2026-03-27T09:06:00.000Z"),

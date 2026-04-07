@@ -28,11 +28,13 @@ import {
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
   dispatchReadyTask,
+  extractFinalExecutionItems,
   extractSessionSummary,
   findDisallowedChangedFiles,
   findDeniedChangedFiles,
   OpenClawSessionStalledError,
   OpenClawSessionTerminatedError,
+  persistExecutionItems,
   sanitizeSecretBearingText,
   parseSessionJsonl,
   provisionTaskWorkspace,
@@ -145,7 +147,7 @@ function createFixtureOpenClawCompletionAwaiter(summary = "OpenClaw developer se
         ].join("\n"),
         "utf8"
       );
-      return { handoffPath, repoRoot };
+      return { handoffPath, repoRoot, sessionTranscriptPath: null };
     }
   };
 }
@@ -5450,6 +5452,168 @@ describe("buildSessionSummaryMarkdown", () => {
   });
 });
 
+// -- Structured execution items --------------------------------------------
+
+describe("parseSessionJsonl — execution items", () => {
+  it("extracts execution items from plan_update events", () => {
+    const jsonl = [
+      JSON.stringify({ role: "system", content: "You are a developer." }),
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Read the codebase", status: "done", durationMs: 1200 },
+          { id: "step-2", title: "Write the changes", status: "active" },
+          { id: "step-3", title: "Run the tests", status: "pending" }
+        ],
+        updatedAt: "2026-04-07T10:00:00.000Z"
+      }),
+      JSON.stringify({ role: "assistant", content: "Done." })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    expect(transcript.executionItems).toHaveLength(3);
+    expect(transcript.executionItems[0]?.id).toBe("step-1");
+    expect(transcript.executionItems[0]?.status).toBe("done");
+    expect(transcript.executionItems[0]?.durationMs).toBe(1200);
+    expect(transcript.executionItems[1]?.title).toBe("Write the changes");
+    expect(transcript.executionItems[2]?.status).toBe("pending");
+    // plan_update lines are not included in entries
+    expect(transcript.totalEntries).toBe(2);
+  });
+
+  it("upserts execution items from individual execution_item events", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "active" }
+      }),
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "done", durationMs: 800 }
+      }),
+      JSON.stringify({ role: "assistant", content: "All done." })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    // Last update for step-1 should win
+    expect(transcript.executionItems).toHaveLength(1);
+    expect(transcript.executionItems[0]?.status).toBe("done");
+    expect(transcript.executionItems[0]?.durationMs).toBe(800);
+    // execution_item lines are not included in entries
+    expect(transcript.totalEntries).toBe(1);
+  });
+
+  it("later plan_update overrides earlier individual execution_item status", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "active" }
+      }),
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Read files", status: "done", durationMs: 500 },
+          { id: "step-2", title: "Write changes", status: "active" }
+        ]
+      })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    expect(transcript.executionItems).toHaveLength(2);
+    const step1 = transcript.executionItems.find((i) => i.id === "step-1");
+    expect(step1?.status).toBe("done");
+    expect(step1?.durationMs).toBe(500);
+  });
+
+  it("returns empty executionItems when no plan_update or execution_item events exist", () => {
+    const jsonl = JSON.stringify({ role: "assistant", content: "Hello." });
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+    expect(transcript.executionItems).toHaveLength(0);
+  });
+
+  it("extractFinalExecutionItems returns the transcript executionItems array", () => {
+    const jsonl = JSON.stringify({
+      type: "plan_update",
+      items: [{ id: "s1", title: "Step 1", status: "done" }]
+    });
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+    const items = extractFinalExecutionItems(transcript);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe("s1");
+  });
+});
+
+describe("persistExecutionItems", () => {
+  it("saves each execution item as an AGENT_PROGRESS_ITEM run event", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const jsonl = [
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Analyze codebase", status: "done", durationMs: 2000 },
+          { id: "step-2", title: "Write implementation", status: "done", durationMs: 5500, detail: "Modified 3 files" },
+          { id: "step-3", title: "Run tests", status: "failed" }
+        ]
+      })
+    ].join("\n");
+    const transcript = parseSessionJsonl(jsonl, "github:issue:acme/repo:42", "reddwarf-developer");
+
+    const count = await persistExecutionItems({
+      repository,
+      taskId: "acme-repo-42",
+      runId: "run-001",
+      phase: "development",
+      transcript,
+      baseEventId: "run-001:development:AGENT_PROGRESS_ITEM",
+      createdAt: "2026-04-07T10:00:00.000Z"
+    });
+
+    expect(count).toBe(3);
+    const events = await repository.listRunEvents("acme-repo-42");
+    const progressEvents = events.filter((e) => e.code === "AGENT_PROGRESS_ITEM");
+    expect(progressEvents).toHaveLength(3);
+
+    const step1 = progressEvents.find((e) => e.message === "Analyze codebase");
+    expect(step1).toBeDefined();
+    expect(step1?.level).toBe("info");
+    expect(step1?.data?.["status"]).toBe("done");
+    expect(step1?.data?.["durationMs"]).toBe(2000);
+
+    const step2 = progressEvents.find((e) => e.message === "Write implementation");
+    expect(step2?.data?.["detail"]).toBe("Modified 3 files");
+
+    const step3 = progressEvents.find((e) => e.message === "Run tests");
+    expect(step3?.level).toBe("error");
+    expect(step3?.data?.["status"]).toBe("failed");
+  });
+
+  it("returns 0 and saves no events when transcript has no execution items", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const transcript = parseSessionJsonl(
+      JSON.stringify({ role: "assistant", content: "Done." }),
+      "test:key",
+      "reddwarf-developer"
+    );
+
+    const count = await persistExecutionItems({
+      repository,
+      taskId: "acme-repo-99",
+      runId: "run-002",
+      phase: "development",
+      transcript,
+      baseEventId: "run-002:development:AGENT_PROGRESS_ITEM",
+      createdAt: "2026-04-07T10:00:00.000Z"
+    });
+
+    expect(count).toBe(0);
+    const events = await repository.listRunEvents("acme-repo-99");
+    expect(events).toHaveLength(0);
+  });
+});
+
 // -- Developer phase OpenClaw dispatch -------------------------------------
 
 describe("developer phase with OpenClaw dispatch", () => {
@@ -5511,7 +5675,7 @@ describe("developer phase with OpenClaw dispatch", () => {
           ].join("\n"),
           "utf8"
         );
-        return { handoffPath, repoRoot: null };
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
       }
     };
     try {
@@ -6978,7 +7142,7 @@ describe("phase timing hardening", () => {
               ]).join("\n"),
           "utf8"
         );
-        return { handoffPath, repoRoot: null };
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
       }
     };
 
@@ -7155,7 +7319,7 @@ describe("phase timing hardening", () => {
               ]).join("\n"),
           "utf8"
         );
-        return { handoffPath, repoRoot: null };
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
       }
     };
 

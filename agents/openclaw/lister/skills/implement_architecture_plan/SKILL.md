@@ -16,6 +16,22 @@ Produce an implementation that is:
 - supported by meaningful test updates
 - validated by running the most relevant available tests before handoff
 
+## Structured Progress Updates
+
+Emit a `plan_update` event at the start and at natural implementation milestones so the RedDwarf dashboard can show a live progress timeline:
+
+```json
+{ "type": "plan_update", "items": [
+  { "id": "orient",     "title": "Reading plan and inspecting codebase",  "status": "active"  },
+  { "id": "implement",  "title": "Implementing feature changes",          "status": "pending" },
+  { "id": "tests",      "title": "Adding or updating tests",              "status": "pending" },
+  { "id": "verify",     "title": "Running verification",                  "status": "pending" },
+  { "id": "handoff",    "title": "Writing implementation handoff",        "status": "pending" }
+] }
+```
+
+Update each item to `done` (with `durationMs`) or `failed` as you progress. Keep orientation to at most three tool calls before your first repo write, then emit an `execution_item` update for each file written. This is informational and does not affect pipeline state.
+
 ## Process
 
 1. Read the issue, acceptance criteria, and architecture handoff carefully.

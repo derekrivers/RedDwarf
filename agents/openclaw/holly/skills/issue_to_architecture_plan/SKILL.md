@@ -15,6 +15,21 @@ Produce a plan that is:
 - explicit enough for implementation
 - explicit about risk and testing
 
+## Structured Progress Updates
+
+Emit a `plan_update` event at the start of each major milestone so the RedDwarf dashboard can show a live progress timeline. Use clear, concise step titles:
+
+```json
+{ "type": "plan_update", "items": [
+  { "id": "read-issue",    "title": "Reading issue and acceptance criteria", "status": "active" },
+  { "id": "inspect-repo",  "title": "Inspecting repository structure",       "status": "pending" },
+  { "id": "draft-plan",    "title": "Drafting architecture plan",            "status": "pending" },
+  { "id": "write-handoff", "title": "Writing developer handoff",             "status": "pending" }
+] }
+```
+
+Update each item to `done` (with `durationMs`) as you complete it. This is informational only and does not affect pipeline state.
+
 ## Process
 
 1. Read the issue and acceptance criteria carefully.

@@ -87,6 +87,7 @@ import {
   processWorkspaceCiRequests
 } from "../ci-tool.js";
 import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
+import { persistExecutionItems, readSessionTranscript } from "../openclaw-session.js";
 
 export async function runDeveloperPhase(
   input: RunDeveloperPhaseInput,
@@ -622,6 +623,41 @@ export async function runDeveloperPhase(
       });
       assignWorkspaceRepoRoot(workspace, completion.repoRoot ?? repoBootstrap.repoRoot);
       await assertWorkspaceRepoChangesWithinAllowedPaths(workspace, runLogger);
+
+      // Persist structured execution items from the session transcript when
+      // the feature is enabled. This is a best-effort operation; failures do
+      // not block handoff processing.
+      if (
+        process.env["REDDWARF_EXECUTION_ITEMS_ENABLED"] === "true" &&
+        completion.sessionTranscriptPath !== null
+      ) {
+        try {
+          const sessionTranscript = await readSessionTranscript(
+            completion.sessionTranscriptPath,
+            sessionKey,
+            openClawAgentId
+          );
+          const persistedCount = await persistExecutionItems({
+            repository,
+            taskId,
+            runId,
+            phase: "development",
+            transcript: sessionTranscript,
+            baseEventId: nextEventId("development", EventCodes.AGENT_PROGRESS_ITEM),
+            createdAt: asIsoTimestamp(clock())
+          });
+          if (persistedCount > 0) {
+            runLogger?.info?.(
+              `Persisted ${persistedCount} execution item(s) from developer session ${sessionKey}.`
+            );
+          }
+        } catch (itemError) {
+          runLogger?.warn?.(
+            `Failed to persist execution items for developer session ${sessionKey}: ${serializeError(itemError)}`
+          );
+        }
+      }
+
       handoff = parseDevelopmentHandoffMarkdown(
         await readFile(completion.handoffPath, "utf8")
       );
