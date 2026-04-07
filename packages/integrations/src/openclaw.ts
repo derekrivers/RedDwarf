@@ -36,6 +36,8 @@ export interface OpenClawDispatchRequest {
   prompt: string;
   /** Optional metadata attached to the dispatch for evidence/tracing. */
   metadata?: Record<string, unknown>;
+  /** Whether to enable chat delivery for this dispatch. Defaults to `false`. */
+  deliver?: boolean;
 }
 
 /**
@@ -168,12 +170,13 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
 
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
     const url = `${this.baseUrl}/hooks/agent`;
+    const prompt = enforcePromptLengthCap(request.prompt);
     const body = JSON.stringify({
-      message: request.prompt,
+      message: prompt,
       name: "RedDwarf",
       sessionKey: request.sessionKey,
       agentId: request.agentId,
-      deliver: false,
+      deliver: request.deliver ?? false,
       wakeMode: "now",
       ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
     });
@@ -248,21 +251,22 @@ export function createHttpOpenClawDispatchAdapter(
 }
 
 /**
- * Create an EnvVarSecretsAdapter pre-configured with the `openclaw` scope
- * mapping so that `requestSecret("openclaw_hook_token")` reads from
- * `OPENCLAW_HOOK_TOKEN` and the `openclaw` scope is available for
- * task-scoped lease issuance.
+ * Create an EnvVarSecretsAdapter pre-configured with the `openclaw` scope.
+ *
+ * The `openclaw` scope intentionally does NOT include `OPENCLAW_HOOK_TOKEN`
+ * because the hook token grants full gateway write access (ability to dispatch
+ * arbitrary work). Exposing it via a generic secret scope would allow any task
+ * with `allowedSecretScopes: ["openclaw"]` to obtain direct gateway control.
  *
  * Additional scopes can be passed and will be merged with the openclaw scope.
  */
 export function createOpenClawSecretsAdapter(
   options: { extraScopes?: Record<string, Record<string, string>> } = {}
 ): EnvVarSecretsAdapter {
-  const hookToken = process.env[OPENCLAW_HOOK_TOKEN_ENV] ?? "";
+  // The openclaw scope is reserved for non-privileged OpenClaw integration
+  // secrets (e.g. read-only API keys, session identifiers). Privileged tokens
+  // such as HOOK_TOKEN must use a dedicated scope if ever needed by agents.
   const openclawScope: Record<string, string> = {};
-  if (hookToken.length > 0) {
-    openclawScope["HOOK_TOKEN"] = hookToken;
-  }
   return new EnvVarSecretsAdapter({
     scopes: {
       [OPENCLAW_HOOK_TOKEN_SCOPE]: openclawScope,
@@ -277,6 +281,12 @@ export interface AcpxOpenClawDispatchAdapterOptions {
   baseUrl?: string;
   hookToken?: string;
   requestTimeoutMs?: number;
+  /** Maximum retry attempts for transient failures. Defaults to 3. */
+  maxAttempts?: number;
+  /** Base delay in milliseconds between retries. Defaults to 2000. */
+  baseDelayMs?: number;
+  /** HTTP status codes that trigger a retry. Defaults to 429 and 529. */
+  retryableStatuses?: Set<number>;
 }
 
 /**
@@ -297,6 +307,9 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   private readonly baseUrl: string;
   private readonly hookToken: string;
   private readonly requestTimeoutMs: number;
+  private readonly maxAttempts: number;
+  private readonly baseDelayMs: number;
+  private readonly retryableStatuses: Set<number>;
 
   constructor(options: AcpxOpenClawDispatchAdapterOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
@@ -316,48 +329,62 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.hookToken = hookToken;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS;
+    this.maxAttempts = options.maxAttempts ?? 3;
+    this.baseDelayMs = options.baseDelayMs ?? 2000;
+    this.retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
   }
 
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
     const url = `${this.baseUrl}/acpx/sessions`;
+    const prompt = enforcePromptLengthCap(request.prompt);
     const body = JSON.stringify({
-      prompt: request.prompt,
+      prompt,
       sessionKey: request.sessionKey,
       agentId: request.agentId,
       ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
     });
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.hookToken}`,
-          "Content-Type": "application/json"
-        },
-        body,
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (err) {
-      throw normalizeFetchTimeoutError(err, "ACPX session creation", this.requestTimeoutMs);
-    }
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${this.hookToken}`,
+            "Content-Type": "application/json"
+          },
+          body,
+          signal: AbortSignal.timeout(this.requestTimeoutMs)
+        });
+      } catch (err) {
+        throw normalizeFetchTimeoutError(err, "ACPX session creation", this.requestTimeoutMs);
+      }
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `OpenClaw ACPX session creation returned ${response.status}${text ? `: ${text}` : ""}`
-      );
-    }
+      if (!response.ok) {
+        // Retry on transient rate-limit / overload responses
+        if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
+          const delay = attempt * this.baseDelayMs;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `OpenClaw ACPX session creation returned ${response.status}${text ? `: ${text}` : ""}`
+        );
+      }
 
-    const result = (await response.json()) as Record<string, unknown>;
-    return {
-      accepted: true,
-      sessionKey: request.sessionKey,
-      agentId: request.agentId,
-      sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
-      respondedAt: asIsoTimestamp(),
-      statusMessage: typeof result["message"] === "string" ? result["message"] : null
-    };
+      const result = (await response.json()) as Record<string, unknown>;
+      return {
+        accepted: true,
+        sessionKey: request.sessionKey,
+        agentId: request.agentId,
+        sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
+        respondedAt: asIsoTimestamp(),
+        statusMessage: typeof result["message"] === "string" ? result["message"] : null
+      };
+    }
   }
 }
 
@@ -381,4 +408,34 @@ function normalizeFetchTimeoutError(
   }
 
   return error instanceof Error ? error : new Error(String(error));
+}
+
+// ── Prompt sanitization ─────────────────────────────────────────────────────
+
+const DEFAULT_MAX_PROMPT_CHARS = 128_000;
+
+/**
+ * Sanitize user-supplied content before embedding it in an OpenClaw dispatch
+ * prompt. Strips null bytes and C0/C1 control characters (except tab, newline,
+ * carriage return) that could interfere with agent processing.
+ */
+export function sanitizeUserContent(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "");
+}
+
+/**
+ * Enforce a character-level length cap on an assembled prompt. If the prompt
+ * exceeds `maxChars`, it is truncated with a visible marker so agents know
+ * the content was cut.
+ */
+export function enforcePromptLengthCap(
+  prompt: string,
+  maxChars: number = DEFAULT_MAX_PROMPT_CHARS
+): string {
+  if (prompt.length <= maxChars) {
+    return prompt;
+  }
+  const marker = "\n\n[... prompt truncated at character limit ...]\n";
+  return prompt.slice(0, maxChars - marker.length) + marker;
 }

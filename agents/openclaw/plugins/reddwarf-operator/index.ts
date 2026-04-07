@@ -116,37 +116,53 @@ interface CachedPolicy {
 const policyCache = new Map<string, CachedPolicy>();
 const POLICY_CACHE_TTL_MS = 60_000;
 
+const POLICY_FETCH_MAX_RETRIES = 3;
+const POLICY_FETCH_RETRY_DELAY_MS = 500;
+
 async function getOrFetchPolicy(
   api: OpenClawPluginApi,
   sessionKey: string
-): Promise<CachedPolicy> {
+): Promise<CachedPolicy | null> {
   const cached = policyCache.get(sessionKey);
   if (cached && Date.now() - cached.fetchedAt < POLICY_CACHE_TTL_MS) {
     return cached;
   }
 
-  try {
-    const response = await operatorJson<{
-      taskId?: string | null;
-      policySnapshot?: {
-        allowedPaths?: string[];
-        deniedPaths?: string[];
-      } | null;
-    }>(api, `/sessions/policy?sessionKey=${encodeURIComponent(sessionKey)}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < POLICY_FETCH_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, POLICY_FETCH_RETRY_DELAY_MS * attempt)
+      );
+    }
+    try {
+      const response = await operatorJson<{
+        taskId?: string | null;
+        policySnapshot?: {
+          allowedPaths?: string[];
+          deniedPaths?: string[];
+        } | null;
+      }>(api, `/sessions/policy?sessionKey=${encodeURIComponent(sessionKey)}`);
 
-    const policy: CachedPolicy = {
-      taskId: response.taskId ?? null,
-      allowedPaths: response.policySnapshot?.allowedPaths ?? [],
-      deniedPaths: response.policySnapshot?.deniedPaths ?? [],
-      fetchedAt: Date.now()
-    };
-    policyCache.set(sessionKey, policy);
-    return policy;
-  } catch {
-    // If policy lookup fails (e.g. session not yet registered), return a permissive
-    // fallback so we don't block legitimate tool calls.
-    return { taskId: null, allowedPaths: [], deniedPaths: [], fetchedAt: Date.now() };
+      const policy: CachedPolicy = {
+        taskId: response.taskId ?? null,
+        allowedPaths: response.policySnapshot?.allowedPaths ?? [],
+        deniedPaths: response.policySnapshot?.deniedPaths ?? [],
+        fetchedAt: Date.now()
+      };
+      policyCache.set(sessionKey, policy);
+      return policy;
+    } catch (err) {
+      lastError = err;
+    }
   }
+
+  // Fail-closed: policy lookup failed after retries — return null so the caller
+  // can deny the tool call rather than silently permitting everything.
+  api.logger.warn?.(
+    `reddwarf-operator: policy lookup failed for session ${sessionKey} after ${POLICY_FETCH_MAX_RETRIES} attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
+  return null;
 }
 
 async function requestToolApproval(
@@ -178,29 +194,33 @@ async function requestToolApproval(
     return "denied";
   }
 
-  // Poll for a decision
+  // Poll for a decision using the single-item endpoint with exponential
+  // backoff and jitter to avoid polling storms under concurrent approvals.
   const deadline = Date.now() + timeoutMs;
+  const INITIAL_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 8000;
+  let delay = INITIAL_DELAY_MS;
+
   while (Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+    // Jitter: randomize up to ±25% of the current delay
+    const jitter = delay * (0.75 + Math.random() * 0.5);
+    await new Promise<void>((resolve) => setTimeout(resolve, jitter));
     try {
       const detail = await operatorJson<{
-        toolApprovals?: Array<{ id: string; status: string }>;
-      }>(api, `/tool-approvals?status=approved`);
-      const found = (detail.toolApprovals ?? []).find((a) => a.id === approvalId);
-      if (found) {
+        toolApproval?: { id: string; status: string };
+      }>(api, `/tool-approvals/${encodeURIComponent(approvalId)}`);
+      const status = detail.toolApproval?.status;
+      if (status === "approved") {
         return "approved";
       }
-      // Also check for denied
-      const denied = await operatorJson<{
-        toolApprovals?: Array<{ id: string; status: string }>;
-      }>(api, `/tool-approvals?status=denied`);
-      const foundDenied = (denied.toolApprovals ?? []).find((a) => a.id === approvalId);
-      if (foundDenied) {
+      if (status === "denied") {
         return "denied";
       }
+      // status === "pending" → keep polling
     } catch {
       // polling error — continue
     }
+    delay = Math.min(delay * 2, MAX_DELAY_MS);
   }
 
   return "denied"; // timeout → deny
@@ -220,6 +240,14 @@ async function handleBeforeToolCall(
 
   // Fetch cached policy snapshot (fast path — cache hit is < 1ms)
   const policy = await getOrFetchPolicy(api, sessionKey);
+
+  // Fail-closed: if policy could not be fetched, deny the tool call
+  if (policy === null) {
+    return {
+      deny: true,
+      reason: "Policy lookup failed — tool call denied for safety. The RedDwarf operator API may be unreachable."
+    };
+  }
 
   // Hard deny if path matches a denied path
   if (targetPath && matchesDeniedPath(targetPath, policy.deniedPaths)) {

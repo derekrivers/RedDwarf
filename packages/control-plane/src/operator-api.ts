@@ -675,32 +675,48 @@ function maskSecretValue(value: string | undefined): string | null {
   return `${value.slice(0, prefixLength)}••••${value.slice(-4)}`;
 }
 
+const OPENCLAW_HEALTH_CACHE_TTL_MS = 15_000;
+let openClawHealthCache: {
+  result: import("@reddwarf/contracts").OperatorUiOpenClawStatus;
+  cachedAt: number;
+} | null = null;
+
 async function resolveOpenClawUiStatus(
   clock: () => Date
 ): Promise<import("@reddwarf/contracts").OperatorUiOpenClawStatus> {
+  // Return cached result if still fresh — prevents every bootstrap call from
+  // blocking on an OpenClaw health check round trip.
+  if (openClawHealthCache && Date.now() - openClawHealthCache.cachedAt < OPENCLAW_HEALTH_CACHE_TTL_MS) {
+    return openClawHealthCache.result;
+  }
+
   const baseUrl = process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578";
   const checkedAt = clock().toISOString();
 
   try {
     const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
-      signal: AbortSignal.timeout(1_500)
+      signal: AbortSignal.timeout(2_000)
     });
 
-    return {
+    const result: import("@reddwarf/contracts").OperatorUiOpenClawStatus = {
       baseUrl,
       reachable: response.ok,
       checkedAt,
       statusCode: response.status,
       message: response.ok ? "ok" : `HTTP ${response.status}`
     };
+    openClawHealthCache = { result, cachedAt: Date.now() };
+    return result;
   } catch (error) {
-    return {
+    const result: import("@reddwarf/contracts").OperatorUiOpenClawStatus = {
       baseUrl,
       reachable: false,
       checkedAt,
       statusCode: null,
       message: error instanceof Error ? error.message : String(error)
     };
+    openClawHealthCache = { result, cachedAt: Date.now() };
+    return result;
   }
 }
 
@@ -3053,6 +3069,23 @@ async function handleOperatorRequest(
       (a) => !statusFilter || a.status === statusFilter
     );
     writeOperatorJsonResponse(res, 200, { toolApprovals: items, total: items.length });
+    return;
+  }
+
+  // GET /tool-approvals/:id — get a single tool approval by ID (Feature 164)
+  const toolApprovalByIdMatch = /^\/tool-approvals\/([^/]+)$/.exec(path);
+  if (method === "GET" && toolApprovalByIdMatch) {
+    const approvalId = decodeURIComponent(toolApprovalByIdMatch[1]!);
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const approval = store.get(approvalId);
+    if (!approval) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Tool approval ${approvalId} not found.`
+      });
+      return;
+    }
+    writeOperatorJsonResponse(res, 200, { toolApproval: approval });
     return;
   }
 

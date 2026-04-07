@@ -6,7 +6,6 @@ import type {
   PersistedTaskSnapshot,
   PlanningTransactionRepository
 } from "@reddwarf/evidence";
-
 interface ProjectTicketMemory {
   projectId: string;
   ticketId: string;
@@ -53,6 +52,8 @@ export async function markProjectTicketFailedFromSnapshot(input: {
   repository: ProjectTicketStateRepository;
   snapshot: PersistedTaskSnapshot;
   updatedAt: string;
+  /** Optional callback invoked when a project transitions to `failed`. */
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }): Promise<ProjectTicketStateSyncResult | null> {
   const memory = readProjectTicketMemory(input.snapshot);
   if (!memory) {
@@ -80,6 +81,15 @@ export async function markProjectTicketFailedFromSnapshot(input: {
       updatedAt: input.updatedAt
     };
     await input.repository.saveProjectSpec(updatedProject);
+
+    // Feature 167: Notify callers (e.g. Task Flow cancellation) when a project fails.
+    if (input.onProjectFailed) {
+      try {
+        await input.onProjectFailed(memory.projectId, memory.ticketId);
+      } catch {
+        // Best-effort: callback failure must not mask the original error.
+      }
+    }
   }
 
   return {

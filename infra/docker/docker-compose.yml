@@ -4,9 +4,6 @@ services:
     restart: unless-stopped
     profiles:
       - openclaw
-    env_file:
-      - ../../.env
-      - ../../.secrets
     command:
       - sh
       - -lc
@@ -17,13 +14,25 @@ services:
         fi
         exec node openclaw.mjs gateway --allow-unconfigured
     environment:
+      # ── Model API keys (required for agent LLM calls) ──────────────
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # ── OpenClaw gateway / hook auth (resolved into openclaw.json by
+      #    the config generator, but the gateway also reads these from
+      #    the process environment at runtime for hot-reload) ──────────
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_HOOK_TOKEN: ${OPENCLAW_HOOK_TOKEN:-}
+      # ── Operator plugin reverse-call credentials ───────────────────
+      REDDWARF_OPERATOR_TOKEN: ${REDDWARF_OPERATOR_TOKEN:-}
+      REDDWARF_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
+      REDDWARF_OPENCLAW_OPERATOR_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
+      # ── Workspace paths ────────────────────────────────────────────
       REDDWARF_POLICY_ROOT: ${REDDWARF_POLICY_ROOT:-/opt/reddwarf}
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
-      REDDWARF_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
-      REDDWARF_OPENCLAW_OPERATOR_API_URL: ${REDDWARF_OPENCLAW_OPERATOR_API_URL:-http://host.docker.internal:8080}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://reddwarf:reddwarf@postgres:5432/reddwarf}
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      # ── Discord (optional, only needed when Discord channel is enabled) ─
+      OPENCLAW_DISCORD_BOT_TOKEN: ${OPENCLAW_DISCORD_BOT_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

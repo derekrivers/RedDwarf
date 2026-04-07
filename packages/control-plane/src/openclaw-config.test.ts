@@ -135,8 +135,17 @@ describe("generateOpenClawConfig", () => {
     });
   });
 
-  it("emits agentToAgent and sessions visibility in the global tools block by default", () => {
+  it("omits agentToAgent tools block by default (opt-in only)", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    expect(config.tools).toBeUndefined();
+  });
+
+  it("emits agentToAgent and sessions visibility when explicitly enabled", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableAgentToAgent: true
+    });
 
     expect(config.tools?.agentToAgent?.enabled).toBe(true);
     expect(config.tools?.sessions?.visibility).toBe("all");
@@ -145,15 +154,6 @@ describe("generateOpenClawConfig", () => {
     for (const id of agentIds) {
       expect(config.tools?.agentToAgent?.allow).toContain(id);
     }
-  });
-
-  it("omits the agentToAgent tools block when enableAgentToAgent is false", () => {
-    const config = generateOpenClawConfig({
-      workspaceRoot: "/ws",
-      enableAgentToAgent: false
-    });
-
-    expect(config.tools).toBeUndefined();
   });
 
   it("includes group:sessions in allow for analyst, developer, and arch-reviewer", () => {

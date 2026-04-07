@@ -53,9 +53,10 @@ framework-specific skills before producing the architecture plan. Use this when:
 
 Search only when it is likely to add value. Do not search for skills on every task.
 
-Only install skills from **verified publishers** or the following curated allowlist:
-- `reddwarf/*` (RedDwarf first-party skills)
-- `anthropic/*`
+Only install skills from **verified publishers** or the configured allowlist.
+The default allowlist is `reddwarf/*`, `anthropic/*`. Operators can override
+this via the `REDDWARF_CLAWHUB_ALLOWED_PUBLISHERS` environment variable
+(comma-separated publisher glob patterns).
 
 Record the skill ID and version in your plan under a "Discovered Skills" section.
 These are recorded as evidence metadata by the RedDwarf pipeline.

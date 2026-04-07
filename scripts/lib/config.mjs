@@ -351,6 +351,7 @@ export async function resolveOpenClawConfig(options) {
     },
     modelProvider: resolveModelProviderEnv(),
     enableModelFailover: readBooleanEnv("REDDWARF_MODEL_FAILOVER_ENABLED"),
+    enableAgentToAgent: readBooleanEnv("REDDWARF_OPENCLAW_AGENT_TO_AGENT_ENABLED"),
     ...(discordEnabled
       ? {
           discord: {

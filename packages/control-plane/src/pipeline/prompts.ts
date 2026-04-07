@@ -23,7 +23,9 @@ import {
 } from "@reddwarf/evidence";
 import {
   type GitHubPullRequestSummary,
-  type OpenClawDispatchAdapter
+  type OpenClawDispatchAdapter,
+  sanitizeUserContent,
+  enforcePromptLengthCap
 } from "@reddwarf/integrations";
 import {
   type MaterializedManagedWorkspace,
@@ -402,10 +404,10 @@ export function renderUntrustedIssueDataBlock(input: {
 }): string {
   const payload = JSON.stringify(
     {
-      title: input.title,
-      summary: input.summary,
-      acceptanceCriteria: [...input.acceptanceCriteria],
-      affectedPaths: [...(input.affectedPaths ?? [])],
+      title: sanitizeUserContent(input.title),
+      summary: sanitizeUserContent(input.summary),
+      acceptanceCriteria: input.acceptanceCriteria.map(sanitizeUserContent),
+      affectedPaths: (input.affectedPaths ?? []).map(sanitizeUserContent),
       requestedCapabilities: [...input.requestedCapabilities]
     },
     null,

@@ -193,10 +193,24 @@ export function extractFinalExecutionItems(
   return transcript.executionItems;
 }
 
+const KNOWN_ROLES = new Set(["system", "user", "assistant", "tool", "toolResult"]);
+const KNOWN_EVENT_TYPES = new Set(["message", "plan_update", "execution_item"]);
+
 function normalizeSessionEntry(parsed: Record<string, unknown>): OpenClawSessionEntry | null {
+  // Reject entries with unknown event types — prevents a crafted transcript from
+  // injecting event types that could confuse stall/termination detection.
+  const eventType = typeof parsed["type"] === "string" ? parsed["type"] : null;
+  if (eventType !== null && !KNOWN_EVENT_TYPES.has(eventType) && !KNOWN_ROLES.has(parsed["role"] as string)) {
+    return null;
+  }
+
   if (typeof parsed["role"] === "string" && typeof parsed["content"] === "string") {
+    const rawRole = parsed["role"] === "toolResult" ? "tool" : parsed["role"];
+    if (!KNOWN_ROLES.has(parsed["role"]) && rawRole !== "tool") {
+      return null;
+    }
     return {
-      role: parsed["role"] as OpenClawSessionEntry["role"],
+      role: rawRole as OpenClawSessionEntry["role"],
       content: parsed["content"],
       ...(typeof parsed["timestamp"] === "string" ? { timestamp: parsed["timestamp"] } : {}),
       ...(typeof parsed["toolName"] === "string" ? { toolName: parsed["toolName"] } : {}),

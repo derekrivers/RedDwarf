@@ -370,6 +370,39 @@ try {
   log(`Workspace cleanup skipped: ${formatError(err)}`);
 }
 
+// ── 2c: Scrub stale secret lease files from surviving workspaces ─────────
+
+try {
+  const entries = await readdir(workspaceRoot).catch(() => []);
+  let scrubCount = 0;
+
+  for (const entry of entries) {
+    const secretEnvPath = join(
+      workspaceRoot,
+      entry,
+      ".workspace",
+      "credentials",
+      "secret-env.json"
+    );
+    try {
+      await stat(secretEnvPath);
+      await rm(secretEnvPath, { force: true });
+      scrubCount++;
+      log(`  Scrubbed stale secret lease: ${entry}/secret-env.json`);
+    } catch {
+      // File does not exist — nothing to scrub
+    }
+  }
+
+  if (scrubCount > 0) {
+    log(
+      `Scrubbed ${scrubCount} stale secret lease file(s) from surviving workspaces.`
+    );
+  }
+} catch (err) {
+  log(`Secret lease cleanup skipped: ${formatError(err)}`);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 3 — Start services
 // ══════════════════════════════════════════════════════════════════════════

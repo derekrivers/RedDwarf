@@ -266,7 +266,7 @@ describe("integrations", () => {
     expect(OPENCLAW_BASE_URL_ENV).toBe("OPENCLAW_BASE_URL");
   });
 
-  it("creates an OpenClaw secrets adapter that reads hook token from env", async () => {
+  it("creates an OpenClaw secrets adapter that does NOT expose the hook token", async () => {
     const saved = process.env[OPENCLAW_HOOK_TOKEN_ENV];
     try {
       process.env[OPENCLAW_HOOK_TOKEN_ENV] = "test-hook-token-abc";
@@ -284,9 +284,11 @@ describe("integrations", () => {
         allowedSecretScopes: ["openclaw"]
       });
 
+      // The openclaw scope must NOT contain the hook token — it grants
+      // full gateway write access and must not leak to agent workspaces.
       expect(lease).not.toBeNull();
       expect(lease?.secretScopes).toEqual(["openclaw"]);
-      expect(lease?.environmentVariables["HOOK_TOKEN"]).toBe("test-hook-token-abc");
+      expect(lease?.environmentVariables["HOOK_TOKEN"]).toBeUndefined();
     } finally {
       if (saved !== undefined) {
         process.env[OPENCLAW_HOOK_TOKEN_ENV] = saved;

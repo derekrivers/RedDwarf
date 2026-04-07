@@ -349,7 +349,7 @@ export function generateOpenClawConfig(
   const operatorApiBaseUrl =
     options.operatorApiBaseUrl ?? "${REDDWARF_OPENCLAW_OPERATOR_API_URL}";
 
-  const enableAgentToAgent = options.enableAgentToAgent ?? true;
+  const enableAgentToAgent = options.enableAgentToAgent ?? false;
   const agentIds = roles.map((role) => role.agentId);
 
   const config: OpenClawConfig = {
@@ -593,8 +593,18 @@ export function serializeOpenClawConfig(config: OpenClawConfig): string {
  *
  * Consequence: the `sandboxMode` fields in agent role definitions (`read_only`,
  * `workspace_write`) express security intent but are NOT currently enforced by
- * OpenClaw at runtime. Enforcement relies entirely on the Docker container
- * boundary and the per-agent tool allow/deny groups.
+ * OpenClaw at runtime. The sole enforcement layers are:
+ *
+ *   1. Docker container boundary (network isolation, volume mounts)
+ *   2. Per-agent tool allow/deny groups (coarse, group-level)
+ *   3. `before_tool_call` plugin hook (Feature 152, when enabled)
+ *   4. Post-completion path validation (`assertWorkspaceRepoChangesWithinAllowedPaths`)
+ *
+ * Notable gap: `read_only` agents (coordinator, analyst) have `group:fs` which
+ * includes write tools. Their sandbox intent is advisory until OpenClaw supports
+ * per-tool allow/deny within a group or a `group:fs:read` subset.
+ *
+ * See: docs/openclaw/AGENT_TOOL_PERMISSIONS.md for the full audit.
  *
  * When moving to a VPS or sandbox-capable host (FEATURE_BOARD Feature 105),
  * replace this function with a real mapping so the role definitions take effect.
