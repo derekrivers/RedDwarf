@@ -214,7 +214,8 @@ export async function dispatchReadyTask(
     logger: dependencies.logger,
     clock: dependencies.clock,
     concurrency: dependencies.concurrency,
-    timing: dependencies.timing
+    timing: dependencies.timing,
+    onProjectFailed: dependencies.onProjectFailed
   });
 
   // ── Development phase ─────────────────────────────────────────────────────

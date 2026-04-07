@@ -1025,7 +1025,8 @@ export async function runDeveloperPhase(
         repository, snapshot, manifest: currentManifest,
         phase: "development", runId, failure: pipelineFailure,
         runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
-        persistTrackedRun, github: dependencies.github
+        persistTrackedRun, github: dependencies.github,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist developer phase failure evidence.", {

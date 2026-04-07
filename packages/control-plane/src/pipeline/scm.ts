@@ -1014,7 +1014,8 @@ export async function runScmPhase(
         repository, snapshot, manifest: currentManifest,
         phase: "scm", runId, failure: pipelineFailure,
         runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
-        persistTrackedRun, github
+        persistTrackedRun, github,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist SCM phase failure evidence.", {

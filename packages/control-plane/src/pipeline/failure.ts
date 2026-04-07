@@ -407,6 +407,7 @@ export async function handleAutomatedPhaseFailure(input: {
     runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github: GitHubAdapter | undefined;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }): Promise<AutomatedFailureRecoveryResult> {
   const { repository, snapshot, manifest, phase, runId, failure } = input;
   const policy = phaseRegistry[phase].recovery;
@@ -747,7 +748,8 @@ export async function handleAutomatedPhaseFailure(input: {
     await markProjectTicketFailedFromSnapshot({
       repository: transactionalRepository,
       snapshot,
-      updatedAt: input.failedAtIso
+      updatedAt: input.failedAtIso,
+      ...(input.onProjectFailed ? { onProjectFailed: input.onProjectFailed } : {})
     });
     await recordRunEvent({
       repository: transactionalRepository,
@@ -918,7 +920,8 @@ export async function persistPhaseFailure(
         failedAt: ctx.failedAt,
         failedAtIso: ctx.failedAtIso,
         persistTrackedRun: ctx.persistTrackedRun,
-        github: ctx.github
+        github: ctx.github,
+        ...(ctx.onProjectFailed ? { onProjectFailed: ctx.onProjectFailed } : {})
       })
     ).manifest;
   }

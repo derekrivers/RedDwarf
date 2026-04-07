@@ -241,6 +241,7 @@ export interface DevelopmentPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ArchitectureReviewPhaseDependencies {
@@ -257,6 +258,7 @@ export interface ArchitectureReviewPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ValidationPhaseDependencies {
@@ -273,6 +275,7 @@ export interface ValidationPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ScmPhaseDependencies {
@@ -288,6 +291,7 @@ export interface ScmPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface DevelopmentPhaseResult {
@@ -414,6 +418,7 @@ export interface DispatchReadyTaskDependencies {
   clock?: () => Date;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export type DispatchPhaseOutcome = "completed" | "blocked" | "failed";
@@ -524,6 +529,8 @@ export interface PhaseFailureContext {
     runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github?: GitHubAdapter | undefined;
+  /** Optional callback invoked when a project transitions to `failed` (e.g. Task Flow cancellation). */
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export type ExecutedValidationCommandResult = import("@reddwarf/contracts").ValidationCommandResult & {

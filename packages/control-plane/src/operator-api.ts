@@ -2516,9 +2516,23 @@ async function handleOperatorRequest(
       "evidenceRoot"
     );
 
+    const onProjectFailed = taskFlowAdapter
+      ? async (projectId: string, _ticketId: string) => {
+          const flowMemory = await repository.listMemoryRecords({
+            keyPrefix: `project.taskflow.flowId:${projectId}`
+          });
+          const flowId = flowMemory.length > 0
+            ? (flowMemory[0]!.value as Record<string, unknown>)["flowId"] as string | null
+            : null;
+          if (flowId) {
+            await taskFlowAdapter.cancelFlow(flowId, "Project failed — phase failure escalated.");
+          }
+        }
+      : undefined;
+
     const result = await dispatchReadyTask(
       { taskId, targetRoot, evidenceRoot },
-      { repository, ...dispatchDependencies }
+      { repository, ...dispatchDependencies, ...(onProjectFailed ? { onProjectFailed } : {}) }
     );
 
     writeOperatorJsonResponse(res, 200, result);
@@ -2817,10 +2831,93 @@ async function handleOperatorRequest(
     };
     await repository.saveProjectSpec(updatedProject);
 
+    // Invalidate any pending policy-gate approval before re-planning.
+    const amendTaskId = projectId.startsWith("project:")
+      ? projectId.slice("project:".length)
+      : projectId;
+    const amendPendingApprovals = await repository.listApprovalRequests({
+      taskId: amendTaskId,
+      statuses: ["pending"]
+    });
+    for (const approval of amendPendingApprovals) {
+      if (approval.phase === "policy_gate") {
+        await repository.saveApprovalRequest(
+          createApprovalRequest({
+            ...approval,
+            status: "rejected",
+            decidedBy: "system",
+            decision: "reject",
+            decisionSummary: "Superseded: project amended; re-planning required.",
+            updatedAt: now,
+            resolvedAt: now
+          })
+        );
+      }
+    }
+
+    // Re-trigger the planning pipeline so Holly re-plans with amendments.
+    const amendOpenClawDispatch = dispatchDependencies?.openClawDispatch;
+    if (amendOpenClawDispatch && managedTargetRoot && planner) {
+      const manifest = await repository.getManifest(amendTaskId);
+      const planningSpec = await repository.getPlanningSpec(amendTaskId);
+      if (manifest && planningSpec) {
+        const replanInput: PlanningTaskInput = {
+          source: manifest.source,
+          title: manifest.title,
+          summary: manifest.summary,
+          priority: manifest.priority,
+          dryRun: manifest.dryRun,
+          labels: [],
+          acceptanceCriteria: planningSpec.acceptanceCriteria,
+          affectedPaths: planningSpec.affectedAreas,
+          requestedCapabilities: manifest.requestedCapabilities,
+          metadata: {
+            replanReason: "project_amended",
+            originalProjectId: projectId
+          }
+        };
+        const classification = classifyComplexity(replanInput);
+        try {
+          const replanResult = await runPlanningPipeline(
+            {
+              ...replanInput,
+              metadata: {
+                ...replanInput.metadata,
+                complexityClassification: classification
+              }
+            },
+            {
+              repository,
+              planner,
+              openClawDispatch: amendOpenClawDispatch,
+              architectTargetRoot: managedTargetRoot,
+              clock
+            }
+          );
+          const replanProject = await repository.getProjectSpec(projectId);
+          writeOperatorJsonResponse(res, 200, {
+            project: replanProject ?? updatedProject,
+            replanRunId: replanResult.runId,
+            replanNextAction: replanResult.nextAction,
+            message:
+              "Project amended. Re-planning dispatched with amendments included in the planning context."
+          });
+        } catch (replanError) {
+          writeOperatorJsonResponse(res, 200, {
+            project: updatedProject,
+            replanError: replanError instanceof Error ? replanError.message : String(replanError),
+            message:
+              "Project amended. Automatic re-planning failed; use POST /tasks/inject to retry."
+          });
+        }
+        return;
+      }
+    }
+
     writeOperatorJsonResponse(res, 200, {
       project: updatedProject,
       message:
-        "Project returned to draft for re-planning with amendments. Amendments have been appended to the planning context."
+        "Project amended. Re-planning could not be triggered automatically — dispatch dependencies not available."
     });
     return;
   }
@@ -2992,8 +3089,11 @@ async function handleOperatorRequest(
               clock
             }
           );
+          // Return the latest project state after re-planning (may have
+          // transitioned to pending_approval or back to clarification_pending).
+          const replanProject = await repository.getProjectSpec(projectId);
           writeOperatorJsonResponse(res, 200, {
-            project: updatedProject,
+            project: replanProject ?? updatedProject,
             replanRunId: replanResult.runId,
             replanNextAction: replanResult.nextAction,
             message:
