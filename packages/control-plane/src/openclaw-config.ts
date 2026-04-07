@@ -4,6 +4,7 @@ import type {
   OpenClawModelProvider
 } from "@reddwarf/contracts";
 import {
+  MODEL_FAILOVER_MAP,
   createOpenClawAgentRoleDefinitions,
   openClawAgentRoleDefinitions,
   resolveOpenClawModelProvider
@@ -108,6 +109,9 @@ export interface OpenClawAgentConfig {
   workspace: string;
   agentDir: string;
   model: string;
+  /** Optional fallback model(s) to try when the primary provider returns a
+   *  transient error (429/500/503). Set by enabling model failover. */
+  modelFallback?: string[];
   tools: {
     profile: string;
     allow: string[];
@@ -248,6 +252,16 @@ export interface GenerateOpenClawConfigOptions {
    * RedDwarf set.
    */
   enableAgentToAgent?: boolean;
+
+  /**
+   * Whether to emit cross-provider model failover chains for each agent.
+   * When true and both ANTHROPIC_API_KEY and OPENAI_API_KEY are available,
+   * OpenClaw will automatically rotate to the fallback provider on transient
+   * errors (429/500/503). Defaults to false.
+   *
+   * Set via REDDWARF_MODEL_FAILOVER_ENABLED env var.
+   */
+  enableModelFailover?: boolean;
 }
 
 /**
@@ -256,7 +270,8 @@ export interface GenerateOpenClawConfigOptions {
 export function buildAgentConfig(
   role: OpenClawAgentRoleDefinition,
   workspaceRoot: string,
-  _skipBootstrap: boolean
+  _skipBootstrap: boolean,
+  options?: { enableModelFailover?: boolean }
 ): OpenClawAgentConfig {
   const policy = role.runtimePolicy;
   const workspace = workspaceRoot.replace(/\\/g, "/");
@@ -265,12 +280,17 @@ export function buildAgentConfig(
     "/"
   );
 
+  const fallbackModel = options?.enableModelFailover
+    ? MODEL_FAILOVER_MAP[policy.model.provider]?.[role.role]
+    : undefined;
+
   return {
     id: role.agentId,
     name: role.displayName,
     workspace,
     agentDir,
     model: policy.model.model,
+    ...(fallbackModel ? { modelFallback: [fallbackModel] } : {}),
     tools: {
       profile: policy.toolProfile,
       allow: [...policy.allow],
@@ -542,8 +562,11 @@ export function generateOpenClawConfig(
     }
   };
 
+  const enableModelFailover = options.enableModelFailover ?? false;
   for (const [index, role] of roles.entries()) {
-    const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap);
+    const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap, {
+      enableModelFailover
+    });
     config.agents.list.push(
       index === 0 ? { ...agentEntry, default: true } : agentEntry
     );

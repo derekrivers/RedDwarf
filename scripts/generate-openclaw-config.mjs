@@ -71,6 +71,8 @@ const resolvedWorkspaceRoot = workspaceRoot.startsWith("/")
   : resolve(workspaceRoot);
 const resolvedOutputPath = resolve(outputPath);
 
+const modelFailoverEnabled = process.env.REDDWARF_MODEL_FAILOVER_ENABLED === "true";
+
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
   policyRoot,
@@ -79,6 +81,7 @@ const config = generateOpenClawConfig({
   operatorApiToken: process.env.REDDWARF_OPERATOR_TOKEN,
   operatorApiBaseUrl: process.env.REDDWARF_OPENCLAW_OPERATOR_API_URL,
   modelProvider,
+  enableModelFailover: modelFailoverEnabled,
   browser: {
     enabled: browserEnabled
   },
@@ -195,6 +198,9 @@ if (config.channels?.discord) {
   if (config.channels.discord.execApprovals?.enabled) {
     console.log("  Discord exec approvals: enabled");
   }
+}
+if (modelFailoverEnabled) {
+  console.log("  Model failover: enabled (cross-provider fallback chains active)");
 }
 if (config.browser?.enabled) {
   console.log("  Browser: enabled");

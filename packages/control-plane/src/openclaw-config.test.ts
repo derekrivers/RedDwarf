@@ -365,4 +365,63 @@ describe("buildAgentConfig", () => {
       mode: "off"
     });
   });
+
+  it("omits modelFallback when failover is disabled (default)", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const developer = roles.find((r: { role: string }) => r.role === "developer");
+
+    const entry = buildAgentConfig(developer, "/ws", false);
+
+    expect(entry.modelFallback).toBeUndefined();
+  });
+
+  it("emits modelFallback cross-provider chain when failover is enabled", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const analyst = roles.find((r: { role: string }) => r.role === "analyst");
+
+    const entry = buildAgentConfig(analyst, "/ws", false, { enableModelFailover: true });
+
+    // Primary: anthropic/claude-opus-4-6 → fallback: openai/gpt-5.4
+    expect(entry.model).toBe("anthropic/claude-opus-4-6");
+    expect(entry.modelFallback).toEqual(["openai/gpt-5.4"]);
+  });
+});
+
+describe("generateOpenClawConfig — model failover", () => {
+  it("does not emit modelFallback when enableModelFailover is false", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableModelFailover: false
+    });
+
+    for (const agent of config.agents.list) {
+      expect(agent.modelFallback).toBeUndefined();
+    }
+  });
+
+  it("emits modelFallback for all agents when enableModelFailover is true", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableModelFailover: true
+    });
+
+    for (const agent of config.agents.list) {
+      expect(Array.isArray(agent.modelFallback)).toBe(true);
+      expect(agent.modelFallback!.length).toBe(1);
+      // Fallback should be from the other provider
+      expect(agent.modelFallback![0]).toMatch(/^openai\//);
+    }
+  });
+
+  it("emits openai fallbacks for openai-primary agents", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai",
+      enableModelFailover: true
+    });
+
+    for (const agent of config.agents.list) {
+      expect(agent.modelFallback![0]).toMatch(/^anthropic\//);
+    }
+  });
 });

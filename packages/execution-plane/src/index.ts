@@ -31,6 +31,7 @@ import {
 
 export {
   MODEL_PROVIDER_ROLE_MAP,
+  MODEL_FAILOVER_MAP,
   createOpenClawModelBinding,
   resolveOpenClawModelProvider
 } from "./openclaw-models.js";

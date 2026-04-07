@@ -25,6 +25,32 @@ export const MODEL_PROVIDER_ROLE_MAP = {
   Record<OpenClawAgentRole, string>
 >;
 
+/**
+ * Cross-provider failover chains for each agent role.
+ * When model failover is enabled, OpenClaw automatically rotates to the
+ * next model in the chain on transient provider errors (429, 500, 503).
+ * The failover model is always from the alternate provider.
+ */
+export const MODEL_FAILOVER_MAP: Record<
+  OpenClawModelProvider,
+  Record<OpenClawAgentRole, string>
+> = {
+  anthropic: {
+    coordinator: "openai/gpt-5",
+    analyst: "openai/gpt-5.4",
+    reviewer: "openai/gpt-5",
+    validator: "openai/gpt-5",
+    developer: "openai/gpt-5.4"
+  },
+  openai: {
+    coordinator: "anthropic/claude-sonnet-4-6",
+    analyst: "anthropic/claude-opus-4-6",
+    reviewer: "anthropic/claude-sonnet-4-6",
+    validator: "anthropic/claude-sonnet-4-6",
+    developer: "anthropic/claude-sonnet-4-6"
+  }
+};
+
 export function resolveOpenClawModelProvider(
   value: unknown,
   fallback: OpenClawModelProvider = "anthropic"
