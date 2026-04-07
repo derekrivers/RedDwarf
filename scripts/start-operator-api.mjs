@@ -5,10 +5,11 @@
 // Default port: 8080
 // Default DB:   postgresql://reddwarf:reddwarf@127.0.0.1:55532/reddwarf
 //               (override with HOST_DATABASE_URL env var)
-// Required env: REDDWARF_OPERATOR_TOKEN
+// Required env: REDDWARF_OPERATOR_TOKEN plus the selected provider key
+// (ANTHROPIC_API_KEY or OPENAI_API_KEY based on REDDWARF_MODEL_PROVIDER)
 
 import { createOperatorApiServer } from "../packages/control-plane/dist/index.js";
-import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
+import { createPlanningAgentForModelProvider } from "../packages/execution-plane/dist/index.js";
 import { createPostgresPlanningRepository } from "../packages/evidence/dist/index.js";
 import {
   V1MutationDisabledError,
@@ -20,7 +21,8 @@ import {
   connectionString,
   loadRepoEnv,
   postgresPoolConfig,
-  refreshDerivedConfig
+  refreshDerivedConfig,
+  resolveModelProviderEnv
 } from "./lib/config.mjs";
 
 await loadRepoEnv();
@@ -40,9 +42,8 @@ const repository = createPostgresPlanningRepository(
   connectionString,
   postgresPoolConfig
 );
-const planner = createPlanningAgent({
-  type: process.env.ANTHROPIC_API_KEY ? "anthropic" : "deterministic"
-});
+const modelProvider = resolveModelProviderEnv();
+const planner = createPlanningAgentForModelProvider(modelProvider);
 
 console.log("Checking Postgres readiness...");
 try {

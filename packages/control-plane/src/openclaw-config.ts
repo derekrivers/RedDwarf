@@ -5,7 +5,8 @@ import type {
 } from "@reddwarf/contracts";
 import {
   createOpenClawAgentRoleDefinitions,
-  openClawAgentRoleDefinitions
+  openClawAgentRoleDefinitions,
+  resolveOpenClawModelProvider
 } from "@reddwarf/execution-plane";
 
 // -- OpenClaw config output types ---------------------------------------------
@@ -302,7 +303,9 @@ export function generateOpenClawConfig(
   const roles =
     options.roles ??
     (options.modelProvider
-      ? createOpenClawAgentRoleDefinitions(options.modelProvider)
+      ? createOpenClawAgentRoleDefinitions(
+          resolveOpenClawModelProvider(options.modelProvider)
+        )
       : openClawAgentRoleDefinitions);
   const skipBootstrap = options.skipBootstrap ?? true;
   const policyRoot = options.policyRoot ?? "/opt/reddwarf";

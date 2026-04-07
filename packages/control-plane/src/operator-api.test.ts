@@ -468,8 +468,10 @@ describe("operator API server", () => {
   it("serves operator config values, schema metadata, and persists updates", async () => {
     const previousPollInterval = process.env.REDDWARF_POLL_INTERVAL_MS;
     const previousSkipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW;
+    const previousModelProvider = process.env.REDDWARF_MODEL_PROVIDER;
     delete process.env.REDDWARF_POLL_INTERVAL_MS;
     delete process.env.REDDWARF_SKIP_OPENCLAW;
+    delete process.env.REDDWARF_MODEL_PROVIDER;
 
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(
@@ -501,16 +503,24 @@ describe("operator API server", () => {
       expect((properties["REDDWARF_POLL_INTERVAL_MS"] as Record<string, unknown>)["type"]).toBe(
         "integer"
       );
+      expect(
+        (properties["REDDWARF_MODEL_PROVIDER"] as Record<string, unknown>)["enum"]
+      ).toEqual(["anthropic", "openai"]);
 
       const badUpdate = await operatorPut(port, "/config", {
         entries: [{ key: "REDDWARF_POLL_INTERVAL_MS", value: "not-a-number" }]
       });
       expect(badUpdate.status).toBe(400);
+      const badProviderUpdate = await operatorPut(port, "/config", {
+        entries: [{ key: "REDDWARF_MODEL_PROVIDER", value: "bedrock" }]
+      });
+      expect(badProviderUpdate.status).toBe(400);
 
       const updated = await operatorPut(port, "/config", {
         entries: [
           { key: "REDDWARF_POLL_INTERVAL_MS", value: 45000 },
-          { key: "REDDWARF_SKIP_OPENCLAW", value: true }
+          { key: "REDDWARF_SKIP_OPENCLAW", value: true },
+          { key: "REDDWARF_MODEL_PROVIDER", value: "openai" }
         ]
       });
       expect(updated.status).toBe(200);
@@ -529,6 +539,12 @@ describe("operator API server", () => {
         value: true,
         source: "database"
       });
+      expect(
+        updatedItems.find((entry) => entry["key"] === "REDDWARF_MODEL_PROVIDER")
+      ).toMatchObject({
+        value: "openai",
+        source: "database"
+      });
 
       await expect(
         repository.getOperatorConfigEntry("REDDWARF_POLL_INTERVAL_MS")
@@ -538,6 +554,7 @@ describe("operator API server", () => {
       });
       expect(process.env.REDDWARF_POLL_INTERVAL_MS).toBe("45000");
       expect(process.env.REDDWARF_SKIP_OPENCLAW).toBe("true");
+      expect(process.env.REDDWARF_MODEL_PROVIDER).toBe("openai");
     } finally {
       if (previousPollInterval === undefined) {
         delete process.env.REDDWARF_POLL_INTERVAL_MS;
@@ -549,6 +566,12 @@ describe("operator API server", () => {
         delete process.env.REDDWARF_SKIP_OPENCLAW;
       } else {
         process.env.REDDWARF_SKIP_OPENCLAW = previousSkipOpenClaw;
+      }
+
+      if (previousModelProvider === undefined) {
+        delete process.env.REDDWARF_MODEL_PROVIDER;
+      } else {
+        process.env.REDDWARF_MODEL_PROVIDER = previousModelProvider;
       }
 
       await apiServer.stop();

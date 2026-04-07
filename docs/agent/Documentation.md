@@ -704,9 +704,16 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Completed feature 103 from `FEATURE_BOARD.md`: OpenAI provider support for OpenClaw model bindings.
 - Extended `packages/contracts/src/agents.ts` so `openClawModelBindingSchema.provider` is now an enum-backed contract shared by Anthropic and OpenAI role definitions, and added schema coverage in `packages/contracts/src/index.test.ts` for `openai/gpt-5` bindings.
 - Updated `packages/execution-plane/src/index.ts` so the default OpenClaw role roster is generated from provider-aware model maps, preserving Anthropic defaults while allowing a full OpenAI-backed roster through `createOpenClawAgentRoleDefinitions("openai")`; added regression coverage in `packages/execution-plane/src/index.test.ts`.
-- Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
+- Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or the now-legacy `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
 - Verification for feature 103: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/openclaw-config.test.ts`.
 - Likely next board item: feature 99, Discord approval bot.
+
+## 2026-04-07
+
+- Implemented the canonical provider switch `REDDWARF_MODEL_PROVIDER=anthropic|openai` for this branch, keeping `REDDWARF_OPENCLAW_MODEL_PROVIDER` as a compatibility alias only.
+- Centralized OpenClaw provider-to-role model refs in `MODEL_PROVIDER_ROLE_MAP`, added validated operator-config coverage for provider selection, and added `OPENAI_API_KEY` to the secret rotation allowlist without exposing raw provider secrets through operator config.
+- Extended direct planning startup paths so the selected provider determines whether RedDwarf requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, while generated OpenClaw config uses the same provider to bind the RedDwarf agent roster.
+- While verifying the change, fixed `scripts/verify-openclaw-context.mjs` to expect `.context/denied_paths.json`, matching the current denylist-first workspace materialization contract.
 
 - Completed feature 99 from `FEATURE_BOARD.md`: Discord approval bot via native OpenClaw channel config.
 - Extended `packages/control-plane/src/openclaw-config.ts` so RedDwarf can emit a typed `channels.discord` block with conservative DM pairing, server allowlisting, and native command support instead of requiring hand-edited OpenClaw JSON.

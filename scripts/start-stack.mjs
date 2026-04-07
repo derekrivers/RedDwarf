@@ -13,7 +13,9 @@
  *
  * Required environment (in .env or exported):
  *   GITHUB_TOKEN        — GitHub PAT with repo scope
- *   ANTHROPIC_API_KEY   — Anthropic API key for LLM planning
+ *   REDDWARF_MODEL_PROVIDER — anthropic or openai (default: anthropic)
+ *   ANTHROPIC_API_KEY   — required when REDDWARF_MODEL_PROVIDER=anthropic
+ *   OPENAI_API_KEY      — required when REDDWARF_MODEL_PROVIDER=openai
  *
  * Optional environment:
  *   REDDWARF_POLL_REPOS       — deprecated bootstrap seed for poll repos when the DB repo list is empty
@@ -53,6 +55,7 @@ import {
   loadRepoEnv,
   openClawConfigRuntimePath,
   refreshDerivedConfig,
+  resolveModelProviderEnv,
   resolveOpenClawConfig
 } from "./lib/config.mjs";
 
@@ -312,7 +315,7 @@ const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
 const { createHttpOpenClawDispatchAdapter } =
   await import("../packages/integrations/dist/index.js");
-const { createPlanningAgent } =
+const { createPlanningAgentForModelProvider } =
   await import("../packages/execution-plane/dist/index.js");
 
 const repository = createPostgresPlanningRepository(
@@ -434,7 +437,8 @@ if (!skipOpenClaw) {
 // Phase 3c: Polling daemon (optional)
 
 let daemon = null;
-const planner = createPlanningAgent({ type: "anthropic" });
+const modelProvider = resolveModelProviderEnv();
+const planner = createPlanningAgentForModelProvider(modelProvider);
 
 daemon = createGitHubIssuePollingDaemon(
   {

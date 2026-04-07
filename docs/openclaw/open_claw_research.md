@@ -174,16 +174,16 @@ For OpenAI specifically, the docs say OpenAI provides developer APIs for GPT mod
 
 The OAuth docs add that OpenClaw supports subscription auth via OAuth for providers that offer it, notably OpenAI Codex via ChatGPT OAuth, and that OpenAI Codex OAuth is explicitly supported for external tools like OpenClaw. The FAQ reinforces that OpenClaw fully supports OpenAI Code subscription OAuth. ([docs.openclaw.ai](https://docs.openclaw.ai/concepts/oauth?utm_source=chatgpt.com))
 
-**For RedDwarf, the current provider is Anthropic.** Models are configured as `anthropic/<model-id>` in agent TOOLS.md files and in openclaw.json. The current team assignments are:
+**For RedDwarf, the provider is now selected by config.** `REDDWARF_MODEL_PROVIDER` accepts `anthropic` or `openai`, and generated `openclaw.json` models use OpenClaw's `provider/model` format. The current team assignments are:
 
-- Rimmer (coordinator): `anthropic/claude-sonnet-4-6`
-- Holly (architect): `anthropic/claude-opus-4-6`
-- Kryten (reviewer): `anthropic/claude-sonnet-4-6`
-- Lister (developer, future): `anthropic/claude-sonnet-4-6`
+- Rimmer (coordinator): provider-selected coordinator model
+- Holly (architect): provider-selected analyst model
+- Kryten (reviewer/validator): provider-selected reviewer or validator model
+- Lister (developer): provider-selected developer model
 
-OpenAI support is a future nice-to-have (F85 on the feature board). The `openClawModelBindingSchema` in contracts currently uses `provider: z.literal("anthropic")`. When F85 is implemented, this will be extended to a provider enum.
+The `openClawModelBindingSchema` provider contract is enum-backed for both Anthropic and OpenAI. Provider selection is validated config; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` remain secrets.
 
-The Anthropic provider page in OpenClaw docs is the primary reference for auth and key configuration. ([docs.openclaw.ai](https://docs.openclaw.ai/providers/anthropic?utm_source=chatgpt.com))
+The Anthropic and OpenAI provider pages are the primary references for auth and key configuration. ([docs.openclaw.ai](https://docs.openclaw.ai/providers/anthropic?utm_source=chatgpt.com), [docs.openclaw.ai](https://docs.openclaw.ai/providers/openai?utm_source=chatgpt.com))
 
 ---
 
@@ -312,8 +312,8 @@ RedDwarf should keep ownership of:
 ### Providers and platform
 
 - Providers directory: available model providers. ([docs.openclaw.ai](https://docs.openclaw.ai/providers?utm_source=chatgpt.com))
-- **Anthropic provider page: API key configuration for current RedDwarf provider.** ([docs.openclaw.ai](https://docs.openclaw.ai/providers/anthropic?utm_source=chatgpt.com))
-- OpenAI provider page: API key and Codex auth guidance (future, F85). ([docs.openclaw.ai](https://docs.openclaw.ai/providers/openai?utm_source=chatgpt.com))
+- Anthropic provider page: API key configuration for Anthropic mode. ([docs.openclaw.ai](https://docs.openclaw.ai/providers/anthropic?utm_source=chatgpt.com))
+- OpenAI provider page: API key and Codex auth guidance for OpenAI mode. ([docs.openclaw.ai](https://docs.openclaw.ai/providers/openai?utm_source=chatgpt.com))
 - OAuth concepts: subscription auth and Codex OAuth. ([docs.openclaw.ai](https://docs.openclaw.ai/concepts/oauth?utm_source=chatgpt.com))
 - Install: installer path. ([docs.openclaw.ai](https://docs.openclaw.ai/install?utm_source=chatgpt.com))
 - Getting started: Node version and setup notes. ([docs.openclaw.ai](https://docs.openclaw.ai/start/getting-started?utm_source=chatgpt.com))
@@ -331,8 +331,8 @@ For building RedDwarf against OpenClaw, the best reading order is:
 3. Tools and plugins
 4. Multi-agent sandbox/tools
 5. Security
-6. **Anthropic provider** (current RedDwarf provider)
-7. OpenAI provider (future, F85)
+6. Anthropic provider (`REDDWARF_MODEL_PROVIDER=anthropic`)
+7. OpenAI provider (`REDDWARF_MODEL_PROVIDER=openai`)
 8. Hooks and webhook
 9. Skills
 10. Windows / platform docs if running from your current home-PC stack ([docs.openclaw.ai](https://docs.openclaw.ai/concepts/agent-workspace?utm_source=chatgpt.com))

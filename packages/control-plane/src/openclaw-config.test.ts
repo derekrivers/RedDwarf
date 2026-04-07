@@ -195,6 +195,15 @@ describe("generateOpenClawConfig", () => {
     expect(developer?.model).toBe("openai/gpt-5");
   });
 
+  it("rejects unsupported model providers before emitting a roster", () => {
+    expect(() =>
+      generateOpenClawConfig({
+        workspaceRoot: "/ws",
+        modelProvider: "bedrock" as never
+      })
+    ).toThrow();
+  });
+
   it("can include a Discord channel config for operator approvals", () => {
     const config = generateOpenClawConfig({
       workspaceRoot: "/ws",

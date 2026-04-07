@@ -1,4 +1,5 @@
 import type { OpenClawAgentRoleDefinition } from "@reddwarf/contracts";
+import { createOpenClawModelBinding } from "./openclaw-models.js";
 
 // Browser-safe subset of the canonical OpenClaw role definitions used by the
 // operator dashboard. Keep this file aligned with createOpenClawAgentRoleDefinitions
@@ -19,10 +20,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:nodes"],
       sandboxMode: "read_only",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-sonnet-4-6"
-      }
+      model: createOpenClawModelBinding("coordinator", "anthropic")
     }
   },
   {
@@ -36,10 +34,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:web", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-opus-4-6"
-      }
+      model: createOpenClawModelBinding("analyst", "anthropic")
     }
   },
   {
@@ -53,10 +48,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:runtime"],
       sandboxMode: "workspace_write",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-sonnet-4-6"
-      }
+      model: createOpenClawModelBinding("reviewer", "anthropic")
     }
   },
   {
@@ -70,10 +62,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-sonnet-4-6"
-      }
+      model: createOpenClawModelBinding("validator", "anthropic")
     }
   },
   {
@@ -87,10 +76,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-sonnet-4-6"
-      }
+      model: createOpenClawModelBinding("developer", "anthropic")
     }
   },
   {
@@ -104,10 +90,7 @@ export const dashboardAgentRoleDefinitions: Pick<
       allow: ["group:fs", "group:runtime", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: {
-        provider: "anthropic",
-        model: "anthropic/claude-opus-4-6"
-      }
+      model: createOpenClawModelBinding("analyst", "anthropic")
     }
   }
 ];

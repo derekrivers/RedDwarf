@@ -55,7 +55,9 @@ Edit `.env` and set your real credentials:
 
 ```
 GITHUB_TOKEN=ghp_your_real_token
+REDDWARF_MODEL_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-your_real_key
+# Or use REDDWARF_MODEL_PROVIDER=openai with OPENAI_API_KEY=sk-your_real_key
 OPENCLAW_HOOK_TOKEN=<long-random-token>
 OPENCLAW_GATEWAY_TOKEN=<long-random-token>
 ```
@@ -131,11 +133,11 @@ RedDwarf's OpenClaw dev team currently uses five agent personas:
 
 | Agent | Character | Role | ID | Tool Policy | Model | Sandbox |
 |-------|-----------|------|----|-------------|-------|---------|
-| **Holly** | Ship's Computer | Architect / Analyst | `reddwarf-analyst` | `full` + allow/deny groups | claude-opus-4-6 | `off` in current Docker topology |
-| **Rimmer** | Session Coordinator | Coordinator | `reddwarf-coordinator` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
-| **Kryten** | Mechanoid | Architecture Reviewer | `reddwarf-arch-reviewer` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
-| **Kryten** | Mechanoid | Validator | `reddwarf-validator` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
-| **Lister** | Last Human Alive | Developer | `reddwarf-developer` | `full` + allow/deny groups | claude-sonnet-4-6 | `off` in current Docker topology |
+| **Holly** | Ship's Computer | Architect / Analyst | `reddwarf-analyst` | `full` + allow/deny groups | provider-selected analyst model | `off` in current Docker topology |
+| **Rimmer** | Session Coordinator | Coordinator | `reddwarf-coordinator` | `full` + allow/deny groups | provider-selected coordinator model | `off` in current Docker topology |
+| **Kryten** | Mechanoid | Architecture Reviewer | `reddwarf-arch-reviewer` | `full` + allow/deny groups | provider-selected reviewer model | `off` in current Docker topology |
+| **Kryten** | Mechanoid | Validator | `reddwarf-validator` | `full` + allow/deny groups | provider-selected validator model | `off` in current Docker topology |
+| **Lister** | Last Human Alive | Developer | `reddwarf-developer` | `full` + allow/deny groups | provider-selected developer model | `off` in current Docker topology |
 
 Agent bootstrap files are in `agents/openclaw/{holly,rimmer,lister,kryten}/` and are mounted per generated role definition:
 - `IDENTITY.md` — Agent name, role, and title
@@ -200,7 +202,9 @@ The fastest way to prove the full pipeline is the automated E2E integration test
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope (contents + pull requests + issues) |
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for LLM planning |
+| `REDDWARF_MODEL_PROVIDER` | No | `anthropic` or `openai`; defaults to `anthropic` |
+| `ANTHROPIC_API_KEY` | Provider-dependent | Required when `REDDWARF_MODEL_PROVIDER=anthropic` |
+| `OPENAI_API_KEY` | Provider-dependent | Required when `REDDWARF_MODEL_PROVIDER=openai` |
 | `E2E_TARGET_REPO` | Yes | Target repo in `owner/repo` format (e.g. `derekrivers/FirstVoyage`) |
 
 ### 3.3 Optional environment
@@ -595,7 +599,7 @@ The database volume is **preserved by default** so you can restart without losin
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `RestGitHubAdapter requires a token` | `GITHUB_TOKEN` not in `.env` | Set it in `.env` |
-| `AnthropicPlanningAgent requires an API key` | `ANTHROPIC_API_KEY` not in `.env` | Set it in `.env` |
+| `AnthropicPlanningAgent requires an API key` or `OpenAIPlanningAgent requires an API key` | Selected provider secret missing | Set `ANTHROPIC_API_KEY` for Anthropic mode or `OPENAI_API_KEY` for OpenAI mode |
 | `E2E_TARGET_REPO is required` | Missing env var | Set `E2E_TARGET_REPO=owner/repo` |
 | GitHub API 404 | Repo not found or token lacks scope | Check repo name format (`owner/repo`) and token scopes |
 | GitHub API 401 | Invalid token | Regenerate at github.com/settings/tokens |

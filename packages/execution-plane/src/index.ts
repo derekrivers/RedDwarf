@@ -23,6 +23,17 @@ import type {
   ValidationDraft,
   WorkspaceContextBundle
 } from "@reddwarf/contracts";
+import {
+  MODEL_PROVIDER_ROLE_MAP,
+  createOpenClawModelBinding,
+  resolveOpenClawModelProvider
+} from "./openclaw-models.js";
+
+export {
+  MODEL_PROVIDER_ROLE_MAP,
+  createOpenClawModelBinding,
+  resolveOpenClawModelProvider
+} from "./openclaw-models.js";
 
 export const agentDefinitions: AgentDefinition[] = [
   {
@@ -83,45 +94,10 @@ const sharedOpenClawCanonicalSources = [
   "standards/engineering.md"
 ] as const;
 
-const openClawRoleModelMap: Record<
-  OpenClawAgentRole,
-  Record<OpenClawModelProvider, string>
-> = {
-  coordinator: {
-    anthropic: "anthropic/claude-sonnet-4-6",
-    openai: "openai/gpt-5"
-  },
-  analyst: {
-    anthropic: "anthropic/claude-opus-4-6",
-    openai: "openai/gpt-5"
-  },
-  reviewer: {
-    anthropic: "anthropic/claude-sonnet-4-6",
-    openai: "openai/gpt-5"
-  },
-  validator: {
-    anthropic: "anthropic/claude-sonnet-4-6",
-    openai: "openai/gpt-5"
-  },
-  developer: {
-    anthropic: "anthropic/claude-sonnet-4-6",
-    openai: "openai/gpt-5"
-  }
-};
-
-function createOpenClawModelBinding(
-  role: OpenClawAgentRole,
-  provider: OpenClawModelProvider
-) {
-  return {
-    provider,
-    model: openClawRoleModelMap[role][provider]
-  };
-}
-
 export function createOpenClawAgentRoleDefinitions(
   provider: OpenClawModelProvider = "anthropic"
 ): OpenClawAgentRoleDefinition[] {
+  const resolvedProvider = resolveOpenClawModelProvider(provider);
   return [
   {
     agentId: "reddwarf-coordinator",
@@ -134,7 +110,7 @@ export function createOpenClawAgentRoleDefinitions(
       allow: ["group:fs", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:nodes"],
       sandboxMode: "read_only",
-      model: createOpenClawModelBinding("coordinator", provider)
+      model: createOpenClawModelBinding("coordinator", resolvedProvider)
     },
     bootstrapFiles: [
       {
@@ -180,7 +156,7 @@ export function createOpenClawAgentRoleDefinitions(
       allow: ["group:fs", "group:web", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "read_only",
-      model: createOpenClawModelBinding("analyst", provider)
+      model: createOpenClawModelBinding("analyst", resolvedProvider)
     },
     bootstrapFiles: [
       {
@@ -237,7 +213,7 @@ export function createOpenClawAgentRoleDefinitions(
       allow: ["group:fs", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "group:runtime", "sessions_spawn", "sessions_yield", "subagents"],
       sandboxMode: "workspace_write",
-      model: createOpenClawModelBinding("reviewer", provider)
+      model: createOpenClawModelBinding("reviewer", resolvedProvider)
     },
     bootstrapFiles: [
       {
@@ -288,7 +264,7 @@ export function createOpenClawAgentRoleDefinitions(
       // actions outside the workspace boundary.
       deny: ["group:automation", "group:messaging"],
       sandboxMode: "workspace_write",
-      model: createOpenClawModelBinding("validator", provider)
+      model: createOpenClawModelBinding("validator", resolvedProvider)
     },
     bootstrapFiles: [
       {
@@ -335,7 +311,7 @@ export function createOpenClawAgentRoleDefinitions(
       allow: ["group:fs", "group:runtime", "group:sessions", "group:openclaw"],
       deny: ["group:automation", "group:messaging", "sessions_spawn", "sessions_yield", "subagents"],
       sandboxMode: "workspace_write",
-      model: createOpenClawModelBinding("developer", provider)
+      model: createOpenClawModelBinding("developer", resolvedProvider)
     },
     bootstrapFiles: [
       {
@@ -379,8 +355,8 @@ export function createOpenClawAgentRoleDefinitions(
       deny: ["group:automation", "group:messaging", "sessions_spawn", "sessions_yield", "subagents"],
       sandboxMode: "workspace_write",
       model: {
-        provider,
-        model: openClawRoleModelMap["analyst"][provider]
+        provider: resolvedProvider,
+        model: MODEL_PROVIDER_ROLE_MAP[resolvedProvider]["analyst"]
       }
     },
     bootstrapFiles: [
@@ -703,7 +679,7 @@ export class DeterministicScmAgent implements ScmAgent {
 }
 
 // ============================================================
-// Live LLM planning agent — Anthropic Messages API
+// Live LLM planning agents
 // ============================================================
 
 export const DEFAULT_PLANNING_SYSTEM_PROMPT = [
@@ -750,9 +726,11 @@ export interface FetchWithRetryOptions {
   retryableStatuses?: Set<number>;
   baseDelayMs?: number;
   requestTimeoutMs?: number;
+  requestLabel?: string;
 }
 
 const DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_OPENAI_REQUEST_TIMEOUT_MS = 60_000;
 
 export async function fetchWithRetry(options: FetchWithRetryOptions): Promise<Response> {
   const maxAttempts = options.maxAttempts ?? 3;
@@ -760,6 +738,7 @@ export async function fetchWithRetry(options: FetchWithRetryOptions): Promise<Re
   const baseDelayMs = options.baseDelayMs ?? 2000;
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS;
+  const requestLabel = options.requestLabel ?? "Anthropic API";
   let attempt = 0;
 
   while (true) {
@@ -771,7 +750,7 @@ export async function fetchWithRetry(options: FetchWithRetryOptions): Promise<Re
         signal: AbortSignal.timeout(requestTimeoutMs)
       });
     } catch (error) {
-      throw normalizeAnthropicFetchError(error, requestTimeoutMs);
+      throw normalizeProviderFetchError(error, requestTimeoutMs, requestLabel);
     }
 
     if (!response.ok) {
@@ -794,6 +773,45 @@ export function extractAnthropicTextContent(response: AnthropicMessagesResponse)
     throw new Error("Anthropic response contained no text content block.");
   }
   return block.text;
+}
+
+export interface OpenAIPlanningAgentOptions {
+  apiKey?: string;
+  model?: string;
+  maxTokens?: number;
+  systemPrompt?: string;
+  baseUrl?: string;
+  requestTimeoutMs?: number;
+}
+
+interface OpenAIResponsesResponse {
+  output_text?: string;
+  output?: Array<{
+    type: string;
+    content?: Array<{ type: string; text?: string }>;
+  }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+}
+
+export function extractOpenAITextContent(response: OpenAIResponsesResponse): string {
+  if (typeof response.output_text === "string" && response.output_text.length > 0) {
+    return response.output_text;
+  }
+
+  const parts =
+    response.output
+      ?.flatMap((entry) => entry.content ?? [])
+      .filter((content) => content.type === "output_text" && content.text)
+      .map((content) => content.text as string) ?? [];
+
+  if (parts.length === 0) {
+    throw new Error("OpenAI response contained no output_text content block.");
+  }
+
+  return parts.join("\n");
 }
 
 export class AnthropicPlanningAgent implements PlanningAgent {
@@ -865,6 +883,76 @@ export class AnthropicPlanningAgent implements PlanningAgent {
   }
 }
 
+export class OpenAIPlanningAgent implements PlanningAgent {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly maxTokens: number;
+  private readonly systemPrompt: string;
+  private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: OpenAIPlanningAgentOptions = {}) {
+    const apiKey = options.apiKey ?? process.env["OPENAI_API_KEY"];
+    if (!apiKey) {
+      throw new Error(
+        "OpenAIPlanningAgent requires an API key. " +
+          "Set the OPENAI_API_KEY environment variable or pass apiKey explicitly."
+      );
+    }
+    this.apiKey = apiKey;
+    this.model = options.model ?? "gpt-5";
+    this.maxTokens = options.maxTokens ?? 2048;
+    this.systemPrompt = options.systemPrompt ?? DEFAULT_PLANNING_SYSTEM_PROMPT;
+    this.baseUrl = options.baseUrl ?? "https://api.openai.com";
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_OPENAI_REQUEST_TIMEOUT_MS;
+  }
+
+  async createSpec(
+    input: PlanningTaskInput,
+    context: { manifest: TaskManifest; runId: string }
+  ): Promise<PlanningDraft> {
+    const userMessage = buildPlanningUserMessage(input, context);
+
+    const response = await fetchWithRetry({
+      url: `${this.baseUrl}/v1/responses`,
+      init: {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.model,
+          instructions: this.systemPrompt,
+          input: userMessage,
+          max_output_tokens: this.maxTokens
+        })
+      },
+      retryableStatuses: new Set([429, 500, 502, 503, 504]),
+      requestTimeoutMs: this.requestTimeoutMs,
+      requestLabel: "OpenAI API"
+    });
+
+    const result = (await response.json()) as OpenAIResponsesResponse;
+    const text = extractOpenAITextContent(result);
+    const draft = parsePlanningDraft(text, input, context);
+    return {
+      ...draft,
+      ...(result.usage &&
+      typeof result.usage.input_tokens === "number" &&
+      typeof result.usage.output_tokens === "number"
+        ? {
+            usage: {
+              inputTokens: result.usage.input_tokens,
+              outputTokens: result.usage.output_tokens
+            }
+          }
+        : {})
+    };
+  }
+}
+
 /**
  * Create an AnthropicPlanningAgent from environment variables or explicit options.
  * Reads ANTHROPIC_API_KEY from the environment when no apiKey is provided.
@@ -875,15 +963,26 @@ export function createAnthropicPlanningAgent(
   return new AnthropicPlanningAgent(options);
 }
 
-function normalizeAnthropicFetchError(
+/**
+ * Create an OpenAIPlanningAgent from environment variables or explicit options.
+ * Reads OPENAI_API_KEY from the environment when no apiKey is provided.
+ */
+export function createOpenAIPlanningAgent(
+  options: OpenAIPlanningAgentOptions = {}
+): OpenAIPlanningAgent {
+  return new OpenAIPlanningAgent(options);
+}
+
+function normalizeProviderFetchError(
   error: unknown,
-  timeoutMs: number
+  timeoutMs: number,
+  requestLabel: string
 ): Error {
   if (
     error instanceof DOMException &&
     error.name === "TimeoutError"
   ) {
-    return new Error(`Anthropic API request timed out after ${timeoutMs}ms.`);
+    return new Error(`${requestLabel} request timed out after ${timeoutMs}ms.`);
   }
 
   return error instanceof Error ? error : new Error(String(error));
@@ -891,20 +990,39 @@ function normalizeAnthropicFetchError(
 
 export type PlanningAgentConfig =
   | { type: "deterministic" }
-  | { type: "anthropic"; options?: AnthropicPlanningAgentOptions };
+  | { type: "anthropic"; options?: AnthropicPlanningAgentOptions }
+  | { type: "openai"; options?: OpenAIPlanningAgentOptions };
 
 /**
- * Factory for selecting between the deterministic stub and the live Anthropic
- * planning agent based on a configuration object.
+ * Factory for selecting between the deterministic stub and live provider-backed
+ * planning agents based on a configuration object.
  *
  * Use `{ type: "deterministic" }` for tests and CI environments where no API
- * key is available. Use `{ type: "anthropic" }` for real planning runs.
+ * key is available. Use `{ type: "anthropic" }` or `{ type: "openai" }` for
+ * real planning runs.
  */
 export function createPlanningAgent(config: PlanningAgentConfig): PlanningAgent {
   if (config.type === "anthropic") {
     return new AnthropicPlanningAgent(config.options);
   }
+  if (config.type === "openai") {
+    return new OpenAIPlanningAgent(config.options);
+  }
   return new DeterministicPlanningAgent();
+}
+
+export function createPlanningAgentForModelProvider(
+  provider: OpenClawModelProvider,
+  options?: {
+    anthropic?: AnthropicPlanningAgentOptions;
+    openai?: OpenAIPlanningAgentOptions;
+  }
+): PlanningAgent {
+  const resolvedProvider = resolveOpenClawModelProvider(provider);
+  if (resolvedProvider === "openai") {
+    return new OpenAIPlanningAgent(options?.openai);
+  }
+  return new AnthropicPlanningAgent(options?.anthropic);
 }
 
 // ============================================================

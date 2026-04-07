@@ -7,6 +7,7 @@ import {
   eventLevelSchema,
   openClawAgentRoleSchema,
   openClawBootstrapFileKindSchema,
+  openClawModelProviderSchema,
   openClawSandboxModeSchema,
   openClawToolProfileSchema,
   OPENCLAW_BOOTSTRAP_FILE_COUNT,
@@ -39,8 +40,6 @@ export const openClawBootstrapFileSchema = z.object({
   relativePath: z.string().min(1),
   description: z.string().min(1)
 });
-
-export const openClawModelProviderSchema = z.enum(["anthropic", "openai"]);
 
 export const openClawModelBindingSchema = z.object({
   provider: openClawModelProviderSchema,

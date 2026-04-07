@@ -780,7 +780,7 @@ export async function runPlanningPipeline(
           taskId,
           runId,
           phase: "planning",
-          promptPath: "packages/execution-plane/src/index.ts#AnthropicPlanningAgent",
+          promptPath: "packages/execution-plane/src/index.ts#PlanningAgent",
           promptText: buildPlanningPromptSource({
             systemPrompt: DEFAULT_PLANNING_SYSTEM_PROMPT,
             taskInput: input,

@@ -257,6 +257,35 @@ function readPositiveIntegerEnv(name) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+export function resolveModelProviderEnv() {
+  const canonical = process.env.REDDWARF_MODEL_PROVIDER?.trim();
+  const legacy = process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER?.trim();
+
+  if (
+    canonical &&
+    legacy &&
+    canonical.length > 0 &&
+    legacy.length > 0 &&
+    canonical !== legacy
+  ) {
+    throw new Error(
+      "REDDWARF_MODEL_PROVIDER and REDDWARF_OPENCLAW_MODEL_PROVIDER disagree. " +
+        "Use REDDWARF_MODEL_PROVIDER as the canonical provider config key."
+    );
+  }
+
+  const provider = canonical && canonical.length > 0 ? canonical : legacy;
+  const resolved = provider && provider.length > 0 ? provider : "anthropic";
+
+  if (resolved !== "anthropic" && resolved !== "openai") {
+    throw new Error(
+      `Invalid REDDWARF_MODEL_PROVIDER value "${resolved}". Expected "anthropic" or "openai".`
+    );
+  }
+
+  return resolved;
+}
+
 async function readJsonFileIfExists(path) {
   const { readFile } = await import("node:fs/promises");
 
@@ -320,9 +349,7 @@ export async function resolveOpenClawConfig(options) {
     browser: {
       enabled: readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true)
     },
-    ...(process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER
-      ? { modelProvider: process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER }
-      : {}),
+    modelProvider: resolveModelProviderEnv(),
     ...(discordEnabled
       ? {
           discord: {

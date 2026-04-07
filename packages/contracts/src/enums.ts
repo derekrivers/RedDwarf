@@ -135,6 +135,8 @@ export const openClawAgentRoles = [
   "validator",
   "developer"
 ] as const;
+export const openClawModelProviders = ["anthropic", "openai"] as const;
+export const openClawModelProviderSchema = z.enum(openClawModelProviders);
 export const openClawBootstrapFileKinds = [
   "identity",
   "soul",

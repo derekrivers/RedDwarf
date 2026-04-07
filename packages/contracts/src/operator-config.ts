@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { isoDateTimeSchema, eventLevelSchema } from "./enums.js";
+import {
+  isoDateTimeSchema,
+  eventLevelSchema,
+  openClawModelProviderSchema
+} from "./enums.js";
 import { tokenBudgetOverageActionSchema } from "./planning.js";
 
 const discordIdSchema = z.string().min(1);
@@ -43,6 +47,7 @@ export const operatorConfigValueSchemas = {
     "both"
   ]),
   REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR: hexColorSchema,
+  REDDWARF_MODEL_PROVIDER: openClawModelProviderSchema,
   REDDWARF_DB_POOL_MAX: z.number().int().positive(),
   REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS: z.number().int().positive(),
   REDDWARF_DB_POOL_IDLE_TIMEOUT_MS: z.number().int().positive(),
@@ -110,6 +115,7 @@ export const operatorConfigDefaults: {
   REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS: [],
   REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVAL_TARGET: "channel",
   REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR: "#d7263d",
+  REDDWARF_MODEL_PROVIDER: "anthropic",
   REDDWARF_DB_POOL_MAX: 10,
   REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS: 5000,
   REDDWARF_DB_POOL_IDLE_TIMEOUT_MS: 30000,
@@ -177,6 +183,8 @@ export const operatorConfigDescriptions: Record<OperatorConfigKey, string> = {
     "Where OpenClaw posts approval prompts: dm, channel, or both.",
   REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR:
     "Accent color for native Discord components and cards.",
+  REDDWARF_MODEL_PROVIDER:
+    "LLM provider used for RedDwarf planning and generated OpenClaw agent model bindings.",
   REDDWARF_DB_POOL_MAX: "Maximum Postgres connections in the shared pool.",
   REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS:
     "Fail Postgres connection attempts after this many milliseconds.",
@@ -438,6 +446,10 @@ const jsonSchemaTypeByKey: Record<OperatorConfigKey, unknown> = {
   REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR: {
     type: "string",
     pattern: "^#[0-9a-fA-F]{6}$"
+  },
+  REDDWARF_MODEL_PROVIDER: {
+    type: "string",
+    enum: ["anthropic", "openai"]
   },
   REDDWARF_DB_POOL_MAX: { type: "integer", minimum: 1 },
   REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS: { type: "integer", minimum: 1 },

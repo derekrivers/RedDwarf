@@ -144,13 +144,15 @@ RedDwarf uses OpenClaw in four distinct ways:
 
 The current generated runtime defines five RedDwarf agents:
 
-| Agent ID | Persona | Responsibility | Model | Tool posture |
+| Agent ID | Persona | Responsibility | Model binding | Tool posture |
 |----------|---------|----------------|-------|--------------|
-| `reddwarf-coordinator` | Rimmer | coordination and bounded handoff | `anthropic/claude-sonnet-4-6` | `full` profile with sessions/openclaw emphasis |
-| `reddwarf-analyst` | Holly | planning and analysis | `anthropic/claude-opus-4-6` | `full` profile with web access |
-| `reddwarf-arch-reviewer` | Kryten | implementation-vs-plan review | `anthropic/claude-sonnet-4-6` | `full` profile with runtime tooling |
-| `reddwarf-validator` | Kryten | validation and evidence-oriented checking | `anthropic/claude-sonnet-4-6` | `full` profile with runtime tooling |
-| `reddwarf-developer` | Lister | development-phase execution | `anthropic/claude-sonnet-4-6` | `full` profile with runtime tooling |
+| `reddwarf-coordinator` | Rimmer | coordination and bounded handoff | provider-selected coordinator model | `full` profile with sessions/openclaw emphasis |
+| `reddwarf-analyst` | Holly | planning and analysis | provider-selected analyst model | `full` profile with web access |
+| `reddwarf-arch-reviewer` | Kryten | implementation-vs-plan review | provider-selected reviewer model | `full` profile with runtime tooling |
+| `reddwarf-validator` | Kryten | validation and evidence-oriented checking | provider-selected validator model | `full` profile with runtime tooling |
+| `reddwarf-developer` | Lister | development-phase execution | provider-selected developer model | `full` profile with runtime tooling |
+
+`REDDWARF_MODEL_PROVIDER` selects the model provider for this roster. Anthropic mode emits `anthropic/claude-*` model refs; OpenAI mode emits `openai/gpt-5` model refs. The provider value is validated config and is safe to expose through operator config surfaces. Provider API keys remain secrets (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) and are not persisted into operator config.
 
 ### 6.2 Dispatch contract
 
@@ -183,6 +185,7 @@ The generated OpenClaw config includes:
 - gateway auth via `OPENCLAW_GATEWAY_TOKEN`
 - hook ingress via `OPENCLAW_HOOK_TOKEN`
 - explicit RedDwarf agent roster under `agents.list`
+- provider-aware model refs for that roster, derived from `REDDWARF_MODEL_PROVIDER`
 - plugin loading for the `reddwarf-operator` plugin
 - MCP server registration under `mcp.servers.reddwarf`
 - optional Discord channel support
@@ -353,6 +356,8 @@ Configuration is intentionally split into layers:
 - dev / E2E helpers
 
 This layering allows RedDwarf to expose safe runtime controls without turning the whole environment surface into mutable state.
+
+Provider selection follows this split: `REDDWARF_MODEL_PROVIDER` is runtime-configurable control data, while `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` stay in the secret path. Regenerating OpenClaw config after changing the provider updates agent model bindings without changing RedDwarf code.
 
 ## 13. Security and Trust Boundaries
 

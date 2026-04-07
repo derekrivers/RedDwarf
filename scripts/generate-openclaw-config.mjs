@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { generateOpenClawConfig, serializeOpenClawConfig } from "../packages/control-plane/dist/index.js";
+import { resolveModelProviderEnv } from "./lib/config.mjs";
 
 function readBooleanEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -43,7 +44,10 @@ const outputPath =
   args[1] ??
   process.env.REDDWARF_OPENCLAW_CONFIG_PATH ??
   "runtime-data/openclaw-home/openclaw.json";
-const modelProvider = args[2] ?? process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER;
+if (args[2]) {
+  process.env.REDDWARF_MODEL_PROVIDER = args[2];
+}
+const modelProvider = resolveModelProviderEnv();
 const policyRoot = process.env.REDDWARF_POLICY_ROOT ?? "/opt/reddwarf";
 const browserEnabled = readBooleanEnv("REDDWARF_OPENCLAW_BROWSER_ENABLED", true);
 const discordEnabled = readBooleanEnv("REDDWARF_OPENCLAW_DISCORD_ENABLED");
@@ -74,7 +78,7 @@ const config = generateOpenClawConfig({
   hookToken: process.env.OPENCLAW_HOOK_TOKEN,
   operatorApiToken: process.env.REDDWARF_OPERATOR_TOKEN,
   operatorApiBaseUrl: process.env.REDDWARF_OPENCLAW_OPERATOR_API_URL,
-  ...(modelProvider ? { modelProvider } : {}),
+  modelProvider,
   browser: {
     enabled: browserEnabled
   },
@@ -185,9 +189,7 @@ mkdirSync(dirname(resolvedOutputPath), { recursive: true });
 writeFileSync(resolvedOutputPath, json, "utf8");
 console.log(`Generated openclaw.json at ${resolvedOutputPath}`);
 console.log(`  Workspace root: ${resolvedWorkspaceRoot}`);
-if (modelProvider) {
-  console.log(`  Model provider: ${modelProvider}`);
-}
+console.log(`  Model provider: ${modelProvider}`);
 if (config.channels?.discord) {
   console.log("  Discord: enabled");
   if (config.channels.discord.execApprovals?.enabled) {

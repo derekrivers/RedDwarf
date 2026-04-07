@@ -6,7 +6,7 @@
 - Allow: `group:fs`, `group:runtime`, `group:openclaw`
 - Deny: `group:messaging`
 - Sandbox mode: `workspace_write`
-- Model binding: `anthropic/claude-sonnet-4-6`
+- Model binding: provider-selected reviewer or validator model from `REDDWARF_MODEL_PROVIDER`
 
 ---
 
