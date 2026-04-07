@@ -43,7 +43,7 @@ const kryten: CrewPersona = {
   name: "Kryten",
   role: "Validator",
   initial: "K",
-  avatar: "/crew/Kryten.jpg",
+  avatar: "/crew/kryten.jpg",
   accentColor: "#ae3ec9",
   accentBg: "rgba(174, 62, 201, 0.15)"
 };
