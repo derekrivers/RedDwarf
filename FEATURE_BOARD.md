@@ -87,3 +87,64 @@ Column legend: `Depends On` captures explicit delivery sequencing.
 - TypeScript strict mode must pass across all modified packages after each feature merge.
 - `verify:all` must pass after every feature. No feature may leave the test suite in a failing state.
 - The existing single-issue pipeline must remain fully operational throughout all features.
+
+---
+
+## M21 — OpenClaw Platform Integration
+
+Source reference: [`docs/openclaw/openclaw-integration-features-spec.md`](/home/derek/code/RedDwarf/docs/openclaw/openclaw-integration-features-spec.md). **Read the full spec before implementing any feature in this milestone.** It contains the architectural context, migration paths, and design decisions for each feature.
+
+Based on analysis of OpenClaw releases v2026.3.28 through v2026.4.5. All features are gated behind feature flags and disabled by default. The existing HTTP hook dispatch, polling-based completion, and static skill bootstrap must continue to work when the new features are disabled.
+
+### Phase 1 — Resilience and Observability (no dependencies, can be worked in parallel)
+
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 153 | **Model failover profiles** — Configure OpenClaw model failover chains in the generated `openclaw.json` so agent sessions automatically rotate to a fallback provider (Anthropic -> OpenAI or vice versa) on transient errors (429, 500, 503). Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be configured for failover to activate. `REDDWARF_MODEL_PROVIDER` becomes the primary preference, not the exclusive choice. Record which model served each session in run event metadata. Gate behind `REDDWARF_MODEL_FAILOVER_ENABLED`. | pending | — | [Spec §153](docs/openclaw/openclaw-integration-features-spec.md) |
+| 151 | **Structured execution items on dashboard** — Extend `openclaw-session.ts` to recognise structured execution item events from OpenClaw v2026.4.5 session transcripts. Map items to `run_events` with code `AGENT_PROGRESS_ITEM`. Surface as a live timeline on the dashboard task detail view showing what the agent is working on (pending/active/done). Update Holly, Lister, and Kryten bootstrap files to encourage emitting structured plan updates at natural milestones. Falls back to heartbeat-only display when agents do not emit items. Gate behind `REDDWARF_EXECUTION_ITEMS_ENABLED`. | pending | — | [Spec §151](docs/openclaw/openclaw-integration-features-spec.md) |
+
+### Phase 2 — Safety and Approval (unblocked by Phase 1)
+
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 152 | **Plugin approval hook for agent-side safety rails** — Add a `before_tool_call` hook in the `reddwarf-operator` plugin that intercepts file write operations against the task's policy snapshot allowed/denied paths and sensitive operations (database mutations, external network requests, large deletions). Route approval through the RedDwarf operator API so all approvals flow through the same dashboard and audit trail. Record denied tool calls as evidence records. Auto-approve operations within policy; only pause for violations. Hook must complete in < 100ms for non-approval checks. Gate behind `REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED`. | pending | 153 | [Spec §152](docs/openclaw/openclaw-integration-features-spec.md) |
+
+### Phase 3 — Orchestration Upgrade (unblocked by Phase 1)
+
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 150 | **Task Flow mirrored mode for project ticket pipeline** — Replace the serial ticket dispatch loop with an OpenClaw Task Flow in mirrored mode. On project approval, create a Task Flow via `api.runtime.taskFlow` with one child task per ticket in dependency order. RedDwarf stays the source of truth; OpenClaw manages child task lifecycle, heartbeats, and durable state. `advanceProjectTicket` becomes a flow state transition instead of a fresh dispatch. Cancellation via sticky cancel intent. Gateway restart recovery via durable flow state. Existing dispatch mechanism continues as fallback. Gate behind `REDDWARF_TASKFLOW_ENABLED`. Requires OpenClaw >= v2026.4.2. | pending | 151 | [Spec §150](docs/openclaw/openclaw-integration-features-spec.md) |
+| 154 | **ACPX embedded dispatch** — Replace HTTP hook dispatch (`POST /hooks/agent`) with ACPX session binding for tighter bidirectional communication. ACPX sessions provide streaming progress events, mid-session MCP tool queries with lower latency, and explicit session cancellation (replacing stale-run-sweep). The `OpenClawDispatchAdapter` interface stays the same; only the implementation changes. Coexists with HTTP dispatch via `REDDWARF_ACPX_DISPATCH_ENABLED`. Requires OpenClaw >= v2026.4.5. | pending | 151 | [Spec §154](docs/openclaw/openclaw-integration-features-spec.md) |
+
+### Phase 4 — Community and Intelligence (unblocked by Phase 2 or 3)
+
+| # | Feature | Status | Depends On | Spec Reference |
+| - | ------- | ------ | ---------- | -------------- |
+| 155 | **ClawHub skill publishing and dynamic discovery** — (A) Publish RedDwarf's governance skills (`reddwarf-architect-planning`, `reddwarf-developer-implementation`, `reddwarf-code-review`, `reddwarf-validation`) to ClawHub with standalone SOUL/IDENTITY/AGENTS context. (B) Enable Holly to search ClawHub for framework-specific skills during planning and install them into the session workspace for the current task only. Only skills from verified publishers or a curated allowlist. Record discovered skills as evidence metadata. Gate behind `REDDWARF_CLAWHUB_ENABLED`. Requires OpenClaw >= v2026.4.5. | pending | 152 | [Spec §155](docs/openclaw/openclaw-integration-features-spec.md) |
+| 156 | **Dreaming memory integration** — After each agent session, capture OpenClaw dreaming output (`dreams.md`) and map structured learnings to `memory_records` with `scope: "repo"`, `provenance: "agent_observed"`, and `source: "dreaming"` tag. Deduplicate across sessions. Holly sees what Lister learned about test patterns; Lister benefits from Holly's architectural observations. Operators can view and prune dreaming memories via the operator API. Gate behind `REDDWARF_DREAMING_MEMORY_ENABLED`. Requires OpenClaw >= v2026.4.5. | pending | 150, 154 | [Spec §156](docs/openclaw/openclaw-integration-features-spec.md) |
+
+### Dependency graph
+
+```
+153 (Failover) ──┬──► 152 (Plugin Approval) ──► 155 (ClawHub)
+                 │
+151 (Exec Items) ┼──► 150 (Task Flow) ──┐
+                 │                       ├──► 156 (Dreaming Memory)
+                 └──► 154 (ACPX) ───────┘
+```
+
+### Recommended execution order
+
+1. **153, 151** — independent. Start in parallel. 153 is the quickest win (config-only). 151 unlocks observability for all later features.
+2. **152** — plugin approval hook. Unblocked by 153. Adds agent-side safety before orchestration changes.
+3. **150, 154** — unblocked by 151. Can be worked in parallel. 150 is the largest change (Task Flow integration). 154 is the dispatch upgrade.
+4. **155** — unblocked by 152. Community publishing + dynamic skill discovery.
+5. **156** — unblocked by 150 + 154. Dreaming memory benefits from the improved session infrastructure.
+
+### Non-functional requirements (apply to all M21 features)
+
+- All features gated behind environment variables, disabled by default.
+- Features 150, 152, 154 require OpenClaw >= v2026.4.2. Features 151, 155, 156 require >= v2026.4.5.
+- Docker Compose config should pin to a minimum OpenClaw version rather than `latest`.
+- Existing HTTP hook dispatch, polling-based completion, and static skill bootstrap must continue to work when new features are disabled.
+- No feature may break the existing single-issue or project mode pipelines.
