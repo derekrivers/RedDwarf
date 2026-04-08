@@ -225,3 +225,20 @@ Findings originate from a comprehensive integration audit conducted 2026-04-07 c
 - No new required env vars added without a corresponding entry in `.env.example` with a comment.
 - Changes to the plugin (`reddwarf-operator`) must be verified against a local OpenClaw instance before commit.
 - TypeScript strict mode must pass across all modified packages after each feature merge.
+
+---
+
+## M23 — Dashboard & Operator UX
+
+### Phase 1 — Discord Issue Submission
+
+| # | Feature | Status | Depends On | Notes |
+| - | ------- | ------ | ---------- | ----- |
+| 174 | **Discord `/rdsubmit` command with modal form for issue creation** — Add a `/rdsubmit` slash command to the Discord operator plugin. The command first presents a `StringSelectMenu` populated from `GET /repos` for repo selection. On repo selection, open a Discord Modal form with fields: title (short text, required), summary (paragraph, required), acceptance criteria (paragraph, required, one per line). On modal submit, call the existing `POST /issues/submit` operator API endpoint with the collected fields and sensible defaults for capabilities and risk class. Reply with a confirmation embed containing the created issue number, link, and repo. Handle validation errors (missing fields, API failures) with user-friendly error messages. Requires `REDDWARF_OPENCLAW_DISCORD_ENABLED=true`. | pending | — | Uses existing `POST /issues/submit` and `GET /repos` operator API endpoints; no new backend work required. Discord Modals support up to 5 `TextInput` components but no native dropdowns, so the repo selector uses a `StringSelectMenu` message before opening the modal. |
+
+### Non-functional requirements (apply to all M23 features)
+
+- All new Discord commands must respect the existing `REDDWARF_OPENCLAW_DISCORD_ENABLED` gate and approver ID allowlist.
+- No new required env vars added without a corresponding entry in `.env.example` with a comment.
+- TypeScript strict mode must pass across all modified packages after each feature merge.
+- `verify:all` must pass after every feature.
