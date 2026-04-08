@@ -364,6 +364,9 @@ export async function resolveOpenClawConfig(options) {
               process.env.REDDWARF_OPENCLAW_DISCORD_DM_POLICY ?? "pairing",
             groupPolicy:
               process.env.REDDWARF_OPENCLAW_DISCORD_GROUP_POLICY ?? "allowlist",
+            ...(discordApproverIds.length > 0
+              ? { allowFrom: discordApproverIds }
+              : {}),
             ...(discordNotificationsEnabled
               ? {
                   streaming:
