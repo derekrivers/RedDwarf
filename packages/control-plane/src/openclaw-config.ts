@@ -44,7 +44,6 @@ export interface OpenClawHooksConfig {
 }
 
 export interface OpenClawDiscordGuildConfig {
-  enabled?: boolean;
   requireMention?: boolean;
   channels?: Record<
     string,
@@ -467,9 +466,6 @@ export function generateOpenClawConfig(
                       Object.entries(options.discord.guilds).map(([guildId, guild]) => [
                         guildId,
                         {
-                          ...(guild.enabled !== undefined
-                            ? { enabled: guild.enabled }
-                            : {}),
                           ...(guild.requireMention !== undefined
                             ? { requireMention: guild.requireMention }
                             : {}),

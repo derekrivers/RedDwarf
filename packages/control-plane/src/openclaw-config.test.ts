@@ -217,7 +217,6 @@ describe("generateOpenClawConfig", () => {
         groupPolicy: "allowlist",
         guilds: {
           "1234567890": {
-            enabled: true,
             requireMention: true
           }
         },
@@ -234,7 +233,6 @@ describe("generateOpenClawConfig", () => {
       groupPolicy: "allowlist",
       guilds: {
         "1234567890": {
-          enabled: true,
           requireMention: true
         }
       },
