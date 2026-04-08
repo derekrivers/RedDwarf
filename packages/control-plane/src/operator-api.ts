@@ -412,10 +412,14 @@ function createCorsMiddlewareRunner(): (
   });
 
   return (req, res) =>
-    new Promise<void>((resolve, reject) => {
+    new Promise<void>((resolve) => {
       middleware(req, res, (error?: unknown) => {
         if (error) {
-          reject(error);
+          writeOperatorJsonResponse(res, 403, {
+            error: "cors_rejected",
+            message: "Origin not allowed by CORS policy."
+          });
+          resolve();
           return;
         }
 

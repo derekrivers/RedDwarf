@@ -534,7 +534,7 @@ export function createGitHubWorkspaceRepoBootstrapper(
 
       await runCommand(
         "git",
-        ["clone", "--depth", "1", "--branch", input.baseBranch, remoteUrl, repoRoot],
+        ["clone", "--depth", "1", "--branch", input.baseBranch, "--", remoteUrl, repoRoot],
         input.workspace.workspaceRoot,
         input.logger,
         {
@@ -1180,7 +1180,7 @@ export function createGitWorkspaceCommitPublisher(
 
       await runCommand(
         "git",
-        ["push", "-u", pushRemote, `${input.branchName}:${input.branchName}`],
+        ["push", "-u", "--", pushRemote, `${input.branchName}:${input.branchName}`],
         repoRoot,
         input.logger,
         githubCommandOptions
