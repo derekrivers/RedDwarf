@@ -16,6 +16,9 @@ import {
   type PreScreeningAgent,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
+  type TicketSpec,
+  type ProjectPlanningResult,
   type ScmAgent,
   type TaskManifest,
   type TaskPhase,
@@ -120,7 +123,8 @@ export const EventCodes = {
   TOKEN_BUDGET_RECORDED: "TOKEN_BUDGET_RECORDED",
   TOKEN_BUDGET_EXCEEDED: "TOKEN_BUDGET_EXCEEDED",
   TOKEN_USAGE_RECORDED: "TOKEN_USAGE_RECORDED",
-  PROMPT_SNAPSHOT_RECORDED: "PROMPT_SNAPSHOT_RECORDED"
+  PROMPT_SNAPSHOT_RECORDED: "PROMPT_SNAPSHOT_RECORDED",
+  AGENT_PROGRESS_ITEM: "AGENT_PROGRESS_ITEM"
 } as const;
 
 export const DEFAULT_PHASE_STALE_AFTER_MS = 5 * 60_000;
@@ -163,6 +167,7 @@ export interface PlanningPipelineDependencies {
   planner: PlanningAgent;
   prescreener?: PreScreeningAgent;
   runtimeConfig?: WorkspaceRuntimeConfig;
+  workspaceRepoBootstrapper?: WorkspaceRepoBootstrapper;
   openClawDispatch?: OpenClawDispatchAdapter;
   openClawArchitectAgentId?: string;
   openClawArchitectAwaiter?: OpenClawCompletionAwaiter;
@@ -182,7 +187,10 @@ export interface PlanningPipelineResult {
   policySnapshot?: PolicySnapshot;
   approvalRequest?: ApprovalRequest;
   hollyHandoffMarkdown?: string;
-  nextAction: "complete" | "await_human" | "task_blocked";
+  projectSpec?: ProjectSpec;
+  ticketSpecs?: TicketSpec[];
+  projectPlanningResult?: ProjectPlanningResult;
+  nextAction: "complete" | "await_human" | "task_blocked" | "clarification_needed";
   concurrencyDecision: ConcurrencyDecision;
 }
 
@@ -233,6 +241,7 @@ export interface DevelopmentPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ArchitectureReviewPhaseDependencies {
@@ -249,6 +258,7 @@ export interface ArchitectureReviewPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ValidationPhaseDependencies {
@@ -265,6 +275,7 @@ export interface ValidationPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface ScmPhaseDependencies {
@@ -280,6 +291,7 @@ export interface ScmPhaseDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export interface DevelopmentPhaseResult {
@@ -406,6 +418,7 @@ export interface DispatchReadyTaskDependencies {
   clock?: () => Date;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export type DispatchPhaseOutcome = "completed" | "blocked" | "failed";
@@ -516,6 +529,8 @@ export interface PhaseFailureContext {
     runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github?: GitHubAdapter | undefined;
+  /** Optional callback invoked when a project transitions to `failed` (e.g. Task Flow cancellation). */
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }
 
 export type ExecutedValidationCommandResult = import("@reddwarf/contracts").ValidationCommandResult & {

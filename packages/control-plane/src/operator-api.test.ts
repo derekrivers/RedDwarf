@@ -468,8 +468,10 @@ describe("operator API server", () => {
   it("serves operator config values, schema metadata, and persists updates", async () => {
     const previousPollInterval = process.env.REDDWARF_POLL_INTERVAL_MS;
     const previousSkipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW;
+    const previousModelProvider = process.env.REDDWARF_MODEL_PROVIDER;
     delete process.env.REDDWARF_POLL_INTERVAL_MS;
     delete process.env.REDDWARF_SKIP_OPENCLAW;
+    delete process.env.REDDWARF_MODEL_PROVIDER;
 
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(
@@ -501,16 +503,24 @@ describe("operator API server", () => {
       expect((properties["REDDWARF_POLL_INTERVAL_MS"] as Record<string, unknown>)["type"]).toBe(
         "integer"
       );
+      expect(
+        (properties["REDDWARF_MODEL_PROVIDER"] as Record<string, unknown>)["enum"]
+      ).toEqual(["anthropic", "openai"]);
 
       const badUpdate = await operatorPut(port, "/config", {
         entries: [{ key: "REDDWARF_POLL_INTERVAL_MS", value: "not-a-number" }]
       });
       expect(badUpdate.status).toBe(400);
+      const badProviderUpdate = await operatorPut(port, "/config", {
+        entries: [{ key: "REDDWARF_MODEL_PROVIDER", value: "bedrock" }]
+      });
+      expect(badProviderUpdate.status).toBe(400);
 
       const updated = await operatorPut(port, "/config", {
         entries: [
           { key: "REDDWARF_POLL_INTERVAL_MS", value: 45000 },
-          { key: "REDDWARF_SKIP_OPENCLAW", value: true }
+          { key: "REDDWARF_SKIP_OPENCLAW", value: true },
+          { key: "REDDWARF_MODEL_PROVIDER", value: "openai" }
         ]
       });
       expect(updated.status).toBe(200);
@@ -529,6 +539,12 @@ describe("operator API server", () => {
         value: true,
         source: "database"
       });
+      expect(
+        updatedItems.find((entry) => entry["key"] === "REDDWARF_MODEL_PROVIDER")
+      ).toMatchObject({
+        value: "openai",
+        source: "database"
+      });
 
       await expect(
         repository.getOperatorConfigEntry("REDDWARF_POLL_INTERVAL_MS")
@@ -538,6 +554,7 @@ describe("operator API server", () => {
       });
       expect(process.env.REDDWARF_POLL_INTERVAL_MS).toBe("45000");
       expect(process.env.REDDWARF_SKIP_OPENCLAW).toBe("true");
+      expect(process.env.REDDWARF_MODEL_PROVIDER).toBe("openai");
     } finally {
       if (previousPollInterval === undefined) {
         delete process.env.REDDWARF_POLL_INTERVAL_MS;
@@ -549,6 +566,12 @@ describe("operator API server", () => {
         delete process.env.REDDWARF_SKIP_OPENCLAW;
       } else {
         process.env.REDDWARF_SKIP_OPENCLAW = previousSkipOpenClaw;
+      }
+
+      if (previousModelProvider === undefined) {
+        delete process.env.REDDWARF_MODEL_PROVIDER;
+      } else {
+        process.env.REDDWARF_MODEL_PROVIDER = previousModelProvider;
       }
 
       await apiServer.stop();
@@ -709,6 +732,9 @@ describe("operator API server", () => {
       expect(ui.body).toContain("GET /ui");
       expect(ui.body).toContain("RedDwarf Operator Panel");
       expect(ui.body).toContain("Polling & Dispatch");
+      expect(ui.body).toContain("Pending Approvals");
+      expect(ui.body).toContain("/approvals?statuses=pending");
+      expect(ui.body).toContain("data-decision=\"approve\"");
 
       const bootstrap = await operatorGet(port, "/ui/bootstrap");
       expect(bootstrap.status).toBe(200);
@@ -1308,6 +1334,67 @@ describe("operator API server", () => {
           ] as Record<string, unknown>
         )["status"]
       ).toBe("approved");
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("rejects generic approval resolution when a project-mode plan is awaiting project approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/feature.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-26T12:00:00.000Z"),
+        idGenerator: () => "op-run-project-approval-conflict"
+      }
+    );
+
+    const projectId = `project:${planResult.manifest.taskId}`;
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        projectId,
+        sourceIssueId: String(planResult.manifest.source.issueNumber ?? 10),
+        sourceRepo: planResult.manifest.source.repo
+      })
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-03-26T12:05:00.000Z") }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const resolved = await operatorPost(
+        port,
+        `/approvals/${planResult.approvalRequest!.requestId}/resolve`,
+        {
+          decision: "approve",
+          decidedBy: "operator-test",
+          decisionSummary: "Approved via the wrong route."
+        }
+      );
+      expect(resolved.status).toBe(409);
+      expect((resolved.body as Record<string, unknown>)["projectId"]).toBe(projectId);
+      expect((resolved.body as Record<string, unknown>)["approvalRoute"]).toBe(
+        `/projects/${encodeURIComponent(projectId)}/approve`
+      );
+
+      const approval = await repository.getApprovalRequest(
+        planResult.approvalRequest!.requestId
+      );
+      expect(approval?.status).toBe("pending");
+
+      const manifest = await repository.getManifest(planResult.manifest.taskId);
+      expect(manifest?.lifecycleStatus).toBe("blocked");
     } finally {
       await apiServer.stop();
     }
@@ -2089,5 +2176,1006 @@ describe("OperatorRateLimiter", () => {
     expect(limiter.allow("2.2.2.2", 1000)).toBe(true);
     expect(limiter.allow("1.1.1.1", 2000)).toBe(false);
     expect(limiter.allow("2.2.2.2", 2000)).toBe(false);
+  });
+});
+
+// ============================================================
+// Phase 3 — Project Mode operator API routes
+// ============================================================
+
+const testTimestamp = "2026-04-06T12:00:00.000Z";
+
+function buildTestProjectSpec(overrides: Partial<import("@reddwarf/contracts").ProjectSpec> = {}): import("@reddwarf/contracts").ProjectSpec {
+  return {
+    projectId: "project:task-001",
+    sourceIssueId: "10",
+    sourceRepo: "acme/platform",
+    title: "Test project",
+    summary: "A test project for operator API endpoints.",
+    projectSize: "medium",
+    status: "pending_approval",
+    complexityClassification: {
+      size: "medium",
+      reasoning: "Spans 3 packages.",
+      signals: ["multi-package"]
+    },
+    approvalDecision: null,
+    decidedBy: null,
+    decisionSummary: null,
+    amendments: null,
+    clarificationQuestions: null,
+    clarificationAnswers: null,
+    clarificationRequestedAt: null,
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+function buildTestTicketSpec(overrides: Partial<import("@reddwarf/contracts").TicketSpec> = {}): import("@reddwarf/contracts").TicketSpec {
+  return {
+    ticketId: "project:task-001:ticket:1",
+    projectId: "project:task-001",
+    title: "First ticket",
+    description: "Implement the first feature.",
+    acceptanceCriteria: ["Feature works"],
+    dependsOn: [],
+    status: "pending",
+    complexityClass: "low",
+    riskClass: "low",
+    githubSubIssueNumber: null,
+    githubPrNumber: null,
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+function buildTestParentManifest(overrides: Partial<import("@reddwarf/contracts").TaskManifest> = {}): import("@reddwarf/contracts").TaskManifest {
+  return {
+    taskId: "task-001",
+    source: {
+      provider: "github",
+      repo: "acme/platform",
+      issueNumber: 10,
+      issueUrl: "https://github.com/acme/platform/issues/10"
+    },
+    title: "Parent project task",
+    summary: "Parent task that produced the project.",
+    priority: 50,
+    dryRun: false,
+    riskClass: "medium",
+    approvalMode: "human_signoff_required",
+    currentPhase: "archive",
+    lifecycleStatus: "blocked",
+    assignedAgentType: "architect",
+    requestedCapabilities: ["can_plan"],
+    retryCount: 0,
+    evidenceLinks: ["db://project_spec/project:task-001"],
+    workspaceId: null,
+    branchName: null,
+    prNumber: null,
+    policyVersion: "test-policy",
+    createdAt: testTimestamp,
+    updatedAt: testTimestamp,
+    ...overrides
+  };
+}
+
+describe("Project Mode — GET /projects", () => {
+  it("returns an empty list when no projects exist", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects");
+      expect(res.status).toBe(200);
+      const body = res.body as { projects: unknown[]; total: number };
+      expect(body.total).toBe(0);
+      expect(body.projects).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns projects with ticket counts", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        status: "merged",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects");
+      expect(res.status).toBe(200);
+      const body = res.body as { projects: { ticketCounts: Record<string, number> }[]; total: number };
+      expect(body.total).toBe(1);
+      expect(body.projects[0]!.ticketCounts.total).toBe(2);
+      expect(body.projects[0]!.ticketCounts.pending).toBe(1);
+      expect(body.projects[0]!.ticketCounts.merged).toBe(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("filters projects by repo query parameter", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        projectId: "project:task-002",
+        sourceRepo: "other/repo"
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects?repo=acme/platform");
+      const body = res.body as { projects: { projectId: string }[]; total: number };
+      expect(body.total).toBe(1);
+      expect(body.projects[0]!.projectId).toBe("project:task-001");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects", null);
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — GET /projects/:id", () => {
+  it("returns full project with ticket children", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { projectId: string };
+        tickets: { ticketId: string }[];
+        ticketCounts: Record<string, number>;
+      };
+      expect(body.project.projectId).toBe("project:task-001");
+      expect(body.tickets).toHaveLength(1);
+      expect(body.ticketCounts.total).toBe(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(server.port, "/projects/nonexistent");
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — POST /projects/:id/approve", () => {
+  it("approves a project, creates sub-issues, and transitions to executing", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          decisionSummary: "Looks good."
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string; approvalDecision: string; decidedBy: string };
+        subIssuesFallback: boolean;
+        dispatchedTicket: { ticketId: string } | null;
+        dispatchedTaskId: string | null;
+        dispatchedTaskCreated: boolean;
+      };
+      // Project transitions all the way to executing (no adapter = fallback)
+      expect(body.project.status).toBe("executing");
+      expect(body.project.approvalDecision).toBe("approve");
+      expect(body.project.decidedBy).toBe("derek");
+      expect(body.subIssuesFallback).toBe(true);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+      expect(body.dispatchedTaskCreated).toBe(true);
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("executing");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("creates GitHub sub-issues when adapter is provided", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ sourceIssueId: "10" }));
+    await repository.saveTicketSpec(buildTestTicketSpec());
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        tickets: { githubSubIssueNumber: number | null }[];
+      };
+      expect(body.subIssuesCreated).toBe(2);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.tickets.every((t) => t.githubSubIssueNumber !== null)).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("backfills missing GitHub sub-issues for an already executing project before PRs open", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        sourceIssueId: "10",
+        status: "executing",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "fallback/repo" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        tickets: { githubSubIssueNumber: number | null; status: string }[];
+        dispatchedTicket: { ticketId: string } | null;
+        dispatchedTaskId: string | null;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(2);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.tickets.every((t) => t.githubSubIssueNumber !== null)).toBe(true);
+      expect(body.tickets.filter((t) => t.status === "dispatched")).toHaveLength(1);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("recovers an executing project whose dispatched ticket is missing a child task", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        sourceIssueId: "10",
+        status: "executing",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z")
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        subIssuesFallback: boolean;
+        dispatchedTaskId: string | null;
+        dispatchedTaskCreated: boolean;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(0);
+      expect(body.subIssuesFallback).toBe(false);
+      expect(body.dispatchedTaskId).toBe("task-001-ticket-1");
+      expect(body.dispatchedTaskCreated).toBe(true);
+
+      const childSnapshot = await repository.getTaskSnapshot("task-001-ticket-1");
+      expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("retries an incomplete approved project when all tickets are still pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "approved",
+        approvalDecision: "approve",
+        decidedBy: "derek"
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        githubSubIssueNumber: 2001
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const { FixtureGitHubIssuesAdapter } = await import("@reddwarf/integrations");
+    const adapter = new FixtureGitHubIssuesAdapter({ repo: "acme/platform" });
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-06T13:00:00.000Z"),
+        githubIssuesAdapter: adapter
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "operator" }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        project: { status: string };
+        subIssuesCreated: number;
+        dispatchedTicket: { ticketId: string } | null;
+      };
+      expect(body.project.status).toBe("executing");
+      expect(body.subIssuesCreated).toBe(1);
+      expect(body.dispatchedTicket?.ticketId).toBe("project:task-001:ticket:1");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("amends a project with amendments text", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "amend",
+          decidedBy: "derek",
+          decisionSummary: "Needs more detail on ticket 2.",
+          amendments: "Please add more detail to the second ticket's acceptance criteria."
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { project: { status: string; amendments: string } };
+      expect(body.project.status).toBe("draft");
+      expect(body.project.amendments).toContain("more detail");
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("draft");
+      expect(persisted?.amendments).toContain("more detail");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rejects amend without amendments text", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "amend", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when project is not in pending_approval status", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "draft" }));
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        "/projects/nonexistent/approve",
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" },
+        null
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — GET /projects/:id/clarifications", () => {
+  it("returns pending clarification questions", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: [
+          "What framework should the frontend use?",
+          "Is there a preferred database?"
+        ],
+        clarificationRequestedAt: testTimestamp
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        questions: string[];
+        status: string;
+        timedOut: boolean;
+        timeoutMs: number;
+      };
+      expect(body.questions).toHaveLength(2);
+      expect(body.status).toBe("clarification_pending");
+      expect(body.timedOut).toBe(false);
+      expect(body.timeoutMs).toBe(1800000);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("reports timeout when clarification has expired", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const longAgo = "2026-04-05T10:00:00.000Z";
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: ["What framework?"],
+        clarificationRequestedAt: longAgo
+      })
+    );
+
+    // Clock is well past the 30-minute timeout
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T12:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { timedOut: boolean };
+      expect(body.timedOut).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns empty questions for project not in clarification_pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorGet(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarifications`
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { questions: string[] };
+      expect(body.questions).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — POST /projects/:id/clarify", () => {
+  it("accepts clarification answers and transitions project to draft", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({
+        status: "clarification_pending",
+        clarificationQuestions: ["What framework?", "What database?"],
+        clarificationRequestedAt: testTimestamp
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date("2026-04-06T13:00:00.000Z") }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        {
+          answers: {
+            "What framework?": "React with Vite",
+            "What database?": "PostgreSQL"
+          }
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = res.body as { project: { status: string; clarificationAnswers: Record<string, string> } };
+      expect(body.project.status).toBe("draft");
+      expect(body.project.clarificationAnswers).toEqual({
+        "What framework?": "React with Vite",
+        "What database?": "PostgreSQL"
+      });
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.status).toBe("draft");
+      expect(persisted?.clarificationAnswers).toEqual({
+        "What framework?": "React with Vite",
+        "What database?": "PostgreSQL"
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when project is not in clarification_pending", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        { answers: { q1: "a1" } }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 400 with missing answers field", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ status: "clarification_pending" })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/clarify`,
+        { notAnswers: "wrong field" }
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        "/projects/nonexistent/clarify",
+        { answers: { q1: "a1" } }
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("Project Mode — POST /projects/advance", () => {
+  it("merges ticket, dispatches next, and returns advanced outcome", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        status: "dispatched",
+        githubSubIssueNumber: 2000
+      })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Second ticket",
+        dependsOn: ["project:task-001:ticket:1"],
+        githubSubIssueNumber: 2001
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string; ticket: { status: string; githubPrNumber: number }; nextDispatchedTicket: { ticketId: string } | null };
+      expect(body.outcome).toBe("advanced");
+      expect(body.ticket.status).toBe("merged");
+      expect(body.ticket.githubPrNumber).toBe(55);
+      expect(body.nextDispatchedTicket).not.toBeNull();
+      expect(body.nextDispatchedTicket!.ticketId).toBe("project:task-001:ticket:2");
+      expect((res.body as { nextDispatchedTaskId: string | null }).nextDispatchedTaskId).toBe(
+        "task-001-ticket-2"
+      );
+
+      const childSnapshot = await repository.getTaskSnapshot("task-001-ticket-2");
+      expect(childSnapshot.manifest?.lifecycleStatus).toBe("ready");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("completes project when all tickets are merged", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveManifest(buildTestParentManifest());
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "merged" })
+    );
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({
+        ticketId: "project:task-001:ticket:2",
+        title: "Last ticket",
+        status: "dispatched",
+        dependsOn: ["project:task-001:ticket:1"]
+      })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:2",
+        github_pr_number: 56
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string; project: { status: string } };
+      expect(body.outcome).toBe("completed");
+      expect(body.project.status).toBe("complete");
+      const parentManifest = await repository.getManifest("task-001");
+      expect(parentManifest?.lifecycleStatus).toBe("completed");
+      expect(parentManifest?.currentPhase).toBe("archive");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns already_merged for idempotent re-advance", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "merged", githubPrNumber: 55 })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { outcome: string };
+      expect(body.outcome).toBe("already_merged");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 404 for nonexistent ticket", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "nonexistent",
+        github_pr_number: 1
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when advancing a ticket that is not dispatched or pr_open", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec({ status: "executing" }));
+    await repository.saveTicketSpec(
+      buildTestTicketSpec({ status: "pending" })
+    );
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      });
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe("conflict");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 400 for invalid payload", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        wrong_field: "bad"
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 400 for a non-integer PR number", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55.5
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 401 without auth token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/advance", {
+        ticket_id: "project:task-001:ticket:1",
+        github_pr_number: 55
+      }, null);
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
   });
 });

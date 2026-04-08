@@ -42,6 +42,8 @@ export interface WorkspaceRepoBootstrapper {
 export interface OpenClawCompletionResult {
   handoffPath: string;
   repoRoot: string | null;
+  /** Path to the OpenClaw session JSONL transcript, if it could be located. */
+  sessionTranscriptPath: string | null;
 }
 
 export interface ArchitectureReviewCompletionResult {
@@ -520,6 +522,7 @@ export function createGitHubWorkspaceRepoBootstrapper(
     async ensureRepo(input) {
       const repoRoot = join(input.workspace.workspaceRoot, "repo");
       const remoteUrl = buildGitHubRemoteUrl(input.manifest.source.repo);
+      assertSafeGitRef(input.baseBranch);
 
       if (await pathExists(join(repoRoot, ".git"))) {
         return {
@@ -531,7 +534,7 @@ export function createGitHubWorkspaceRepoBootstrapper(
 
       await runCommand(
         "git",
-        ["clone", "--depth", "1", "--branch", input.baseBranch, remoteUrl, repoRoot],
+        ["clone", "--depth", "1", "--branch", input.baseBranch, "--", remoteUrl, repoRoot],
         input.workspace.workspaceRoot,
         input.logger,
         {
@@ -553,6 +556,8 @@ export interface ArchitectHandoffAwaiterOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  handoffFileName?: string;
+  requiredHeadings?: readonly string[];
 }
 
 export function createArchitectHandoffAwaiter(
@@ -562,10 +567,19 @@ export function createArchitectHandoffAwaiter(
   const pollIntervalMs = options.pollIntervalMs ?? 2000;
   const defaultHeartbeatIntervalMs =
     options.heartbeatIntervalMs ?? DEFAULT_OPENCLAW_HEARTBEAT_INTERVAL_MS;
+  const handoffFileName = options.handoffFileName ?? "architect-handoff.md";
+  const requiredHeadings = options.requiredHeadings ?? [
+    "# Architecture Handoff",
+    "## Summary",
+    "## Implementation Approach",
+    "## Affected Files",
+    "## Risks and Assumptions",
+    "## Test Strategy"
+  ];
 
   return {
     async waitForCompletion(input) {
-      const handoffPath = join(input.workspace.artifactsDir, "architect-handoff.md");
+      const handoffPath = join(input.workspace.artifactsDir, handoffFileName);
       const deadline = Date.now() + timeoutMs;
       let lastHeartbeatAt = Date.now();
       const heartbeatIntervalMs =
@@ -574,18 +588,12 @@ export function createArchitectHandoffAwaiter(
       while (Date.now() < deadline) {
         if (await pathExists(handoffPath)) {
           const handoff = await readFile(handoffPath, "utf8");
-          const headings = [
-            "# Architecture Handoff",
-            "## Summary",
-            "## Implementation Approach",
-            "## Affected Files",
-            "## Risks and Assumptions",
-            "## Test Strategy"
-          ];
-          const hasAllHeadings = headings.every((heading) => handoff.includes(heading));
+          const hasAllHeadings = requiredHeadings.every((heading) =>
+            handoff.includes(heading)
+          );
 
           if (hasAllHeadings) {
-            return { handoffPath, repoRoot: null };
+            return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
           }
         }
 
@@ -716,7 +724,7 @@ export function createDeveloperHandoffAwaiter(
             expectedCodeWritingDeclaration &&
             (codeWriteEnabled ? repoHasChanges : true)
           ) {
-            return { handoffPath, repoRoot };
+            return { handoffPath, repoRoot, sessionTranscriptPath };
           }
         }
 
@@ -1168,10 +1176,11 @@ export function createGitWorkspaceCommitPublisher(
         timeoutMs: commandTimeoutMs
       };
       const pushRemote = buildGitHubRemoteUrl(input.manifest.source.repo);
+      assertSafeGitRef(input.branchName);
 
       await runCommand(
         "git",
-        ["push", "-u", pushRemote, `${input.branchName}:${input.branchName}`],
+        ["push", "-u", "--", pushRemote, `${input.branchName}:${input.branchName}`],
         repoRoot,
         input.logger,
         githubCommandOptions
@@ -1491,6 +1500,35 @@ function globPatternToRegExp(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
+/**
+ * Validates that a GitHub repo slug matches the expected `owner/name` format.
+ * Rejects values that could inject shell arguments or path traversal.
+ */
+const SAFE_REPO_PATTERN = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+
+function assertSafeRepoSlug(repo: string): void {
+  if (!SAFE_REPO_PATTERN.test(repo)) {
+    throw new Error(
+      `Refusing to use repo slug that does not match owner/name format: ${repo.slice(0, 80)}`
+    );
+  }
+}
+
+/**
+ * Validates that a git ref name is safe to pass as a command argument.
+ * Rejects values containing shell metacharacters, double-dots, or leading dashes.
+ */
+const SAFE_REF_PATTERN = /^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$/;
+
+function assertSafeGitRef(ref: string): void {
+  if (!SAFE_REF_PATTERN.test(ref) || ref.includes("..")) {
+    throw new Error(
+      `Refusing to use git ref that contains unsafe characters: ${ref.slice(0, 80)}`
+    );
+  }
+}
+
 function buildGitHubRemoteUrl(repo: string): string {
+  assertSafeRepoSlug(repo);
   return `https://github.com/${repo}.git`;
 }

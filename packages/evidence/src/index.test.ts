@@ -397,6 +397,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       confidenceLevel: "high",
       confidenceReason: "The fixture models a previously accepted planning task.",
+      projectSize: "small",
       createdAt: timestamp
     });
 
@@ -416,6 +417,303 @@ describe("evidence memory partitions", () => {
         issueUrl: "https://github.com/acme/platform/issues/78"
       })
     ).resolves.toBe(false);
+  });
+
+  it("stores and retrieves project specs with ticket specs", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-001",
+      sourceIssueId: "42",
+      sourceRepo: "acme/platform",
+      title: "Project Mode implementation",
+      summary: "Add a dedicated planning phase for medium and large requests.",
+      projectSize: "large",
+      status: "draft",
+      complexityClassification: {
+        size: "large",
+        reasoning: "Spans 5+ packages and requires new DB migrations.",
+        signals: ["multi-package", "new-schema", "new-integration"]
+      },
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await repository.saveTicketSpec({
+      ticketId: "ticket-001",
+      projectId: "proj-001",
+      title: "Complexity classifier",
+      description: "Add complexity sizing to Rimmer intake.",
+      acceptanceCriteria: ["Classifies small/medium/large"],
+      dependsOn: [],
+      status: "pending",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveTicketSpec({
+      ticketId: "ticket-002",
+      projectId: "proj-001",
+      title: "Schema and persistence",
+      description: "Add project_specs and ticket_specs tables.",
+      acceptanceCriteria: ["Tables created", "Repositories implemented"],
+      dependsOn: ["ticket-001"],
+      status: "pending",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: "2026-03-25T20:21:00.000Z",
+      updatedAt: "2026-03-25T20:21:00.000Z"
+    });
+
+    await expect(repository.getProjectSpec("proj-001")).resolves.toMatchObject({
+      projectId: "proj-001",
+      projectSize: "large",
+      status: "draft"
+    });
+    await expect(repository.listProjectSpecs("acme/platform")).resolves.toHaveLength(1);
+    await expect(repository.listProjectSpecs("other/repo")).resolves.toHaveLength(0);
+    await expect(repository.listTicketSpecs("proj-001")).resolves.toHaveLength(2);
+  });
+
+  it("resolveNextReadyTicket returns the first ticket whose dependencies are all merged", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-002",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Test project",
+      summary: "A test project for resolveNextReady.",
+      projectSize: "medium",
+      status: "executing",
+      complexityClassification: null,
+      approvalDecision: "approve",
+      decidedBy: "operator",
+      decisionSummary: "Approved",
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await repository.saveTicketSpec({
+      ticketId: "t-a",
+      projectId: "proj-002",
+      title: "First ticket",
+      description: "No dependencies.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: [],
+      status: "merged",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveTicketSpec({
+      ticketId: "t-b",
+      projectId: "proj-002",
+      title: "Second ticket",
+      description: "Depends on t-a.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: ["t-a"],
+      status: "pending",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: "2026-03-25T20:21:00.000Z",
+      updatedAt: "2026-03-25T20:21:00.000Z"
+    });
+    await repository.saveTicketSpec({
+      ticketId: "t-c",
+      projectId: "proj-002",
+      title: "Third ticket",
+      description: "Depends on t-a and t-b.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: ["t-a", "t-b"],
+      status: "pending",
+      complexityClass: "medium",
+      riskClass: "medium",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: "2026-03-25T20:22:00.000Z",
+      updatedAt: "2026-03-25T20:22:00.000Z"
+    });
+
+    const next = await repository.resolveNextReadyTicket("proj-002");
+    expect(next).toMatchObject({ ticketId: "t-b" });
+  });
+
+  it("resolveNextReadyTicket returns null when all tickets are merged or blocked", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-003",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Complete project",
+      summary: "All tickets merged.",
+      projectSize: "small",
+      status: "complete",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await repository.saveTicketSpec({
+      ticketId: "t-done",
+      projectId: "proj-003",
+      title: "Only ticket",
+      description: "Already merged.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: [],
+      status: "merged",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await expect(repository.resolveNextReadyTicket("proj-003")).resolves.toBeNull();
+  });
+
+  it("updates project and ticket statuses independently", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-004",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Status test",
+      summary: "Test status transitions.",
+      projectSize: "medium",
+      status: "draft",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveTicketSpec({
+      ticketId: "t-status",
+      projectId: "proj-004",
+      title: "Status ticket",
+      description: "Test ticket status update.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: [],
+      status: "pending",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    // Use valid transition path: draft → pending_approval → approved → executing
+    await repository.updateProjectStatus("proj-004", "pending_approval");
+    await repository.updateProjectStatus("proj-004", "approved");
+    await repository.updateProjectStatus("proj-004", "executing");
+    await repository.updateTicketStatus("t-status", "dispatched");
+
+    const project = await repository.getProjectSpec("proj-004");
+    const ticket = await repository.getTicketSpec("t-status");
+    expect(project?.status).toBe("executing");
+    expect(ticket?.status).toBe("dispatched");
+  });
+
+  it("rolls back project and ticket writes in memory transactions", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-rollback",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Rollback project",
+      summary: "Test project transaction rollback.",
+      projectSize: "medium",
+      status: "executing",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await repository.saveTicketSpec({
+      ticketId: "t-rollback",
+      projectId: "proj-rollback",
+      title: "Rollback ticket",
+      description: "Test ticket transaction rollback.",
+      acceptanceCriteria: ["Done"],
+      dependsOn: [],
+      status: "dispatched",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await expect(
+      repository.runInTransaction(async (transaction) => {
+        await transaction.saveProjectSpec({
+          ...(await transaction.getProjectSpec("proj-rollback"))!,
+          status: "failed",
+          updatedAt: "2026-03-25T20:30:00.000Z"
+        });
+        await transaction.saveTicketSpec({
+          ...(await transaction.getTicketSpec("t-rollback"))!,
+          status: "failed",
+          updatedAt: "2026-03-25T20:30:00.000Z"
+        });
+        throw new Error("rollback");
+      })
+    ).rejects.toThrow(/rollback/);
+
+    await expect(repository.getProjectSpec("proj-rollback")).resolves.toMatchObject({
+      status: "executing",
+      updatedAt: timestamp
+    });
+    await expect(repository.getTicketSpec("t-rollback")).resolves.toMatchObject({
+      status: "dispatched",
+      updatedAt: timestamp
+    });
   });
 
   it("claims active runs atomically in memory, retiring stale overlaps and blocking fresh ones", async () => {

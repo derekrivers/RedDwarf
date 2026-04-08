@@ -10,8 +10,11 @@ import {
   memoryScopes,
   phaseLifecycleStatuses,
   pipelineRunStatuses,
+  projectSizes,
+  projectStatuses,
   riskClasses,
   taskLifecycleStatuses,
+  ticketStatuses,
   githubIssuePollingCursorStatuses,
   taskPhases
 } from "@reddwarf/contracts";
@@ -32,6 +35,9 @@ export const memoryScopeEnum = pgEnum("memory_scope", memoryScopes);
 export const memoryProvenanceEnum = pgEnum("memory_provenance", memoryProvenances);
 export const concurrencyStrategyEnum = pgEnum("concurrency_strategy", concurrencyStrategies);
 export const pipelineRunStatusEnum = pgEnum("pipeline_run_status", pipelineRunStatuses);
+export const projectSizeEnum = pgEnum("project_size", projectSizes);
+export const projectStatusEnum = pgEnum("project_status", projectStatuses);
+export const ticketStatusEnum = pgEnum("ticket_status", ticketStatuses);
 
 export const manifestsTable = pgTable("task_manifests", {
   taskId: text("task_id").primaryKey(),
@@ -86,6 +92,7 @@ export const planningSpecsTable = pgTable("planning_specs", {
   riskClass: riskClassEnum("risk_class").notNull(),
   confidenceLevel: text("confidence_level").notNull(),
   confidenceReason: text("confidence_reason").notNull(),
+  projectSize: projectSizeEnum("project_size"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull()
 });
 
@@ -201,6 +208,42 @@ export const promptSnapshotsTable = pgTable("prompt_snapshots", {
   promptHash: text("prompt_hash").notNull(),
   promptPath: text("prompt_path").notNull(),
   capturedAt: timestamp("captured_at", { withTimezone: true }).notNull()
+});
+
+export const projectSpecsTable = pgTable("project_specs", {
+  projectId: text("project_id").primaryKey(),
+  sourceIssueId: text("source_issue_id"),
+  sourceRepo: text("source_repo").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  projectSize: projectSizeEnum("project_size").notNull(),
+  status: projectStatusEnum("status").notNull(),
+  complexityClassification: jsonb("complexity_classification"),
+  approvalDecision: text("approval_decision"),
+  decidedBy: text("decided_by"),
+  decisionSummary: text("decision_summary"),
+  amendments: text("amendments"),
+  clarificationQuestions: jsonb("clarification_questions"),
+  clarificationAnswers: jsonb("clarification_answers"),
+  clarificationRequestedAt: timestamp("clarification_requested_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
+});
+
+export const ticketSpecsTable = pgTable("ticket_specs", {
+  ticketId: text("ticket_id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  acceptanceCriteria: jsonb("acceptance_criteria").notNull(),
+  dependsOn: jsonb("depends_on").notNull(),
+  status: ticketStatusEnum("status").notNull(),
+  complexityClass: riskClassEnum("complexity_class").notNull(),
+  riskClass: riskClassEnum("risk_class").notNull(),
+  githubSubIssueNumber: integer("github_sub_issue_number"),
+  githubPrNumber: integer("github_pr_number"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
 
 export const eligibilityRejectionsTable = pgTable("eligibility_rejections", {

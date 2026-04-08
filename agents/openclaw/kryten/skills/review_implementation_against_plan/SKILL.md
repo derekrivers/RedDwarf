@@ -25,6 +25,21 @@ You serve two pipeline phases. Determine which phase you are in from the task co
 
 If the task context does not make the phase clear, apply both checklists.
 
+## Structured Progress Updates
+
+Emit a `plan_update` event at the start of each review phase so the RedDwarf dashboard can show a live progress timeline:
+
+```json
+{ "type": "plan_update", "items": [
+  { "id": "read-context",  "title": "Reading issue, plan, and implementation report", "status": "active"  },
+  { "id": "inspect-code",  "title": "Inspecting changed repository files",            "status": "pending" },
+  { "id": "check-tests",   "title": "Checking test coverage and results",             "status": "pending" },
+  { "id": "verdict",       "title": "Producing pass / rework recommendation",         "status": "pending" }
+] }
+```
+
+Update each item to `done` (with `durationMs`) as you complete it. This is informational only and does not affect pipeline state.
+
 ## Architecture Review Process
 
 1. Read the issue and acceptance criteria carefully.

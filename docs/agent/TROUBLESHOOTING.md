@@ -1,5 +1,173 @@
 # Troubleshooting
 
+## `verify-packaged-policy-pack.mjs` fails with `AssertionError ... 6 !== 5`
+
+- Symptom: `node scripts/verify-packaged-policy-pack.mjs` or `corepack pnpm verify:package` fails in CI or locally with `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 6 !== 5` from the packaged verifier.
+- Root cause: the execution-plane now ships six packaged OpenClaw role definitions because `reddwarf-developer-opus` was added alongside the standard developer, but the verifier still asserted the older five-role count.
+- Failing approach: debugging the policy-pack staging logic, packaged `node_modules`, or workspace materialization first. The package contents are usually fine; the assertion is stale.
+- Working workaround: update `scripts/verify-packaged-policy-pack.mjs` to assert the current packaged roster shape directly, for example by checking the exported `agentId` list instead of a brittle hard-coded count.
+- Verification: rerun `corepack pnpm verify:package`; the script should complete and report `openClawRoleCount: 6`.
+
+## `verify:package` fails with `EACCES: permission denied, mkdir '.../artifacts/policy-packs/...`
+
+- Symptom: local runs of `node scripts/verify-packaged-policy-pack.mjs` or `corepack pnpm verify:package` fail before the packaged assertions run, with `EACCES: permission denied, mkdir '/home/derek/code/RedDwarf/artifacts/policy-packs/...'`.
+- Root cause: this checkout's `artifacts/` tree can be owned by `nobody:nogroup`, so the verifier cannot write its temporary packaged output to the repo-default `artifacts/policy-packs` destination.
+- Failing approach: re-running the same verifier command unchanged from the same shell.
+- Working workaround: verify the packaging flow with `createPolicyPackPackage({ outputRoot: '/tmp/reddwarf-policy-pack-verification' })`, or restore write ownership on `artifacts/policy-packs` before rerunning the stock script.
+- Verification: the `/tmp`-rooted verification should complete and print a JSON summary including `openClawRoleCount: 6`.
+
+## New GitHub issue fails planning immediately with `OpenClaw ACPX session creation returned 404`
+
+- Symptom: a new `ai-eligible` GitHub issue is ingested, the task manifest is created, and planning fails within about a second. `/health` shows polling degraded with `lastPollError: OpenClaw ACPX session creation returned 404: Not Found`. The task snapshot has no `PlanningSpec` or approvals, only intake/eligibility passed and planning failed.
+- Root cause: `REDDWARF_ACPX_DISPATCH_ENABLED=true` makes RedDwarf dispatch Holly/Lister through `POST /acpx/sessions`, but the currently running OpenClaw gateway image may not expose that endpoint even though `/health` and the Control UI are healthy. A `GET /acpx/sessions` can return the Control UI HTML while `POST /acpx/sessions` returns `404 Not Found`.
+- Failing approach: treating this as a stuck agent session, approval blockage, or GitHub polling freeze. Holly never starts; the failure happens before OpenClaw session creation.
+- Working workaround: set `REDDWARF_ACPX_DISPATCH_ENABLED=false` in `.env`, restart the stack through the standard start flow, and use the working `/hooks/agent` dispatch path until the deployed OpenClaw gateway supports ACPX sessions. Confirm hook ingress with a safe empty-body probe: `POST /hooks/agent` should return `400 {"ok":false,"error":"message required"}` rather than `404`.
+- Verification: after restart, `GET /health` should stop reporting the ACPX 404 for the polled repo, `POST /acpx/sessions` no longer appears in failed task evidence, and re-running issue intake should produce an architect dispatch or a normal planning/project approval result.
+
+## Project handoff exists but `/projects` is empty and the task falls back to a generic approval
+
+- Symptom: a medium/large issue creates both architect workspaces and `project-architect-handoff.md`, but `/projects` stays empty. The task list shows the parent task blocked on a generic `policy_gate` approval instead of `projectApprovalRequired`.
+- Root cause: Holly may generate ticket titles containing commas and then use that exact title in a dependency line. Older parsing split dependency text on every comma before checking known ticket titles, so a dependency such as `Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision` became `Implement frightened mode` and failed unknown-dependency validation. The planning pipeline then swallowed the Project Mode error and fell back to the legacy single-task approval path.
+- Failing approach: approving the generic task approval, recreating the issue without changing the parser, or assuming the missing `/projects` row means project planning never ran.
+- Working workaround: run a build where project dependency parsing checks exact known ticket titles before comma-splitting, ticket markdown sections stop at same-or-higher heading levels, and Project Mode planning errors are rethrown instead of creating a generic approval fallback. Existing issues that already fell back, such as `derekrivers/FirstVoyage#74`, should be requeued or recreated after restart.
+- Verification: run `corepack pnpm exec tsx -e "import { readFileSync } from 'node:fs'; import { parseProjectArchitectHandoff } from './packages/control-plane/src/pipeline/prompts.ts'; const markdown=readFileSync('runtime-data/workspaces/derekrivers-firstvoyage-74-project-architect/artifacts/project-architect-handoff.md','utf8'); console.log(JSON.stringify(parseProjectArchitectHandoff(markdown), null, 2));"` against the live handoff, plus `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts` and the focused Project Mode planning regression in `packages/control-plane/src/index.test.ts`.
+
+## Project ticket child task fails but the project dashboard still looks healthy
+
+- Symptom: a project-ticket child task exhausts its retry budget and shows a pending `failure-automation` approval, but `/projects/:id` still shows the project as `executing` and the ticket as `dispatched` or `pr_open` instead of surfacing the failure.
+- Root cause: child task failure recovery originally updated only the task manifest, run, phase records, and failure approval. The `project.ticket` memory link was not used to synchronize the originating `TicketSpec` or `ProjectSpec`.
+- Failing approach: checking only `/projects/:id` to decide whether a project is healthy after child task failure, or manually advancing the failed ticket while the child task is waiting on failure recovery.
+- Working workaround: run a build where recoverable phase escalation reads the child task's `project.ticket` memory and marks the linked `TicketSpec` plus `ProjectSpec` as `failed`. If the operator approves the failure retry, RedDwarf restores the project to `executing` and the ticket to `dispatched` before the dispatcher retries the child task.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-ticket-state.test.ts`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "escalates validation failures after the retry budget and creates a follow-up issue"`.
+
+## `/projects/advance` can mutate the wrong ticket if the workflow marker is stale or wrong
+
+- Symptom: a bad manual API call or malformed PR body marker calls `POST /projects/advance` for a ticket that is still `pending`, already dependency-blocked, or belongs to a project that is not executing.
+- Root cause: the merge callback originally treated any non-merged `TicketSpec` as advanceable. That made the endpoint idempotent for duplicate merge events, but it also allowed invalid callbacks to mark tickets as `merged` even when no project-ticket PR was open.
+- Failing approach: trusting the caller-supplied `ticket_id` without checking the current `TicketSpec` and `ProjectSpec` states.
+- Working workaround: require the project to be `executing` and the ticket to be `dispatched` or `pr_open` before applying a merge callback. Already-`merged` tickets still return the idempotent `already_merged` outcome.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-approval.test.ts packages/control-plane/src/operator-api.test.ts`; invalid advance requests should return `409 conflict`.
+
+## Project is complete but the parent task still looks blocked
+
+- Symptom: all project tickets have merged and `/projects/:id` shows `status: "complete"`, but task views or snapshots for the original parent task still show `lifecycleStatus: "blocked"` from the project-planning approval gate.
+- Root cause: `/projects/advance` previously completed only the `ProjectSpec`. It did not update the parent task manifest (`project:<taskId>` -> `<taskId>`) after the final ticket merge, so task-level observability kept reporting the old blocked planning run even though the project was done.
+- Failing approach: treating the stale parent task state as evidence that another approval is needed, or restarting the service to clear the blocked state.
+- Working workaround: run a build where `advanceProjectTicket(...)` completes the parent manifest when all tickets are merged. The manifest should move to `currentPhase: "archive"` and `lifecycleStatus: "completed"` at the same timestamp as the completed project.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-approval.test.ts packages/control-plane/src/operator-api.test.ts`; after the final merge callback, confirm `/projects/:id` is `complete` and `GET /tasks/<parent-task-id>` or the task snapshot shows `lifecycleStatus: "completed"`.
+
+## Project ticket stays pending forever because a dependency cannot resolve
+
+- Symptom: a project approval or merge callback succeeds, but a later ticket remains `pending` forever even though the tickets it visibly depends on appear to be merged. `resolveNextReadyTicket(...)` returns no next ticket and `/projects/advance` reports no next ticket ready.
+- Root cause: Holly project handoffs express dependencies by ticket title before RedDwarf converts them to `TicketSpec.ticketId` refs. If a dependency title is misspelled, duplicated, self-referential, or cyclic, the persisted dependency graph can become unsatisfiable or ambiguous.
+- Failing approach: persisting raw dependency text and relying on `resolveNextReadyTicket(...)` to recover later, or manually re-approving the project without fixing the malformed ticket graph.
+- Working workaround: reject malformed project handoffs before persistence. Ticket titles must be unique, each dependency must match another generated ticket title exactly, dependencies must form an acyclic graph, and a ticket cannot depend on itself.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; malformed handoffs should fail during project planning instead of producing a permanently pending `TicketSpec`.
+
+## Project-ticket PR opens but the project still shows only `dispatched`
+
+- Symptom: a project ticket reaches SCM and opens a pull request, but `/projects/:id` still shows the ticket as `dispatched` with `githubPrNumber: null` and the dashboard has no PR number to display before merge.
+- Root cause: project-ticket SCM previously only updated the child task manifest with the PR number. It appended the `reddwarf:ticket_id` merge marker to the PR body, but it did not update the originating `TicketSpec` until the later merge-driven `/projects/advance` callback.
+- Failing approach: waiting for the dashboard to infer the ticket PR from the child task manifest, or assuming `dispatched` means “PR is open” during manual recovery.
+- Working workaround: run a build where `runScmPhase(...)` reads `project.ticket` memory, then marks the originating `TicketSpec` as `pr_open` and records `githubPrNumber` immediately after `github.createPullRequest(...)` succeeds. The merge callback still transitions that ticket from `pr_open` to `merged`.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/scm.test.ts`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "routes approved PR tasks from validation into SCM and completes the task"`; confirm `/projects/:id` shows `pr_open` and the PR number while review is pending.
+
+## Merge workflow cannot call `/projects/advance` because the operator API URL was stored in the wrong GitHub Actions namespace
+
+- Symptom: a project-ticket PR merges, but the `RedDwarf Ticket Advance` workflow fails with `REDDWARF_OPERATOR_API_URL is not set` even though the URL was added during setup, or it posts to a malformed URL when the configured base URL includes a trailing slash.
+- Root cause: the workflow originally read `REDDWARF_OPERATOR_API_URL` only from GitHub Actions variables, while setup guidance could lead operators to store it as a secret. It also appended `/projects/advance` directly to the configured value, so a trailing slash could produce a double-slash path.
+- Failing approach: moving the URL back and forth between secrets and variables without changing the workflow, or requiring operators to remember an exact no-trailing-slash format.
+- Working workaround: run a workflow version that falls back from `vars.REDDWARF_OPERATOR_API_URL` to `secrets.REDDWARF_OPERATOR_API_URL` and trims one trailing slash before calling `/projects/advance`.
+- Verification: inspect `.github/workflows/reddwarf-advance.yml` for `${{ vars.REDDWARF_OPERATOR_API_URL || secrets.REDDWARF_OPERATOR_API_URL }}` and `REDDWARF_OPERATOR_API_BASE_URL="${REDDWARF_OPERATOR_API_URL%/}"`; then merge a project-ticket PR and confirm `/projects/advance` receives a positive integer `github_pr_number`.
+
+## Project-mode poller tests try to clone `https://github.com/acme/platform.git`
+
+- Symptom: `packages/control-plane/src/polling-daemon.test.ts` fails in the medium/project-mode case with `git clone --depth 1 --branch main https://github.com/acme/platform.git ... fatal: could not read Username for 'https://github.com'`.
+- Root cause: architect repo bootstrapping became injectable through `workspaceRepoBootstrapper`, but the GitHub issue poller did not forward that dependency into `runPlanningPipeline(...)`. The planning path therefore fell back to the default live GitHub bootstrapper in a fixture test.
+- Failing approach: allowing project-mode poller tests to rely on live network clone access for `acme/platform`, or fixing only the test without forwarding the dependency in production wiring.
+- Working workaround: declare `workspaceRepoBootstrapper` on `GitHubIssuePollingDependencies`, pass it through to `runPlanningPipeline(...)`, and use a fixture bootstrapper in the project-mode polling regression.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; `corepack pnpm typecheck`.
+
+## Project approval creates child issues but no developer workspace starts
+
+- Symptom: `/projects/:id` shows a project in `executing`, ticket 1 is `dispatched`, and GitHub child issues such as `[1/3] ...` exist, but `/runs` has no developer run for the child issue/ticket and `runtime-data/workspaces/` has no `*-workspace` directory for that project ticket.
+- Root cause: older Project Mode approval only mutated `TicketSpec.status = "dispatched"`. It did not materialize a normal RedDwarf task manifest/planning spec/policy snapshot/approved policy-gate row for that ticket, so the existing ready-task dispatcher had nothing to pick up.
+- Failing approach: treating `TicketSpec.status = "dispatched"` as equivalent to a queued developer task, or expecting child issues labeled only `reddwarf-ticket` to be re-ingested through the normal `ai-eligible` GitHub poller.
+- Working workaround: run a build where project-ticket dispatch creates a deterministic ready child task for the dispatched ticket. For an already-`executing` project with child issues but no ticket task, re-run `POST /projects/:id/approve`; the recovery path materializes the missing child task without recreating sub-issues or changing ticket order.
+- Verification: `GET /projects/:id` still shows exactly one dispatched ticket, `GET /tasks?limit=...` or `GET /tasks/<ticket-task-id>/snapshot` shows the child task in `ready`/`development`, the ready-task dispatcher starts a developer workspace on its next cycle, and project-ticket PR bodies include `<!-- reddwarf:ticket_id:... -->` so the merge workflow can call `/projects/advance`.
+
+## Project approval executes internally but no GitHub child issues appear
+
+- Symptom: `/projects/:id` shows a project in `executing`, at least one ticket is `dispatched`, but every ticket still has `githubSubIssueNumber: null` and GitHub's issue list does not show child issues such as `[1/3] ...`.
+- Root cause: project approval can fall back to Postgres-only execution when the GitHub Issues adapter is disabled or unavailable. Older builds also required a global `GITHUB_REPO`, even though the project already persisted `sourceRepo`, so a correctly-ingested project could still dispatch internally without external child issue creation.
+- Failing approach: trusting ticket `dispatched` as proof that GitHub child issues exist, or re-approving an already-`executing` project on older builds where the recovery path only handled `approved` projects with all tickets still pending.
+- Working workaround: enable `REDDWARF_GITHUB_ISSUES_ENABLED=true`, run a build where project approval passes `ProjectSpec.sourceRepo` to the GitHub Issues adapter, and re-run `POST /projects/:id/approve` when the project is already `executing` with missing sub-issue links and no ticket PRs yet. The recovery path backfills missing child issues without redispatching tickets.
+- Verification: `GET /projects/:id` should show non-null `githubSubIssueNumber` values after recovery, `subIssuesCreated` should be greater than zero, and GitHub should show the corresponding child issues in the source repo.
+
+## Holly still gets stuck after repo bootstrap because she cannot enumerate directories
+
+- Symptom: the architect workspace contains `repo/.git`, but Holly still starts by calling `read` on the repo directory, gets `EISDIR`, then falls back to browser inspection or spawns a subagent to enumerate the repo. The subagent returns an incomplete directory summary and the architect handoff never appears.
+- Root cause: the repo checkout alone is not enough when the analyst runtime lacks a directory-listing primitive. The `read` tool can open files but cannot list directories, and spawned analyst subagents inherit the same limitation.
+- Failing approach: relying on Holly or analyst subagents to discover the repo structure by reading directories directly, or assuming the browser fallback will be available in the runtime.
+- Working workaround: generate a readable `REPO_INDEX.md` file in architect and project-architect workspaces and instruct Holly to read it first. That gives the analyst a file-based repo tree she can inspect with the existing `read` tool.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "fences untrusted GitHub issue content in architect and developer prompts|keeps project-mode plans blocked without creating a legacy policy-gate approval request"`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; `corepack pnpm typecheck`.
+
+## Holly architect sessions stall because the planning workspace has no repo checkout
+
+- Symptom: a GitHub issue creates an `*-architect` workspace and OpenClaw session, but no `architect-handoff.md` appears. The Holly transcript shows `read` failing with `EISDIR` on workspace directories, browser fallbacks reporting `No supported browser found`, and `web_fetch` calls against GitHub HTML/raw URLs instead of grounded local repo inspection.
+- Root cause: the planning pipeline used to create only the architect workspace `artifacts/` directory before dispatch. Holly received a generic `/var/lib/reddwarf/workspaces` hint in the prompt, but there was no checked-out `repo/` inside the architect workspace to inspect with filesystem tools.
+- Failing approach: retrying the same issue intake, increasing the planning timeout, or relying on browser/web fallbacks when the analyst workspace itself does not contain a repo checkout.
+- Working workaround: run a build where architect and project-architect dispatch bootstrap `workspaceRoot/repo` before OpenClaw dispatch and the prompt points Holly at that explicit checkout path. With that fix, the awaiter sees a real repo checkout before Holly starts planning.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts -t "fences untrusted GitHub issue content in architect and developer prompts|keeps project-mode plans blocked without creating a legacy policy-gate approval request"`; `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/pipeline/project-planning.test.ts`; `corepack pnpm typecheck`.
+
+## `node scripts/start-stack.mjs` fails immediately with `Identifier 'createRestGitHubAdapter' has already been declared`
+
+- Symptom: Node aborts before any stack startup work begins and points at `scripts/start-stack.mjs` with a parse-time `SyntaxError` for `createRestGitHubAdapter`.
+- Root cause: the script imported `createRestGitHubAdapter` at module scope and then redeclared the same identifier inside a later dynamic import destructure.
+- Failing approach: retrying the same startup command or debugging Docker/Postgres, since the process never reaches runtime initialization.
+- Working workaround: remove `createRestGitHubAdapter` from the later dynamic import and keep only the top-level binding.
+- Verification: `node --check scripts/start-stack.mjs`; then rerun `node scripts/start-stack.mjs`.
+
+## Medium project-mode GitHub issues can time out the poller before the cursor advances
+
+- Symptom: `/health` shows polling degraded with `GitHub issue polling cycle for <repo> timed out after 120000ms`, `lastSeenIssueNumber` stays on the previous issue, and the new GitHub issue never appears in `/projects` even though the repo poll is otherwise healthy.
+- Root cause: the repo poll timeout used to wrap the entire per-repo intake loop, including `runPlanningPipeline(...)`. A medium/large issue that triggered Holly project planning could legitimately take longer than the poll timeout, so the repo cursor never advanced and the same issue stayed stuck behind a failed cycle.
+- Failing approach: treating the 120s poll timeout as evidence that GitHub listing is hung, then only increasing the timeout or recreating the issue.
+- Working workaround: run a build where `packages/control-plane/src/polling.ts` applies the timeout only to GitHub batch fetch and cursor persistence, not to the full planning pipeline. Slow planning will then complete normally, while genuinely hung GitHub reads still fail fast.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; confirm the timeout test for a hung `listIssueCandidates(...)` still fails fast, and confirm the slow-planner regression passes with `cycleTimeoutMs` shorter than the planner delay.
+
+## Project approval gets stuck in `approved` with all tickets still pending
+
+- Symptom: `/projects` shows a project in `approved` rather than `executing`, all ticket counts remain `pending`, and no GitHub child issues with titles like `[1/3] ...` exist.
+- Root cause: the operator API can be miswired with a generic `RestGitHubAdapter` in the `githubIssuesAdapter` slot. That object lacks `createSubIssue(...)`, so project approval can persist `status = "approved"` and then crash before any ticket dispatch.
+- Failing approach: passing the same generic REST GitHub adapter into both `githubWriter` and `githubIssuesAdapter`, or assuming an already-approved stuck project cannot be resumed.
+- Working workaround: start the API through a build that creates a real `createGitHubIssuesAdapter()` for project sub-issue mutations, and allow `POST /projects/:id/approve` to resume projects that are already `approved` but whose tickets are all still pending.
+- Verification: approve or re-approve a pending/stuck project and confirm it transitions to `executing`, `subIssuesCreated` is greater than zero when the issues adapter is enabled, and at least one ticket moves to `dispatched`.
+
+## Approving a project-mode task through `/approvals/:requestId/resolve` bypasses project approval and no GitHub sub-issues get created
+
+- Symptom: `/projects` shows a pending project with ticket decomposition, but an operator approval click or API call against the generic approvals route starts a normal whole-task development run instead of creating project sub-issues. The project can remain `pending_approval` while the parent task unexpectedly advances to `development`.
+- Root cause: project-mode planning used to persist both a `ProjectSpec` and a legacy `policy_gate` approval request. Resolving that generic approval marked the parent manifest `ready`, and the normal dispatcher resumed the single-task pipeline. The dedicated project approval logic in `POST /projects/:id/approve` never ran, so sub-issue creation and first-ticket dispatch were skipped.
+- Failing approach: approving the task through `POST /approvals/:requestId/resolve` or an approvals UI card after project decomposition has already been created.
+- Working workaround: use `POST /projects/:id/approve` for project-mode plans. On current builds, project-mode planning no longer creates the legacy approval row, and stale generic approval rows now return `409 conflict` with the correct `/projects/:id/approve` route.
+- Verification: run `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/operator-api.test.ts packages/control-plane/src/index.test.ts packages/control-plane/src/pipeline/project-approval.test.ts`; confirm project-mode planning returns `approvalRequest === undefined`, confirm `/approvals/:id/resolve` returns `409` for stale project-mode approvals, and confirm `/projects/:id/approve` still transitions the project to `executing`.
+
+## `WORKSPACE_PROVISIONED` reports `development_readonly` even though the approved developer workspace can write code
+
+- Symptom: the live run event or workspace evidence record says `toolPolicyMode: development_readonly` and `codeWriteEnabled: false`, but the actual workspace descriptor and `TOOLS.md` show `development_readwrite` with code writing enabled.
+- Root cause: the development pipeline used to persist the workspace artifact and `WORKSPACE_PROVISIONED` event before `enableWorkspaceCodeWriting(...)` patched the descriptor for approved code-writing runs.
+- Failing approach: treating the early event payload as source of truth for whether the workspace can mutate code.
+- Working workaround: trust the workspace descriptor and `TOOLS.md`, or upgrade to the build where the event/evidence emission happens after the code-writing patch. The emitted `WORKSPACE_PROVISIONED` event now reflects the final descriptor state.
+- Verification: run `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/index.test.ts`; confirm the OpenClaw developer dispatch test records `WORKSPACE_PROVISIONED.codeWriteEnabled = true` when the approved policy-gate request grants `can_write_code`.
+
+## Medium/large GitHub issues from the poller skip Project Mode and go straight into the single-task pipeline
+
+- Symptom: a polled GitHub issue that should decompose into tickets instead creates only a normal `PlanningSpec`, lands in the standard approval/development flow, and `/projects` remains empty. Task snapshots may misleadingly show `spec.projectSize: "small"` even though the issue looks broader than that.
+- Root cause: the issue poller was classifying complexity correctly, but it only passed `repository` and `planner` into `runPlanningPipeline(...)`. Without the OpenClaw planning dependencies (`openClawDispatch` plus an architect target root), the planning pipeline could never enter project mode. Separately, single-issue planning specs defaulted `projectSize` to `"small"` when the classification metadata was not copied onto the persisted spec.
+- Failing approach: inspecting only the generated planning spec or live task snapshot and assuming the classifier itself returned `small`, or restarting the stack without changing the poller wiring.
+- Working workaround: forward the available OpenClaw planning dependencies from the live intake surface into `runPlanningPipeline(...)` so medium/large issues can dispatch Holly in project mode. Also persist `metadata.complexityClassification.size` onto the saved planning spec so diagnostics reflect the actual routing decision.
+- Verification: `corepack pnpm exec vitest run --configLoader runner packages/control-plane/src/polling-daemon.test.ts`; confirm a medium GitHub issue creates both a `ProjectSpec` and `PlanningSpec.projectSize = "medium"`, and confirm live `/projects` is non-empty after re-ingesting the issue.
+
 ## `verify:package` fails in the packaged control plane with `TypeError: Cannot read properties of undefined (reading 'length')`
 
 - Symptom: `node scripts/verify-packaged-policy-pack.mjs` or the GitHub Actions packaging workflow fails inside `packages/control-plane/dist/workspace.js` while rendering runtime instructions, with a stack through `formatLiteralList(...)` and `renderRuntimeSoulMarkdown(...)`.
@@ -439,3 +607,19 @@
 - Failing approach: only generating `openclaw.json` and assuming that file controls host exec approval policy, or fixing the gateway once with `openclaw approvals set` and expecting the change to survive future local bootstrap resets.
 - Working workaround: set `REDDWARF_OPENCLAW_TRUSTED_AUTOMATION=true` in `.env` and restart through the standard `setup` / `start` flows. RedDwarf now seeds `runtime-data/openclaw-home/exec-approvals.json` with `defaults: { security: "full", ask: "off" }` while preserving any existing OpenClaw `socket` metadata.
 - Verification: restart the stack, then run `docker compose -f infra/docker/docker-compose.yml --profile openclaw exec -T openclaw sh -lc 'cat /home/node/.openclaw/exec-approvals.json'` and confirm the defaults block contains `security: "full"` and `ask: "off"`; rerun the approved task and confirm the `exec denied` log line no longer appears.
+## Symptom: Medium issues finish Holly project planning but `/projects` stays empty
+
+- Symptom:
+  - The task snapshot shows `spec.projectSize: "medium"` and an `OPENCLAW_DISPATCH` event with `mode: "project"`, but `/projects` remains empty.
+  - The project architect workspace contains `artifacts/project-architect-handoff.md`, yet no `ProjectSpec` is persisted.
+- Root cause:
+  - Project-mode planning reused `createArchitectHandoffAwaiter(...)`, but that awaiter only watched for `architect-handoff.md` and single-task architecture headings.
+  - Holly correctly wrote `project-architect-handoff.md`, so the control plane never consumed the finished project handoff.
+- Failing approach:
+  - Assuming the project planner is still running just because `/projects` is empty.
+- Working workaround:
+  - Check whether `runtime-data/workspaces/<task>-project-architect/artifacts/project-architect-handoff.md` exists.
+  - If it does, verify the control plane build includes the configurable architect awaiter fix that watches `project-architect-handoff.md`.
+- Verification:
+  - Run the project-mode awaiter regression test in `packages/control-plane/src/index.test.ts`.
+  - Re-run intake for a medium issue and confirm `/projects` returns a persisted `ProjectSpec`.

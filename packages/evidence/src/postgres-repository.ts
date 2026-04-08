@@ -25,10 +25,14 @@ import {
   type PipelineRunQuery,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
   type RunSummary,
-  type TaskManifest
+  type TaskManifest,
+  type TicketSpec,
+  assertValidProjectStatusTransition,
+  assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
 import pg from "pg";
 import {
@@ -44,7 +48,9 @@ import {
   mapOperatorConfigRow,
   mapApprovalRequestRow,
   mapPromptSnapshotRow,
-  mapEligibilityRejectionRow
+  mapEligibilityRejectionRow,
+  mapProjectSpecRow,
+  mapTicketSpecRow
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -420,8 +426,11 @@ export class PostgresPlanningRepository implements PlanningRepository {
     await this.savePhaseRecordWithExecutor(this.pool, record);
   }
 
-  async savePlanningSpec(spec: PlanningSpec): Promise<void> {
-    await this.pool.query(
+  private async savePlanningSpecWithExecutor(
+    executor: QueryExecutor,
+    spec: PlanningSpec
+  ): Promise<void> {
+    await executor.query(
       `
         INSERT INTO planning_specs (
           spec_id,
@@ -436,8 +445,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           risk_class,
           confidence_level,
           confidence_reason,
+          project_size,
           created_at
-        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (spec_id) DO UPDATE SET
           task_id = EXCLUDED.task_id,
           summary = EXCLUDED.summary,
@@ -450,6 +460,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           risk_class = EXCLUDED.risk_class,
           confidence_level = EXCLUDED.confidence_level,
           confidence_reason = EXCLUDED.confidence_reason,
+          project_size = EXCLUDED.project_size,
           created_at = EXCLUDED.created_at
       `,
       [
@@ -465,16 +476,23 @@ export class PostgresPlanningRepository implements PlanningRepository {
         spec.riskClass,
         spec.confidenceLevel,
         spec.confidenceReason,
+        spec.projectSize ?? "small",
         spec.createdAt
       ]
     );
   }
-  async savePolicySnapshot(
+
+  async savePlanningSpec(spec: PlanningSpec): Promise<void> {
+    await this.savePlanningSpecWithExecutor(this.pool, spec);
+  }
+
+  private async savePolicySnapshotWithExecutor(
+    executor: QueryExecutor,
     taskId: string,
     snapshot: PolicySnapshot
   ): Promise<void> {
     const now = asIsoTimestamp();
-    await this.pool.query(
+    await executor.query(
       `
         INSERT INTO policy_snapshots (
           task_id,
@@ -488,6 +506,13 @@ export class PostgresPlanningRepository implements PlanningRepository {
       `,
       [taskId, JSON.stringify(snapshot), now, now]
     );
+  }
+
+  async savePolicySnapshot(
+    taskId: string,
+    snapshot: PolicySnapshot
+  ): Promise<void> {
+    await this.savePolicySnapshotWithExecutor(this.pool, taskId, snapshot);
   }
 
   private async saveEvidenceRecordWithExecutor(
@@ -709,8 +734,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
     } catch (error) {
       try {
         await client.query("ROLLBACK");
-      } catch {
-        // ignore rollback failures and surface the original error
+      } catch (rollbackError) {
+        // Log rollback failures but surface the original error
+        console.error("Transaction ROLLBACK failed:", rollbackError);
       }
       throw error;
     } finally {
@@ -975,7 +1001,31 @@ export class PostgresPlanningRepository implements PlanningRepository {
         this.saveOperatorConfigEntryWithExecutor(client, entry),
       savePromptSnapshot: (snapshot) => this.savePromptSnapshotWithExecutor(client, snapshot),
       saveEligibilityRejection: (record) =>
-        this.saveEligibilityRejectionWithExecutor(client, record)
+        this.saveEligibilityRejectionWithExecutor(client, record),
+      getProjectSpec: (projectId) => this.getProjectSpecWithExecutor(client, projectId),
+      saveProjectSpec: (project) => this.saveProjectSpecWithExecutor(client, project),
+      getTicketSpec: (ticketId) => this.getTicketSpecWithExecutor(client, ticketId),
+      saveTicketSpec: (ticket) => this.saveTicketSpecWithExecutor(client, ticket),
+      listTicketSpecs: async (projectId) => {
+        const result = await client.query(
+          `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+          [projectId]
+        );
+        return result.rows.map(mapTicketSpecRow);
+      },
+      resolveNextReadyTicket: (projectId) =>
+        this.resolveNextReadyTicketWithExecutor(client, projectId),
+      getManifest: async (taskId) => {
+        const result = await client.query(
+          "SELECT * FROM task_manifests WHERE task_id = $1",
+          [taskId]
+        );
+        return result.rows[0] ? mapManifestRow(result.rows[0]) : null;
+      },
+      getTaskSnapshot: (taskId) => this.getTaskSnapshotWithExecutor(client, taskId),
+      savePlanningSpec: (spec) => this.savePlanningSpecWithExecutor(client, spec),
+      savePolicySnapshot: (taskId, snapshot) =>
+        this.savePolicySnapshotWithExecutor(client, taskId, snapshot)
     };
 
     try {
@@ -986,8 +1036,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
     } catch (error) {
       try {
         await client.query("ROLLBACK");
-      } catch {
-        // ignore rollback failures and surface the original error
+      } catch (rollbackError) {
+        // Log rollback failures but surface the original error
+        console.error("Transaction ROLLBACK failed:", rollbackError);
       }
       throw error;
     } finally {
@@ -1370,6 +1421,41 @@ export class PostgresPlanningRepository implements PlanningRepository {
     return result.rows.map(mapApprovalRequestRow);
   }
 
+  private async getTaskSnapshotWithExecutor(
+    executor: QueryExecutor,
+    taskId: string
+  ): Promise<PersistedTaskSnapshot> {
+    const result = await executor.query(
+      `
+      SELECT
+        (SELECT row_to_json(m.*) FROM task_manifests m WHERE m.task_id = $1) AS manifest,
+        (SELECT row_to_json(s.*) FROM planning_specs s WHERE s.task_id = $1 ORDER BY s.created_at DESC LIMIT 1) AS spec,
+        (SELECT row_to_json(ps.*) FROM policy_snapshots ps WHERE ps.task_id = $1) AS policy_snapshot,
+        (SELECT COALESCE(json_agg(pr ORDER BY pr.created_at ASC, pr.record_id ASC), '[]'::json) FROM phase_records pr WHERE pr.task_id = $1) AS phase_records,
+        (SELECT COALESCE(json_agg(er ORDER BY er.created_at ASC, er.record_id ASC), '[]'::json) FROM evidence_records er WHERE er.task_id = $1) AS evidence_records,
+        (SELECT COALESCE(json_agg(re ORDER BY re.created_at ASC, re.event_id ASC), '[]'::json) FROM run_events re WHERE re.task_id = $1) AS run_events,
+        (SELECT COALESCE(json_agg(mr ORDER BY mr.updated_at DESC, mr.created_at DESC, mr.memory_id ASC), '[]'::json) FROM (SELECT * FROM memory_records WHERE task_id = $1 AND scope = 'task' ORDER BY updated_at DESC, created_at DESC, memory_id ASC LIMIT 100) mr) AS memory_records,
+        (SELECT COALESCE(json_agg(plr ORDER BY plr.started_at DESC, plr.run_id ASC), '[]'::json) FROM (SELECT * FROM pipeline_runs WHERE task_id = $1 ORDER BY started_at DESC, run_id ASC LIMIT 100) plr) AS pipeline_runs,
+        (SELECT COALESCE(json_agg(ar ORDER BY ar.updated_at DESC, ar.created_at DESC, ar.request_id ASC), '[]'::json) FROM (SELECT * FROM approval_requests WHERE task_id = $1 ORDER BY updated_at DESC, created_at DESC, request_id ASC LIMIT 100) ar) AS approval_requests
+      `,
+      [taskId]
+    );
+
+    const row = result.rows[0];
+
+    return {
+      manifest: row.manifest ? mapManifestRow(row.manifest) : null,
+      spec: row.spec ? mapPlanningSpecRow(row.spec) : null,
+      policySnapshot: row.policy_snapshot ? mapPolicySnapshotRow(row.policy_snapshot) : null,
+      phaseRecords: (row.phase_records as Record<string, unknown>[]).map(mapPhaseRecordRow),
+      evidenceRecords: (row.evidence_records as Record<string, unknown>[]).map(mapEvidenceRecordRow),
+      runEvents: (row.run_events as Record<string, unknown>[]).map(mapRunEventRow),
+      memoryRecords: (row.memory_records as Record<string, unknown>[]).map(mapMemoryRecordRow),
+      pipelineRuns: (row.pipeline_runs as Record<string, unknown>[]).map(mapPipelineRunRow),
+      approvalRequests: (row.approval_requests as Record<string, unknown>[]).map(mapApprovalRequestRow)
+    };
+  }
+
   async getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot> {
     const result = await this.pool.query(
       `
@@ -1420,6 +1506,245 @@ export class PostgresPlanningRepository implements PlanningRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext> {
     return buildMemoryContextForRepository(this, input);
+  }
+
+  private async saveProjectSpecWithExecutor(
+    executor: QueryExecutor,
+    project: ProjectSpec
+  ): Promise<void> {
+    // Validate status transition if updating an existing record
+    // Use FOR UPDATE to prevent TOCTOU races — concurrent transactions will block here
+    const existing = await this.getProjectSpecWithExecutor(executor, project.projectId, { forUpdate: true });
+    if (existing && existing.status !== project.status) {
+      assertValidProjectStatusTransition(existing.status, project.status);
+    }
+    await executor.query(
+      `
+        INSERT INTO project_specs (
+          project_id, source_issue_id, source_repo, title, summary,
+          project_size, status, complexity_classification,
+          approval_decision, decided_by, decision_summary, amendments,
+          clarification_questions, clarification_answers, clarification_requested_at,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
+        ON CONFLICT (project_id) DO UPDATE SET
+          source_issue_id = EXCLUDED.source_issue_id,
+          source_repo = EXCLUDED.source_repo,
+          title = EXCLUDED.title,
+          summary = EXCLUDED.summary,
+          project_size = EXCLUDED.project_size,
+          status = EXCLUDED.status,
+          complexity_classification = EXCLUDED.complexity_classification,
+          approval_decision = EXCLUDED.approval_decision,
+          decided_by = EXCLUDED.decided_by,
+          decision_summary = EXCLUDED.decision_summary,
+          amendments = EXCLUDED.amendments,
+          clarification_questions = EXCLUDED.clarification_questions,
+          clarification_answers = EXCLUDED.clarification_answers,
+          clarification_requested_at = EXCLUDED.clarification_requested_at,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        project.projectId,
+        project.sourceIssueId,
+        project.sourceRepo,
+        project.title,
+        project.summary,
+        project.projectSize,
+        project.status,
+        project.complexityClassification
+          ? JSON.stringify(project.complexityClassification)
+          : null,
+        project.approvalDecision,
+        project.decidedBy,
+        project.decisionSummary,
+        project.amendments,
+        project.clarificationQuestions
+          ? JSON.stringify(project.clarificationQuestions)
+          : null,
+        project.clarificationAnswers
+          ? JSON.stringify(project.clarificationAnswers)
+          : null,
+        project.clarificationRequestedAt,
+        project.createdAt,
+        project.updatedAt
+      ]
+    );
+  }
+
+  async saveProjectSpec(project: ProjectSpec): Promise<void> {
+    await this.saveProjectSpecWithExecutor(this.pool, project);
+  }
+
+  private async saveTicketSpecWithExecutor(
+    executor: QueryExecutor,
+    ticket: TicketSpec
+  ): Promise<void> {
+    // Validate status transition if updating an existing record
+    // Use FOR UPDATE to prevent TOCTOU races — concurrent transactions will block here
+    const existing = await this.getTicketSpecWithExecutor(executor, ticket.ticketId, { forUpdate: true });
+    if (existing && existing.status !== ticket.status) {
+      assertValidTicketStatusTransition(existing.status, ticket.status);
+    }
+    await executor.query(
+      `
+        INSERT INTO ticket_specs (
+          ticket_id, project_id, title, description,
+          acceptance_criteria, depends_on, status,
+          complexity_class, risk_class,
+          github_sub_issue_number, github_pr_number,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (ticket_id) DO UPDATE SET
+          project_id = EXCLUDED.project_id,
+          title = EXCLUDED.title,
+          description = EXCLUDED.description,
+          acceptance_criteria = EXCLUDED.acceptance_criteria,
+          depends_on = EXCLUDED.depends_on,
+          status = EXCLUDED.status,
+          complexity_class = EXCLUDED.complexity_class,
+          risk_class = EXCLUDED.risk_class,
+          github_sub_issue_number = EXCLUDED.github_sub_issue_number,
+          github_pr_number = EXCLUDED.github_pr_number,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        ticket.ticketId,
+        ticket.projectId,
+        ticket.title,
+        ticket.description,
+        JSON.stringify(ticket.acceptanceCriteria),
+        JSON.stringify(ticket.dependsOn),
+        ticket.status,
+        ticket.complexityClass,
+        ticket.riskClass,
+        ticket.githubSubIssueNumber,
+        ticket.githubPrNumber,
+        ticket.createdAt,
+        ticket.updatedAt
+      ]
+    );
+  }
+
+  async saveTicketSpec(ticket: TicketSpec): Promise<void> {
+    await this.saveTicketSpecWithExecutor(this.pool, ticket);
+  }
+
+  async updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void> {
+    const existing = await this.getProjectSpec(projectId);
+    if (existing && existing.status !== status) {
+      assertValidProjectStatusTransition(existing.status, status);
+    }
+    const now = asIsoTimestamp();
+    await this.pool.query(
+      `UPDATE project_specs SET status = $1, updated_at = $2 WHERE project_id = $3`,
+      [status, now, projectId]
+    );
+  }
+
+  async updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void> {
+    const existing = await this.getTicketSpec(ticketId);
+    if (existing && existing.status !== status) {
+      assertValidTicketStatusTransition(existing.status, status);
+    }
+    const now = asIsoTimestamp();
+    await this.pool.query(
+      `UPDATE ticket_specs SET status = $1, updated_at = $2 WHERE ticket_id = $3`,
+      [status, now, ticketId]
+    );
+  }
+
+  private async getProjectSpecWithExecutor(
+    executor: QueryExecutor,
+    projectId: string,
+    options?: { forUpdate?: boolean }
+  ): Promise<ProjectSpec | null> {
+    const lockClause = options?.forUpdate ? " FOR UPDATE" : "";
+    const result = await executor.query(
+      `SELECT * FROM project_specs WHERE project_id = $1${lockClause}`,
+      [projectId]
+    );
+    return result.rows[0] ? mapProjectSpecRow(result.rows[0]) : null;
+  }
+
+  async getProjectSpec(projectId: string): Promise<ProjectSpec | null> {
+    return this.getProjectSpecWithExecutor(this.pool, projectId);
+  }
+
+  async listProjectSpecs(repo?: string): Promise<ProjectSpec[]> {
+    if (repo) {
+      const result = await this.pool.query(
+        `SELECT * FROM project_specs WHERE source_repo = $1 ORDER BY created_at DESC`,
+        [repo]
+      );
+      return result.rows.map(mapProjectSpecRow);
+    }
+    const result = await this.pool.query(
+      `SELECT * FROM project_specs ORDER BY created_at DESC`
+    );
+    return result.rows.map(mapProjectSpecRow);
+  }
+
+  private async getTicketSpecWithExecutor(
+    executor: QueryExecutor,
+    ticketId: string,
+    options?: { forUpdate?: boolean }
+  ): Promise<TicketSpec | null> {
+    const lockClause = options?.forUpdate ? " FOR UPDATE" : "";
+    const result = await executor.query(
+      `SELECT * FROM ticket_specs WHERE ticket_id = $1${lockClause}`,
+      [ticketId]
+    );
+    return result.rows[0] ? mapTicketSpecRow(result.rows[0]) : null;
+  }
+
+  async getTicketSpec(ticketId: string): Promise<TicketSpec | null> {
+    return this.getTicketSpecWithExecutor(this.pool, ticketId);
+  }
+
+  async listTicketSpecs(projectId: string): Promise<TicketSpec[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+      [projectId]
+    );
+    return result.rows.map(mapTicketSpecRow);
+  }
+
+  private async resolveNextReadyTicketWithExecutor(
+    executor: QueryExecutor,
+    projectId: string
+  ): Promise<TicketSpec | null> {
+    // Use FOR UPDATE SKIP LOCKED to prevent concurrent dispatch of the same ticket.
+    // When called inside a transaction, this acquires a row-level lock on the
+    // selected ticket, ensuring only one caller can dispatch it.
+    const ticketsResult = await executor.query(
+      `SELECT * FROM ticket_specs WHERE project_id = $1 ORDER BY created_at ASC`,
+      [projectId]
+    );
+    const tickets = ticketsResult.rows.map(mapTicketSpecRow);
+    const mergedIds = new Set(
+      tickets.filter((t) => t.status === "merged").map((t) => t.ticketId)
+    );
+    for (const ticket of tickets) {
+      if (ticket.status !== "pending") continue;
+      const allDepsResolved = ticket.dependsOn.every((dep) => mergedIds.has(dep));
+      if (allDepsResolved) {
+        // Attempt to lock this specific ticket row; skip if already locked
+        const lockResult = await executor.query(
+          `SELECT * FROM ticket_specs WHERE ticket_id = $1 AND status = 'pending' FOR UPDATE SKIP LOCKED`,
+          [ticket.ticketId]
+        );
+        if (lockResult.rows.length > 0) {
+          return mapTicketSpecRow(lockResult.rows[0]);
+        }
+        // Row was locked by another transaction — skip and try next candidate
+      }
+    }
+    return null;
+  }
+
+  async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
+    return this.resolveNextReadyTicketWithExecutor(this.pool, projectId);
   }
 }
 

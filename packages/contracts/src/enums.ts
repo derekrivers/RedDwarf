@@ -76,12 +76,16 @@ export const memoryScopes = [
   "task",
   "project",
   "organization",
-  "external"
+  "external",
+  /** Repository-scoped memories — persist across tasks for the same repo (Feature 156). */
+  "repo"
 ] as const;
 export const memoryProvenances = [
   "human_curated",
   "pipeline_derived",
-  "external_retrieval"
+  "external_retrieval",
+  /** Observations extracted from agent session outputs such as OpenClaw dreaming passes (Feature 156). */
+  "agent_observed"
 ] as const;
 export const policyPackEntryKinds = ["directory", "file"] as const;
 export const concurrencyStrategies = ["serialize", "escalate"] as const;
@@ -135,6 +139,8 @@ export const openClawAgentRoles = [
   "validator",
   "developer"
 ] as const;
+export const openClawModelProviders = ["anthropic", "openai"] as const;
+export const openClawModelProviderSchema = z.enum(openClawModelProviders);
 export const openClawBootstrapFileKinds = [
   "identity",
   "soul",
@@ -144,6 +150,25 @@ export const openClawBootstrapFileKinds = [
 ] as const;
 export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
 export const openClawSandboxModes = ["read_only", "workspace_write"] as const;
+export const projectSizes = ["small", "medium", "large"] as const;
+export const projectStatuses = [
+  "draft",
+  "clarification_pending",
+  "pending_approval",
+  "approved",
+  "executing",
+  "complete",
+  "failed"
+] as const;
+export const ticketStatuses = [
+  "pending",
+  "dispatched",
+  "in_progress",
+  "pr_open",
+  "merged",
+  "failed"
+] as const;
+
 export const architectureReviewVerdicts = ["pass", "fail", "escalate"] as const;
 export const architectureReviewCheckStatuses = [
   "pass",
@@ -209,6 +234,9 @@ export const openClawAgentRoleSchema = z.enum(openClawAgentRoles);
 export const openClawBootstrapFileKindSchema = z.enum(openClawBootstrapFileKinds);
 export const openClawToolProfileSchema = z.enum(openClawToolProfiles);
 export const openClawSandboxModeSchema = z.enum(openClawSandboxModes);
+export const projectSizeSchema = z.enum(projectSizes);
+export const projectStatusSchema = z.enum(projectStatuses);
+export const ticketStatusSchema = z.enum(ticketStatuses);
 export const architectureReviewVerdictSchema = z.enum(
   architectureReviewVerdicts
 );
@@ -244,9 +272,75 @@ export type OpenClawSandboxMode = z.infer<typeof openClawSandboxModeSchema>;
 export type ArchitectureReviewVerdict = z.infer<
   typeof architectureReviewVerdictSchema
 >;
+export type ProjectSize = z.infer<typeof projectSizeSchema>;
+export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+export type TicketStatus = z.infer<typeof ticketStatusSchema>;
 export type ArchitectureReviewCheckStatus = z.infer<
   typeof architectureReviewCheckStatusSchema
 >;
+
+// Status transition maps
+
+/**
+ * Valid state transitions for ProjectSpec.status.
+ * Any transition not listed here is illegal and should be rejected.
+ */
+export const validProjectStatusTransitions: Record<ProjectStatus, readonly ProjectStatus[]> = {
+  draft: ["clarification_pending", "pending_approval", "failed"],
+  clarification_pending: ["draft", "pending_approval", "failed"],
+  pending_approval: ["approved", "draft", "failed"],
+  approved: ["executing", "failed"],
+  executing: ["complete", "failed"],
+  complete: [],
+  failed: ["executing", "draft"]
+};
+
+/**
+ * Valid state transitions for TicketSpec.status.
+ * Any transition not listed here is illegal and should be rejected.
+ */
+export const validTicketStatusTransitions: Record<TicketStatus, readonly TicketStatus[]> = {
+  pending: ["dispatched", "failed"],
+  dispatched: ["in_progress", "pr_open", "merged", "failed"],
+  in_progress: ["pr_open", "merged", "failed"],
+  pr_open: ["merged", "failed"],
+  merged: [],
+  failed: ["dispatched", "pending"]
+};
+
+/**
+ * Validate that a project status transition is legal.
+ * Throws if the transition is not allowed.
+ */
+export function assertValidProjectStatusTransition(
+  from: ProjectStatus,
+  to: ProjectStatus
+): void {
+  if (from === to) return;
+  const allowed = validProjectStatusTransitions[from];
+  if (!allowed.includes(to)) {
+    throw new Error(
+      `Invalid project status transition: '${from}' → '${to}'. Allowed transitions from '${from}': [${allowed.join(", ")}].`
+    );
+  }
+}
+
+/**
+ * Validate that a ticket status transition is legal.
+ * Throws if the transition is not allowed.
+ */
+export function assertValidTicketStatusTransition(
+  from: TicketStatus,
+  to: TicketStatus
+): void {
+  if (from === to) return;
+  const allowed = validTicketStatusTransitions[from];
+  if (!allowed.includes(to)) {
+    throw new Error(
+      `Invalid ticket status transition: '${from}' → '${to}'. Allowed transitions from '${from}': [${allowed.join(", ")}].`
+    );
+  }
+}
 
 // Utility
 

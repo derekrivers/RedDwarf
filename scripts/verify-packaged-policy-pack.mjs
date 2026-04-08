@@ -93,6 +93,14 @@ const parsedManifest = manifestModule.policyPackManifestSchema.parse(
   packaged.manifest
 );
 const openClawDefinitions = executionPlaneModule.openClawAgentRoleDefinitions;
+const expectedOpenClawAgentIds = [
+  "reddwarf-coordinator",
+  "reddwarf-analyst",
+  "reddwarf-arch-reviewer",
+  "reddwarf-validator",
+  "reddwarf-developer",
+  "reddwarf-developer-opus"
+];
 const tempRoot = await mkdtemp(join(tmpdir(), "reddwarf-packaged-workspace-"));
 
 try {
@@ -128,7 +136,10 @@ try {
   assert.equal(destroyed.descriptor?.status, "destroyed");
   assert.equal(destroyed.removed, true);
   await assert.rejects(access(managedWorkspace.workspaceRoot));
-  assert.equal(openClawDefinitions.length, 5);
+  assert.deepEqual(
+    openClawDefinitions.map((definition) => definition.agentId),
+    expectedOpenClawAgentIds
+  );
 
   for (const definition of openClawDefinitions) {
     for (const file of definition.bootstrapFiles) {

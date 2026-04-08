@@ -350,12 +350,11 @@ This keeps GitHub mutation:
 
 ## Recommended Model Assignment
 
-Current provider: **Anthropic**. OpenAI equivalents are listed as a future option (see F85 on the feature board).
+Provider selection is now controlled by `REDDWARF_MODEL_PROVIDER`. Anthropic defaults and OpenAI mappings are generated from the central provider-role map.
 
 ## Holly — Architect
 
-**Default model:** `anthropic/claude-opus-4-6`
-**OpenAI equivalent (future):** `gpt-5.4`
+**Default model binding:** provider-selected analyst model
 
 ### Why
 
@@ -372,8 +371,7 @@ Use Holly for:
 
 ## Dave Lister — Developer
 
-**Default model:** `anthropic/claude-sonnet-4-6`
-**OpenAI equivalent (future):** `gpt-5.4-mini`
+**Default model binding:** provider-selected developer model
 
 ### Why
 
@@ -398,8 +396,7 @@ Use Lister for:
 
 ## Kryten — Reviewer
 
-**Default model:** `anthropic/claude-sonnet-4-6`
-**OpenAI equivalent (future):** `gpt-5.4-mini`
+**Default model binding:** provider-selected reviewer model
 
 ### Why
 
@@ -412,7 +409,7 @@ Use Kryten for:
 - test adequacy checks
 - risk spotting
 
-### Escalate Kryten to `anthropic/claude-opus-4-6` when:
+### Escalate Kryten to the provider's stronger reviewer/analyst model when:
 
 - the change is high-risk
 - the diff is unusually large
@@ -423,8 +420,7 @@ Use Kryten for:
 
 ## Arnold Rimmer — Coordinator
 
-**Default model:** `anthropic/claude-sonnet-4-6`
-**OpenAI equivalent (future):** `gpt-5.4-mini`
+**Default model binding:** provider-selected coordinator model
 
 ### Why
 
@@ -434,8 +430,7 @@ Rimmer coordinates the session, delegates to Holly and Kryten, and assembles res
 
 ## Optional Helper Model
 
-**Optional:** `anthropic/claude-haiku-4-5`
-**OpenAI equivalent (future):** `gpt-5.4-nano`
+**Optional:** provider-selected fast helper model, if added to the central model map
 
 Use only for:
 - PR title drafting
@@ -865,10 +860,10 @@ We should not add these until real task volume or repeated failure modes justify
 The best initial RedDwarf OpenClaw team is:
 
 ### Inside OpenClaw
-- **Arnold Rimmer** — Coordinator — `anthropic/claude-sonnet-4-6`
-- **Holly** — Architect — `anthropic/claude-opus-4-6`
-- **Dave Lister** — Developer — `anthropic/claude-sonnet-4-6` _(future — not yet deployed)_
-- **Kryten** — Reviewer — `anthropic/claude-sonnet-4-6`
+- **Arnold Rimmer** — Coordinator — provider-selected coordinator model
+- **Holly** — Architect — provider-selected analyst model
+- **Dave Lister** — Developer — provider-selected developer model
+- **Kryten** — Reviewer — provider-selected reviewer model
 
 ### Outside OpenClaw
 - **RedDwarf Orchestrator** — deterministic workflow engine

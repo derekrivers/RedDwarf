@@ -87,6 +87,7 @@ import {
   processWorkspaceCiRequests
 } from "../ci-tool.js";
 import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
+import { captureDreamingMemory, persistExecutionItems, readSessionTranscript } from "../openclaw-session.js";
 
 export async function runDeveloperPhase(
   input: RunDeveloperPhaseInput,
@@ -371,6 +372,25 @@ export async function runDeveloperPhase(
       ]
     });
     await repository.updateManifest(currentManifest);
+
+    let handoff: DevelopmentDraft;
+    let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
+    let developmentTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
+    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
+    const developmentHeartbeatMetadata = {
+      workspaceId: workspace.workspaceId,
+      ...(approvedRequest
+        ? { approvalRequestId: approvedRequest.requestId }
+        : {})
+    };
+
+    const codeWritingApproved =
+      dependencies.openClawDispatch !== undefined &&
+      (approvedRequest?.requestedCapabilities.includes("can_write_code") ?? false);
+    if (codeWritingApproved) {
+      await enableWorkspaceCodeWriting(workspace);
+    }
+
     await repository.saveEvidenceRecord(
       createEvidenceRecord({
         recordId: `${taskId}:workspace:${workspace.workspaceId}:provisioned`,
@@ -438,23 +458,7 @@ export async function runDeveloperPhase(
       });
     }
 
-    let handoff: DevelopmentDraft;
-    let dispatchResult: import("@reddwarf/integrations").OpenClawDispatchResult | null = null;
-    let developmentTokenBudget: import("@reddwarf/contracts").TokenBudgetResult | null = null;
-    const handoffPath = join(workspace.artifactsDir, "developer-handoff.md");
-    const developmentHeartbeatMetadata = {
-      workspaceId: workspace.workspaceId,
-      ...(approvedRequest
-        ? { approvalRequestId: approvedRequest.requestId }
-        : {})
-    };
-
     if (dependencies.openClawDispatch) {
-      const codeWritingApproved =
-        approvedRequest?.requestedCapabilities.includes("can_write_code") ?? false;
-      if (codeWritingApproved) {
-        await enableWorkspaceCodeWriting(workspace);
-      }
       const repoBootstrap = await waitWithHeartbeat({
         work: workspaceRepoBootstrapper.ensureRepo({
           manifest: currentManifest,
@@ -619,6 +623,64 @@ export async function runDeveloperPhase(
       });
       assignWorkspaceRepoRoot(workspace, completion.repoRoot ?? repoBootstrap.repoRoot);
       await assertWorkspaceRepoChangesWithinAllowedPaths(workspace, runLogger);
+
+      // Persist structured execution items from the session transcript when
+      // the feature is enabled. This is a best-effort operation; failures do
+      // not block handoff processing.
+      if (
+        process.env["REDDWARF_EXECUTION_ITEMS_ENABLED"] === "true" &&
+        completion.sessionTranscriptPath !== null
+      ) {
+        try {
+          const sessionTranscript = await readSessionTranscript(
+            completion.sessionTranscriptPath,
+            sessionKey,
+            openClawAgentId
+          );
+          const persistedCount = await persistExecutionItems({
+            repository,
+            taskId,
+            runId,
+            phase: "development",
+            transcript: sessionTranscript,
+            baseEventId: nextEventId("development", EventCodes.AGENT_PROGRESS_ITEM),
+            createdAt: asIsoTimestamp(clock())
+          });
+          if (persistedCount > 0) {
+            runLogger?.info?.(
+              `Persisted ${persistedCount} execution item(s) from developer session ${sessionKey}.`
+            );
+          }
+        } catch (itemError) {
+          runLogger?.warn?.(
+            `Failed to persist execution items for developer session ${sessionKey}: ${serializeError(itemError)}`
+          );
+        }
+      }
+
+      // Feature 156: Capture dreaming memory from the OpenClaw session workspace.
+      if (process.env["REDDWARF_DREAMING_MEMORY_ENABLED"] === "true") {
+        try {
+          const dreamingResult = await captureDreamingMemory({
+            repository,
+            workspaceRoot: workspace.workspaceRoot,
+            taskId,
+            repo: currentManifest.source.repo,
+            agentRole: "developer",
+            createdAt: asIsoTimestamp(clock())
+          });
+          if (dreamingResult.dreamsFound) {
+            runLogger?.info?.(
+              `Dreaming memory: persisted ${dreamingResult.persisted}, skipped ${dreamingResult.skipped} (duplicates) from developer session.`
+            );
+          }
+        } catch (dreamErr) {
+          runLogger?.warn?.(
+            `Failed to capture dreaming memory from developer session: ${serializeError(dreamErr)}`
+          );
+        }
+      }
+
       handoff = parseDevelopmentHandoffMarkdown(
         await readFile(completion.handoffPath, "utf8")
       );
@@ -963,7 +1025,8 @@ export async function runDeveloperPhase(
         repository, snapshot, manifest: currentManifest,
         phase: "development", runId, failure: pipelineFailure,
         runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
-        persistTrackedRun, github: dependencies.github
+        persistTrackedRun, github: dependencies.github,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist developer phase failure evidence.", {

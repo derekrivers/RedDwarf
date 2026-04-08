@@ -20,12 +20,27 @@ import {
   recordRunEvent
 } from "./shared.js";
 import { getPhaseRetryBudgetMemoryKey, readPhaseRetryBudgetState } from "./retry-budget.js";
+import {
+  restoreProjectTicketExecutionFromSnapshot
+} from "./project-ticket-state.js";
 import { failureAutomationRequestedBy } from "./types.js";
 import {
   type ResolveApprovalRequestDependencies,
   type ResolveApprovalRequestInput,
   type ResolveApprovalRequestResult
 } from "./types.js";
+
+export class ProjectApprovalRequiredError extends Error {
+  readonly projectId: string;
+
+  constructor(projectId: string) {
+    super(
+      `Project-mode tasks must be approved via POST /projects/${projectId}/approve before execution can continue.`
+    );
+    this.name = "ProjectApprovalRequiredError";
+    this.projectId = projectId;
+  }
+}
 
 export async function resolveApprovalRequest(
   input: ResolveApprovalRequestInput,
@@ -70,6 +85,26 @@ export async function resolveApprovalRequest(
     throw new Error(
       `Task manifest ${approvalRequest.taskId} was not found for approval request ${requestId}.`
     );
+  }
+
+  if (approvalRequest.phase === "policy_gate") {
+    const projectId = `project:${approvalRequest.taskId}`;
+    const project = await repository.getProjectSpec(projectId);
+    if (project?.status === "pending_approval") {
+      throw new ProjectApprovalRequiredError(projectId);
+    }
+    // Block approval resolution when the project exists but has no tickets yet
+    // (e.g. after clarification answers were submitted and the project returned
+    // to draft — re-planning must run before execution can proceed).
+    if (project && project.status !== "approved" && project.status !== "executing" && project.status !== "complete") {
+      const tickets = await repository.listTicketSpecs(projectId);
+      if (tickets.length === 0) {
+        throw new Error(
+          `Project ${projectId} is in status '${project.status}' with no tickets. ` +
+          `Re-planning must complete before the approval can be resolved.`
+        );
+      }
+    }
   }
 
   const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";
@@ -138,6 +173,13 @@ export async function resolveApprovalRequest(
   await repository.runInTransaction(async (transactionalRepository) => {
     await transactionalRepository.saveApprovalRequest(updatedApprovalRequest);
     await transactionalRepository.updateManifest(finalManifest);
+    if (resetRetryBudgetOnApproval) {
+      await restoreProjectTicketExecutionFromSnapshot({
+        repository: transactionalRepository,
+        snapshot,
+        updatedAt: resolvedAtIso
+      });
+    }
     if (resetRetryBudgetOnApproval && retryBudgetState !== null) {
       const phase = recoverableApprovalPhase!;
       await transactionalRepository.saveMemoryRecord(

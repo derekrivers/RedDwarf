@@ -8,4 +8,5 @@ export * from "./polling.js";
 export * from "./openclaw-config.js";
 export * from "./operator-mcp.js";
 export * from "./openclaw-session.js";
+export * from "./openclaw-session-key.js";
 export * from "./live-workflow.js";

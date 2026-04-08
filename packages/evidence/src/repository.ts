@@ -19,11 +19,13 @@ import {
   type PipelineRunQuery,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
   type RunSummary,
   type TaskManifest,
-  type TaskManifestQuery
+  type TaskManifestQuery,
+  type TicketSpec
 } from "@reddwarf/contracts";
 
 export type RepositoryHealthStatus = "healthy" | "degraded";
@@ -61,6 +63,16 @@ export interface PlanningTransactionRepository {
   savePromptSnapshot(snapshot: PromptSnapshot): Promise<PromptSnapshot>;
   saveEligibilityRejection(record: EligibilityRejectionRecord): Promise<void>;
   saveOperatorConfigEntry(entry: OperatorConfigEntry): Promise<void>;
+  getProjectSpec(projectId: string): Promise<ProjectSpec | null>;
+  saveProjectSpec(project: ProjectSpec): Promise<void>;
+  getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
+  saveTicketSpec(ticket: TicketSpec): Promise<void>;
+  listTicketSpecs(projectId: string): Promise<TicketSpec[]>;
+  resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null>;
+  getManifest(taskId: string): Promise<TaskManifest | null>;
+  getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
+  savePlanningSpec(spec: PlanningSpec): Promise<void>;
+  savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {
@@ -69,6 +81,10 @@ export interface PlanningCommandRepository extends PlanningTransactionRepository
   claimPipelineRun(input: ClaimPipelineRunInput): Promise<ClaimPipelineRunResult>;
   saveGitHubIssuePollingCursor(cursor: GitHubIssuePollingCursor): Promise<void>;
   deleteGitHubIssuePollingCursor(repo: string): Promise<boolean>;
+  saveProjectSpec(project: ProjectSpec): Promise<void>;
+  saveTicketSpec(ticket: TicketSpec): Promise<void>;
+  updateProjectStatus(projectId: string, status: ProjectSpec["status"]): Promise<void>;
+  updateTicketStatus(ticketId: string, status: TicketSpec["status"]): Promise<void>;
   runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T>;
@@ -112,6 +128,11 @@ export interface PlanningQueryRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext>;
   getRepositoryHealth(): Promise<RepositoryHealthSnapshot>;
+  getProjectSpec(projectId: string): Promise<ProjectSpec | null>;
+  listProjectSpecs(repo?: string): Promise<ProjectSpec[]>;
+  getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
+  listTicketSpecs(projectId: string): Promise<TicketSpec[]>;
+  resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null>;
 }
 
 export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;

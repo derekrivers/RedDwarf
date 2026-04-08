@@ -12,6 +12,7 @@ Use tools deliberately and economically.
 
 Profile: full
 Sandbox: workspace_write
+Model binding: provider-selected developer model from `REDDWARF_MODEL_PROVIDER`
 Allow: group:fs, group:runtime, group:openclaw
 Deny: group:automation, group:messaging
 

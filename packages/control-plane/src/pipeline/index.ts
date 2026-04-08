@@ -60,13 +60,24 @@ export { buildRuntimeWorkspacePath } from "./workspace-path.js";
 
 // Pipeline phase functions
 export { runPlanningPipeline } from "./planning.js";
+export { runProjectPlanningPhase } from "./project-planning.js";
 export { runDeveloperPhase } from "./development.js";
 export { runArchitectureReviewPhase } from "./architecture-review.js";
 export { runValidationPhase } from "./validation.js";
 export { runScmPhase } from "./scm.js";
-export { resolveApprovalRequest } from "./approval.js";
+export { ProjectApprovalRequiredError, resolveApprovalRequest } from "./approval.js";
 export { sweepStaleRuns, sweepOrphanedDispatcherState } from "./sweep.js";
 export { dispatchReadyTask } from "./dispatch.js";
+export { executeProjectApproval, advanceProjectTicket } from "./project-approval.js";
+export type {
+  ExecuteProjectApprovalInput,
+  ExecuteProjectApprovalDependencies,
+  ExecuteProjectApprovalResult,
+  AdvanceProjectTicketInput,
+  AdvanceProjectTicketDependencies,
+  AdvanceProjectTicketOutcome,
+  AdvanceProjectTicketResult
+} from "./project-approval.js";
 export * from "./token-budget.js";
 export * from "./retry-budget.js";
 export * from "./run-report.js";

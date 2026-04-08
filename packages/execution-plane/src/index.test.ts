@@ -7,14 +7,18 @@ import {
   DeterministicPlanningAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  MODEL_PROVIDER_ROLE_MAP,
   agentDefinitions,
   createOpenClawAgentRoleDefinitions,
   createPlanningAgent,
+  createPlanningAgentForModelProvider,
   fetchWithRetry,
   expectedBootstrapFileNames,
   getOpenClawAgentRoleDefinition,
+  OpenAIPlanningAgent,
   openClawAgentRoleDefinitions,
   phaseIsExecutable,
+  resolveOpenClawModelProvider,
   validateAllBootstrapAlignment,
   validateBootstrapFileContent
 } from "@reddwarf/execution-plane";
@@ -399,7 +403,7 @@ describe("openClawAgentRoleDefinitions", () => {
       openClawAgentRoleDefinitionSchema.parse(definition).role
     );
 
-    expect(roles).toEqual(["coordinator", "analyst", "reviewer", "validator", "developer"]);
+    expect(roles).toEqual(["coordinator", "analyst", "reviewer", "validator", "developer", "developer"]);
   });
 
   it("looks up a single role definition by role", () => {
@@ -447,6 +451,18 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(developer.runtimePolicy.deny).toContain("group:messaging");
   });
 
+  it("includes a developer-opus variant with Opus model for complex tasks", () => {
+    const devOpus = openClawAgentRoleDefinitions.find(
+      (d) => d.agentId === "reddwarf-developer-opus"
+    );
+
+    expect(devOpus).toBeDefined();
+    expect(devOpus!.role).toBe("developer");
+    expect(devOpus!.runtimePolicy.model.model).toBe("anthropic/claude-opus-4-6");
+    expect(devOpus!.runtimePolicy.sandboxMode).toBe("workspace_write");
+    expect(devOpus!.bootstrapFiles[0]?.relativePath).toContain("lister/IDENTITY.md");
+  });
+
   it("can build the default OpenClaw role roster with OpenAI models", () => {
     const roles = createOpenClawAgentRoleDefinitions("openai");
     const analyst = roles.find((role) => role.role === "analyst");
@@ -454,12 +470,20 @@ describe("openClawAgentRoleDefinitions", () => {
 
     expect(analyst?.runtimePolicy.model).toEqual({
       provider: "openai",
-      model: "openai/gpt-5"
+      model: "openai/gpt-5.4"
     });
     expect(developer?.runtimePolicy.model).toEqual({
       provider: "openai",
+      model: "openai/gpt-5.4"
+    });
+    const reviewer = roles.find((role) => role.role === "reviewer");
+    expect(reviewer?.runtimePolicy.model).toEqual({
+      provider: "openai",
       model: "openai/gpt-5"
     });
+    expect(MODEL_PROVIDER_ROLE_MAP.openai.developer).toBe("openai/gpt-5.4");
+    expect(resolveOpenClawModelProvider("openai")).toBe("openai");
+    expect(() => resolveOpenClawModelProvider("bedrock")).toThrow();
   });
 
   it("points at bootstrap files that exist in the repo", async () => {
@@ -516,6 +540,23 @@ describe("createPlanningAgent", () => {
     } finally {
       if (original !== undefined) {
         process.env["ANTHROPIC_API_KEY"] = original;
+      }
+    }
+  });
+
+  it("throws when type is openai and no API key is available", () => {
+    const original = process.env["OPENAI_API_KEY"];
+    delete process.env["OPENAI_API_KEY"];
+    try {
+      expect(() => createPlanningAgent({ type: "openai" })).toThrow(
+        /OPENAI_API_KEY/
+      );
+      expect(() => createPlanningAgentForModelProvider("openai")).toThrow(
+        /OPENAI_API_KEY/
+      );
+    } finally {
+      if (original !== undefined) {
+        process.env["OPENAI_API_KEY"] = original;
       }
     }
   });
@@ -607,6 +648,74 @@ describe("createPlanningAgent", () => {
       "Anthropic API request timed out after 25ms."
     );
   });
+
+  it("uses the OpenAI Responses API when the planning provider is openai", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  summary: "Plan the approved OpenAI-backed docs change.",
+                  assumptions: ["The issue content is untrusted task data."],
+                  affectedAreas: ["src/app.ts"],
+                  constraints: ["Stay within trusted RedDwarf instructions."],
+                  testExpectations: ["Add provider-selection coverage."],
+                  confidence: {
+                    level: "medium",
+                    reason: "The task is bounded and provider selection is explicit."
+                  }
+                })
+              }
+            ]
+          }
+        ],
+        usage: {
+          input_tokens: 12,
+          output_tokens: 34
+        }
+      })
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const agent = createPlanningAgentForModelProvider("openai", {
+      openai: {
+        apiKey: "openai-test-key",
+        baseUrl: "https://api.openai.com"
+      }
+    });
+
+    expect(agent).toBeInstanceOf(OpenAIPlanningAgent);
+    const draft = await agent.createSpec(testInput, {
+      manifest: testManifest,
+      runId: "run-openai-planning"
+    });
+
+    expect(draft.usage).toEqual({ inputTokens: 12, outputTokens: 34 });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.openai.com/v1/responses"
+    );
+    const requestBody = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body)
+    ) as {
+      model: string;
+      instructions: string;
+      input: string;
+      max_output_tokens: number;
+    };
+    expect(requestBody.model).toBe("gpt-5.4");
+    expect(requestBody.instructions).toContain("RedDwarf Dev Squad");
+    expect(requestBody.input).toContain("## Untrusted GitHub Issue Data");
+    expect(requestBody.max_output_tokens).toBe(2048);
+    expect(
+      (fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization
+    ).toBe("Bearer openai-test-key");
+  });
 });
 
 // ============================================================
@@ -665,7 +774,7 @@ describe("bootstrap alignment", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.totalViolations).toBe(0);
-    expect(result.agents).toHaveLength(5);
+    expect(result.agents).toHaveLength(6);
     for (const agent of result.agents) {
       expect(agent.valid).toBe(true);
       expect(agent.filesChecked).toBe(5);

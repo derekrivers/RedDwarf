@@ -13,7 +13,9 @@
  *
  * Required environment (in .env or exported):
  *   GITHUB_TOKEN        — GitHub PAT with repo scope
- *   ANTHROPIC_API_KEY   — Anthropic API key for LLM planning
+ *   REDDWARF_MODEL_PROVIDER — anthropic or openai (default: anthropic)
+ *   ANTHROPIC_API_KEY   — required when REDDWARF_MODEL_PROVIDER=anthropic
+ *   OPENAI_API_KEY      — required when REDDWARF_MODEL_PROVIDER=openai
  *
  * Optional environment:
  *   REDDWARF_POLL_REPOS       — deprecated bootstrap seed for poll repos when the DB repo list is empty
@@ -35,6 +37,11 @@ import { execFileSync, execSync, spawn } from "node:child_process";
 import { readdir, stat, rm, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
+import {
+  V1MutationDisabledError,
+  createGitHubIssuesAdapter,
+  createRestGitHubAdapter
+} from "../packages/integrations/dist/index.js";
 
 import {
   applyOperatorRuntimeConfig,
@@ -48,6 +55,7 @@ import {
   loadRepoEnv,
   openClawConfigRuntimePath,
   refreshDerivedConfig,
+  resolveModelProviderEnv,
   resolveOpenClawConfig
 } from "./lib/config.mjs";
 
@@ -88,6 +96,17 @@ const dryRun = process.env.REDDWARF_DRY_RUN === "true";
 if (operatorApiToken.length === 0) {
   logError("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
   process.exit(1);
+}
+
+const github = createRestGitHubAdapter();
+let githubIssuesAdapter = null;
+try {
+  githubIssuesAdapter = createGitHubIssuesAdapter();
+} catch (error) {
+  if (!(error instanceof V1MutationDisabledError)) {
+    throw error;
+  }
+  log("GitHub sub-issue creation disabled; project approvals will fall back to Postgres-only mode.");
 }
 
 if (dryRun) {
@@ -294,9 +313,9 @@ const {
 } = await import("../packages/control-plane/dist/index.js");
 const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
-const { createRestGitHubAdapter, createHttpOpenClawDispatchAdapter } =
+const { createHttpOpenClawDispatchAdapter, createAcpxOpenClawDispatchAdapter, HttpOpenClawTaskFlowAdapter } =
   await import("../packages/integrations/dist/index.js");
-const { createPlanningAgent } =
+const { createPlanningAgentForModelProvider } =
   await import("../packages/execution-plane/dist/index.js");
 
 const repository = createPostgresPlanningRepository(
@@ -351,6 +370,39 @@ try {
   log(`Workspace cleanup skipped: ${formatError(err)}`);
 }
 
+// ── 2c: Scrub stale secret lease files from surviving workspaces ─────────
+
+try {
+  const entries = await readdir(workspaceRoot).catch(() => []);
+  let scrubCount = 0;
+
+  for (const entry of entries) {
+    const secretEnvPath = join(
+      workspaceRoot,
+      entry,
+      ".workspace",
+      "credentials",
+      "secret-env.json"
+    );
+    try {
+      await stat(secretEnvPath);
+      await rm(secretEnvPath, { force: true });
+      scrubCount++;
+      log(`  Scrubbed stale secret lease: ${entry}/secret-env.json`);
+    } catch {
+      // File does not exist — nothing to scrub
+    }
+  }
+
+  if (scrubCount > 0) {
+    log(
+      `Scrubbed ${scrubCount} stale secret lease file(s) from surviving workspaces.`
+    );
+  }
+} catch (err) {
+  log(`Secret lease cleanup skipped: ${formatError(err)}`);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 3 — Start services
 // ══════════════════════════════════════════════════════════════════════════
@@ -358,8 +410,6 @@ try {
 log("Phase 3: Starting services...");
 
 // Phase 3a: Shared adapters
-
-const github = createRestGitHubAdapter();
 const workspaceTargetRoot = resolve(repoRoot, "runtime-data", "workspaces");
 const evidenceRoot = resolve(repoRoot, "runtime-data", "evidence");
 const dispatchIntervalMs = parseInt(
@@ -391,9 +441,20 @@ if (pollRepos.length > 0) {
 
 let dispatcher = null;
 let dispatchDeps = null;
+let taskFlowAdapter = null;
 
 if (!skipOpenClaw) {
-  const openClawDispatch = createHttpOpenClawDispatchAdapter();
+  // Feature 154: Use ACPX session binding when enabled; fall back to HTTP hook dispatch.
+  const openClawDispatch =
+    process.env.REDDWARF_ACPX_DISPATCH_ENABLED === "true"
+      ? createAcpxOpenClawDispatchAdapter()
+      : createHttpOpenClawDispatchAdapter();
+
+  // Feature 150: Create Task Flow adapter when enabled.
+  taskFlowAdapter =
+    process.env.REDDWARF_TASKFLOW_ENABLED === "true"
+      ? new HttpOpenClawTaskFlowAdapter()
+      : null;
 
   dispatchDeps = {
     developer: new DeterministicDeveloperAgent(),
@@ -420,7 +481,8 @@ if (!skipOpenClaw) {
 // Phase 3c: Polling daemon (optional)
 
 let daemon = null;
-const planner = createPlanningAgent({ type: "anthropic" });
+const modelProvider = resolveModelProviderEnv();
+const planner = createPlanningAgentForModelProvider(modelProvider);
 
 daemon = createGitHubIssuePollingDaemon(
   {
@@ -429,7 +491,18 @@ daemon = createGitHubIssuePollingDaemon(
     dryRun,
     runOnStart: true
   },
-  { repository, github, planner, logger: runtimeLogger }
+  {
+    repository,
+    github,
+    planner,
+    ...(dispatchDeps
+      ? {
+          openClawDispatch: dispatchDeps.openClawDispatch,
+          architectTargetRoot: workspaceTargetRoot
+        }
+      : {}),
+    logger: runtimeLogger
+  }
 );
 
 // Phase 3d: Operator API
@@ -445,10 +518,13 @@ const server = createOperatorApiServer(
     repository,
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
+    githubRepoDiscovery: github,
+    ...(githubIssuesAdapter ? { githubIssuesAdapter } : {}),
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),
     ...(daemon ? { pollingDaemon: daemon } : {}),
-    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {})
+    ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {}),
+    ...(taskFlowAdapter ? { taskFlowAdapter } : {})
   }
 );
 await server.start();

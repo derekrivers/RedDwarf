@@ -1,7 +1,10 @@
 import {
   asIsoTimestamp,
+  projectSpecSchema,
+  ticketSpecSchema,
   type ApprovalDecision,
   type ApprovalRequest,
+  type ComplexityClassification,
   type ConcurrencyStrategy,
   type EvidenceRecord,
   type EligibilityRejectionRecord,
@@ -13,9 +16,11 @@ import {
   type PipelineRun,
   type PlanningSpec,
   type PolicySnapshot,
+  type ProjectSpec,
   type PromptSnapshot,
   type RunEvent,
-  type TaskManifest
+  type TaskManifest,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import {
   createApprovalRequest,
@@ -82,6 +87,7 @@ export function mapPlanningSpecRow(row: Record<string, unknown>): PlanningSpec {
     riskClass: row.risk_class as PlanningSpec["riskClass"],
     confidenceLevel: row.confidence_level as PlanningSpec["confidenceLevel"],
     confidenceReason: row.confidence_reason as PlanningSpec["confidenceReason"],
+    projectSize: (row.project_size as PlanningSpec["projectSize"]) ?? "small",
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date))
   };
 }
@@ -244,6 +250,65 @@ export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapsh
     promptPath: row.prompt_path as string,
     capturedAt: asIsoTimestamp(new Date(row.captured_at as string | Date))
   });
+}
+
+export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
+  const mapped = {
+    projectId: row.project_id as string,
+    sourceIssueId: (row.source_issue_id as string | null) ?? null,
+    sourceRepo: row.source_repo as string,
+    title: row.title as string,
+    summary: row.summary as string,
+    projectSize: row.project_size as ProjectSpec["projectSize"],
+    status: row.status as ProjectSpec["status"],
+    complexityClassification:
+      (row.complexity_classification as ComplexityClassification | null) ?? null,
+    approvalDecision: (row.approval_decision as string | null) ?? null,
+    decidedBy: (row.decided_by as string | null) ?? null,
+    decisionSummary: (row.decision_summary as string | null) ?? null,
+    amendments: (row.amendments as string | null) ?? null,
+    clarificationQuestions: (row.clarification_questions as string[] | null) ?? null,
+    clarificationAnswers: (row.clarification_answers as Record<string, string> | null) ?? null,
+    clarificationRequestedAt: row.clarification_requested_at
+      ? asIsoTimestamp(new Date(row.clarification_requested_at as string | Date))
+      : null,
+    createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  };
+  // Validate against schema to catch corrupt data early
+  const result = projectSpecSchema.safeParse(mapped);
+  if (!result.success) {
+    throw new Error(
+      `Corrupt project_specs row (project_id=${mapped.projectId}): ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+    );
+  }
+  return result.data;
+}
+
+export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
+  const mapped = {
+    ticketId: row.ticket_id as string,
+    projectId: row.project_id as string,
+    title: row.title as string,
+    description: row.description as string,
+    acceptanceCriteria: row.acceptance_criteria as string[],
+    dependsOn: row.depends_on as string[],
+    status: row.status as TicketSpec["status"],
+    complexityClass: row.complexity_class as TicketSpec["complexityClass"],
+    riskClass: row.risk_class as TicketSpec["riskClass"],
+    githubSubIssueNumber: (row.github_sub_issue_number as number | null) ?? null,
+    githubPrNumber: (row.github_pr_number as number | null) ?? null,
+    createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
+    updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
+  };
+  // Validate against schema to catch corrupt data early
+  const result = ticketSpecSchema.safeParse(mapped);
+  if (!result.success) {
+    throw new Error(
+      `Corrupt ticket_specs row (ticket_id=${mapped.ticketId}): ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+    );
+  }
+  return result.data;
 }
 
 export function mapEligibilityRejectionRow(

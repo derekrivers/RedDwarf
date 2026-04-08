@@ -3,4 +3,5 @@ export * from "./ci.js";
 export * from "./knowledge.js";
 export * from "./secrets.js";
 export * from "./openclaw.js";
+export * from "./openclaw-task-flow.js";
 export * from "./github.js";

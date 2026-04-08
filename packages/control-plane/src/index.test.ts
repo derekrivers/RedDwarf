@@ -28,11 +28,13 @@ import {
   createWorkspaceContextBundle,
   destroyTaskWorkspace,
   dispatchReadyTask,
+  extractFinalExecutionItems,
   extractSessionSummary,
   findDisallowedChangedFiles,
   findDeniedChangedFiles,
   OpenClawSessionStalledError,
   OpenClawSessionTerminatedError,
+  persistExecutionItems,
   sanitizeSecretBearingText,
   parseSessionJsonl,
   provisionTaskWorkspace,
@@ -145,7 +147,7 @@ function createFixtureOpenClawCompletionAwaiter(summary = "OpenClaw developer se
         ].join("\n"),
         "utf8"
       );
-      return { handoffPath, repoRoot };
+      return { handoffPath, repoRoot, sessionTranscriptPath: null };
     }
   };
 }
@@ -2605,6 +2607,43 @@ describe("control-plane", () => {
           idGenerator: () => "run-scm-validation"
         }
       );
+      const projectTicketId = "project:run-scm:ticket:1";
+      await repository.saveTicketSpec({
+        ticketId: projectTicketId,
+        projectId: "project:run-scm",
+        title: "SCM ticket",
+        description: "Verify project ticket PR-open state recording.",
+        acceptanceCriteria: ["The ticket records the opened PR number."],
+        dependsOn: [],
+        status: "dispatched",
+        complexityClass: "low",
+        riskClass: "low",
+        githubSubIssueNumber: 2000,
+        githubPrNumber: null,
+        createdAt: "2026-03-25T18:00:00.000Z",
+        updatedAt: "2026-03-25T18:00:00.000Z"
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${planningResult.manifest.taskId}:memory:task:project-ticket`,
+          taskId: planningResult.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "project.ticket",
+          title: "Project ticket dispatch metadata",
+          value: {
+            projectId: "project:run-scm",
+            ticketId: projectTicketId,
+            githubSubIssueNumber: 2000,
+            sourceRepo: planningResult.manifest.source.repo
+          },
+          repo: planningResult.manifest.source.repo,
+          organizationId: "acme",
+          tags: ["project", "ticket"],
+          createdAt: "2026-03-25T18:00:00.000Z",
+          updatedAt: "2026-03-25T18:00:00.000Z"
+        })
+      );
       const scm = await runScmPhase(
         {
           taskId: planningResult.manifest.taskId,
@@ -2634,6 +2673,7 @@ describe("control-plane", () => {
           record.taskId === planningResult.manifest.taskId &&
           typeof record.metadata.archivePath === "string"
       );
+      const persistedProjectTicket = await repository.getTicketSpec(projectTicketId);
 
       expect(validation.nextAction).toBe("await_scm");
       expect(scm.nextAction).toBe("complete");
@@ -2644,6 +2684,8 @@ describe("control-plane", () => {
       expect(persistedManifest?.lifecycleStatus).toBe("completed");
       expect(persistedManifest?.branchName).toBe(scm.branch?.branchName ?? null);
       expect(persistedManifest?.prNumber).toBe(71);
+      expect(persistedProjectTicket?.status).toBe("pr_open");
+      expect(persistedProjectTicket?.githubPrNumber).toBe(71);
       expect(runSummary?.status).toBe("completed");
       expect(runSummary?.latestPhase).toBe("scm");
       expect(reportMarkdown).toContain("SCM Report");
@@ -2868,6 +2910,7 @@ describe("control-plane", () => {
         createIssue: github.createIssue.bind(github),
         createBranch: github.createBranch.bind(github),
         commentOnIssue: github.commentOnIssue.bind(github),
+        ensureWorkflowFile: github.ensureWorkflowFile.bind(github),
         async createPullRequest(input: Parameters<typeof github.createPullRequest>[0]) {
           const pullRequest = await github.createPullRequest(input);
           if (shouldDropFirstPullRequestResponse) {
@@ -3596,6 +3639,63 @@ describe("control-plane", () => {
           idGenerator: () => "run-validation-escalation-dev"
         }
       );
+      const projectId = `project:${planningResult.manifest.taskId}`;
+      const ticketId = `${projectId}:ticket:1`;
+      await repository.saveProjectSpec({
+        projectId,
+        sourceIssueId: String(planningResult.manifest.source.issueNumber ?? 99),
+        sourceRepo: planningResult.manifest.source.repo,
+        title: "Validation escalation project",
+        summary: "Project state should reflect child task escalation.",
+        projectSize: "medium",
+        status: "executing",
+        complexityClassification: null,
+        approvalDecision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved.",
+        amendments: null,
+        clarificationQuestions: null,
+        clarificationAnswers: null,
+        clarificationRequestedAt: null,
+        createdAt: "2026-03-25T18:09:00.000Z",
+        updatedAt: "2026-03-25T18:09:00.000Z"
+      });
+      await repository.saveTicketSpec({
+        ticketId,
+        projectId,
+        title: "Validation escalation ticket",
+        description: "Ticket should follow child task failure state.",
+        acceptanceCriteria: ["Validation failure is visible on the project."],
+        dependsOn: [],
+        status: "dispatched",
+        complexityClass: "low",
+        riskClass: "low",
+        githubSubIssueNumber: 2000,
+        githubPrNumber: null,
+        createdAt: "2026-03-25T18:09:00.000Z",
+        updatedAt: "2026-03-25T18:09:00.000Z"
+      });
+      await repository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${planningResult.manifest.taskId}:memory:task:project-ticket`,
+          taskId: planningResult.manifest.taskId,
+          scope: "task",
+          provenance: "pipeline_derived",
+          key: "project.ticket",
+          title: "Project ticket dispatch metadata",
+          value: {
+            projectId,
+            ticketId,
+            githubSubIssueNumber: 2000,
+            sourceRepo: planningResult.manifest.source.repo
+          },
+          repo: planningResult.manifest.source.repo,
+          organizationId: "acme",
+          tags: ["project", "ticket"],
+          createdAt: "2026-03-25T18:09:00.000Z",
+          updatedAt: "2026-03-25T18:09:00.000Z"
+        })
+      );
 
       const failingValidator = {
         async createPlan() {
@@ -3673,10 +3773,14 @@ describe("control-plane", () => {
       const followUpIssue = repository.memoryRecords.find(
         (record) => record.key === "failure.follow_up_issue.validation"
       );
+      const failedProject = await repository.getProjectSpec(projectId);
+      const failedTicket = await repository.getTicketSpec(ticketId);
 
       expect(persistedManifest?.lifecycleStatus).toBe("blocked");
       expect(persistedManifest?.currentPhase).toBe("validation");
       expect(persistedManifest?.retryCount).toBe(1);
+      expect(failedProject?.status).toBe("failed");
+      expect(failedTicket?.status).toBe("failed");
       expect(runSummary?.status).toBe("blocked");
       expect(failureRequest?.status).toBe("pending");
       expect(failureRequest?.requestedBy).toBe("failure-automation");
@@ -3690,6 +3794,24 @@ describe("control-plane", () => {
       expect(
         repository.runEvents.some((event) => event.code === "FOLLOW_UP_ISSUE_CREATED")
       ).toBe(true);
+
+      await resolveApprovalRequest(
+        {
+          requestId: failureRequest!.requestId,
+          decision: "approve",
+          decidedBy: "operator",
+          decisionSummary: "Retry the failed project ticket validation."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:25:00.000Z")
+        }
+      );
+
+      const restoredProject = await repository.getProjectSpec(projectId);
+      const restoredTicket = await repository.getTicketSpec(ticketId);
+      expect(restoredProject?.status).toBe("executing");
+      expect(restoredTicket?.status).toBe("dispatched");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -4339,6 +4461,100 @@ describe("development complexity budgets", () => {
     expect(profile.timeoutMultiplier).toBeGreaterThan(1);
     expect(profile.reasons).toContain("single-file frontend scaffolding");
     expect(scaleTimeoutBudgetMs(600_000, profile.timeoutMultiplier)).toBeGreaterThan(600_000);
+  });
+
+  it("standard complexity selects reddwarf-developer, elevated/high selects reddwarf-developer-opus", () => {
+    function selectDeveloperAgent(level: string): string {
+      return level === "elevated" || level === "high"
+        ? "reddwarf-developer-opus"
+        : "reddwarf-developer";
+    }
+
+    // Standard complexity: simple task
+    const simpleManifest = taskManifestSchema.parse({
+      taskId: "acme-platform-model-select-simple",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 1 },
+      title: "Simple edit",
+      summary: "A focused single-file change to the application.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "low",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_write_code"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const simpleSpec = planningSpecSchema.parse({
+      specId: "simple-spec",
+      taskId: simpleManifest.taskId,
+      summary: "Simple change.",
+      assumptions: [],
+      affectedAreas: ["src/app.ts"],
+      constraints: [],
+      acceptanceCriteria: ["One file updated."],
+      testExpectations: [],
+      recommendedAgentType: "developer",
+      riskClass: "low",
+      confidenceLevel: "high",
+      confidenceReason: "Narrow scope.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const standardProfile = buildDevelopmentComplexityProfile(simpleManifest, simpleSpec);
+    expect(standardProfile.level).toBe("standard");
+    expect(selectDeveloperAgent(standardProfile.level)).toBe("reddwarf-developer");
+
+    // High complexity: many criteria, areas, high risk, low confidence
+    const complexManifest = taskManifestSchema.parse({
+      taskId: "acme-platform-model-select-complex",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 2 },
+      title: "Cross-package refactor",
+      summary: "Major cross-cutting change spanning multiple subsystems.",
+      priority: 1,
+      dryRun: false,
+      riskClass: "high",
+      approvalMode: "human_signoff_required",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: ["can_write_code", "can_run_tests", "can_open_pr"],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-04-04T10:00:00.000Z",
+      updatedAt: "2026-04-04T10:00:00.000Z"
+    });
+    const complexSpec = planningSpecSchema.parse({
+      specId: "complex-spec",
+      taskId: complexManifest.taskId,
+      summary: "Cross-package refactor.",
+      assumptions: [],
+      affectedAreas: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+      constraints: [],
+      acceptanceCriteria: ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"],
+      testExpectations: ["t1", "t2", "t3", "t4"],
+      recommendedAgentType: "developer",
+      riskClass: "high",
+      confidenceLevel: "low",
+      confidenceReason: "Spans many subsystems.",
+      createdAt: "2026-04-04T10:00:00.000Z"
+    });
+
+    const highProfile = buildDevelopmentComplexityProfile(complexManifest, complexSpec);
+    expect(highProfile.level).toBe("high");
+    expect(selectDeveloperAgent(highProfile.level)).toBe("reddwarf-developer-opus");
   });
 });
 
@@ -5237,6 +5453,168 @@ describe("buildSessionSummaryMarkdown", () => {
   });
 });
 
+// -- Structured execution items --------------------------------------------
+
+describe("parseSessionJsonl — execution items", () => {
+  it("extracts execution items from plan_update events", () => {
+    const jsonl = [
+      JSON.stringify({ role: "system", content: "You are a developer." }),
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Read the codebase", status: "done", durationMs: 1200 },
+          { id: "step-2", title: "Write the changes", status: "active" },
+          { id: "step-3", title: "Run the tests", status: "pending" }
+        ],
+        updatedAt: "2026-04-07T10:00:00.000Z"
+      }),
+      JSON.stringify({ role: "assistant", content: "Done." })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    expect(transcript.executionItems).toHaveLength(3);
+    expect(transcript.executionItems[0]?.id).toBe("step-1");
+    expect(transcript.executionItems[0]?.status).toBe("done");
+    expect(transcript.executionItems[0]?.durationMs).toBe(1200);
+    expect(transcript.executionItems[1]?.title).toBe("Write the changes");
+    expect(transcript.executionItems[2]?.status).toBe("pending");
+    // plan_update lines are not included in entries
+    expect(transcript.totalEntries).toBe(2);
+  });
+
+  it("upserts execution items from individual execution_item events", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "active" }
+      }),
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "done", durationMs: 800 }
+      }),
+      JSON.stringify({ role: "assistant", content: "All done." })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    // Last update for step-1 should win
+    expect(transcript.executionItems).toHaveLength(1);
+    expect(transcript.executionItems[0]?.status).toBe("done");
+    expect(transcript.executionItems[0]?.durationMs).toBe(800);
+    // execution_item lines are not included in entries
+    expect(transcript.totalEntries).toBe(1);
+  });
+
+  it("later plan_update overrides earlier individual execution_item status", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "execution_item",
+        item: { id: "step-1", title: "Read files", status: "active" }
+      }),
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Read files", status: "done", durationMs: 500 },
+          { id: "step-2", title: "Write changes", status: "active" }
+        ]
+      })
+    ].join("\n");
+
+    const transcript = parseSessionJsonl(jsonl, "test:session", "reddwarf-developer");
+
+    expect(transcript.executionItems).toHaveLength(2);
+    const step1 = transcript.executionItems.find((i) => i.id === "step-1");
+    expect(step1?.status).toBe("done");
+    expect(step1?.durationMs).toBe(500);
+  });
+
+  it("returns empty executionItems when no plan_update or execution_item events exist", () => {
+    const jsonl = JSON.stringify({ role: "assistant", content: "Hello." });
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+    expect(transcript.executionItems).toHaveLength(0);
+  });
+
+  it("extractFinalExecutionItems returns the transcript executionItems array", () => {
+    const jsonl = JSON.stringify({
+      type: "plan_update",
+      items: [{ id: "s1", title: "Step 1", status: "done" }]
+    });
+    const transcript = parseSessionJsonl(jsonl, "test:key", "reddwarf-developer");
+    const items = extractFinalExecutionItems(transcript);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe("s1");
+  });
+});
+
+describe("persistExecutionItems", () => {
+  it("saves each execution item as an AGENT_PROGRESS_ITEM run event", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const jsonl = [
+      JSON.stringify({
+        type: "plan_update",
+        items: [
+          { id: "step-1", title: "Analyze codebase", status: "done", durationMs: 2000 },
+          { id: "step-2", title: "Write implementation", status: "done", durationMs: 5500, detail: "Modified 3 files" },
+          { id: "step-3", title: "Run tests", status: "failed" }
+        ]
+      })
+    ].join("\n");
+    const transcript = parseSessionJsonl(jsonl, "github:issue:acme/repo:42", "reddwarf-developer");
+
+    const count = await persistExecutionItems({
+      repository,
+      taskId: "acme-repo-42",
+      runId: "run-001",
+      phase: "development",
+      transcript,
+      baseEventId: "run-001:development:AGENT_PROGRESS_ITEM",
+      createdAt: "2026-04-07T10:00:00.000Z"
+    });
+
+    expect(count).toBe(3);
+    const events = await repository.listRunEvents("acme-repo-42");
+    const progressEvents = events.filter((e) => e.code === "AGENT_PROGRESS_ITEM");
+    expect(progressEvents).toHaveLength(3);
+
+    const step1 = progressEvents.find((e) => e.message === "Analyze codebase");
+    expect(step1).toBeDefined();
+    expect(step1?.level).toBe("info");
+    expect(step1?.data?.["status"]).toBe("done");
+    expect(step1?.data?.["durationMs"]).toBe(2000);
+
+    const step2 = progressEvents.find((e) => e.message === "Write implementation");
+    expect(step2?.data?.["detail"]).toBe("Modified 3 files");
+
+    const step3 = progressEvents.find((e) => e.message === "Run tests");
+    expect(step3?.level).toBe("error");
+    expect(step3?.data?.["status"]).toBe("failed");
+  });
+
+  it("returns 0 and saves no events when transcript has no execution items", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const transcript = parseSessionJsonl(
+      JSON.stringify({ role: "assistant", content: "Done." }),
+      "test:key",
+      "reddwarf-developer"
+    );
+
+    const count = await persistExecutionItems({
+      repository,
+      taskId: "acme-repo-99",
+      runId: "run-002",
+      phase: "development",
+      transcript,
+      baseEventId: "run-002:development:AGENT_PROGRESS_ITEM",
+      createdAt: "2026-04-07T10:00:00.000Z"
+    });
+
+    expect(count).toBe(0);
+    const events = await repository.listRunEvents("acme-repo-99");
+    expect(events).toHaveLength(0);
+  });
+});
+
 // -- Developer phase OpenClaw dispatch -------------------------------------
 
 describe("developer phase with OpenClaw dispatch", () => {
@@ -5250,8 +5628,14 @@ describe("developer phase with OpenClaw dispatch", () => {
     const architectAwaiter = {
       async waitForCompletion(input: {
         manifest: { taskId: string; source: { repo: string } };
-        workspace: { artifactsDir: string };
+        workspace: { workspaceRoot: string; artifactsDir: string };
       }) {
+        await expect(
+          access(join(input.workspace.workspaceRoot, "repo", ".git"))
+        ).resolves.toBeUndefined();
+        await expect(
+          access(join(input.workspace.workspaceRoot, "REPO_INDEX.md"))
+        ).resolves.toBeUndefined();
         await mkdir(input.workspace.artifactsDir, { recursive: true });
         const handoffPath = join(
           input.workspace.artifactsDir,
@@ -5292,10 +5676,9 @@ describe("developer phase with OpenClaw dispatch", () => {
           ].join("\n"),
           "utf8"
         );
-        return { handoffPath, repoRoot: null };
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
       }
     };
-
     try {
       const planningResult = await runPlanningPipeline(
         {
@@ -5319,6 +5702,7 @@ describe("developer phase with OpenClaw dispatch", () => {
           openClawArchitectAgentId: "reddwarf-analyst",
           openClawArchitectAwaiter: architectAwaiter as never,
           architectTargetRoot: tempRoot,
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
           clock: () => new Date("2026-03-29T17:00:00.000Z"),
           idGenerator: () => "run-prompt-boundary-plan"
         }
@@ -5363,7 +5747,15 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(architectPrompt).toContain("## Trusted Instructions");
       expect(architectPrompt).toContain("## Untrusted GitHub Issue Data");
       expect(architectPrompt).toContain("## Required Handoff Format");
+      expect(architectPrompt).toContain("Repository checkout:");
+      expect(architectPrompt).toContain("Repository index:");
       expect(architectPrompt).toContain(maliciousSummary);
+      expect(architectPrompt).toContain(
+        "Inspect the checked-out repository at the repository checkout path above"
+      );
+      expect(architectPrompt).toContain(
+        "Start by reading the repository index file above"
+      );
       expect(architectPrompt).toContain(
         "you may use the managed OpenClaw browser to inspect current framework docs and API references"
       );
@@ -5571,6 +5963,15 @@ describe("developer phase with OpenClaw dispatch", () => {
       expect(
         development.workspace?.descriptor.toolPolicy.allowedCapabilities
       ).toContain("can_write_code");
+      const provisionedEvent = repository.runEvents.find(
+        (event) =>
+          event.runId === "run-dispatch" &&
+          event.code === "WORKSPACE_PROVISIONED"
+      );
+      expect(provisionedEvent?.data["toolPolicyMode"]).toBe(
+        "development_readwrite"
+      );
+      expect(provisionedEvent?.data["codeWriteEnabled"]).toBe(true);
 
       // Verify TOOLS.md was fully patched: no legacy read-only escalation rule,
       // can_write_code appears in the capability guidance, and it is no longer in
@@ -5942,7 +6343,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6052,7 +6454,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6160,7 +6563,8 @@ describe("developer phase with OpenClaw dispatch", () => {
           );
           return {
             handoffPath,
-            repoRoot: join(input.workspace.workspaceRoot, "repo")
+            repoRoot: join(input.workspace.workspaceRoot, "repo"),
+            sessionTranscriptPath: null
           };
         }
       };
@@ -6328,7 +6732,7 @@ describe("developer phase with OpenClaw dispatch", () => {
                 ].join("\n"),
                 "utf8"
               );
-              return { handoffPath, repoRoot };
+              return { handoffPath, repoRoot, sessionTranscriptPath: null };
             }
           },
           clock: () => new Date("2026-03-30T09:04:00.000Z"),
@@ -6537,6 +6941,432 @@ describe("phase timing hardening", () => {
       expect(heartbeatCount).toBeGreaterThanOrEqual(2);
     } finally {
       await rm(architectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts project-mode architect handoffs when configured for the project artifact", async () => {
+    const architectRoot = await mkdtemp(join(tmpdir(), "project-architect-heartbeat-"));
+    const artifactsDir = join(architectRoot, "artifacts");
+    const awaiter = createArchitectHandoffAwaiter({
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+      heartbeatIntervalMs: 50,
+      handoffFileName: "project-architect-handoff.md",
+      requiredHeadings: [
+        "# Project Architecture Handoff",
+        "## Project Title",
+        "## Project Summary",
+        "## Tickets"
+      ]
+    });
+
+    try {
+      const pending = awaiter.waitForCompletion({
+        manifest: {} as never,
+        workspace: {
+          workspaceId: "project-architect-heartbeat",
+          workspaceRoot: architectRoot,
+          artifactsDir,
+          stateFile: join(architectRoot, ".workspace", "workspace.json"),
+          descriptor: {} as never
+        } as never,
+        sessionKey: "github:issue:acme/platform:502",
+        dispatchResult: {
+          accepted: true,
+          sessionKey: "github:issue:acme/platform:502",
+          agentId: "reddwarf-analyst",
+          sessionId: "project-architect-heartbeat-session",
+          respondedAt: new Date().toISOString(),
+          statusMessage: null
+        },
+        onHeartbeat: async () => {
+          await mkdir(artifactsDir, { recursive: true });
+          await writeFile(
+            join(artifactsDir, "project-architect-handoff.md"),
+            [
+              "# Project Architecture Handoff",
+              "",
+              "- Task ID: derekrivers-firstvoyage-64",
+              "- Repository: derekrivers/FirstVoyage",
+              "- Architect: Holly (reddwarf-analyst)",
+              "- Confidence: high",
+              "- Confidence reason: Project mode wrote the expected handoff file.",
+              "",
+              "## Project Title",
+              "",
+              "Persist project-mode planning output",
+              "",
+              "## Project Summary",
+              "",
+              "Wait for the project architect artifact and persist the resulting ProjectSpec.",
+              "",
+              "## Tickets",
+              "",
+              "### Ticket: Persist the project spec",
+              "",
+              "- Complexity: medium",
+              "- Depends on: none",
+              "",
+              "#### Description",
+              "",
+              "Save the generated project specification after the handoff is written.",
+              "",
+              "#### Acceptance Criteria",
+              "",
+              "- Project planning stores a ProjectSpec.",
+              "- /projects returns the saved project."
+            ].join("\n"),
+            "utf8"
+          );
+        },
+        heartbeatIntervalMs: 50
+      });
+
+      await expect(pending).resolves.toMatchObject({
+        handoffPath: join(artifactsDir, "project-architect-handoff.md"),
+        repoRoot: null
+      });
+    } finally {
+      await rm(architectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps project-mode plans blocked without creating a legacy policy-gate approval request", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const targetRoot = await mkdtemp(join(tmpdir(), "project-plan-approval-route-"));
+    const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+      fixedSessionId: "session-project-plan-approval-route"
+    });
+
+    let architectCallCount = 0;
+    const projectAwaiter = {
+      async waitForCompletion(input: {
+        manifest: { taskId: string; source: { repo: string } };
+        workspace: { workspaceRoot: string; artifactsDir: string };
+      }) {
+        await expect(
+          access(join(input.workspace.workspaceRoot, "repo", ".git"))
+        ).resolves.toBeUndefined();
+        await expect(
+          access(join(input.workspace.workspaceRoot, "REPO_INDEX.md"))
+        ).resolves.toBeUndefined();
+        await mkdir(input.workspace.artifactsDir, { recursive: true });
+        architectCallCount += 1;
+        const isProjectPlanningCall = architectCallCount > 1;
+        const handoffPath = join(
+          input.workspace.artifactsDir,
+          isProjectPlanningCall
+            ? "project-architect-handoff.md"
+            : "architect-handoff.md"
+        );
+        await writeFile(
+          handoffPath,
+          (isProjectPlanningCall
+            ? [
+                "# Project Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Project approval should be handled through /projects.",
+                "",
+                "## Project Title",
+                "",
+                "Project approval route hardening",
+                "",
+                "## Project Summary",
+                "",
+                "Ensure project-mode planning blocks on the project approval route instead of creating a generic task approval.",
+                "",
+                "## Tickets",
+                "",
+                "### Ticket: Remove the legacy approval artifact",
+                "",
+                "- Complexity: medium",
+                "- Depends on: none",
+                "",
+                "#### Description",
+                "",
+                "Keep project-mode plans in pending approval without queuing the generic task approval request.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Project-mode plans do not create a policy-gate approval request.",
+                "- The project remains pending approval in /projects.",
+                "",
+                "### Ticket: Guard the generic approval route",
+                "",
+                "- Complexity: medium",
+                "- Depends on: Remove the legacy approval artifact",
+                "",
+                "#### Description",
+                "",
+                "Reject generic approval resolution when a project is waiting on /projects approval.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Generic approval resolution returns a conflict.",
+                "- The operator is pointed at /projects/:id/approve."
+              ]
+            : [
+                "# Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Single-task planning completed before project decomposition.",
+                "",
+                "## Summary",
+                "",
+                "Plan the project-mode approval routing fix with enough detail for policy persistence.",
+                "",
+                "## Implementation Approach",
+                "",
+                "Persist the normal planning spec first, then persist the project decomposition and hold approval at the project route.",
+                "",
+                "## Affected Files",
+                "",
+                "- packages/control-plane/src/pipeline/planning.ts",
+                "- packages/control-plane/src/operator-api.ts",
+                "",
+                "## Risks and Assumptions",
+                "",
+                "- Project-mode planning should block on /projects approval.",
+                "- The legacy task approval route must not resume project execution.",
+                "",
+                "## Test Strategy",
+                "",
+                "- Verify project-mode planning stays blocked without a generic approval request.",
+                "",
+                "## Non-Goals",
+                "",
+                "- Do not queue a policy-gate approval request for project-mode planning."
+              ]).join("\n"),
+          "utf8"
+        );
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
+      }
+    };
+
+    try {
+      const planningResult = await runPlanningPipeline(
+        {
+          ...eligibleInput,
+          source: {
+            provider: "github",
+            repo: "acme/platform",
+            issueNumber: 614,
+            issueUrl: "https://github.com/acme/platform/issues/614"
+          },
+          requestedCapabilities: ["can_write_code"],
+          affectedPaths: [
+            "packages/control-plane/src/pipeline/planning.ts",
+            "packages/control-plane/src/operator-api.ts"
+          ],
+          metadata: {
+            complexityClassification: {
+              size: "medium",
+              reasoning: "Spans multiple control-plane paths and requires project decomposition.",
+              signals: ["multi-package", "project-mode"]
+            }
+          }
+        },
+        {
+          repository,
+          planner: new DeterministicPlanningAgent(),
+          openClawDispatch: dispatchAdapter,
+          openClawArchitectAwaiter: projectAwaiter as never,
+          architectTargetRoot: targetRoot,
+          workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+          clock: () => new Date("2026-04-06T20:00:00.000Z"),
+          idGenerator: () => "project-plan-approval-route"
+        }
+      );
+
+      expect(planningResult.projectSpec?.projectId).toBe(
+        `project:${planningResult.manifest.taskId}`
+      );
+      expect(planningResult.projectSpec?.status).toBe("pending_approval");
+      expect(planningResult.ticketSpecs).toHaveLength(2);
+      expect(planningResult.approvalRequest).toBeUndefined();
+      expect(planningResult.nextAction).toBe("await_human");
+      expect(dispatchAdapter.dispatches).toHaveLength(2);
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "Repository checkout:"
+      );
+      expect(dispatchAdapter.dispatches[0]?.prompt ?? "").toContain(
+        "Repository index:"
+      );
+      expect(dispatchAdapter.dispatches[1]?.prompt ?? "").toContain(
+        "Repository checkout:"
+      );
+      expect(dispatchAdapter.dispatches[1]?.prompt ?? "").toContain(
+        "Repository index:"
+      );
+
+      const manifest = await repository.getManifest(planningResult.manifest.taskId);
+      expect(manifest?.lifecycleStatus).toBe("blocked");
+
+      const approvals = await repository.listApprovalRequests({
+        taskId: planningResult.manifest.taskId
+      });
+      expect(approvals).toHaveLength(0);
+    } finally {
+      await rm(targetRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails project-mode planning instead of falling back to a generic approval when the project handoff is invalid", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const targetRoot = await mkdtemp(join(tmpdir(), "project-plan-invalid-handoff-"));
+    const dispatchAdapter = new FixtureOpenClawDispatchAdapter({
+      fixedSessionId: "session-project-plan-invalid-handoff"
+    });
+
+    let architectCallCount = 0;
+    const projectAwaiter = {
+      async waitForCompletion(input: {
+        manifest: { taskId: string; source: { repo: string } };
+        workspace: { artifactsDir: string };
+      }) {
+        await mkdir(input.workspace.artifactsDir, { recursive: true });
+        architectCallCount += 1;
+        const isProjectPlanningCall = architectCallCount > 1;
+        const handoffPath = join(
+          input.workspace.artifactsDir,
+          isProjectPlanningCall
+            ? "project-architect-handoff.md"
+            : "architect-handoff.md"
+        );
+        await writeFile(
+          handoffPath,
+          (isProjectPlanningCall
+            ? [
+                "# Project Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: This handoff intentionally contains a malformed dependency.",
+                "",
+                "## Project Title",
+                "",
+                "Invalid project handoff",
+                "",
+                "## Project Summary",
+                "",
+                "This should not fall back to the single-task approval path.",
+                "",
+                "## Tickets",
+                "",
+                "### Ticket: First ticket",
+                "",
+                "- Complexity: low",
+                "- Depends on: none",
+                "",
+                "#### Description",
+                "",
+                "First.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Works.",
+                "",
+                "### Ticket: Second ticket",
+                "",
+                "- Complexity: medium",
+                "- Depends on: Missing ticket",
+                "",
+                "#### Description",
+                "",
+                "Second.",
+                "",
+                "#### Acceptance Criteria",
+                "",
+                "- Also works."
+              ]
+            : [
+                "# Architecture Handoff",
+                "",
+                `- Task ID: ${input.manifest.taskId}`,
+                `- Repository: ${input.manifest.source.repo}`,
+                "- Architect: Holly (reddwarf-analyst)",
+                "- Confidence: high",
+                "- Confidence reason: Single-task planning completed before project decomposition.",
+                "",
+                "## Summary",
+                "",
+                "Plan enough detail for project decomposition.",
+                "",
+                "## Implementation Approach",
+                "",
+                "Decompose into project tickets.",
+                "",
+                "## Affected Files",
+                "",
+                "- packages/control-plane/src/pipeline/planning.ts",
+                "",
+                "## Risks and Assumptions",
+                "",
+                "- Project-mode planning should not silently fall back.",
+                "",
+                "## Test Strategy",
+                "",
+                "- Verify invalid project handoffs fail the task.",
+                "",
+                "## Non-Goals",
+                "",
+                "- Do not queue a generic approval request."
+              ]).join("\n"),
+          "utf8"
+        );
+        return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
+      }
+    };
+
+    try {
+      await expect(
+        runPlanningPipeline(
+          {
+            ...eligibleInput,
+            source: {
+              provider: "github",
+              repo: "acme/platform",
+              issueNumber: 615,
+              issueUrl: "https://github.com/acme/platform/issues/615"
+            },
+            requestedCapabilities: ["can_write_code"],
+            affectedPaths: ["packages/control-plane/src/pipeline/planning.ts"],
+            metadata: {
+              complexityClassification: {
+                size: "medium",
+                reasoning: "Requires project decomposition.",
+                signals: ["project-mode"]
+              }
+            }
+          },
+          {
+            repository,
+            planner: new DeterministicPlanningAgent(),
+            openClawDispatch: dispatchAdapter,
+            openClawArchitectAwaiter: projectAwaiter as never,
+            architectTargetRoot: targetRoot,
+            workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+            clock: () => new Date("2026-04-06T20:00:00.000Z"),
+            idGenerator: () => "project-plan-invalid-handoff"
+          }
+        )
+      ).rejects.toThrow(/depends on unknown ticket/);
+
+      const approvals = await repository.listApprovalRequests({
+        taskId: "acme-platform-615"
+      });
+      expect(approvals).toHaveLength(0);
+    } finally {
+      await rm(targetRoot, { recursive: true, force: true });
     }
   });
 

@@ -999,7 +999,8 @@ export async function runArchitectureReviewPhase(
         runStartedAt,
         failedAt,
         failedAtIso,
-        persistTrackedRun
+        persistTrackedRun,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error(

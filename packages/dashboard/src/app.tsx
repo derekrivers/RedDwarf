@@ -14,7 +14,9 @@ import {
   IconCloudUpload,
   IconDatabase,
   IconFileSearch,
+  IconFolder,
   IconGauge,
+  IconGitBranch,
   IconLogout,
   IconMoon,
   IconRobot,
@@ -29,6 +31,9 @@ import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
 import { PipelinePage } from "./pages/pipeline-page";
+import { ProjectDetailPage } from "./pages/project-detail-page";
+import { ProjectsPage } from "./pages/projects-page";
+import { RepositoriesPage } from "./pages/repositories-page";
 import { SubmitIssuePage } from "./pages/submit-issue-page";
 import {
   createApiClient,
@@ -54,10 +59,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: IconGauge },
+  { to: "/projects", label: "Projects", icon: IconFolder },
   { to: "/approvals", label: "Approvals", icon: IconChecklist },
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
   { to: "/agents", label: "Agents", icon: IconRobot },
+  { to: "/repos", label: "Repositories", icon: IconGitBranch },
   { to: "/submit", label: "Submit Issue", icon: IconCloudUpload }
 ];
 
@@ -291,6 +298,14 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
                 element={<DashboardHomePage apiClient={apiClient} />}
               />
               <Route
+                path="/projects"
+                element={<ProjectsPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/projects/:projectId"
+                element={<ProjectDetailPage apiClient={apiClient} />}
+              />
+              <Route
                 path="/approvals"
                 element={<ApprovalsPage apiClient={apiClient} />}
               />
@@ -309,6 +324,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/agents"
                 element={<AgentsPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/repos"
+                element={<RepositoriesPage apiClient={apiClient} />}
               />
               <Route
                 path="/submit"

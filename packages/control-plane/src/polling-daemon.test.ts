@@ -1,4 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { PlanningAgent } from "@reddwarf/contracts";
 import {
   DeterministicPlanningAgent,
   createBufferedPlanningLogger,
@@ -7,11 +11,41 @@ import {
   runPlanningPipeline
 } from "@reddwarf/control-plane";
 import {
-  FixtureGitHubAdapter
+  FixtureGitHubAdapter,
+  FixtureOpenClawDispatchAdapter
 } from "@reddwarf/integrations";
 import {
   InMemoryPlanningRepository
 } from "@reddwarf/evidence";
+
+function createFixtureWorkspaceRepoBootstrapper() {
+  return {
+    async ensureRepo(input: {
+      workspace: { workspaceRoot: string };
+      baseBranch: string;
+      manifest: { source: { repo: string } };
+    }) {
+      const repoRoot = join(input.workspace.workspaceRoot, "repo");
+      await mkdir(join(repoRoot, "docs"), { recursive: true });
+      await writeFile(join(repoRoot, "README.md"), "# Fixture repo\n", "utf8");
+      await writeFile(
+        join(repoRoot, "docs", "rollout-plan.md"),
+        "# Rollout plan\n",
+        "utf8"
+      );
+      await writeFile(
+        join(repoRoot, "docs", "rollout-checklist.md"),
+        "# Rollout checklist\n",
+        "utf8"
+      );
+      return {
+        repoRoot,
+        baseBranch: input.baseBranch,
+        remoteUrl: `https://github.com/${input.manifest.source.repo}.git`
+      };
+    }
+  };
+}
 
 describe("GitHub issue polling daemon", () => {
   it("polls configured repositories and runs planning for new issue candidates", async () => {
@@ -196,6 +230,192 @@ describe("GitHub issue polling daemon", () => {
       action: "planned"
     });
   });
+
+  it("routes medium GitHub issues into project mode when OpenClaw planning deps are available", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const github = new FixtureGitHubAdapter({
+      candidates: [
+        {
+          repo: "acme/platform",
+          issueNumber: 74,
+          title: "Break down a multi-step rollout",
+          body: [
+            "## Summary",
+            "",
+            "This request should enter project mode instead of the single-issue path.",
+            "",
+            "## Acceptance Criteria",
+            "",
+            "- The issue is classified above small",
+            "- Project planning persists a ProjectSpec",
+            "- Ticket decomposition contains at least two tickets",
+            "- The planning spec preserves the classified project size",
+            "",
+            "## Affected Paths",
+            "",
+            "- docs/rollout-plan.md",
+            "- docs/rollout-checklist.md",
+            "",
+            "## Requested Capabilities",
+            "",
+            "- can_plan",
+            "- can_archive_evidence"
+          ].join("\n"),
+          labels: ["ai-eligible", "priority:4"],
+          url: "https://github.com/acme/platform/issues/74",
+          state: "open"
+        }
+      ]
+    });
+    const architectTargetRoot = await mkdtemp(join(tmpdir(), "poll-project-mode-"));
+    const daemon = createGitHubIssuePollingDaemon(
+      {
+        intervalMs: 5_000,
+        repositories: [{ repo: "acme/platform" }],
+        runOnStart: false
+      },
+      {
+        repository,
+        github,
+        planner: new DeterministicPlanningAgent(),
+        openClawDispatch: new FixtureOpenClawDispatchAdapter({
+          fixedSessionId: "session-project-mode-001"
+        }),
+        architectTargetRoot,
+        workspaceRepoBootstrapper: createFixtureWorkspaceRepoBootstrapper(),
+        openClawArchitectAwaiter: {
+          async waitForCompletion(input: {
+            workspace: { workspaceId: string; artifactsDir: string };
+          }) {
+            const isProjectMode = input.workspace.workspaceId.endsWith(
+              "-project-architect"
+            );
+            const handoffPath = join(
+              input.workspace.artifactsDir,
+              isProjectMode
+                ? "project-architect-handoff.md"
+                : "architect-handoff.md"
+            );
+            await writeFile(
+              handoffPath,
+              (
+                isProjectMode
+                  ? [
+                      "# Project Architecture Handoff",
+                      "",
+                      "- Task ID: acme-platform-74",
+                      "- Repository: acme/platform",
+                      "- Architect: Holly (reddwarf-analyst)",
+                      "- Confidence: high",
+                      "- Confidence reason: The work is broad enough to benefit from ticket decomposition.",
+                      "",
+                      "## Project Title",
+                      "",
+                      "Rollout Planning Corridor",
+                      "",
+                      "## Project Summary",
+                      "",
+                      "Break the rollout into sequential planning and execution tickets.",
+                      "",
+                      "## Tickets",
+                      "",
+                      "### Ticket: Draft the rollout plan",
+                      "",
+                      "- Complexity: low",
+                      "- Depends on: none",
+                      "",
+                      "#### Description",
+                      "",
+                      "Create the initial rollout plan document.",
+                      "",
+                      "#### Acceptance Criteria",
+                      "",
+                      "- Draft plan exists",
+                      "- Stakeholders can review it",
+                      "",
+                      "### Ticket: Finalize rollout checklist",
+                      "",
+                      "- Complexity: medium",
+                      "- Depends on: Draft the rollout plan",
+                      "",
+                      "#### Description",
+                      "",
+                      "Turn the approved plan into a final checklist for execution.",
+                      "",
+                      "#### Acceptance Criteria",
+                      "",
+                      "- Checklist reflects the approved rollout plan",
+                      "- Dependencies are captured",
+                      ""
+                    ]
+                  : [
+                      "# Architecture Handoff",
+                      "",
+                      "- Task ID: acme-platform-74",
+                      "- Repository: acme/platform",
+                      "- Architect: Holly (reddwarf-analyst)",
+                      "- Confidence: high",
+                      "- Confidence reason: The issue has enough detail for a deterministic planning pass.",
+                      "",
+                      "## Summary",
+                      "",
+                      "Plan the rollout work before decomposing it into project tickets.",
+                      "",
+                      "## Implementation Approach",
+                      "",
+                      "Capture the rollout scope, affected documents, and validation expectations.",
+                      "",
+                      "## Affected Files",
+                      "",
+                      "- docs/rollout-plan.md",
+                      "- docs/rollout-checklist.md",
+                      "",
+                      "## Risks and Assumptions",
+                      "",
+                      "- The rollout can be broken into at least two serial tickets.",
+                      "",
+                      "## Test Strategy",
+                      "",
+                      "- Verify the plan and checklist stay aligned.",
+                      "",
+                      "## Non-Goals",
+                      "",
+                      "- Do not execute the rollout during planning."
+                    ]
+              ).join("\n"),
+              "utf8"
+            );
+            return { handoffPath, repoRoot: null, sessionTranscriptPath: null };
+          }
+        } as never,
+        clock: () => new Date("2026-03-27T09:06:00.000Z"),
+        idGenerator: () => "poll-run-project-mode-001"
+      }
+    );
+
+    try {
+      const cycle = await daemon.pollOnce();
+      const planningSpec = [...repository.planningSpecs.values()][0];
+      const projectSpec = await repository.getProjectSpec(
+        "project:acme-platform-74"
+      );
+      const ticketSpecs = await repository.listTicketSpecs("project:acme-platform-74");
+
+      expect(cycle.plannedIssueCount).toBe(1);
+      expect(cycle.decisions[0]).toMatchObject({
+        repo: "acme/platform",
+        issueNumber: 74,
+        action: "planned"
+      });
+      expect(planningSpec?.projectSize).toBe("medium");
+      expect(projectSpec?.projectSize).toBe("medium");
+      expect(projectSpec?.status).toBe("pending_approval");
+      expect(ticketSpecs).toHaveLength(2);
+    } finally {
+      await rm(architectTargetRoot, { recursive: true, force: true });
+    }
+  });
+
   it("skips issues that already have a persisted planning spec", async () => {
     const repository = new InMemoryPlanningRepository();
     const github = new FixtureGitHubAdapter({
@@ -455,6 +675,81 @@ describe("GitHub issue polling daemon backoff", () => {
       const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
       expect(cursor?.lastPollStatus).toBe("failed");
       expect(cursor?.lastPollError).toContain("timed out after 2000ms");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fail a poll cycle just because planning takes longer than the fetch timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const github = new FixtureGitHubAdapter({
+        candidates: [
+          {
+            repo: "acme/platform",
+            issueNumber: 75,
+            title: "Slow planning should still complete",
+            body: [
+              "This issue simulates a slow architect pass.",
+              "",
+              "Acceptance Criteria:",
+              "- Polling still completes successfully",
+              "",
+              "Affected Paths:",
+              "- docs/polling-timeouts.md",
+              "",
+              "Requested Capabilities:",
+              "- can_plan",
+              "- can_archive_evidence"
+            ].join("\n"),
+            labels: ["ai-eligible"],
+            url: "https://github.com/acme/platform/issues/75",
+            state: "open",
+            updatedAt: "2026-03-29T13:00:00.000Z"
+          }
+        ]
+      });
+      const deterministicPlanner = new DeterministicPlanningAgent();
+      const slowPlanner: PlanningAgent = {
+        async createSpec(input, context) {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          return deterministicPlanner.createSpec(input, context);
+        }
+      };
+
+      const daemon = createGitHubIssuePollingDaemon(
+        {
+          intervalMs: 5_000,
+          cycleTimeoutMs: 2_000,
+          repositories: [{ repo: "acme/platform" }],
+          runOnStart: false
+        },
+        {
+          repository,
+          github,
+          planner: slowPlanner,
+          clock: () => new Date("2026-03-29T13:00:00.000Z"),
+          idGenerator: () => "slow-plan-001"
+        }
+      );
+
+      const pending = daemon.pollOnce();
+      await vi.advanceTimersByTimeAsync(3_000);
+      const cycle = await pending;
+
+      expect(cycle.plannedIssueCount).toBe(1);
+      expect(cycle.decisions[0]).toMatchObject({
+        repo: "acme/platform",
+        issueNumber: 75,
+        action: "planned"
+      });
+
+      const cursor = await repository.getGitHubIssuePollingCursor("acme/platform");
+      expect(cursor?.lastSeenIssueNumber).toBe(75);
+      expect(cursor?.lastPollStatus).toBe("succeeded");
+      expect(daemon.consecutiveFailures).toBe(0);
     } finally {
       vi.useRealTimers();
     }

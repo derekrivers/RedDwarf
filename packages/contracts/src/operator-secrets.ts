@@ -7,7 +7,11 @@ export const operatorSecretMetadata = {
     restartRequired: false
   },
   ANTHROPIC_API_KEY: {
-    description: "Anthropic API key used by the planning agent.",
+    description: "Anthropic API key used when REDDWARF_MODEL_PROVIDER=anthropic.",
+    restartRequired: false
+  },
+  OPENAI_API_KEY: {
+    description: "OpenAI API key used when REDDWARF_MODEL_PROVIDER=openai.",
     restartRequired: false
   },
   OPENCLAW_HOOK_TOKEN: {

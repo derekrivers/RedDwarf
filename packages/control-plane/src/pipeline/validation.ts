@@ -965,7 +965,8 @@ export async function runValidationPhase(
         repository, snapshot, manifest: currentManifest,
         phase: "validation", runId, failure: pipelineFailure,
         runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
-        persistTrackedRun, github: dependencies.github
+        persistTrackedRun, github: dependencies.github,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist validation phase failure evidence.", {

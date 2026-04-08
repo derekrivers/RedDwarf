@@ -7,6 +7,7 @@ import {
   eventLevelSchema,
   openClawAgentRoleSchema,
   openClawBootstrapFileKindSchema,
+  openClawModelProviderSchema,
   openClawSandboxModeSchema,
   openClawToolProfileSchema,
   OPENCLAW_BOOTSTRAP_FILE_COUNT,
@@ -39,8 +40,6 @@ export const openClawBootstrapFileSchema = z.object({
   relativePath: z.string().min(1),
   description: z.string().min(1)
 });
-
-export const openClawModelProviderSchema = z.enum(["anthropic", "openai"]);
 
 export const openClawModelBindingSchema = z.object({
   provider: openClawModelProviderSchema,
@@ -119,6 +118,31 @@ export interface PlanningDraft {
   confidence: ConfidenceSignal;
   usage?: TokenUsage;
 }
+
+export interface ClarificationRequest {
+  questions: string[];
+}
+
+export type ProjectPlanningMode = "single" | "project";
+
+export interface ProjectTicketDraft {
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  dependsOn: string[];
+  complexityClass: string;
+}
+
+export interface ProjectPlanningDraft {
+  title: string;
+  summary: string;
+  tickets: ProjectTicketDraft[];
+  confidence: ConfidenceSignal;
+}
+
+export type ProjectPlanningResult =
+  | { outcome: "project_spec"; draft: ProjectPlanningDraft }
+  | { outcome: "clarification_needed"; clarification: ClarificationRequest };
 
 export interface DevelopmentDraft {
   summary: string;

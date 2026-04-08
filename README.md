@@ -195,13 +195,15 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `REDDWARF_TOKEN_BUDGET_REVIEWER` | `60000` | Architecture-review token budget |
 | `REDDWARF_TOKEN_BUDGET_SCM` | `40000` | SCM token budget |
 | `REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION` | `warn` | Budget overage behavior: warn or block |
+| `REDDWARF_MODEL_PROVIDER` | `anthropic` | LLM provider for direct planning calls and generated OpenClaw agent model bindings; allowed values are `anthropic` and `openai` |
 
 **Secrets**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | _(required)_ | GitHub PAT for issue intake, branch publishing, PR creation, and cleanup |
-| `ANTHROPIC_API_KEY` | _(required for Anthropic planning)_ | Anthropic API key for planning and provider-backed execution |
+| `ANTHROPIC_API_KEY` | _(required when `REDDWARF_MODEL_PROVIDER=anthropic`)_ | Anthropic API key for planning and OpenClaw's Anthropic-backed agent execution |
+| `OPENAI_API_KEY` | _(required when `REDDWARF_MODEL_PROVIDER=openai`)_ | OpenAI API key for planning and OpenClaw's OpenAI-backed agent execution |
 | `OPENCLAW_HOOK_TOKEN` | _(required when dispatching to OpenClaw)_ | Privileged hook-ingress token for RedDwarf -> OpenClaw dispatch |
 | `OPENCLAW_BASE_URL` | `http://localhost:3578` | Base URL for the OpenClaw gateway HTTP API |
 | `OPENCLAW_GATEWAY_TOKEN` | _(required for Control UI)_ | Browser auth token for the OpenClaw Control UI |
@@ -223,6 +225,16 @@ REDDWARF_POLL_REPOS=owner/repo corepack pnpm start
 ```
 
 `REDDWARF_POLL_REPOS` is now only a backward-compatible bootstrap seed. Once the stack is up, manage the polled repo roster through `POST /repos` and `DELETE /repos/:owner/:repo`.
+
+**Example — switch model provider without code edits:**
+
+```bash
+REDDWARF_MODEL_PROVIDER=openai
+OPENAI_API_KEY=sk-your-openai-key
+corepack pnpm generate:openclaw-config
+```
+
+`REDDWARF_MODEL_PROVIDER` is normal validated config, while provider API keys remain secrets in `.env` or `.secrets`. When the provider is changed, the generated `runtime-data/openclaw-home/openclaw.json` agent roster switches its `provider/model` refs for the same RedDwarf personas. Anthropic mode requires `ANTHROPIC_API_KEY`; OpenAI mode requires `OPENAI_API_KEY`. The older `REDDWARF_OPENCLAW_MODEL_PROVIDER` name is accepted as a compatibility alias, but new config should use `REDDWARF_MODEL_PROVIDER`.
 
 **Example — infrastructure + operator API only (no polling):**
 

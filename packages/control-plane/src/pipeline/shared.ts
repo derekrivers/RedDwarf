@@ -206,7 +206,7 @@ export function patchManifest(
   manifest: TaskManifest,
   updates: Partial<TaskManifest>
 ): TaskManifest {
-  return { ...manifest, ...updates };
+  return taskManifestSchema.parse({ ...manifest, ...updates });
 }
 
 // ── Phase pre-flight helpers ──────────────────────────────────────────────────

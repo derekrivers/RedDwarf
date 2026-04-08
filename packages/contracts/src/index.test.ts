@@ -203,15 +203,15 @@ describe("contracts", () => {
       value: "secret-value-123"
     });
     const response = operatorSecretRotationResponseSchema.parse({
-      key: "OPENCLAW_HOOK_TOKEN",
+      key: "OPENAI_API_KEY",
       rotatedAt: timestamp,
-      restartRequired: true,
-      notes: ["Restart OpenClaw to apply the rotated token."]
+      restartRequired: false,
+      notes: ["OpenAI key rotated."]
     });
 
     expect(request.value).toBe("secret-value-123");
-    expect(response.key).toBe("OPENCLAW_HOOK_TOKEN");
-    expect(response.restartRequired).toBe(true);
+    expect(response.key).toBe("OPENAI_API_KEY");
+    expect(response.restartRequired).toBe(false);
   });
 
   it("parses operator UI bootstrap metadata", () => {
@@ -308,6 +308,12 @@ describe("contracts", () => {
       )
     ).toBe("");
     expect(parseOperatorConfigValue("REDDWARF_API_PORT", 8080)).toBe(8080);
+    expect(parseOperatorConfigValue("REDDWARF_MODEL_PROVIDER", "openai")).toBe(
+      "openai"
+    );
+    expect(() =>
+      parseOperatorConfigValue("REDDWARF_MODEL_PROVIDER", "bedrock")
+    ).toThrow();
   });
 
   it("builds a JSON-schema-style operator config schema response", () => {
@@ -322,6 +328,15 @@ describe("contracts", () => {
       ]
     ).toBe("integer");
     expect(response.schema.defaults["REDDWARF_LOG_LEVEL"]).toBe("info");
+    expect(response.schema.defaults["REDDWARF_MODEL_PROVIDER"]).toBe(
+      "anthropic"
+    );
+    expect(
+      (response.schema.properties["REDDWARF_MODEL_PROVIDER"] as Record<
+        string,
+        unknown
+      >)["enum"]
+    ).toEqual(["anthropic", "openai"]);
     expect(response.schema.descriptions["REDDWARF_SKIP_OPENCLAW"]).toContain(
       "OpenClaw"
     );

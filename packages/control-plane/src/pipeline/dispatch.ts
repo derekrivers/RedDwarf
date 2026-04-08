@@ -20,6 +20,7 @@ import { runDeveloperPhase } from "./development.js";
 import { runValidationPhase } from "./validation.js";
 import { runScmPhase } from "./scm.js";
 import { resolveUnmetTaskGroupDependencies } from "../task-groups.js";
+import { buildDevelopmentComplexityProfile } from "./token-budget.js";
 import type { PlanningPipelineLogger } from "../logger.js";
 
 /**
@@ -213,20 +214,37 @@ export async function dispatchReadyTask(
     logger: dependencies.logger,
     clock: dependencies.clock,
     concurrency: dependencies.concurrency,
-    timing: dependencies.timing
+    timing: dependencies.timing,
+    onProjectFailed: dependencies.onProjectFailed
   });
 
   // ── Development phase ─────────────────────────────────────────────────────
 
   if (startPhase === "development") {
     try {
+      // Select Opus developer for elevated/high complexity tasks
+      const devComplexity = buildDevelopmentComplexityProfile(manifest, snapshot.spec!);
+      const developerAgentId =
+        devComplexity.level === "elevated" || devComplexity.level === "high"
+          ? "reddwarf-developer-opus"
+          : "reddwarf-developer";
+
+      if (developerAgentId === "reddwarf-developer-opus") {
+        dispatchLogger.info("Escalating developer to Opus model for elevated/high complexity.", {
+          taskId,
+          complexityLevel: devComplexity.level,
+          complexityScore: devComplexity.score,
+          reasons: devComplexity.reasons
+        });
+      }
+
       dispatchLogger.info("Dispatching developer phase.", { taskId });
       const devResult = await runDeveloperPhase(phaseInput, {
         repository,
         developer: dependencies.developer,
         memoryContext,
         github: dependencies.github,
-        openClawAgentId: "reddwarf-developer",
+        openClawAgentId: developerAgentId,
         ...pickDefined({
           ci: dependencies.ci,
           openClawDispatch: dependencies.openClawDispatch,

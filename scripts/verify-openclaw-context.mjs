@@ -58,6 +58,7 @@ try {
         ".context/project_memory.json",
         ".context/policy_snapshot.json",
         ".context/allowed_paths.json",
+        ".context/denied_paths.json",
         ".context/acceptance_criteria.json"
       ],
       absentFiles: []
@@ -67,7 +68,8 @@ try {
         ".context/task.json",
         ".context/spec.md",
         ".context/project_memory.json",
-        ".context/acceptance_criteria.json"
+        ".context/acceptance_criteria.json",
+        ".context/denied_paths.json"
       ],
       absentFiles: [
         ".context/policy_snapshot.json",
@@ -78,7 +80,8 @@ try {
       contextFiles: [
         ".context/task.json",
         ".context/spec.md",
-        ".context/acceptance_criteria.json"
+        ".context/acceptance_criteria.json",
+        ".context/denied_paths.json"
       ],
       absentFiles: [
         ".context/policy_snapshot.json",

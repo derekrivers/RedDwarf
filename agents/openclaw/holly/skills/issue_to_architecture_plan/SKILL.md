@@ -15,6 +15,21 @@ Produce a plan that is:
 - explicit enough for implementation
 - explicit about risk and testing
 
+## Structured Progress Updates
+
+Emit a `plan_update` event at the start of each major milestone so the RedDwarf dashboard can show a live progress timeline. Use clear, concise step titles:
+
+```json
+{ "type": "plan_update", "items": [
+  { "id": "read-issue",    "title": "Reading issue and acceptance criteria", "status": "active" },
+  { "id": "inspect-repo",  "title": "Inspecting repository structure",       "status": "pending" },
+  { "id": "draft-plan",    "title": "Drafting architecture plan",            "status": "pending" },
+  { "id": "write-handoff", "title": "Writing developer handoff",             "status": "pending" }
+] }
+```
+
+Update each item to `done` (with `durationMs`) as you complete it. This is informational only and does not affect pipeline state.
+
 ## Process
 
 1. Read the issue and acceptance criteria carefully.
@@ -26,6 +41,31 @@ Produce a plan that is:
 7. Define what the Developer must change.
 8. Define what tests should be added or updated.
 9. Produce the final architecture handoff.
+
+## Dynamic Skill Discovery (ClawHub)
+
+When `REDDWARF_CLAWHUB_ENABLED` is enabled, you may search ClawHub for
+framework-specific skills before producing the architecture plan. Use this when:
+
+- The codebase uses a framework or tool you have limited expertise in.
+- A community skill could improve the quality of the plan (e.g., "next.js testing patterns",
+  "terraform deployment", "rust cargo workspace").
+
+Search only when it is likely to add value. Do not search for skills on every task.
+
+Only install skills from **verified publishers** or the configured allowlist.
+The default allowlist is `reddwarf/*`, `anthropic/*`. Operators can override
+this via the `REDDWARF_CLAWHUB_ALLOWED_PUBLISHERS` environment variable
+(comma-separated publisher glob patterns).
+
+Record the skill ID and version in your plan under a "Discovered Skills" section.
+These are recorded as evidence metadata by the RedDwarf pipeline.
+
+Example search (only when ClawHub is available):
+```
+openclaw skills search "next.js testing patterns"
+openclaw skills install nextjs/testing-patterns
+```
 
 ## Output Format
 

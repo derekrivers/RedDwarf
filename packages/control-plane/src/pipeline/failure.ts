@@ -52,6 +52,9 @@ import {
   readPhaseRetryBudgetState,
   resolvePhaseRetryLimit
 } from "./retry-budget.js";
+import {
+  markProjectTicketFailedFromSnapshot
+} from "./project-ticket-state.js";
 
 import { sanitizeSecretBearingText } from "../live-workflow.js";
 
@@ -404,6 +407,7 @@ export async function handleAutomatedPhaseFailure(input: {
     runRepository?: { savePipelineRun(run: PipelineRun): Promise<void> }
   ) => Promise<void>;
   github: GitHubAdapter | undefined;
+  onProjectFailed?: (projectId: string, ticketId: string) => Promise<void>;
 }): Promise<AutomatedFailureRecoveryResult> {
   const { repository, snapshot, manifest, phase, runId, failure } = input;
   const policy = phaseRegistry[phase].recovery;
@@ -681,10 +685,10 @@ export async function handleAutomatedPhaseFailure(input: {
         taskId: manifest.taskId,
         runId,
         phase,
-        level: "warn",
+        level: "error",
         code: EventCodes.FOLLOW_UP_ISSUE_SKIPPED,
         failureClass: failure.failureClass,
-        message: `Failed to create a follow-up issue for the ${phase} failure.`,
+        message: `Failed to create a follow-up issue for the ${phase} failure. Manual follow-up may be required.`,
         data: {
           error: followUpIssueError
         },
@@ -740,6 +744,12 @@ export async function handleAutomatedPhaseFailure(input: {
       retryBudgetState,
       recoveryMetadata,
       createdAt: input.failedAtIso
+    });
+    await markProjectTicketFailedFromSnapshot({
+      repository: transactionalRepository,
+      snapshot,
+      updatedAt: input.failedAtIso,
+      ...(input.onProjectFailed ? { onProjectFailed: input.onProjectFailed } : {})
     });
     await recordRunEvent({
       repository: transactionalRepository,
@@ -910,7 +920,8 @@ export async function persistPhaseFailure(
         failedAt: ctx.failedAt,
         failedAtIso: ctx.failedAtIso,
         persistTrackedRun: ctx.persistTrackedRun,
-        github: ctx.github
+        github: ctx.github,
+        ...(ctx.onProjectFailed ? { onProjectFailed: ctx.onProjectFailed } : {})
       })
     ).manifest;
   }

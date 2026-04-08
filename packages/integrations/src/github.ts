@@ -1,4 +1,4 @@
-import { asIsoTimestamp, capabilities, type Capability, type PlanningTaskInput } from "@reddwarf/contracts";
+import { asIsoTimestamp, capabilities, type Capability, type PlanningTaskInput, type TicketSpec } from "@reddwarf/contracts";
 import type { CiAdapter, CiCheckSuiteSnapshot } from "./ci.js";
 import { V1MutationDisabledError } from "./errors.js";
 
@@ -111,9 +111,53 @@ export interface GitHubWriter {
   ): Promise<GitHubBranchSummary>;
   createPullRequest(input: GitHubPullRequestDraft): Promise<GitHubPullRequestSummary>;
   commentOnIssue(comment: GitHubIssueComment): Promise<void>;
+  /**
+   * Ensures the RedDwarf ticket-advance workflow file exists in the target repo.
+   * Creates `.github/workflows/reddwarf-advance.yml` if absent; skips silently if
+   * the file is already present so user customizations are preserved.
+   */
+  ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }>;
 }
 
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
+
+// ============================================================
+// GitHubRepoDiscovery — list repos accessible to the token
+// ============================================================
+
+export interface GitHubRepoSummary {
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string | null;
+  language: string | null;
+  archived: boolean;
+}
+
+export interface GitHubRepoDiscovery {
+  listUserRepos(options?: {
+    perPage?: number;
+    page?: number;
+    sort?: "updated" | "full_name" | "created" | "pushed";
+    direction?: "asc" | "desc";
+    query?: string;
+  }): Promise<{ repos: GitHubRepoSummary[]; total: number }>;
+}
+
+// ============================================================
+// GitHubIssuesAdapter — project mode sub-issue operations
+// ============================================================
+
+export interface GitHubIssuesAdapter {
+  createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number>;
+  closeIssue(issueNumber: number, repo?: string): Promise<void>;
+  getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot>;
+}
 
 export interface GitHubIssueIntakeResult {
   candidate: GitHubIssueCandidate;
@@ -330,6 +374,82 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   async commentOnIssue(comment: GitHubIssueComment): Promise<void> {
     throw new V1MutationDisabledError(`Commenting on ${comment.repo}#${comment.issueNumber}`);
   }
+
+  async ensureWorkflowFile(_repo: string): Promise<{ created: boolean; skipped: boolean }> {
+    return { created: false, skipped: true };
+  }
+}
+
+export interface FixtureGitHubIssuesAdapterOptions {
+  repo: string;
+  enabled?: boolean;
+  issueNumberStart?: number;
+}
+
+export class FixtureGitHubIssuesAdapter implements GitHubIssuesAdapter {
+  private readonly repo: string;
+  private readonly enabled: boolean;
+  private readonly createdSubIssues: Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string; repo: string }>;
+  private readonly closedIssues: Set<number>;
+  private nextIssueNumber: number;
+
+  constructor(options: FixtureGitHubIssuesAdapterOptions) {
+    this.repo = options.repo;
+    this.enabled = options.enabled ?? true;
+    this.createdSubIssues = new Map();
+    this.closedIssues = new Set();
+    this.nextIssueNumber = options.issueNumberStart ?? 2_000;
+  }
+
+  getCreatedSubIssues(): Map<number, { parentIssueNumber: number; ticketSpec: TicketSpec; body: string; repo: string }> {
+    return this.createdSubIssues;
+  }
+
+  getClosedIssues(): Set<number> {
+    return this.closedIssues;
+  }
+
+  async createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number> {
+    if (!this.enabled) {
+      throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+    }
+    const issueNumber = this.nextIssueNumber;
+    this.nextIssueNumber += 1;
+    const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
+    this.createdSubIssues.set(issueNumber, {
+      parentIssueNumber,
+      ticketSpec,
+      body,
+      repo: repo ?? this.repo
+    });
+    return issueNumber;
+  }
+
+  async closeIssue(issueNumber: number): Promise<void> {
+    if (!this.enabled) {
+      throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+    }
+    this.closedIssues.add(issueNumber);
+  }
+
+  async getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot> {
+    const issueRepo = repo ?? this.repo;
+    return {
+      repo: issueRepo,
+      issueNumber,
+      url: `https://github.com/${issueRepo}/issues/${issueNumber}`,
+      state: this.closedIssues.has(issueNumber) ? "closed" : "open",
+      labels: ["reddwarf-ticket"],
+      assignees: [],
+      milestone: null,
+      defaultBranch: "main",
+      updatedAt: null
+    };
+  }
 }
 
 export async function intakeGitHubIssue(input: {
@@ -433,7 +553,13 @@ interface GitHubApiIssue {
 }
 
 interface GitHubApiRepository {
+  full_name: string;
+  description: string | null;
+  private: boolean;
   default_branch: string;
+  updated_at: string | null;
+  language: string | null;
+  archived: boolean;
 }
 
 interface GitHubApiCreatedIssue {
@@ -458,7 +584,108 @@ interface GitHubApiPullRequest {
   merged_at: string | null;
 }
 
-export class RestGitHubAdapter implements GitHubAdapter {
+const REDDWARF_ADVANCE_WORKFLOW_YAML = `# RedDwarf Project Mode — Ticket Advance Workflow
+#
+# Fires when a pull request is closed and merged. Extracts the ticket_id from
+# the PR branch name (format: reddwarf/ticket/{ticket_id}) or the PR body,
+# then calls POST /projects/advance on the RedDwarf operator API to advance
+# the project ticket queue.
+#
+# Required secrets:
+#   REDDWARF_OPERATOR_TOKEN — the operator API bearer token
+#
+# Required variable or secret (set in repo or environment settings):
+#   REDDWARF_OPERATOR_API_URL — the operator API base URL reachable from
+#     GitHub Actions runners (e.g. https://<machine>.tail<net>.ts.net:8080)
+
+name: RedDwarf Ticket Advance
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  advance:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract ticket ID
+        id: extract
+        env:
+          PR_BRANCH: \${{ github.event.pull_request.head.ref }}
+          PR_BODY: \${{ github.event.pull_request.body }}
+        run: |
+          # Try branch name first: reddwarf/ticket/{ticket_id}
+          if [[ "$PR_BRANCH" =~ ^reddwarf/ticket/(.+)$ ]]; then
+            echo "ticket_id=\${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "source=branch" >> "$GITHUB_OUTPUT"
+            echo "Extracted ticket_id from branch: \${BASH_REMATCH[1]}"
+            exit 0
+          fi
+
+          # Fall back to PR body: look for <!-- reddwarf:ticket_id:VALUE -->
+          TICKET_ID=$(echo "$PR_BODY" | grep -oP '<!-- reddwarf:ticket_id:(.+?) -->' | head -1 | sed 's/<!-- reddwarf:ticket_id:\\(.*\\) -->/\\1/')
+          if [ -n "$TICKET_ID" ]; then
+            echo "ticket_id=$TICKET_ID" >> "$GITHUB_OUTPUT"
+            echo "source=body" >> "$GITHUB_OUTPUT"
+            echo "Extracted ticket_id from PR body: $TICKET_ID"
+            exit 0
+          fi
+
+          echo "No ticket_id found in branch name or PR body. Skipping advance."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+      - name: Advance ticket queue
+        if: steps.extract.outputs.skip != 'true'
+        env:
+          REDDWARF_OPERATOR_TOKEN: \${{ secrets.REDDWARF_OPERATOR_TOKEN }}
+          REDDWARF_OPERATOR_API_URL: \${{ vars.REDDWARF_OPERATOR_API_URL || secrets.REDDWARF_OPERATOR_API_URL }}
+          TICKET_ID: \${{ steps.extract.outputs.ticket_id }}
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$REDDWARF_OPERATOR_API_URL" ]; then
+            echo "::error::REDDWARF_OPERATOR_API_URL is not set. Configure it in repository variables or secrets."
+            exit 1
+          fi
+
+          if [ -z "$REDDWARF_OPERATOR_TOKEN" ]; then
+            echo "::error::REDDWARF_OPERATOR_TOKEN secret is not set."
+            exit 1
+          fi
+
+          echo "Advancing ticket $TICKET_ID (PR #$PR_NUMBER)..."
+          REDDWARF_OPERATOR_API_BASE_URL="\${REDDWARF_OPERATOR_API_URL%/}"
+
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \\
+            -X POST \\
+            -H "Authorization: Bearer $REDDWARF_OPERATOR_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"ticket_id\\": \\"$TICKET_ID\\", \\"github_pr_number\\": $PR_NUMBER}" \\
+            "$REDDWARF_OPERATOR_API_BASE_URL/projects/advance")
+
+          cat response.json
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            OUTCOME=$(jq -r '.outcome // "unknown"' response.json)
+            echo "Advance succeeded. Outcome: $OUTCOME"
+
+            if [ "$OUTCOME" = "already_merged" ]; then
+              echo "::warning::Ticket $TICKET_ID was already merged. No state change."
+            elif [ "$OUTCOME" = "completed" ]; then
+              echo "All tickets merged. Project complete."
+            else
+              NEXT_TICKET=$(jq -r '.nextDispatchedTicket.ticketId // "none"' response.json)
+              echo "Next dispatched ticket: $NEXT_TICKET"
+            fi
+          else
+            echo "::error::Advance API call failed with HTTP $HTTP_CODE"
+            cat response.json
+            exit 1
+          fi
+`;
+
+export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
@@ -829,6 +1056,102 @@ export class RestGitHubAdapter implements GitHubAdapter {
       throw error;
     }
   }
+
+  private async apiPut<T>(path: string, payload: unknown): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "PUT",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API PUT ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API PUT ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-advance.yml`;
+
+    try {
+      await this.apiGet<unknown>(apiPath);
+      return { created: false, skipped: true };
+    } catch (error) {
+      if (!isGitHubNotFoundError(error)) {
+        throw error;
+      }
+    }
+
+    const content = Buffer.from(REDDWARF_ADVANCE_WORKFLOW_YAML).toString("base64");
+    await this.apiPut<unknown>(apiPath, {
+      message: "Add RedDwarf ticket advance workflow",
+      content
+    });
+
+    return { created: true, skipped: false };
+  }
+
+  async listUserRepos(
+    options: {
+      perPage?: number;
+      page?: number;
+      sort?: "updated" | "full_name" | "created" | "pushed";
+      direction?: "asc" | "desc";
+      query?: string;
+    } = {}
+  ): Promise<{ repos: GitHubRepoSummary[]; total: number }> {
+    const perPage = Math.min(options.perPage ?? 100, 100);
+    const page = options.page ?? 1;
+    const sort = options.sort ?? "updated";
+    const direction = options.direction ?? "desc";
+
+    if (options.query) {
+      const params = new URLSearchParams();
+      params.set("q", `${options.query} in:name fork:true`);
+      params.set("per_page", String(perPage));
+      params.set("page", String(page));
+      params.set("sort", sort === "full_name" ? "name" : sort);
+      params.set("order", direction);
+      const result = await this.apiGet<{
+        total_count: number;
+        items: GitHubApiRepository[];
+      }>(`/search/repositories?${params.toString()}`);
+      return {
+        repos: result.items.map(mapApiRepoToSummary),
+        total: result.total_count
+      };
+    }
+
+    const params = new URLSearchParams();
+    params.set("per_page", String(perPage));
+    params.set("page", String(page));
+    params.set("sort", sort);
+    params.set("direction", direction);
+    params.set("type", "owner");
+    const items = await this.apiGet<GitHubApiRepository[]>(
+      `/user/repos?${params.toString()}`
+    );
+    return { repos: items.map(mapApiRepoToSummary), total: items.length };
+  }
+}
+
+function mapApiRepoToSummary(repo: GitHubApiRepository): GitHubRepoSummary {
+  return {
+    fullName: repo.full_name,
+    description: repo.description ?? null,
+    private: repo.private ?? false,
+    defaultBranch: repo.default_branch ?? "main",
+    updatedAt: repo.updated_at ?? null,
+    language: repo.language ?? null,
+    archived: repo.archived ?? false
+  };
 }
 
 /**
@@ -850,6 +1173,212 @@ export function createRestGitHubAdapter(
     ...(options.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: options.requestTimeoutMs }
       : {})
+  });
+}
+
+// ============================================================
+// RestGitHubIssuesAdapter — project mode sub-issue operations
+// ============================================================
+
+export function formatTicketSpecBody(ticketSpec: TicketSpec, parentIssueNumber: number): string {
+  const lines: string[] = [];
+  lines.push(`Parent issue: #${parentIssueNumber}`);
+  lines.push("");
+  lines.push(ticketSpec.description);
+  lines.push("");
+  lines.push("## Acceptance Criteria");
+  lines.push("");
+  for (const criterion of ticketSpec.acceptanceCriteria) {
+    lines.push(`- [ ] ${criterion}`);
+  }
+  if (ticketSpec.dependsOn.length > 0) {
+    lines.push("");
+    lines.push("## Dependencies");
+    lines.push("");
+    for (const dep of ticketSpec.dependsOn) {
+      lines.push(`- ${dep}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export interface RestGitHubIssuesAdapterOptions {
+  token: string;
+  repo?: string;
+  baseUrl?: string;
+  requestTimeoutMs?: number;
+}
+
+export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
+  private readonly token: string;
+  private readonly repo: string | undefined;
+  private readonly baseUrl: string;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: RestGitHubIssuesAdapterOptions) {
+    this.token = options.token;
+    this.repo = options.repo;
+    this.baseUrl = options.baseUrl ?? "https://api.github.com";
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+  }
+
+  private parseRepo(repoOverride?: string): { owner: string; repoName: string; repo: string } {
+    const repo = repoOverride ?? this.repo;
+    if (!repo) {
+      throw new Error(
+        "GitHubIssuesAdapter requires a repo for this operation. Pass a repo or set GITHUB_REPO."
+      );
+    }
+    const slash = repo.indexOf("/");
+    if (slash <= 0 || slash >= repo.length - 1) {
+      throw new Error(`Invalid repo format: "${repo}". Expected "owner/name".`);
+    }
+    return { owner: repo.slice(0, slash), repoName: repo.slice(slash + 1), repo };
+  }
+
+  private apiHeaders(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.token}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "reddwarf/0.1.0"
+    };
+  }
+
+  private async apiGet<T>(path: string): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "GET",
+        headers: this.apiHeaders(),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API GET ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async apiPost<T>(path: string, payload: unknown): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API POST ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private async apiPatch<T>(path: string, payload: unknown): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "PATCH",
+        headers: this.apiHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch (error) {
+      throw normalizeFetchTimeoutError(error, `GitHub API PATCH ${path}`, this.requestTimeoutMs);
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`GitHub API PATCH ${path} returned ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async createSubIssue(
+    parentIssueNumber: number,
+    ticketSpec: TicketSpec,
+    repo?: string
+  ): Promise<number> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const body = formatTicketSpecBody(ticketSpec, parentIssueNumber);
+    const created = await this.apiPost<GitHubApiCreatedIssue>(
+      `/repos/${owner}/${repoName}/issues`,
+      {
+        title: ticketSpec.title,
+        body,
+        labels: ["reddwarf-ticket"]
+      }
+    );
+    return created.number;
+  }
+
+  async closeIssue(issueNumber: number, repo?: string): Promise<void> {
+    const { owner, repoName } = this.parseRepo(repo);
+    await this.apiPatch<GitHubApiIssue>(
+      `/repos/${owner}/${repoName}/issues/${issueNumber}`,
+      { state: "closed" }
+    );
+  }
+
+  async getIssue(issueNumber: number, repo?: string): Promise<GitHubIssueStatusSnapshot> {
+    const parsedRepo = this.parseRepo(repo);
+    const { owner, repoName } = parsedRepo;
+    const [issue, repoData] = await Promise.all([
+      this.apiGet<GitHubApiIssue>(`/repos/${owner}/${repoName}/issues/${issueNumber}`),
+      this.apiGet<GitHubApiRepository>(`/repos/${owner}/${repoName}`)
+    ]);
+    return {
+      repo: parsedRepo.repo,
+      issueNumber: issue.number,
+      url: issue.html_url,
+      state: issue.state === "open" ? "open" : "closed",
+      labels: issue.labels
+        .map((l) => (typeof l === "string" ? l : (l.name ?? "")))
+        .filter((n) => n.length > 0),
+      assignees: issue.assignees.map((a) => a.login),
+      milestone: issue.milestone?.title ?? null,
+      defaultBranch: repoData.default_branch,
+      updatedAt: issue.updated_at ?? null
+    };
+  }
+}
+
+/**
+ * Create a RestGitHubIssuesAdapter from environment variables or explicit options.
+ * Throws V1MutationDisabledError when REDDWARF_GITHUB_ISSUES_ENABLED is not "true".
+ * Requires GITHUB_TOKEN. GITHUB_REPO is optional when callers pass the
+ * source repo per operation.
+ */
+export function createGitHubIssuesAdapter(
+  options: { token?: string; repo?: string; baseUrl?: string; requestTimeoutMs?: number } = {}
+): RestGitHubIssuesAdapter {
+  const enabled = process.env["REDDWARF_GITHUB_ISSUES_ENABLED"];
+  if (enabled !== "true") {
+    throw new V1MutationDisabledError("GitHub Issues adapter is disabled (REDDWARF_GITHUB_ISSUES_ENABLED is not true)");
+  }
+
+  const token = options.token ?? process.env["GITHUB_TOKEN"];
+  if (!token) {
+    throw new Error(
+      "GitHubIssuesAdapter requires a GitHub token. Set the GITHUB_TOKEN environment variable or pass token explicitly."
+    );
+  }
+
+  const repo = options.repo ?? process.env["GITHUB_REPO"];
+
+  return new RestGitHubIssuesAdapter({
+    token,
+    ...(repo !== undefined ? { repo } : {}),
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {})
   });
 }
 

@@ -1,5 +1,85 @@
 # Agent Documentation
 
+## 2026-04-08
+
+- Fixed the packaged policy-pack verifier after the OpenClaw runtime roster expanded from five packaged role definitions to six with `reddwarf-developer-opus`.
+- Updated `scripts/verify-packaged-policy-pack.mjs` to assert the current packaged agent IDs instead of a stale hard-coded count, so packaging verification now tracks the shipped roster shape directly.
+- Local verification note: this checkout's `artifacts/policy-packs` directory is owned by `nobody:nogroup`, so the stock verifier cannot create a fresh package there from this shell. Verified the same packaged flow against `/tmp/reddwarf-policy-pack-verification`, which completed and reported `openClawRoleCount: 6`.
+
+## 2026-04-07
+
+- Investigated live GitHub issue `derekrivers/FirstVoyage#84` after it appeared stuck. Intake created task `derekrivers-firstvoyage-84`, but planning failed in under one second before Holly started because local `.env` had `REDDWARF_ACPX_DISPATCH_ENABLED=true` while the running `ghcr.io/openclaw/openclaw:latest` gateway returned `404 Not Found` for `POST /acpx/sessions`. Confirmed `/hooks/agent` is healthy, switched the untracked local `.env` flag back to `false`, cleared a persisted `REDDWARF_SKIP_OPENCLAW=true` operator-config override, and removed stale fake `operator-api-*` poll repos from the managed roster. After restart, `#84` replanned successfully and is blocked only on the normal pending `policy_gate` approval; `/health` reports healthy polling and dispatcher state.
+- Completed M21 OpenClaw Platform Integration milestone — all 7 features (150–156) implemented, verified, and committed.
+- Feature 153: Model failover profiles — cross-provider failover chains in generated `openclaw.json`, gated by `REDDWARF_MODEL_FAILOVER_ENABLED`.
+- Feature 151: Structured execution items — JSONL plan_update/execution_item parsing, AGENT_PROGRESS_ITEM run events, dashboard AgentProgressTimeline component, agent bootstrap files updated. Gated by `REDDWARF_EXECUTION_ITEMS_ENABLED`.
+- Feature 152: Plugin approval hook — `before_tool_call` hook in `reddwarf-operator` plugin; auto-approve/deny via policy with operator API routing for uncertain calls. Gated by `REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED`.
+- Feature 150: Task Flow mirrored mode — `OpenClawTaskFlowAdapter` interface + `HttpOpenClawTaskFlowAdapter`; project approval creates a Task Flow when enabled; `advanceProjectTicket` signals flow state transitions. Gated by `REDDWARF_TASKFLOW_ENABLED`.
+- Feature 154: ACPX embedded dispatch — `AcpxOpenClawDispatchAdapter` calling `POST /acpx/sessions`; coexists with HTTP hook dispatch. Gated by `REDDWARF_ACPX_DISPATCH_ENABLED`.
+- Feature 155: ClawHub skill publishing — published 4 governance skills to `clawhub/skills/`; Holly bootstrap updated for dynamic skill discovery with verified-publisher allowlist. Gated by `REDDWARF_CLAWHUB_ENABLED`.
+- Feature 156: Dreaming memory integration — `parseDreamsMarkdown` + `captureDreamingMemory` with SHA256 deduplication; new `repo` scope and `agent_observed` provenance enum values; SQL migration `0016_dreaming_memory_enums.sql`. Gated by `REDDWARF_DREAMING_MEMORY_ENABLED`.
+- OpenClaw Docker Compose image pinned to `ghcr.io/openclaw/openclaw:v2026.4.5` (was `latest`).
+- All 533 tests pass, typecheck clean.
+
+## 2026-04-06
+
+- Followed live GitHub issue `derekrivers/FirstVoyage#74` after restart onto the Project Mode hardening build. Intake reached both Holly architect passes and wrote `project-architect-handoff.md`, but `/projects` stayed empty and the task fell back to a generic policy-gate approval.
+- Root-caused the failure to project handoff parsing: Holly generated a dependency on the exact ticket title `Implement frightened mode, ghost-eating scoring, and Pac-Man/ghost collision`, and the parser split dependency text on every comma before checking known ticket titles. That turned the dependency into `Implement frightened mode` and threw an unknown-dependency error.
+- Hardened project handoff parsing so exact dependency-title matches win before comma splitting, and fixed markdown section extraction to stop ticket `#### Description` / `#### Acceptance Criteria` sections at same-or-higher heading levels instead of bleeding across later tickets.
+- Removed the unsafe Project Mode fallback to the single-issue approval path. If project planning throws after a medium/large issue enters Project Mode, RedDwarf now fails that planning run instead of creating a legacy generic approval that can bypass `/projects/:id/approve`.
+
+- Ran a second architecture-level Project Mode audit before service restart and found three more end-to-end hardening points. Holly dependency validation now rejects dependency cycles in addition to unknown, duplicate, and self references, preventing a no-ready-ticket deadlock after approval.
+- Added project-ticket failure state propagation for child task escalations: when a dispatched ticket task exhausts its retry budget and creates a failure-automation approval, RedDwarf now marks the originating `TicketSpec` and `ProjectSpec` as `failed`. Approving the failure retry restores the project to `executing` and the ticket to `dispatched`, so recovery does not strand the project in failed state.
+- Hardened `/projects/advance` so merge callbacks can only advance tickets that are already `dispatched` or `pr_open` on an `executing` project. Already-merged callbacks stay idempotent, but bad workflow markers or manual calls can no longer mark dependency-blocked pending tickets as merged.
+
+- Performed a deeper end-to-end Project Mode audit before restarting the service onto the project-ticket execution fixes. Found and fixed two additional state-consistency gaps: final ticket merge now completes the parent project-planning task manifest, and intermediate ticket advancement refreshes the owning `ProjectSpec.updatedAt` so the project list reflects merge-driven activity.
+- Hardened Holly project decomposition parsing so ticket dependencies must reference another generated ticket title exactly, ticket titles must be unique, and self-dependencies are rejected before `TicketSpec` rows are persisted. This prevents dependency graph deadlocks where a ticket can stay `pending` forever because `resolveNextReadyTicket(...)` can never match an unknown or ambiguous dependency.
+- Added regression coverage at both the lower-level project approval helper and the operator `/projects/advance` endpoint for parent task completion on final merge, plus parser coverage for unknown and duplicated dependencies.
+
+- Audited the full Project Mode flow before restarting onto the ticket-materialization build. Found and fixed the next SCM-state gap: project-ticket PR creation now marks the originating `TicketSpec` as `pr_open` and records `githubPrNumber` immediately after the PR opens, instead of leaving the project dashboard stuck on `dispatched` until the merge-driven `/projects/advance` callback.
+- Hardened the merge workflow for operator setup drift: `.github/workflows/reddwarf-advance.yml` now accepts `REDDWARF_OPERATOR_API_URL` from either GitHub Actions variables or secrets, trims a trailing slash before posting to `/projects/advance`, and the operator API now rejects non-integer `github_pr_number` payloads.
+- Fixed the project-mode intake dependency surface so GitHub polling forwards `workspaceRepoBootstrapper` into `runPlanningPipeline(...)`. This keeps architect repo checkout behavior injectable and testable instead of falling back to live `git clone` when the poller is exercising OpenClaw project planning.
+
+- Fixed the next Project Mode execution gap after live project `derekrivers/FirstVoyage#69` proved that approval could create GitHub child issues and mark ticket 1 as `dispatched` without launching any developer workspace or run.
+- Project ticket dispatch now materializes a deterministic child task for the dispatched `TicketSpec`, including a ready manifest, ticket-scoped planning spec, policy snapshot, approved policy-gate row, and project-ticket memory. The existing ready-task dispatcher can then start the normal developer/review/validation/SCM pipeline instead of requiring a parallel Project Mode executor.
+- Added recovery for already-`executing` projects whose dispatched ticket has child GitHub issues but no child task: re-running `POST /projects/:id/approve` now materializes the missing ready child task without recreating child issues or changing ticket order. Merge-driven `advanceProjectTicket(...)` now materializes the next ticket task as it dispatches.
+- SCM now appends the `<!-- reddwarf:ticket_id:... -->` marker to project-ticket PR bodies so the existing GitHub Actions workflow can call `/projects/advance` with the original `TicketSpec.ticketId` even though the branch name uses the sanitized child task ID.
+
+- Investigated live project `derekrivers/FirstVoyage#70` after project-level approval moved it to `executing` but GitHub still showed no child issues. The detail endpoint showed ticket 1 as `dispatched` while all `githubSubIssueNumber` values remained `null`, proving the Postgres-only fallback path had advanced internal state without external GitHub sub-issue creation.
+- Project approval now uses the persisted `ProjectSpec.sourceRepo` for sub-issue creation instead of depending on a single global `GITHUB_REPO` value, and the GitHub Issues adapter no longer requires `GITHUB_REPO` at startup when callers pass a repo per operation.
+- Added a recovery path for already-`executing` projects that have missing GitHub sub-issue links and no PRs yet: re-running `POST /projects/:id/approve` with a configured GitHub Issues adapter backfills the missing child issues without redispatching tickets or changing ticket order.
+
+- Fixed a follow-on Holly planning failure after architect repo bootstrapping. Live issue `derekrivers/FirstVoyage#69` proved that Holly still could not reliably inspect the checked-out repo because the `read` tool errors on directories, browser fallback was unavailable, and spawned analyst subagents inherited the same limitation. Holly responded by asking subagents to enumerate the repo, and those children returned incomplete structure summaries.
+- Architect and project-architect workspaces now generate a readable `REPO_INDEX.md` alongside the checkout, and the prompts explicitly instruct Holly to read that file first instead of reading directories or spawning subagents just to enumerate the repository.
+- Added regression coverage proving architect workspaces materialize `REPO_INDEX.md` and that both architect prompt variants mention the repository index path and first-read instruction.
+
+- Fixed Holly architect sessions getting stuck before project creation because planning dispatch only created an `artifacts/` directory and pointed Holly at a generic `/var/lib/reddwarf/workspaces` root. In live issue `derekrivers/FirstVoyage#68`, that left Holly with no concrete repo checkout to inspect, so the analyst session bounced between `read`-on-directory failures, unavailable browser fallbacks, and GitHub HTML/raw fetches instead of producing `architect-handoff.md`.
+- Planning and project-mode architect dispatch now bootstrap a real `repo/` checkout inside the architect workspace before OpenClaw dispatch, pass the checkout path through the prompt, and instruct Holly to search and read within that specific checkout rather than the shared workspace root.
+- Added regression coverage proving architect and project-mode planning workspaces contain a repo checkout before the awaiter runs, and updated the project prompt unit suite for the new repository-checkout prompt contract.
+
+- Fixed a startup regression in `scripts/start-stack.mjs` after the project sub-issue adapter wiring landed. The script imported `createRestGitHubAdapter` at module scope and then destructured the same identifier again from a later dynamic import, causing Node to abort at parse time with `SyntaxError: Identifier 'createRestGitHubAdapter' has already been declared`.
+- The dynamic import now only pulls `createHttpOpenClawDispatchAdapter`, leaving the shared REST GitHub adapter bound once at module scope.
+
+- Fixed live project approval recovery for stuck project `#67`. The first startup fix for sub-issues was incomplete: the scripts were passing `createRestGitHubAdapter()` into `githubIssuesAdapter`, but that object does not implement `createSubIssue(...)`. In live approval, the project could be persisted as `approved` and then die before any ticket dispatch, leaving all tickets pending.
+- Startup now keeps `githubWriter` on the generic REST adapter and instantiates a real `createGitHubIssuesAdapter()` separately for project sub-issue mutations. When GitHub sub-issues are disabled, startup logs the fallback and omits the adapter cleanly instead of wiring the wrong object shape.
+- Hardened `executeProjectApproval(...)` so malformed adapters are rejected before any project mutation, and incomplete approvals can be resumed when a project is already `approved` but all tickets are still pending. Existing ticket sub-issue numbers are preserved on retry so partially completed approvals do not duplicate GitHub child issues.
+- Added regression coverage proving incomplete approved projects can be retried through the operator API and malformed adapters no longer mutate project state.
+
+- Fixed GitHub issue polling timeouts that were blocking medium project-mode intake such as `derekrivers/FirstVoyage#67`. The poller used to wrap the entire per-repo loop, including `runPlanningPipeline(...)`, inside the 120s cycle timeout. Slow Holly/project-planning work could therefore mark polling degraded before the repo cursor advanced, even when the underlying planning work was healthy.
+- The poller now applies the timeout only to GitHub batch fetch and cursor persistence, while planning runs outside that narrow fetch timeout. This keeps hung GitHub reads failing fast without treating a long planning pass as a repo polling failure.
+- Added regression coverage proving a hung `listIssueCandidates(...)` call still times out, while a slow planner no longer fails the cycle or prevents cursor advancement.
+
+- Fixed project-mode approval routing after live issue `#65` showed the operator could approve the generic policy-gate request and accidentally resume the legacy whole-task pipeline instead of the documented project approval flow.
+- Project-mode planning no longer queues a normal `policy_gate` approval request when it already persisted a pending `ProjectSpec`; those runs now stay blocked and wait for `POST /projects/:id/approve`.
+- Hardened the generic approval resolver so stale legacy approval rows now fail with a clear conflict pointing operators at `/projects/:id/approve` instead of silently bypassing sub-issue creation.
+- Also corrected development telemetry so the `WORKSPACE_PROVISIONED` event and workspace evidence snapshot reflect post-approval write access after `enableWorkspaceCodeWriting(...)` runs, matching the actual workspace descriptor and `TOOLS.md`.
+- Added regression coverage proving project-mode planning does not emit a legacy approval request, the operator API rejects stale generic approval clicks for pending projects, and write-enabled developer runs now record `WORKSPACE_PROVISIONED.codeWriteEnabled = true`.
+
+- Investigated live GitHub issue intake for `derekrivers/FirstVoyage#63` after it unexpectedly entered the single-task developer pipeline instead of Project Mode.
+- Confirmed the deterministic classifier rates that issue as `medium` (`2` affected paths, `4` acceptance criteria, no package fan-out required), so it should be eligible for project-mode planning.
+- Fixed the live intake wiring so GitHub polling now forwards OpenClaw project-planning dependencies into `runPlanningPipeline(...)` when they are available, which allows medium/large polled issues to create `ProjectSpec` records instead of silently staying on the single-issue path.
+- Also started persisting the classified `projectSize` onto the normal planning spec so snapshots no longer default medium/large issues to `small` during diagnostics.
+- Added focused regression coverage proving a medium GitHub issue routed through the poller now persists both a `PlanningSpec.projectSize = "medium"` value and a pending-approval `ProjectSpec` with ticket decomposition.
+
 ## 2026-04-05
 
 - Fixed packaged policy-pack verification so exported control-plane workspace helpers now normalize raw JavaScript bundle inputs through `workspaceContextBundleSchema` before rendering JSON artifacts or runtime instruction markdown. This restores defaults like `policySnapshot.deniedPaths` and `policySnapshot.allowedSecretScopes` for package-verification callers that do not pre-parse a full `WorkspaceContextBundle`.
@@ -644,9 +724,17 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Completed feature 103 from `FEATURE_BOARD.md`: OpenAI provider support for OpenClaw model bindings.
 - Extended `packages/contracts/src/agents.ts` so `openClawModelBindingSchema.provider` is now an enum-backed contract shared by Anthropic and OpenAI role definitions, and added schema coverage in `packages/contracts/src/index.test.ts` for `openai/gpt-5` bindings.
 - Updated `packages/execution-plane/src/index.ts` so the default OpenClaw role roster is generated from provider-aware model maps, preserving Anthropic defaults while allowing a full OpenAI-backed roster through `createOpenClawAgentRoleDefinitions("openai")`; added regression coverage in `packages/execution-plane/src/index.test.ts`.
-- Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
+- Updated `packages/control-plane/src/openclaw-config.ts` and `scripts/generate-openclaw-config.mjs` so generated `openclaw.json` files can opt into an OpenAI-backed agent roster via `modelProvider` or the now-legacy `REDDWARF_OPENCLAW_MODEL_PROVIDER`, with focused config-generation coverage in `packages/control-plane/src/openclaw-config.test.ts`.
 - Verification for feature 103: `corepack pnpm typecheck`; `corepack pnpm test -- packages/contracts/src/index.test.ts packages/execution-plane/src/index.test.ts packages/control-plane/src/openclaw-config.test.ts`.
 - Likely next board item: feature 99, Discord approval bot.
+
+## 2026-04-07
+
+- Implemented the canonical provider switch `REDDWARF_MODEL_PROVIDER=anthropic|openai` for this branch, keeping `REDDWARF_OPENCLAW_MODEL_PROVIDER` as a compatibility alias only.
+- Centralized OpenClaw provider-to-role model refs in `MODEL_PROVIDER_ROLE_MAP`, added validated operator-config coverage for provider selection, and added `OPENAI_API_KEY` to the secret rotation allowlist without exposing raw provider secrets through operator config.
+- Extended direct planning startup paths so the selected provider determines whether RedDwarf requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, while generated OpenClaw config uses the same provider to bind the RedDwarf agent roster.
+- While verifying the change, fixed `scripts/verify-openclaw-context.mjs` to expect `.context/denied_paths.json`, matching the current denylist-first workspace materialization contract.
+- Updated the OpenAI mapping so analyst/architect and developer roles use GPT 5.4 (`openai/gpt-5.4` in OpenClaw config, `gpt-5.4` for direct OpenAI planning), while coordinator, reviewer, and validator remain on `openai/gpt-5`.
 
 - Completed feature 99 from `FEATURE_BOARD.md`: Discord approval bot via native OpenClaw channel config.
 - Extended `packages/control-plane/src/openclaw-config.ts` so RedDwarf can emit a typed `channels.discord` block with conservative DM pairing, server allowlisting, and native command support instead of requiring hand-edited OpenClaw JSON.
@@ -720,3 +808,10 @@ eddwarf/derekrivers-firstvoyage-14/83e5475f-b404-436e-867c-5e87784592b6, and ope
 - Gated OpenClaw code writing on an explicitly approved `can_write_code` capability instead of auto-enabling it for every development dispatch. GitHub AI Task issue intake now defaults to `can_plan`, `can_write_code`, and `can_archive_evidence` when the issue body does not specify requested capabilities, which keeps normal execution-oriented issues aligned with the stricter gate.
 - Tightened OpenClaw developer handoff validation so readonly runs must keep `Code writing enabled: no`, write-enabled runs must show repo changes within the approved path scope, and handoffs cannot claim tests ran unless the workspace actually allowed `can_run_tests`. Run summaries now stay `active` until a terminal pipeline event is recorded instead of defaulting to `completed`.
 - Added focused regression coverage for effective allowed paths, readonly OpenClaw development, unverified test-claim rejection, GitHub intake defaults, active run summaries, and context materialization. Verification for this fix set: `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm test -- packages/control-plane/src/index.test.ts packages/evidence/src/index.test.ts packages/integrations/src/github.test.ts packages/contracts/src/index.test.ts tests/context-materialization.test.ts"`; `docker run --rm -v /home/derek/code/RedDwarf:/work -w /work node:22 bash -lc "corepack pnpm typecheck"`.
+## 2026-04-06 - Project-mode handoff filename mismatch
+
+- Investigated why GitHub issue `derekrivers/FirstVoyage#64` reached medium-complexity project planning but never appeared in `/projects`.
+- Confirmed Holly completed project-mode planning and wrote `runtime-data/workspaces/derekrivers-firstvoyage-64-project-architect/artifacts/project-architect-handoff.md`.
+- Root cause: `runProjectPlanningPhase(...)` reused `createArchitectHandoffAwaiter(...)`, but the awaiter only watched `architect-handoff.md` with single-task headings. Project-mode therefore wrote the correct handoff file and then stalled before `ProjectSpec` persistence.
+- Fixed the awaiter to accept configurable handoff filenames/headings and wired project-mode planning to wait on `project-architect-handoff.md` with project headings.
+- Added a regression test covering the configurable project-mode handoff path.

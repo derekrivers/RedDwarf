@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type { PipelineRun } from "@reddwarf/contracts";
+import type { PipelineRun, RunEvent } from "@reddwarf/contracts";
 import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
 
 function formatDateTime(value: string): string {
@@ -42,6 +42,64 @@ function statusBadgeClass(status: PipelineRun["status"]): string {
     case "cancelled":
       return "bg-secondary-lt text-secondary";
   }
+}
+
+function progressItemStatusBadge(status: string): string {
+  switch (status) {
+    case "done":
+      return "bg-green-lt text-green";
+    case "active":
+      return "bg-blue-lt text-blue";
+    case "failed":
+      return "bg-red-lt text-red";
+    case "skipped":
+      return "bg-secondary-lt text-secondary";
+    default:
+      return "bg-secondary-lt text-muted";
+  }
+}
+
+function formatItemDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = (ms / 1000).toFixed(1);
+  return `${seconds}s`;
+}
+
+function AgentProgressTimeline(props: { events: RunEvent[] }) {
+  const progressEvents = props.events.filter((e) => e.code === "AGENT_PROGRESS_ITEM");
+  if (progressEvents.length === 0) {
+    return null;
+  }
+  return (
+    <div className="col-12">
+      <div className="text-secondary mb-2">Agent progress</div>
+      <div className="list-group list-group-flush">
+        {progressEvents.map((event) => {
+          const status = typeof event.data["status"] === "string" ? event.data["status"] : "pending";
+          const durationMs = typeof event.data["durationMs"] === "number" ? event.data["durationMs"] : null;
+          const detail = typeof event.data["detail"] === "string" ? event.data["detail"] : null;
+          return (
+            <div key={event.eventId} className="list-group-item list-group-item-action py-2 px-0">
+              <div className="d-flex align-items-center gap-2">
+                <span className={`badge badge-sm ${progressItemStatusBadge(status)}`}>
+                  {status}
+                </span>
+                <span className="fw-medium flex-grow-1">{event.message}</span>
+                {durationMs !== null && (
+                  <small className="text-secondary text-nowrap">{formatItemDuration(durationMs)}</small>
+                )}
+              </div>
+              {detail && (
+                <div className="text-secondary" style={{ fontSize: "0.8125rem", paddingLeft: "0.25rem" }}>
+                  {detail}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function RunDetailPanel(props: {
@@ -90,6 +148,7 @@ function RunDetailPanel(props: {
           {detail.tokenUsage.inputTokens} in / {detail.tokenUsage.outputTokens} out
         </div>
       </div>
+      <AgentProgressTimeline events={detail.events} />
       <div className="col-12">
         <div className="text-secondary mb-1">Run metadata</div>
         <pre className="dashboard-code-block mb-0">

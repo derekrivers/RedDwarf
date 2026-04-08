@@ -1,11 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  asIsoTimestamp
+  asIsoTimestamp,
+  type TicketSpec
 } from "@reddwarf/contracts";
 import {
   createEvidenceRecord,
   createMemoryRecord,
+  type PersistedTaskSnapshot,
+  type PlanningRepository,
   createPipelineRun,
   deriveOrganizationId
 } from "@reddwarf/evidence";
@@ -37,6 +40,7 @@ import {
   patchManifest,
   readDevelopmentCodeWriteEnabledFromSnapshot,
   readPlanningDefaultBranchFromSnapshot,
+  readTaskMemoryValue,
   readValidationReportPathFromSnapshot,
   readValidationSummaryFromSnapshot,
   recordRunEvent,
@@ -72,6 +76,74 @@ import {
   renderScmDiffMarkdown,
   renderScmReportMarkdown
 } from "./prompts.js";
+
+export function appendProjectTicketIdMarker(
+  body: string,
+  ticketId: string | null
+): string {
+  if (!ticketId) {
+    return body;
+  }
+
+  const marker = `<!-- reddwarf:ticket_id:${ticketId} -->`;
+  if (body.includes(marker)) {
+    return body;
+  }
+
+  return `${body.trimEnd()}\n\n${marker}\n`;
+}
+
+function readProjectTicketIdFromSnapshot(
+  snapshot: PersistedTaskSnapshot
+): string | null {
+  const projectTicket = readTaskMemoryValue(snapshot, "project.ticket");
+  if (!projectTicket || typeof projectTicket !== "object" || Array.isArray(projectTicket)) {
+    return null;
+  }
+
+  const ticketId = (projectTicket as Record<string, unknown>)["ticketId"];
+  return typeof ticketId === "string" && ticketId.trim().length > 0
+    ? ticketId.trim()
+    : null;
+}
+
+export async function markProjectTicketPullRequestOpen(input: {
+  repository: Pick<PlanningRepository, "getTicketSpec" | "saveTicketSpec">;
+  ticketId: string;
+  pullRequestNumber: number;
+  updatedAt: string;
+  logger?: { info: (msg: string) => void; warn: (msg: string) => void; error?: (msg: string) => void };
+}): Promise<TicketSpec | null> {
+  const ticket = await input.repository.getTicketSpec(input.ticketId);
+  if (!ticket) {
+    const msg = `ERROR: Project ticket ${input.ticketId} was not found while recording PR #${input.pullRequestNumber}. This may indicate orphaned state — manual investigation required.`;
+    if (input.logger?.error) {
+      input.logger.error(msg);
+    } else {
+      input.logger?.warn(msg);
+    }
+    return null;
+  }
+
+  if (ticket.status === "merged") {
+    input.logger?.warn(
+      `Project ticket ${input.ticketId} is already merged; leaving PR #${input.pullRequestNumber} as historical state.`
+    );
+    return ticket;
+  }
+
+  const updatedTicket: TicketSpec = {
+    ...ticket,
+    status: "pr_open",
+    githubPrNumber: input.pullRequestNumber,
+    updatedAt: input.updatedAt
+  };
+  await input.repository.saveTicketSpec(updatedTicket);
+  input.logger?.info(
+    `Project ticket ${input.ticketId} marked pr_open for PR #${input.pullRequestNumber}.`
+  );
+  return updatedTicket;
+}
 
 export async function runScmPhase(
   input: RunScmPhaseInput,
@@ -429,6 +501,14 @@ export async function runScmPhase(
       throw new Error(`SCM draft for ${taskId} did not provide a branch name.`);
     }
 
+    // Validate branch name contains only git-legal characters
+    const gitBranchPattern = /^[a-zA-Z0-9._\-/]+$/;
+    if (!gitBranchPattern.test(draft.branchName)) {
+      throw new Error(
+        `SCM draft for ${taskId} contains invalid branch name characters: '${draft.branchName}'. Branch names must match ${gitBranchPattern}.`
+      );
+    }
+
     if (draft.baseBranch.trim().length === 0) {
       throw new Error(`SCM draft for ${taskId} did not provide a base branch.`);
     }
@@ -551,6 +631,19 @@ export async function runScmPhase(
       }
     });
 
+    // Record branch on manifest before PR creation so it's recoverable if PR creation fails
+    currentManifest = patchManifest(currentManifest, {
+      branchName: publication.branch.branchName,
+      updatedAt: asIsoTimestamp(clock())
+    });
+    await repository.saveManifest(currentManifest);
+
+    const projectTicketId = readProjectTicketIdFromSnapshot(snapshot);
+    const pullRequestBody = appendProjectTicketIdMarker(
+      draft.pullRequestBody,
+      projectTicketId
+    );
+
     const pullRequest = currentManifest.dryRun
       ? null
       : await github.createPullRequest({
@@ -558,7 +651,7 @@ export async function runScmPhase(
           baseBranch: draft.baseBranch,
           headBranch: publication.branch.branchName,
           title: draft.pullRequestTitle,
-          body: draft.pullRequestBody,
+          body: pullRequestBody,
           labels: draft.labels,
           ...(currentManifest.source.issueNumber
             ? { issueNumber: currentManifest.source.issueNumber }
@@ -566,6 +659,15 @@ export async function runScmPhase(
         });
     const scmCompletedAt = clock();
     const scmCompletedAtIso = asIsoTimestamp(scmCompletedAt);
+    if (projectTicketId && pullRequest) {
+      await markProjectTicketPullRequestOpen({
+        repository,
+        ticketId: projectTicketId,
+        pullRequestNumber: pullRequest.number,
+        updatedAt: scmCompletedAtIso,
+        logger: runLogger
+      });
+    }
     const reportPath = join(workspace.artifactsDir, "scm-report.md");
     await writeFile(
       reportPath,
@@ -912,7 +1014,8 @@ export async function runScmPhase(
         repository, snapshot, manifest: currentManifest,
         phase: "scm", runId, failure: pipelineFailure,
         runLogger, nextEventId, runStartedAt, failedAt, failedAtIso,
-        persistTrackedRun, github
+        persistTrackedRun, github,
+        ...(dependencies.onProjectFailed ? { onProjectFailed: dependencies.onProjectFailed } : {})
       });
     } catch (persistenceError) {
       runLogger.error("Failed to persist SCM phase failure evidence.", {

@@ -6,7 +6,7 @@
 - Allow: `group:fs`, `group:web`, `group:openclaw`
 - Deny: `group:automation`, `group:messaging`
 - Sandbox mode: `read_only`
-- Model binding: `anthropic/claude-opus-4-6`
+- Model binding: provider-selected analyst model from `REDDWARF_MODEL_PROVIDER`
 
 ---
 

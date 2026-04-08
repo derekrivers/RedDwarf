@@ -22,7 +22,8 @@ describe("generateOpenClawConfig", () => {
         "reddwarf-analyst",
         "reddwarf-arch-reviewer",
         "reddwarf-validator",
-        "reddwarf-developer"
+        "reddwarf-developer",
+        "reddwarf-developer-opus"
       ],
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:", "github:issue:"]
@@ -66,7 +67,8 @@ describe("generateOpenClawConfig", () => {
     expect(agentIds).toContain("reddwarf-arch-reviewer");
     expect(agentIds).toContain("reddwarf-validator");
     expect(agentIds).toContain("reddwarf-developer");
-    expect(agentIds).toHaveLength(5);
+    expect(agentIds).toContain("reddwarf-developer-opus");
+    expect(agentIds).toHaveLength(6);
     expect(config.agents.list[0]?.default).toBe(true);
   });
 
@@ -133,8 +135,17 @@ describe("generateOpenClawConfig", () => {
     });
   });
 
-  it("emits agentToAgent and sessions visibility in the global tools block by default", () => {
+  it("omits agentToAgent tools block by default (opt-in only)", () => {
     const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    expect(config.tools).toBeUndefined();
+  });
+
+  it("emits agentToAgent and sessions visibility when explicitly enabled", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableAgentToAgent: true
+    });
 
     expect(config.tools?.agentToAgent?.enabled).toBe(true);
     expect(config.tools?.sessions?.visibility).toBe("all");
@@ -143,15 +154,6 @@ describe("generateOpenClawConfig", () => {
     for (const id of agentIds) {
       expect(config.tools?.agentToAgent?.allow).toContain(id);
     }
-  });
-
-  it("omits the agentToAgent tools block when enableAgentToAgent is false", () => {
-    const config = generateOpenClawConfig({
-      workspaceRoot: "/ws",
-      enableAgentToAgent: false
-    });
-
-    expect(config.tools).toBeUndefined();
   });
 
   it("includes group:sessions in allow for analyst, developer, and arch-reviewer", () => {
@@ -189,8 +191,20 @@ describe("generateOpenClawConfig", () => {
     const analyst = config.agents.list.find((agent) => agent.id === "reddwarf-analyst");
     const developer = config.agents.list.find((agent) => agent.id === "reddwarf-developer");
 
-    expect(analyst?.model).toBe("openai/gpt-5");
-    expect(developer?.model).toBe("openai/gpt-5");
+    const reviewer = config.agents.list.find((agent) => agent.id === "reddwarf-arch-reviewer");
+
+    expect(analyst?.model).toBe("openai/gpt-5.4");
+    expect(developer?.model).toBe("openai/gpt-5.4");
+    expect(reviewer?.model).toBe("openai/gpt-5");
+  });
+
+  it("rejects unsupported model providers before emitting a roster", () => {
+    expect(() =>
+      generateOpenClawConfig({
+        workspaceRoot: "/ws",
+        modelProvider: "bedrock" as never
+      })
+    ).toThrow();
   });
 
   it("can include a Discord channel config for operator approvals", () => {
@@ -203,7 +217,6 @@ describe("generateOpenClawConfig", () => {
         groupPolicy: "allowlist",
         guilds: {
           "1234567890": {
-            enabled: true,
             requireMention: true
           }
         },
@@ -220,7 +233,6 @@ describe("generateOpenClawConfig", () => {
       groupPolicy: "allowlist",
       guilds: {
         "1234567890": {
-          enabled: true,
           requireMention: true
         }
       },
@@ -350,5 +362,64 @@ describe("buildAgentConfig", () => {
     expect(entry.sandbox).toEqual({
       mode: "off"
     });
+  });
+
+  it("omits modelFallback when failover is disabled (default)", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const developer = roles.find((r: { role: string }) => r.role === "developer");
+
+    const entry = buildAgentConfig(developer, "/ws", false);
+
+    expect(entry.modelFallback).toBeUndefined();
+  });
+
+  it("emits modelFallback cross-provider chain when failover is enabled", () => {
+    const { openClawAgentRoleDefinitions: roles } = require("@reddwarf/execution-plane");
+    const analyst = roles.find((r: { role: string }) => r.role === "analyst");
+
+    const entry = buildAgentConfig(analyst, "/ws", false, { enableModelFailover: true });
+
+    // Primary: anthropic/claude-opus-4-6 → fallback: openai/gpt-5.4
+    expect(entry.model).toBe("anthropic/claude-opus-4-6");
+    expect(entry.modelFallback).toEqual(["openai/gpt-5.4"]);
+  });
+});
+
+describe("generateOpenClawConfig — model failover", () => {
+  it("does not emit modelFallback when enableModelFailover is false", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableModelFailover: false
+    });
+
+    for (const agent of config.agents.list) {
+      expect(agent.modelFallback).toBeUndefined();
+    }
+  });
+
+  it("emits modelFallback for all agents when enableModelFailover is true", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableModelFailover: true
+    });
+
+    for (const agent of config.agents.list) {
+      expect(Array.isArray(agent.modelFallback)).toBe(true);
+      expect(agent.modelFallback!.length).toBe(1);
+      // Fallback should be from the other provider
+      expect(agent.modelFallback![0]).toMatch(/^openai\//);
+    }
+  });
+
+  it("emits openai fallbacks for openai-primary agents", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai",
+      enableModelFailover: true
+    });
+
+    for (const agent of config.agents.list) {
+      expect(agent.modelFallback![0]).toMatch(/^anthropic\//);
+    }
   });
 });

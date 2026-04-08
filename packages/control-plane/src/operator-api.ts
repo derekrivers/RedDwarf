@@ -42,11 +42,16 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
-import type { GitHubWriter } from "@reddwarf/integrations";
+import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import {
+  buildOpenClawIssueSessionKeyFromManifest,
+  normalizeOpenClawSessionKey
+} from "./openclaw-session-key.js";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
+  createApprovalRequest,
   createGitHubIssuePollingCursor,
   type PlanningRepository,
   type RepositoryHealthSnapshot
@@ -54,6 +59,7 @@ import {
 import {
   assembleRunReport,
   dispatchReadyTask,
+  ProjectApprovalRequiredError,
   renderRunReportMarkdown,
   resolveApprovalRequest,
   runPlanningPipeline,
@@ -62,6 +68,12 @@ import {
   type DispatchReadyTaskDependencies,
   type SweepOrphanedStateResult
 } from "./pipeline.js";
+import { classifyComplexity } from "./rimmer/index.js";
+import {
+  advanceProjectTicket,
+  createProjectTicketTaskId,
+  executeProjectApproval
+} from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
@@ -131,6 +143,12 @@ export interface OperatorApiDependencies {
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
   /** When provided, enables POST /issues/submit to create GitHub issues for polling to intercept. */
   githubWriter?: GitHubWriter;
+  /** When provided, enables GET /repos/github to discover repos accessible to the GitHub token. */
+  githubRepoDiscovery?: GitHubRepoDiscovery;
+  /** When provided, enables sub-issue creation on project approval. */
+  githubIssuesAdapter?: GitHubIssuesAdapter;
+  /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates/advances Task Flows on project approval/advance. */
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
 }
 
 export interface OperatorBlockedSummary {
@@ -202,6 +220,24 @@ export interface OperatorRunDetailResponse {
   tokenUsage: ReturnType<typeof summarizeRunTokenUsage>;
 }
 
+/**
+ * Represents an in-flight tool-level approval request raised by the
+ * reddwarf-operator plugin's before_tool_call hook (Feature 152).
+ * Stored in memory — not persisted to Postgres. Expires when the session ends.
+ */
+export interface ToolApprovalRequest {
+  id: string;
+  sessionKey: string;
+  taskId: string | null;
+  toolName: string;
+  targetPath: string | null;
+  reason: string;
+  status: "pending" | "approved" | "denied";
+  decidedBy: string | null;
+  decidedAt: string | null;
+  requestedAt: string;
+}
+
 class OperatorApiRequestError extends Error {
   readonly status: number;
   readonly error: string;
@@ -249,8 +285,13 @@ export function createOperatorApiServer(
     dispatcher,
     pollingDaemon,
     dispatchDependencies,
-    githubWriter
+    githubWriter,
+    githubIssuesAdapter,
+    githubRepoDiscovery,
+    taskFlowAdapter
   } = deps;
+  /** In-memory store for pending tool-level approval requests (Feature 152). */
+  const toolApprovals = new Map<string, ToolApprovalRequest>();
   let boundPort = config.port;
 
   if (authToken.length === 0) {
@@ -301,7 +342,11 @@ export function createOperatorApiServer(
           managedTargetRoot,
           managedEvidenceRoot,
           localSecretsPath,
-          githubWriter
+          githubWriter,
+          githubIssuesAdapter,
+          githubRepoDiscovery,
+          toolApprovals,
+          taskFlowAdapter
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -314,7 +359,7 @@ export function createOperatorApiServer(
 
         writeOperatorJsonResponse(res, 500, {
           error: "internal_error",
-          message: err instanceof Error ? err.message : "Unexpected error"
+          message: safeErrorMessage(err, "Unexpected error")
         });
       }
     }
@@ -367,10 +412,14 @@ function createCorsMiddlewareRunner(): (
   });
 
   return (req, res) =>
-    new Promise<void>((resolve, reject) => {
+    new Promise<void>((resolve) => {
       middleware(req, res, (error?: unknown) => {
         if (error) {
-          reject(error);
+          writeOperatorJsonResponse(res, 403, {
+            error: "cors_rejected",
+            message: "Origin not allowed by CORS policy."
+          });
+          resolve();
           return;
         }
 
@@ -400,6 +449,20 @@ function resolveAllowedDashboardOrigins(): string[] {
 // ============================================================
 // Internal helpers
 // ============================================================
+
+/**
+ * Extracts a safe error message for HTTP responses. Strips stack traces,
+ * file paths, and internal details that could leak implementation info
+ * to callers (CodeQL: information-exposure-through-stack-trace).
+ */
+function safeErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  // Take only the first line of the message to strip Zod's multi-line
+  // validation output and any embedded stack frames.
+  const firstLine = error.message.split("\n")[0] ?? fallback;
+  // Cap length to avoid dumping huge payloads into responses.
+  return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
+}
 
 function writeOperatorJsonResponse(
   res: ServerResponse,
@@ -635,32 +698,48 @@ function maskSecretValue(value: string | undefined): string | null {
   return `${value.slice(0, prefixLength)}••••${value.slice(-4)}`;
 }
 
+const OPENCLAW_HEALTH_CACHE_TTL_MS = 15_000;
+let openClawHealthCache: {
+  result: import("@reddwarf/contracts").OperatorUiOpenClawStatus;
+  cachedAt: number;
+} | null = null;
+
 async function resolveOpenClawUiStatus(
   clock: () => Date
 ): Promise<import("@reddwarf/contracts").OperatorUiOpenClawStatus> {
+  // Return cached result if still fresh — prevents every bootstrap call from
+  // blocking on an OpenClaw health check round trip.
+  if (openClawHealthCache && Date.now() - openClawHealthCache.cachedAt < OPENCLAW_HEALTH_CACHE_TTL_MS) {
+    return openClawHealthCache.result;
+  }
+
   const baseUrl = process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578";
   const checkedAt = clock().toISOString();
 
   try {
     const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
-      signal: AbortSignal.timeout(1_500)
+      signal: AbortSignal.timeout(2_000)
     });
 
-    return {
+    const result: import("@reddwarf/contracts").OperatorUiOpenClawStatus = {
       baseUrl,
       reachable: response.ok,
       checkedAt,
       statusCode: response.status,
       message: response.ok ? "ok" : `HTTP ${response.status}`
     };
+    openClawHealthCache = { result, cachedAt: Date.now() };
+    return result;
   } catch (error) {
-    return {
+    const result: import("@reddwarf/contracts").OperatorUiOpenClawStatus = {
       baseUrl,
       reachable: false,
       checkedAt,
       statusCode: null,
-      message: error instanceof Error ? error.message : String(error)
+      message: safeErrorMessage(error, "OpenClaw health check failed")
     };
+    openClawHealthCache = { result, cachedAt: Date.now() };
+    return result;
   }
 }
 
@@ -1011,6 +1090,16 @@ function renderOperatorUiHtml(): string {
           </div>
           <div id="path-list" class="path-list"></div>
         </article>
+        <article class="panel span-4">
+          <div class="section-head">
+            <div>
+              <h2>Pending Approvals</h2>
+              <p>Review queued human gates without leaving the operator panel.</p>
+            </div>
+          </div>
+          <div id="approval-list" class="recent-list"></div>
+          <div id="approvals-notice" class="notice"></div>
+        </article>
         <article class="panel span-8">
           <div class="section-head">
             <div>
@@ -1096,7 +1185,8 @@ function renderOperatorUiHtml(): string {
         repos: [],
         health: null,
         runs: [],
-        tasks: []
+        tasks: [],
+        approvals: []
       };
 
       const tokenInput = document.getElementById("token-input");
@@ -1348,11 +1438,55 @@ function renderOperatorUiHtml(): string {
             ).join("");
       }
 
+      function renderApprovals() {
+        const list = document.getElementById("approval-list");
+        if (!state.approvals.length) {
+          list.innerHTML = '<div class="empty">No pending approvals.</div>';
+          return;
+        }
+        list.innerHTML = state.approvals.map((approval) =>
+          '<div class="record">' +
+            '<div><strong>' + approval.taskId + '</strong><p>' + (approval.summary || "Human approval required.") + '</p></div>' +
+            '<div class="row"><span class="inline-code">' + approval.phase + '</span><span class="label">' + approval.riskClass + ' risk</span></div>' +
+            '<div class="label">' + approval.requestId + '</div>' +
+            '<div class="button-row">' +
+              '<button class="button-primary" data-approval="' + approval.requestId + '" data-decision="approve">Approve</button>' +
+              '<button class="button-danger" data-approval="' + approval.requestId + '" data-decision="reject">Reject</button>' +
+            '</div>' +
+          '</div>'
+        ).join("");
+        list.querySelectorAll("button[data-approval]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const approvalId = button.getAttribute("data-approval");
+            const decision = button.getAttribute("data-decision");
+            button.disabled = true;
+            try {
+              await api("/approvals/" + encodeURIComponent(approvalId) + "/resolve", {
+                method: "POST",
+                body: {
+                  decision,
+                  decidedBy: "operator",
+                  decisionSummary: decision === "approve"
+                    ? "Approved from the operator panel."
+                    : "Rejected from the operator panel."
+                }
+              });
+              setNotice("approvals-notice", "ok", decision === "approve" ? "Approval approved." : "Approval rejected.");
+              await refreshData();
+            } catch (error) {
+              button.disabled = false;
+              setNotice("approvals-notice", "error", error instanceof Error ? error.message : String(error));
+            }
+          });
+        });
+      }
+
       async function refreshData() {
         if (!state.token) {
           renderBootstrapMeta();
           renderPaths();
           renderStatus();
+          renderApprovals();
           renderRepos();
           renderSecrets();
           renderConfigForm("polling-form", CONFIG_GROUPS.polling);
@@ -1361,13 +1495,14 @@ function renderOperatorUiHtml(): string {
           return;
         }
         try {
-          const [bootstrap, health, config, repos, runs, tasks] = await Promise.all([
+          const [bootstrap, health, config, repos, runs, tasks, approvals] = await Promise.all([
             api("/ui/bootstrap"),
             api("/health"),
             api("/config"),
             api("/repos"),
             api("/runs?limit=6"),
-            api("/tasks?limit=6")
+            api("/tasks?limit=6"),
+            api("/approvals?statuses=pending")
           ]);
           state.bootstrap = bootstrap;
           state.health = health;
@@ -1375,9 +1510,11 @@ function renderOperatorUiHtml(): string {
           state.repos = repos.repos || [];
           state.runs = runs.runs || [];
           state.tasks = tasks.tasks || [];
+          state.approvals = approvals.approvals || [];
           renderBootstrapMeta();
           renderPaths();
           renderStatus();
+          renderApprovals();
           renderRepos();
           renderSecrets();
           renderConfigForm("polling-form", CONFIG_GROUPS.polling);
@@ -1403,6 +1540,7 @@ function renderOperatorUiHtml(): string {
         state.health = null;
         state.runs = [];
         state.tasks = [];
+        state.approvals = [];
         tokenInput.value = "";
         sessionStorage.removeItem(TOKEN_STORAGE_KEY);
         setNotice("global-notice", "warn", "Cleared the operator token from this tab.");
@@ -1537,7 +1675,11 @@ async function handleOperatorRequest(
   managedTargetRoot?: string,
   managedEvidenceRoot?: string,
   localSecretsPath?: string,
-  githubWriter?: GitHubWriter
+  githubWriter?: GitHubWriter,
+  githubIssuesAdapter?: GitHubIssuesAdapter,
+  githubRepoDiscovery?: GitHubRepoDiscovery,
+  toolApprovals?: Map<string, ToolApprovalRequest>,
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -1614,11 +1756,9 @@ async function handleOperatorRequest(
     try {
       updateRequest = operatorConfigUpdateRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid operator config payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid operator config payload.")
       });
       return;
     }
@@ -1722,11 +1862,9 @@ async function handleOperatorRequest(
     try {
       createRequest = operatorRepoCreateRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid repository payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid repository payload.")
       });
       return;
     }
@@ -1773,6 +1911,38 @@ async function handleOperatorRequest(
         deleted: true
       })
     );
+    return;
+  }
+
+  // GET /repos/github — discover repos accessible to the GitHub token
+  if (method === "GET" && path === "/repos/github") {
+    if (!githubRepoDiscovery) {
+      writeOperatorJsonResponse(res, 501, {
+        error: "not_implemented",
+        message: "GitHub repo discovery is not available. Ensure GITHUB_TOKEN is configured."
+      });
+      return;
+    }
+    const perPage = qp["per_page"] ? parseInt(String(qp["per_page"]), 10) : undefined;
+    const page = qp["page"] ? parseInt(String(qp["page"]), 10) : undefined;
+    const sort = typeof qp["sort"] === "string" ? qp["sort"] as "updated" | "full_name" | "created" | "pushed" : undefined;
+    const direction = typeof qp["direction"] === "string" ? qp["direction"] as "asc" | "desc" : undefined;
+    const query = typeof qp["q"] === "string" ? qp["q"] : undefined;
+    try {
+      const result = await githubRepoDiscovery.listUserRepos({
+        ...(perPage !== undefined && !isNaN(perPage) ? { perPage } : {}),
+        ...(page !== undefined && !isNaN(page) ? { page } : {}),
+        ...(sort ? { sort } : {}),
+        ...(direction ? { direction } : {}),
+        ...(query ? { query } : {})
+      });
+      writeOperatorJsonResponse(res, 200, result);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "github_error",
+        message: safeErrorMessage(error, "Failed to list GitHub repositories.")
+      });
+    }
     return;
   }
 
@@ -1988,17 +2158,31 @@ async function handleOperatorRequest(
       });
       return;
     }
-    const resolveResult = await resolveApprovalRequest(
-      {
-        requestId,
-        decision: body["decision"] as ApprovalDecision,
-        decidedBy: body["decidedBy"],
-        decisionSummary: body["decisionSummary"],
-        comment:
-          typeof body["comment"] === "string" ? body["comment"] : null
-      },
-      { repository, clock }
-    );
+    let resolveResult;
+    try {
+      resolveResult = await resolveApprovalRequest(
+        {
+          requestId,
+          decision: body["decision"] as ApprovalDecision,
+          decidedBy: body["decidedBy"],
+          decisionSummary: body["decisionSummary"],
+          comment:
+            typeof body["comment"] === "string" ? body["comment"] : null
+        },
+        { repository, clock }
+      );
+    } catch (error) {
+      if (error instanceof ProjectApprovalRequiredError) {
+        writeOperatorJsonResponse(res, 409, {
+          error: "conflict",
+          message: error.message,
+          projectId: error.projectId,
+          approvalRoute: `/projects/${encodeURIComponent(error.projectId)}/approve`
+        });
+        return;
+      }
+      throw error;
+    }
     writeOperatorJsonResponse(res, 200, {
       approval: resolveResult.approvalRequest,
       manifest: resolveResult.manifest
@@ -2040,11 +2224,9 @@ async function handleOperatorRequest(
     try {
       injected = directTaskInjectionRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid injection payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid injection payload.")
       });
       return;
     }
@@ -2053,16 +2235,30 @@ async function handleOperatorRequest(
       injected,
       defaultPlanningDryRun
     );
-    const result = await runPlanningPipeline(planningInput, {
-      repository,
-      planner,
-      clock
-    });
+    const classification = classifyComplexity(planningInput);
+    const result = await runPlanningPipeline(
+      {
+        ...planningInput,
+        metadata: { ...planningInput.metadata, complexityClassification: classification }
+      },
+      {
+        repository,
+        planner,
+        ...(dispatchDependencies && managedTargetRoot
+          ? {
+              openClawDispatch: dispatchDependencies.openClawDispatch,
+              architectTargetRoot: managedTargetRoot
+            }
+          : {}),
+        clock
+      }
+    );
 
     writeOperatorJsonResponse(res, 201, {
       runId: result.runId,
       nextAction: result.nextAction,
       manifest: result.manifest,
+      complexityClassification: classification,
       ...(result.spec ? { spec: result.spec } : {}),
       ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
       ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
@@ -2087,11 +2283,9 @@ async function handleOperatorRequest(
     try {
       submission = githubIssueSubmitSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid issue submission payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid issue submission payload.")
       });
       return;
     }
@@ -2148,11 +2342,9 @@ async function handleOperatorRequest(
     try {
       injectedGroup = taskGroupInjectionRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid task-group payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid task-group payload.")
       });
       return;
     }
@@ -2170,11 +2362,24 @@ async function handleOperatorRequest(
         task,
         defaultPlanningDryRun
       );
-      const result = await runPlanningPipeline(planningInput, {
-        repository,
-        planner,
-        clock
-      });
+      const classification = classifyComplexity(planningInput);
+      const result = await runPlanningPipeline(
+        {
+          ...planningInput,
+          metadata: { ...planningInput.metadata, complexityClassification: classification }
+        },
+        {
+          repository,
+          planner,
+          ...(dispatchDependencies && managedTargetRoot
+            ? {
+                openClawDispatch: dispatchDependencies.openClawDispatch,
+                architectTargetRoot: managedTargetRoot
+              }
+            : {}),
+          clock
+        }
+      );
       taskIdByKey.set(task.taskKey, result.manifest.taskId);
       results.push({
         taskKey: task.taskKey,
@@ -2356,9 +2561,23 @@ async function handleOperatorRequest(
       "evidenceRoot"
     );
 
+    const onProjectFailed = taskFlowAdapter
+      ? async (projectId: string, _ticketId: string) => {
+          const flowMemory = await repository.listMemoryRecords({
+            keyPrefix: `project.taskflow.flowId:${projectId}`
+          });
+          const flowId = flowMemory.length > 0
+            ? (flowMemory[0]!.value as Record<string, unknown>)["flowId"] as string | null
+            : null;
+          if (flowId) {
+            await taskFlowAdapter.cancelFlow(flowId, "Project failed — phase failure escalated.");
+          }
+        }
+      : undefined;
+
     const result = await dispatchReadyTask(
       { taskId, targetRoot, evidenceRoot },
-      { repository, ...dispatchDependencies }
+      { repository, ...dispatchDependencies, ...(onProjectFailed ? { onProjectFailed } : {}) }
     );
 
     writeOperatorJsonResponse(res, 200, result);
@@ -2426,6 +2645,746 @@ async function handleOperatorRequest(
       totalPendingApprovals: pendingApprovals.length
     };
     writeOperatorJsonResponse(res, 200, summary);
+    return;
+  }
+
+  // ============================================================
+  // Project Mode routes (Phase 3)
+  // ============================================================
+
+  // GET /projects — list projects with ticket counts
+  if (method === "GET" && path === "/projects") {
+    const repoFilter = typeof qp["repo"] === "string" ? qp["repo"] : undefined;
+    const statusFilter = typeof qp["status"] === "string" ? qp["status"] : undefined;
+
+    let projects = await repository.listProjectSpecs(repoFilter);
+    if (statusFilter) {
+      projects = projects.filter((p) => p.status === statusFilter);
+    }
+
+    const projectSummaries = await Promise.all(
+      projects.map(async (project) => {
+        const tickets = await repository.listTicketSpecs(project.projectId);
+        return {
+          ...project,
+          ticketCounts: {
+            total: tickets.length,
+            pending: tickets.filter((t) => t.status === "pending").length,
+            dispatched: tickets.filter((t) => t.status === "dispatched").length,
+            in_progress: tickets.filter((t) => t.status === "in_progress").length,
+            pr_open: tickets.filter((t) => t.status === "pr_open").length,
+            merged: tickets.filter((t) => t.status === "merged").length,
+            failed: tickets.filter((t) => t.status === "failed").length
+          }
+        };
+      })
+    );
+
+    writeOperatorJsonResponse(res, 200, {
+      projects: projectSummaries,
+      total: projectSummaries.length
+    });
+    return;
+  }
+
+  // GET /projects/:id — full project with ticket children
+  const projectDetailMatch = /^\/projects\/([^/]+)$/.exec(path);
+  if (method === "GET" && projectDetailMatch) {
+    const projectId = decodeURIComponent(projectDetailMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    const tickets = await repository.listTicketSpecs(projectId);
+    writeOperatorJsonResponse(res, 200, {
+      project,
+      tickets,
+      ticketCounts: {
+        total: tickets.length,
+        pending: tickets.filter((t) => t.status === "pending").length,
+        dispatched: tickets.filter((t) => t.status === "dispatched").length,
+        in_progress: tickets.filter((t) => t.status === "in_progress").length,
+        pr_open: tickets.filter((t) => t.status === "pr_open").length,
+        merged: tickets.filter((t) => t.status === "merged").length,
+        failed: tickets.filter((t) => t.status === "failed").length
+      }
+    });
+    return;
+  }
+
+  // POST /projects/:id/approve — approve or amend a project plan
+  const projectApproveMatch = /^\/projects\/([^/]+)\/approve$/.exec(path);
+  if (method === "POST" && projectApproveMatch) {
+    const projectId = decodeURIComponent(projectApproveMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("decision" in rawBody) ||
+      !("decidedBy" in rawBody)
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { decision: 'approve' | 'amend', decidedBy: string, decisionSummary?: string, amendments?: string }."
+      });
+      return;
+    }
+
+    const body = rawBody as {
+      decision: string;
+      decidedBy: string;
+      decisionSummary?: string;
+      amendments?: string;
+    };
+
+    if (body.decision !== "approve" && body.decision !== "amend") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "decision must be 'approve' or 'amend'."
+      });
+      return;
+    }
+
+    if (
+      project.status !== "pending_approval" &&
+      !(
+        body.decision === "approve" &&
+        (project.status === "approved" || project.status === "executing")
+      )
+    ) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Project ${projectId} is in status '${project.status}' and cannot be approved. Only projects in 'pending_approval' status can be approved, unless an already-approved project is being resumed before any ticket dispatch or an executing project is backfilling missing GitHub sub-issues before any PR opens.`
+      });
+      return;
+    }
+
+    const now = clock().toISOString();
+
+    if (body.decision === "approve") {
+      if (project.status === "approved") {
+        const tickets = await repository.listTicketSpecs(projectId);
+        const resumable = tickets.every(
+          (ticket) => ticket.status === "pending" && ticket.githubPrNumber === null
+        );
+        if (!resumable) {
+          writeOperatorJsonResponse(res, 409, {
+            error: "conflict",
+            message: `Project ${projectId} is in status 'approved' but cannot be resumed because at least one ticket has already advanced beyond pending.`
+          });
+          return;
+        }
+      }
+      if (project.status === "executing") {
+        const tickets = await repository.listTicketSpecs(projectId);
+        let hasDispatchedTicketWithoutTask = false;
+        for (const ticket of tickets) {
+          if (ticket.status !== "dispatched" || ticket.githubPrNumber !== null) {
+            continue;
+          }
+          const taskId = createProjectTicketTaskId(ticket.ticketId);
+          const snapshot = await repository.getTaskSnapshot(taskId);
+          if (!snapshot.manifest) {
+            hasDispatchedTicketWithoutTask = true;
+            break;
+          }
+        }
+        const backfillable = (
+          tickets.length > 0 &&
+          (
+            tickets.some((ticket) => ticket.githubSubIssueNumber === null) ||
+            hasDispatchedTicketWithoutTask
+          ) &&
+          tickets.some((ticket) => ticket.status !== "pending") &&
+          tickets.every((ticket) => ticket.githubPrNumber === null)
+        );
+        if (!backfillable) {
+          writeOperatorJsonResponse(res, 409, {
+            error: "conflict",
+            message: `Project ${projectId} is in status 'executing' but cannot be recovered because no GitHub sub-issues or dispatched child tasks are missing, or at least one ticket already has a PR.`
+          });
+          return;
+        }
+      }
+
+      const result = await executeProjectApproval(
+        {
+          projectId,
+          decidedBy: body.decidedBy,
+          decisionSummary: body.decisionSummary
+        },
+        {
+          repository,
+          githubIssuesAdapter: githubIssuesAdapter ?? null,
+          taskFlowAdapter: taskFlowAdapter ?? null,
+          github: githubWriter ?? null,
+          clock
+        }
+      );
+
+      writeOperatorJsonResponse(res, 200, {
+        project: result.project,
+        tickets: result.tickets,
+        subIssuesCreated: result.subIssuesCreated,
+        subIssuesFallback: result.subIssuesFallback,
+        dispatchedTicket: result.dispatchedTicket,
+        dispatchedTaskId: result.dispatchedTaskId,
+        dispatchedTaskCreated: result.dispatchedTaskCreated,
+        message: result.subIssuesFallback
+          ? "Project approved and executing (Postgres-only — GitHub sub-issues not created)."
+          : `Project approved. ${result.subIssuesCreated} sub-issue(s) created. Executing.`
+      });
+      return;
+    }
+
+    // Amend decision — return project to draft for re-planning
+    if (!body.amendments || body.amendments.trim().length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "amendments text is required when decision is 'amend'."
+      });
+      return;
+    }
+
+    const existingAmendments = project.amendments
+      ? `${project.amendments}\n\n---\n\n${body.amendments}`
+      : body.amendments;
+
+    const updatedProject = {
+      ...project,
+      status: "draft" as const,
+      approvalDecision: "amend",
+      decidedBy: body.decidedBy,
+      decisionSummary: body.decisionSummary ?? null,
+      amendments: existingAmendments,
+      updatedAt: now
+    };
+    await repository.saveProjectSpec(updatedProject);
+
+    // Invalidate any pending policy-gate approval before re-planning.
+    const amendTaskId = projectId.startsWith("project:")
+      ? projectId.slice("project:".length)
+      : projectId;
+    const amendPendingApprovals = await repository.listApprovalRequests({
+      taskId: amendTaskId,
+      statuses: ["pending"]
+    });
+    for (const approval of amendPendingApprovals) {
+      if (approval.phase === "policy_gate") {
+        await repository.saveApprovalRequest(
+          createApprovalRequest({
+            ...approval,
+            status: "rejected",
+            decidedBy: "system",
+            decision: "reject",
+            decisionSummary: "Superseded: project amended; re-planning required.",
+            updatedAt: now,
+            resolvedAt: now
+          })
+        );
+      }
+    }
+
+    // Re-trigger the planning pipeline so Holly re-plans with amendments.
+    const amendOpenClawDispatch = dispatchDependencies?.openClawDispatch;
+    if (amendOpenClawDispatch && managedTargetRoot && planner) {
+      const manifest = await repository.getManifest(amendTaskId);
+      const planningSpec = await repository.getPlanningSpec(amendTaskId);
+      if (manifest && planningSpec) {
+        const replanInput: PlanningTaskInput = {
+          source: manifest.source,
+          title: manifest.title,
+          summary: manifest.summary,
+          priority: manifest.priority,
+          dryRun: manifest.dryRun,
+          labels: [],
+          acceptanceCriteria: planningSpec.acceptanceCriteria,
+          affectedPaths: planningSpec.affectedAreas,
+          requestedCapabilities: manifest.requestedCapabilities,
+          metadata: {
+            replanReason: "project_amended",
+            originalProjectId: projectId
+          }
+        };
+        const classification = classifyComplexity(replanInput);
+        try {
+          const replanResult = await runPlanningPipeline(
+            {
+              ...replanInput,
+              metadata: {
+                ...replanInput.metadata,
+                complexityClassification: classification
+              }
+            },
+            {
+              repository,
+              planner,
+              openClawDispatch: amendOpenClawDispatch,
+              architectTargetRoot: managedTargetRoot,
+              clock
+            }
+          );
+          const replanProject = await repository.getProjectSpec(projectId);
+          writeOperatorJsonResponse(res, 200, {
+            project: replanProject ?? updatedProject,
+            replanRunId: replanResult.runId,
+            replanNextAction: replanResult.nextAction,
+            message:
+              "Project amended. Re-planning dispatched with amendments included in the planning context."
+          });
+        } catch (replanError) {
+          writeOperatorJsonResponse(res, 200, {
+            project: updatedProject,
+            replanError: replanError instanceof Error ? replanError.message : String(replanError),
+            message:
+              "Project amended. Automatic re-planning failed; use POST /tasks/inject to retry."
+          });
+        }
+        return;
+      }
+    }
+
+    writeOperatorJsonResponse(res, 200, {
+      project: updatedProject,
+      message:
+        "Project amended. Re-planning could not be triggered automatically — dispatch dependencies not available."
+    });
+    return;
+  }
+
+  // GET /projects/:id/clarifications — pending clarification questions
+  const projectClarificationsMatch =
+    /^\/projects\/([^/]+)\/clarifications$/.exec(path);
+  if (method === "GET" && projectClarificationsMatch) {
+    const projectId = decodeURIComponent(projectClarificationsMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    const clarificationTimeoutMs = Number(
+      process.env.REDDWARF_CLARIFICATION_TIMEOUT_MS ?? "1800000"
+    );
+    const timedOut =
+      project.status === "clarification_pending" &&
+      project.clarificationRequestedAt !== null &&
+      clock().getTime() - new Date(project.clarificationRequestedAt).getTime() >
+        clarificationTimeoutMs;
+
+    writeOperatorJsonResponse(res, 200, {
+      projectId: project.projectId,
+      status: project.status,
+      questions: project.clarificationQuestions ?? [],
+      answers: project.clarificationAnswers ?? null,
+      clarificationRequestedAt: project.clarificationRequestedAt,
+      timeoutMs: clarificationTimeoutMs,
+      timedOut
+    });
+    return;
+  }
+
+  // POST /projects/:id/clarify — submit clarification answers
+  const projectClarifyMatch = /^\/projects\/([^/]+)\/clarify$/.exec(path);
+  if (method === "POST" && projectClarifyMatch) {
+    const projectId = decodeURIComponent(projectClarifyMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+
+    if (project.status !== "clarification_pending") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Project ${projectId} is in status '${project.status}'. Clarification answers can only be submitted when status is 'clarification_pending'.`
+      });
+      return;
+    }
+
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("answers" in rawBody) ||
+      typeof (rawBody as Record<string, unknown>).answers !== "object"
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { answers: Record<string, string> }."
+      });
+      return;
+    }
+
+    const body = rawBody as { answers: Record<string, string> };
+
+    // Validate that answers are non-empty and correspond to the pending questions
+    const answerValues = Object.values(body.answers);
+    if (answerValues.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Answers must not be empty."
+      });
+      return;
+    }
+    if (answerValues.some((v) => typeof v !== "string" || v.trim().length === 0)) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "All answer values must be non-empty strings."
+      });
+      return;
+    }
+
+    const now = clock().toISOString();
+
+    const updatedProject = {
+      ...project,
+      status: "draft" as const,
+      clarificationAnswers: body.answers,
+      updatedAt: now
+    };
+    await repository.saveProjectSpec(updatedProject);
+
+    // Invalidate any pending policy-gate approval for this task so it cannot be
+    // resolved before re-planning completes.  The taskId is derived from the
+    // projectId by stripping the "project:" prefix.
+    const clarifyTaskId = projectId.startsWith("project:")
+      ? projectId.slice("project:".length)
+      : projectId;
+    const pendingApprovals = await repository.listApprovalRequests({
+      taskId: clarifyTaskId,
+      statuses: ["pending"]
+    });
+    for (const approval of pendingApprovals) {
+      if (approval.phase === "policy_gate") {
+        await repository.saveApprovalRequest(
+          createApprovalRequest({
+            ...approval,
+            status: "rejected",
+            decidedBy: "system",
+            decision: "reject",
+            decisionSummary: "Superseded: clarification answers submitted; re-planning required.",
+            updatedAt: now,
+            resolvedAt: now
+          })
+        );
+      }
+    }
+
+    // Re-trigger the planning pipeline so Holly runs again with clarification
+    // answers included in the prompt context.  Project-mode re-planning
+    // requires OpenClaw dispatch; skip automatic re-trigger when unavailable.
+    const replanOpenClawDispatch = dispatchDependencies?.openClawDispatch;
+    if (replanOpenClawDispatch && managedTargetRoot && planner) {
+      const manifest = await repository.getManifest(clarifyTaskId);
+      const planningSpec = await repository.getPlanningSpec(clarifyTaskId);
+      if (manifest && planningSpec) {
+        const replanInput: PlanningTaskInput = {
+          source: manifest.source,
+          title: manifest.title,
+          summary: manifest.summary,
+          priority: manifest.priority,
+          dryRun: manifest.dryRun,
+          labels: [],
+          acceptanceCriteria: planningSpec.acceptanceCriteria,
+          affectedPaths: planningSpec.affectedAreas,
+          requestedCapabilities: manifest.requestedCapabilities,
+          metadata: {
+            replanReason: "clarification_answers_submitted",
+            originalProjectId: projectId
+          }
+        };
+        const classification = classifyComplexity(replanInput);
+        try {
+          const replanResult = await runPlanningPipeline(
+            {
+              ...replanInput,
+              metadata: {
+                ...replanInput.metadata,
+                complexityClassification: classification
+              }
+            },
+            {
+              repository,
+              planner,
+              openClawDispatch: replanOpenClawDispatch,
+              architectTargetRoot: managedTargetRoot,
+              clock
+            }
+          );
+          // Return the latest project state after re-planning (may have
+          // transitioned to pending_approval or back to clarification_pending).
+          const replanProject = await repository.getProjectSpec(projectId);
+          writeOperatorJsonResponse(res, 200, {
+            project: replanProject ?? updatedProject,
+            replanRunId: replanResult.runId,
+            replanNextAction: replanResult.nextAction,
+            message:
+              "Clarification answers recorded. Re-planning dispatched with answers included in the planning context."
+          });
+        } catch (replanError) {
+          // Re-planning failed — still return success for the clarification submission
+          // but include the error so the operator knows re-planning needs manual retry.
+          writeOperatorJsonResponse(res, 200, {
+            project: updatedProject,
+            replanError: replanError instanceof Error ? replanError.message : String(replanError),
+            message:
+              "Clarification answers recorded. Automatic re-planning failed; use POST /tasks/inject to retry."
+          });
+        }
+        return;
+      }
+    }
+
+    writeOperatorJsonResponse(res, 200, {
+      project: updatedProject,
+      message:
+        "Clarification answers recorded. Project returned to draft. Re-planning could not be triggered automatically — dispatch dependencies not available."
+    });
+    return;
+  }
+
+  // POST /projects/advance — advance ticket queue after PR merge
+  if (method === "POST" && path === "/projects/advance") {
+    const rawBody = await readOperatorJsonBody(req, maxRequestBodyBytes);
+    if (
+      !rawBody ||
+      typeof rawBody !== "object" ||
+      !("ticket_id" in rawBody) ||
+      !("github_pr_number" in rawBody)
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          "Request body must include { ticket_id: string, github_pr_number: number }."
+      });
+      return;
+    }
+
+    const body = rawBody as { ticket_id: string; github_pr_number: number };
+
+    if (typeof body.ticket_id !== "string" || body.ticket_id.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "ticket_id must be a non-empty string."
+      });
+      return;
+    }
+
+    if (
+      typeof body.github_pr_number !== "number" ||
+      !Number.isInteger(body.github_pr_number) ||
+      body.github_pr_number <= 0
+    ) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "github_pr_number must be a positive integer."
+      });
+      return;
+    }
+
+    try {
+      const result = await advanceProjectTicket(
+        {
+          ticketId: body.ticket_id,
+          githubPrNumber: body.github_pr_number
+        },
+        {
+          repository,
+          githubIssuesAdapter: githubIssuesAdapter ?? null,
+          taskFlowAdapter: taskFlowAdapter ?? null,
+          clock
+        }
+      );
+
+      const statusCode = result.outcome === "already_merged" ? 200 : 200;
+      writeOperatorJsonResponse(res, statusCode, {
+        outcome: result.outcome,
+        ticket: result.ticket,
+        project: result.project,
+        nextDispatchedTicket: result.nextDispatchedTicket,
+        nextDispatchedTaskId: result.nextDispatchedTaskId,
+        nextDispatchedTaskCreated: result.nextDispatchedTaskCreated,
+        message:
+          result.outcome === "already_merged"
+            ? `Ticket ${body.ticket_id} is already merged. No state change.`
+            : result.outcome === "completed"
+              ? `Ticket ${body.ticket_id} merged. All tickets complete. Project marked as complete.`
+              : result.nextDispatchedTicket
+                ? `Ticket ${body.ticket_id} merged. Next ticket ${result.nextDispatchedTicket.ticketId} dispatched.`
+                : `Ticket ${body.ticket_id} merged. No next ticket ready.`
+      });
+      return;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not found")) {
+        writeOperatorJsonResponse(res, 404, {
+          error: "not_found",
+          message: err.message
+        });
+        return;
+      }
+      if (
+        err instanceof Error &&
+        (err.message.includes("cannot advance ticket") ||
+          err.message.includes("cannot be advanced from a PR merge callback"))
+      ) {
+        writeOperatorJsonResponse(res, 409, {
+          error: "conflict",
+          message: err.message
+        });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  // ── Feature 152: Plugin approval hook endpoints ─────────────────────────────
+
+  // GET /sessions/policy?sessionKey=<key>
+  // Returns the policy snapshot for the active task whose session key matches.
+  // Used by the reddwarf-operator before_tool_call hook to check allowed/denied paths.
+  if (method === "GET" && path === "/sessions/policy") {
+    const rawKey = typeof qp["sessionKey"] === "string" ? qp["sessionKey"] : "";
+    const normalizedKey = normalizeOpenClawSessionKey(rawKey);
+    if (!normalizedKey) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "sessionKey query parameter is required."
+      });
+      return;
+    }
+    const activeManifests = await repository.listManifestsByLifecycleStatus("active", 50);
+    const matched = activeManifests.find(
+      (m) => normalizeOpenClawSessionKey(buildOpenClawIssueSessionKeyFromManifest(m)) === normalizedKey
+    );
+    if (!matched) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: "No active task found for the given session key."
+      });
+      return;
+    }
+    const policySnapshot = await repository.getPolicySnapshot(matched.taskId);
+    writeOperatorJsonResponse(res, 200, {
+      taskId: matched.taskId,
+      sessionKey: normalizedKey,
+      policySnapshot
+    });
+    return;
+  }
+
+  // GET /tool-approvals — list tool approval requests (Feature 152)
+  if (method === "GET" && path === "/tool-approvals") {
+    const statusFilter = typeof qp["status"] === "string" ? qp["status"] : undefined;
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const items = Array.from(store.values()).filter(
+      (a) => !statusFilter || a.status === statusFilter
+    );
+    writeOperatorJsonResponse(res, 200, { toolApprovals: items, total: items.length });
+    return;
+  }
+
+  // GET /tool-approvals/:id — get a single tool approval by ID (Feature 164)
+  const toolApprovalByIdMatch = /^\/tool-approvals\/([^/]+)$/.exec(path);
+  if (method === "GET" && toolApprovalByIdMatch) {
+    const approvalId = decodeURIComponent(toolApprovalByIdMatch[1]!);
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const approval = store.get(approvalId);
+    if (!approval) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Tool approval ${approvalId} not found.`
+      });
+      return;
+    }
+    writeOperatorJsonResponse(res, 200, { toolApproval: approval });
+    return;
+  }
+
+  // POST /tool-approvals — create a pending tool approval request (Feature 152)
+  if (method === "POST" && path === "/tool-approvals") {
+    const parsed = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null ?? {};
+    const sessionKey = typeof parsed.sessionKey === "string" ? parsed.sessionKey.trim() : "";
+    const toolName = typeof parsed.toolName === "string" ? parsed.toolName.trim() : "";
+    const targetPath = typeof parsed.targetPath === "string" ? parsed.targetPath : null;
+    const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "requires approval";
+    const taskId = typeof parsed.taskId === "string" ? parsed.taskId : null;
+    if (!sessionKey || !toolName) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "sessionKey and toolName are required."
+      });
+      return;
+    }
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const id = randomUUID();
+    const approval: ToolApprovalRequest = {
+      id,
+      sessionKey,
+      taskId,
+      toolName,
+      targetPath,
+      reason,
+      status: "pending",
+      decidedBy: null,
+      decidedAt: null,
+      requestedAt: clock().toISOString()
+    };
+    store.set(id, approval);
+    writeOperatorJsonResponse(res, 201, { toolApproval: approval });
+    return;
+  }
+
+  // POST /tool-approvals/:id/decide — approve or deny a tool approval (Feature 152)
+  const toolApprovalDecideMatch = /^\/tool-approvals\/([^/]+)\/decide$/.exec(path);
+  if (method === "POST" && toolApprovalDecideMatch) {
+    const approvalId = decodeURIComponent(toolApprovalDecideMatch[1]!);
+    const store = toolApprovals ?? new Map<string, ToolApprovalRequest>();
+    const approval = store.get(approvalId);
+    if (!approval) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Tool approval ${approvalId} not found.`
+      });
+      return;
+    }
+    if (approval.status !== "pending") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Tool approval ${approvalId} is already ${approval.status}.`
+      });
+      return;
+    }
+    const parsedDecide = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as Record<string, unknown> | null ?? {};
+    const decision = parsedDecide.decision === "deny" ? "denied" : "approved";
+    const decidedBy = typeof parsedDecide.decidedBy === "string" ? parsedDecide.decidedBy : "operator";
+    approval.status = decision;
+    approval.decidedBy = decidedBy;
+    approval.decidedAt = clock().toISOString();
+    store.set(approvalId, approval);
+    writeOperatorJsonResponse(res, 200, { toolApproval: approval });
     return;
   }
 

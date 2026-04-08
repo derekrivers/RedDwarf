@@ -9,7 +9,9 @@
  *
  * Required environment:
  *   GITHUB_TOKEN          - GitHub PAT with repo scope
- *   ANTHROPIC_API_KEY     - Anthropic API key for LLM planning
+ *   REDDWARF_MODEL_PROVIDER - anthropic or openai (default: anthropic)
+ *   ANTHROPIC_API_KEY     - required when REDDWARF_MODEL_PROVIDER=anthropic
+ *   OPENAI_API_KEY        - required when REDDWARF_MODEL_PROVIDER=openai
  *   E2E_TARGET_REPO       - GitHub repo in owner/repo format (for example derekrivers/FirstVoyage)
  *
  * Optional environment:
@@ -56,13 +58,14 @@ import {
   intakeGitHubIssue,
   createHttpOpenClawDispatchAdapter
 } from "../packages/integrations/dist/index.js";
-import { createPlanningAgent } from "../packages/execution-plane/dist/index.js";
+import { createPlanningAgentForModelProvider } from "../packages/execution-plane/dist/index.js";
 import {
   connectionString,
   createScriptLogger,
   formatError,
   postgresPoolConfig,
-  refreshDerivedConfig
+  refreshDerivedConfig,
+  resolveModelProviderEnv
 } from "./lib/config.mjs";
 
 refreshDerivedConfig();
@@ -78,8 +81,11 @@ if (!process.env.GITHUB_TOKEN) {
   logError("GITHUB_TOKEN is required");
   process.exit(1);
 }
-if (!process.env.ANTHROPIC_API_KEY) {
-  logError("ANTHROPIC_API_KEY is required");
+const modelProvider = resolveModelProviderEnv();
+const requiredProviderSecret =
+  modelProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+if (!process.env[requiredProviderSecret]) {
+  logError(`${requiredProviderSecret} is required for REDDWARF_MODEL_PROVIDER=${modelProvider}`);
   process.exit(1);
 }
 
@@ -99,7 +105,7 @@ const setupScriptPath = resolve(__scriptdir, "setup.mjs");
 
 const repository = createPostgresPlanningRepository(connectionString, postgresPoolConfig);
 const github = createRestGitHubAdapter();
-const planner = createPlanningAgent({ type: "anthropic" });
+const planner = createPlanningAgentForModelProvider(modelProvider);
 
 function elapsed(startMs) {
   return `${((Date.now() - startMs) / 1000).toFixed(1)}s`;

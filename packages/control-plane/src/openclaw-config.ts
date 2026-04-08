@@ -4,8 +4,10 @@ import type {
   OpenClawModelProvider
 } from "@reddwarf/contracts";
 import {
+  MODEL_FAILOVER_MAP,
   createOpenClawAgentRoleDefinitions,
-  openClawAgentRoleDefinitions
+  openClawAgentRoleDefinitions,
+  resolveOpenClawModelProvider
 } from "@reddwarf/execution-plane";
 
 // -- OpenClaw config output types ---------------------------------------------
@@ -42,7 +44,6 @@ export interface OpenClawHooksConfig {
 }
 
 export interface OpenClawDiscordGuildConfig {
-  enabled?: boolean;
   requireMention?: boolean;
   channels?: Record<
     string,
@@ -107,6 +108,9 @@ export interface OpenClawAgentConfig {
   workspace: string;
   agentDir: string;
   model: string;
+  /** Optional fallback model(s) to try when the primary provider returns a
+   *  transient error (429/500/503). Set by enabling model failover. */
+  modelFallback?: string[];
   tools: {
     profile: string;
     allow: string[];
@@ -247,6 +251,16 @@ export interface GenerateOpenClawConfigOptions {
    * RedDwarf set.
    */
   enableAgentToAgent?: boolean;
+
+  /**
+   * Whether to emit cross-provider model failover chains for each agent.
+   * When true and both ANTHROPIC_API_KEY and OPENAI_API_KEY are available,
+   * OpenClaw will automatically rotate to the fallback provider on transient
+   * errors (429/500/503). Defaults to false.
+   *
+   * Set via REDDWARF_MODEL_FAILOVER_ENABLED env var.
+   */
+  enableModelFailover?: boolean;
 }
 
 /**
@@ -255,7 +269,8 @@ export interface GenerateOpenClawConfigOptions {
 export function buildAgentConfig(
   role: OpenClawAgentRoleDefinition,
   workspaceRoot: string,
-  _skipBootstrap: boolean
+  _skipBootstrap: boolean,
+  options?: { enableModelFailover?: boolean }
 ): OpenClawAgentConfig {
   const policy = role.runtimePolicy;
   const workspace = workspaceRoot.replace(/\\/g, "/");
@@ -264,12 +279,17 @@ export function buildAgentConfig(
     "/"
   );
 
+  const fallbackModel = options?.enableModelFailover
+    ? MODEL_FAILOVER_MAP[policy.model.provider]?.[role.role]
+    : undefined;
+
   return {
     id: role.agentId,
     name: role.displayName,
     workspace,
     agentDir,
     model: policy.model.model,
+    ...(fallbackModel ? { modelFallback: [fallbackModel] } : {}),
     tools: {
       profile: policy.toolProfile,
       allow: [...policy.allow],
@@ -302,7 +322,9 @@ export function generateOpenClawConfig(
   const roles =
     options.roles ??
     (options.modelProvider
-      ? createOpenClawAgentRoleDefinitions(options.modelProvider)
+      ? createOpenClawAgentRoleDefinitions(
+          resolveOpenClawModelProvider(options.modelProvider)
+        )
       : openClawAgentRoleDefinitions);
   const skipBootstrap = options.skipBootstrap ?? true;
   const policyRoot = options.policyRoot ?? "/opt/reddwarf";
@@ -326,7 +348,7 @@ export function generateOpenClawConfig(
   const operatorApiBaseUrl =
     options.operatorApiBaseUrl ?? "${REDDWARF_OPENCLAW_OPERATOR_API_URL}";
 
-  const enableAgentToAgent = options.enableAgentToAgent ?? true;
+  const enableAgentToAgent = options.enableAgentToAgent ?? false;
   const agentIds = roles.map((role) => role.agentId);
 
   const config: OpenClawConfig = {
@@ -444,9 +466,6 @@ export function generateOpenClawConfig(
                       Object.entries(options.discord.guilds).map(([guildId, guild]) => [
                         guildId,
                         {
-                          ...(guild.enabled !== undefined
-                            ? { enabled: guild.enabled }
-                            : {}),
                           ...(guild.requireMention !== undefined
                             ? { requireMention: guild.requireMention }
                             : {}),
@@ -539,8 +558,11 @@ export function generateOpenClawConfig(
     }
   };
 
+  const enableModelFailover = options.enableModelFailover ?? false;
   for (const [index, role] of roles.entries()) {
-    const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap);
+    const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap, {
+      enableModelFailover
+    });
     config.agents.list.push(
       index === 0 ? { ...agentEntry, default: true } : agentEntry
     );
@@ -567,8 +589,18 @@ export function serializeOpenClawConfig(config: OpenClawConfig): string {
  *
  * Consequence: the `sandboxMode` fields in agent role definitions (`read_only`,
  * `workspace_write`) express security intent but are NOT currently enforced by
- * OpenClaw at runtime. Enforcement relies entirely on the Docker container
- * boundary and the per-agent tool allow/deny groups.
+ * OpenClaw at runtime. The sole enforcement layers are:
+ *
+ *   1. Docker container boundary (network isolation, volume mounts)
+ *   2. Per-agent tool allow/deny groups (coarse, group-level)
+ *   3. `before_tool_call` plugin hook (Feature 152, when enabled)
+ *   4. Post-completion path validation (`assertWorkspaceRepoChangesWithinAllowedPaths`)
+ *
+ * Notable gap: `read_only` agents (coordinator, analyst) have `group:fs` which
+ * includes write tools. Their sandbox intent is advisory until OpenClaw supports
+ * per-tool allow/deny within a group or a `group:fs:read` subset.
+ *
+ * See: docs/openclaw/AGENT_TOOL_PERMISSIONS.md for the full audit.
  *
  * When moving to a VPS or sandbox-capable host (FEATURE_BOARD Feature 105),
  * replace this function with a real mapping so the role definitions take effect.
