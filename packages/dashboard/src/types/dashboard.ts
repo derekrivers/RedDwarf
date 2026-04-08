@@ -16,8 +16,11 @@ import type {
 import type {
   ApprovalResponse,
   BlockedApprovalsResponse,
+  GitHubReposResponse,
   HealthResponse,
   PipelineRunsResponse,
+  RepoDeleteResponse,
+  RepoMutationResponse,
   ReposResponse,
   RunEvidenceResponse,
   ResolveApprovalResponse,
@@ -134,6 +137,9 @@ export interface DashboardApiClient {
     decisionSummary: string
   ): Promise<ResolveApprovalResponse>;
   getRepos(): Promise<ReposResponse>;
+  addRepo(repo: string): Promise<RepoMutationResponse>;
+  removeRepo(owner: string, repo: string): Promise<RepoDeleteResponse>;
+  listGitHubUserRepos(options?: { page?: number; perPage?: number; q?: string }): Promise<GitHubReposResponse>;
   submitIssue(req: SubmitIssueRequest): Promise<SubmitIssueResponse>;
   getProjects(filters?: ProjectListFilters): Promise<ProjectListResponse>;
   getProject(id: string): Promise<ProjectDetailResponse>;

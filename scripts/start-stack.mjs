@@ -518,6 +518,7 @@ const server = createOperatorApiServer(
     repository,
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
+    githubRepoDiscovery: github,
     ...(githubIssuesAdapter ? { githubIssuesAdapter } : {}),
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),

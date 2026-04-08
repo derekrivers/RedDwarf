@@ -122,6 +122,30 @@ export interface GitHubWriter {
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
 
 // ============================================================
+// GitHubRepoDiscovery — list repos accessible to the token
+// ============================================================
+
+export interface GitHubRepoSummary {
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string | null;
+  language: string | null;
+  archived: boolean;
+}
+
+export interface GitHubRepoDiscovery {
+  listUserRepos(options?: {
+    perPage?: number;
+    page?: number;
+    sort?: "updated" | "full_name" | "created" | "pushed";
+    direction?: "asc" | "desc";
+    query?: string;
+  }): Promise<{ repos: GitHubRepoSummary[]; total: number }>;
+}
+
+// ============================================================
 // GitHubIssuesAdapter — project mode sub-issue operations
 // ============================================================
 
@@ -529,7 +553,13 @@ interface GitHubApiIssue {
 }
 
 interface GitHubApiRepository {
+  full_name: string;
+  description: string | null;
+  private: boolean;
   default_branch: string;
+  updated_at: string | null;
+  language: string | null;
+  archived: boolean;
 }
 
 interface GitHubApiCreatedIssue {
@@ -655,7 +685,7 @@ jobs:
           fi
 `;
 
-export class RestGitHubAdapter implements GitHubAdapter {
+export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
@@ -1067,6 +1097,61 @@ export class RestGitHubAdapter implements GitHubAdapter {
 
     return { created: true, skipped: false };
   }
+
+  async listUserRepos(
+    options: {
+      perPage?: number;
+      page?: number;
+      sort?: "updated" | "full_name" | "created" | "pushed";
+      direction?: "asc" | "desc";
+      query?: string;
+    } = {}
+  ): Promise<{ repos: GitHubRepoSummary[]; total: number }> {
+    const perPage = Math.min(options.perPage ?? 100, 100);
+    const page = options.page ?? 1;
+    const sort = options.sort ?? "updated";
+    const direction = options.direction ?? "desc";
+
+    if (options.query) {
+      const params = new URLSearchParams();
+      params.set("q", `${options.query} in:name fork:true`);
+      params.set("per_page", String(perPage));
+      params.set("page", String(page));
+      params.set("sort", sort === "full_name" ? "name" : sort);
+      params.set("order", direction);
+      const result = await this.apiGet<{
+        total_count: number;
+        items: GitHubApiRepository[];
+      }>(`/search/repositories?${params.toString()}`);
+      return {
+        repos: result.items.map(mapApiRepoToSummary),
+        total: result.total_count
+      };
+    }
+
+    const params = new URLSearchParams();
+    params.set("per_page", String(perPage));
+    params.set("page", String(page));
+    params.set("sort", sort);
+    params.set("direction", direction);
+    params.set("type", "owner");
+    const items = await this.apiGet<GitHubApiRepository[]>(
+      `/user/repos?${params.toString()}`
+    );
+    return { repos: items.map(mapApiRepoToSummary), total: items.length };
+  }
+}
+
+function mapApiRepoToSummary(repo: GitHubApiRepository): GitHubRepoSummary {
+  return {
+    fullName: repo.full_name,
+    description: repo.description ?? null,
+    private: repo.private ?? false,
+    defaultBranch: repo.default_branch ?? "main",
+    updatedAt: repo.updated_at ?? null,
+    language: repo.language ?? null,
+    archived: repo.archived ?? false
+  };
 }
 
 /**

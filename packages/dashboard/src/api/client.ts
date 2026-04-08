@@ -96,6 +96,31 @@ export interface ReposResponse {
   total: number;
 }
 
+export interface RepoMutationResponse {
+  repo: { repo: string };
+  created: boolean;
+}
+
+export interface RepoDeleteResponse {
+  repo: string;
+  deleted: true;
+}
+
+export interface GitHubRepoSummary {
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string | null;
+  language: string | null;
+  archived: boolean;
+}
+
+export interface GitHubReposResponse {
+  repos: GitHubRepoSummary[];
+  total: number;
+}
+
 export interface SubmitIssueRequest {
   repo: string;
   title: string;
@@ -235,6 +260,26 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
     },
     getRepos() {
       return request<ReposResponse>("/repos");
+    },
+    addRepo(repo: string) {
+      return request<RepoMutationResponse>("/repos", {
+        method: "POST",
+        body: JSON.stringify({ repo })
+      });
+    },
+    removeRepo(owner: string, repo: string) {
+      return request<RepoDeleteResponse>(
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { method: "DELETE" }
+      );
+    },
+    listGitHubUserRepos(options?: { page?: number; perPage?: number; q?: string }) {
+      const params = new URLSearchParams();
+      if (options?.page) params.set("page", String(options.page));
+      if (options?.perPage) params.set("per_page", String(options.perPage));
+      if (options?.q) params.set("q", options.q);
+      const qs = params.toString();
+      return request<GitHubReposResponse>(`/repos/github${qs ? `?${qs}` : ""}`);
     },
     submitIssue(req: SubmitIssueRequest) {
       return request<SubmitIssueResponse>("/issues/submit", {

@@ -42,7 +42,7 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
-import type { GitHubWriter, GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
@@ -143,6 +143,8 @@ export interface OperatorApiDependencies {
   dispatchDependencies?: Omit<DispatchReadyTaskDependencies, "repository" | "logger" | "clock" | "concurrency">;
   /** When provided, enables POST /issues/submit to create GitHub issues for polling to intercept. */
   githubWriter?: GitHubWriter;
+  /** When provided, enables GET /repos/github to discover repos accessible to the GitHub token. */
+  githubRepoDiscovery?: GitHubRepoDiscovery;
   /** When provided, enables sub-issue creation on project approval. */
   githubIssuesAdapter?: GitHubIssuesAdapter;
   /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates/advances Task Flows on project approval/advance. */
@@ -285,6 +287,7 @@ export function createOperatorApiServer(
     dispatchDependencies,
     githubWriter,
     githubIssuesAdapter,
+    githubRepoDiscovery,
     taskFlowAdapter
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
@@ -341,6 +344,7 @@ export function createOperatorApiServer(
           localSecretsPath,
           githubWriter,
           githubIssuesAdapter,
+          githubRepoDiscovery,
           toolApprovals,
           taskFlowAdapter
         );
@@ -1669,6 +1673,7 @@ async function handleOperatorRequest(
   localSecretsPath?: string,
   githubWriter?: GitHubWriter,
   githubIssuesAdapter?: GitHubIssuesAdapter,
+  githubRepoDiscovery?: GitHubRepoDiscovery,
   toolApprovals?: Map<string, ToolApprovalRequest>,
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null
 ): Promise<void> {
@@ -1902,6 +1907,38 @@ async function handleOperatorRequest(
         deleted: true
       })
     );
+    return;
+  }
+
+  // GET /repos/github — discover repos accessible to the GitHub token
+  if (method === "GET" && path === "/repos/github") {
+    if (!githubRepoDiscovery) {
+      writeOperatorJsonResponse(res, 501, {
+        error: "not_implemented",
+        message: "GitHub repo discovery is not available. Ensure GITHUB_TOKEN is configured."
+      });
+      return;
+    }
+    const perPage = qp["per_page"] ? parseInt(String(qp["per_page"]), 10) : undefined;
+    const page = qp["page"] ? parseInt(String(qp["page"]), 10) : undefined;
+    const sort = typeof qp["sort"] === "string" ? qp["sort"] as "updated" | "full_name" | "created" | "pushed" : undefined;
+    const direction = typeof qp["direction"] === "string" ? qp["direction"] as "asc" | "desc" : undefined;
+    const query = typeof qp["q"] === "string" ? qp["q"] : undefined;
+    try {
+      const result = await githubRepoDiscovery.listUserRepos({
+        ...(perPage !== undefined && !isNaN(perPage) ? { perPage } : {}),
+        ...(page !== undefined && !isNaN(page) ? { page } : {}),
+        ...(sort ? { sort } : {}),
+        ...(direction ? { direction } : {}),
+        ...(query ? { query } : {})
+      });
+      writeOperatorJsonResponse(res, 200, result);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "github_error",
+        message: safeErrorMessage(error, "Failed to list GitHub repositories.")
+      });
+    }
     return;
   }
 

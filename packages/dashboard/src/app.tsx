@@ -16,6 +16,7 @@ import {
   IconFileSearch,
   IconFolder,
   IconGauge,
+  IconGitBranch,
   IconLogout,
   IconMoon,
   IconRobot,
@@ -32,6 +33,7 @@ import { EvidencePage } from "./pages/evidence-page";
 import { PipelinePage } from "./pages/pipeline-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
 import { ProjectsPage } from "./pages/projects-page";
+import { RepositoriesPage } from "./pages/repositories-page";
 import { SubmitIssuePage } from "./pages/submit-issue-page";
 import {
   createApiClient,
@@ -62,6 +64,7 @@ const navItems: NavItem[] = [
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
   { to: "/agents", label: "Agents", icon: IconRobot },
+  { to: "/repos", label: "Repositories", icon: IconGitBranch },
   { to: "/submit", label: "Submit Issue", icon: IconCloudUpload }
 ];
 
@@ -321,6 +324,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/agents"
                 element={<AgentsPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/repos"
+                element={<RepositoriesPage apiClient={apiClient} />}
               />
               <Route
                 path="/submit"
