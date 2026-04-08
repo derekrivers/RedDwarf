@@ -652,11 +652,214 @@ async function handleSubmitCommand(
     };
 }
 
+// ── /rdhelp ─────────────────────────────────────────────────────────────────
+
+const COMMAND_HELP: Array<{ name: string; usage: string; description: string }> = [
+  {
+    name: "rdhelp",
+    usage: "/rdhelp",
+    description: "Show this help message listing all available RedDwarf commands."
+  },
+  {
+    name: "rdstatus",
+    usage: "/rdstatus",
+    description: "Show pipeline health, pending approvals, and active runs."
+  },
+  {
+    name: "rdapprove",
+    usage: "/rdapprove <task-id-or-approval-id>",
+    description: "Approve a pending pipeline approval."
+  },
+  {
+    name: "rdreject",
+    usage: "/rdreject <task-id-or-approval-id> <reason>",
+    description: "Reject a pending pipeline approval with a reason."
+  },
+  {
+    name: "submit",
+    usage: "/submit <description>  or  /submit owner/repo | description",
+    description: "Submit a new RedDwarf task. If only one repo is managed the repo is inferred."
+  },
+  {
+    name: "runs",
+    usage: "/runs",
+    description: "List recent pipeline runs with their status."
+  },
+  {
+    name: "rdclarify",
+    usage: "/rdclarify <project-id>  or  /rdclarify <project-id> | answer1 | answer2 | ...",
+    description:
+      "View pending clarification questions for a project, or submit answers. " +
+      "When called without answers, shows Holly's questions. " +
+      "When called with pipe-separated answers, submits them and triggers re-planning."
+  }
+];
+
+function handleHelpCommand(): { text: string } {
+  const lines = COMMAND_HELP.map(
+    (cmd) => `**/${cmd.name}**\n  ${cmd.usage}\n  ${cmd.description}`
+  );
+  return {
+    text: "RedDwarf commands\n\n" + lines.join("\n\n")
+  };
+}
+
+// ── /rdclarify ──────────────────────────────────────────────────────────────
+
+function parseClarifyInput(rawArgs: string): {
+  projectId: string;
+  answers: string[];
+} {
+  const args = rawArgs.trim();
+  if (!args) {
+    return { projectId: "", answers: [] };
+  }
+
+  const parts = args.split("|").map((part) => part.trim()).filter(Boolean);
+  return {
+    projectId: parts[0] ?? "",
+    answers: parts.slice(1)
+  };
+}
+
+function formatClarificationQuestions(
+  projectId: string,
+  status: string,
+  questions: string[],
+  answers: Record<string, string> | null,
+  timedOut: boolean
+): string {
+  if (status !== "clarification_pending") {
+    return `Project ${projectId} is in status '${status}' — no clarification pending.`;
+  }
+
+  if (timedOut) {
+    return `Project ${projectId} clarification has timed out. Re-submit the task or extend the timeout.`;
+  }
+
+  if (questions.length === 0) {
+    return `Project ${projectId} is pending clarification but has no questions listed.`;
+  }
+
+  const header = `Holly needs clarification on project ${projectId}:\n`;
+  const numbered = questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
+  const hint =
+    "\n\nTo answer, use:\n" +
+    `/rdclarify ${projectId} | <answer 1> | <answer 2> | ...`;
+
+  if (answers && Object.keys(answers).length > 0) {
+    const prev = Object.entries(answers)
+      .map(([key, val]) => `- ${key}: ${val}`)
+      .join("\n");
+    return header + numbered + `\n\nPrevious answers:\n${prev}` + hint;
+  }
+
+  return header + numbered + hint;
+}
+
+async function handleClarifyCommand(
+  api: OpenClawPluginApi,
+  ctx: OperatorCommandContext
+): Promise<{ text: string }> {
+  const parsed = parseClarifyInput(trimString(ctx.args));
+  if (!parsed.projectId) {
+    return {
+      text:
+        "Usage:\n" +
+        "  /rdclarify <project-id> — view pending questions\n" +
+        "  /rdclarify <project-id> | answer1 | answer2 | ... — submit answers"
+    };
+  }
+
+  // Normalise: the API expects the full project:<taskId> form, but operators
+  // often copy just the task id from /rdstatus output.
+  const projectId = parsed.projectId.startsWith("project:")
+    ? parsed.projectId
+    : `project:${parsed.projectId}`;
+
+  // Fetch current clarification state
+  const clarifications = await operatorJson<{
+    projectId: string;
+    status: string;
+    questions: string[];
+    answers: Record<string, string> | null;
+    timedOut: boolean;
+  }>(api, `/projects/${encodeURIComponent(projectId)}/clarifications`);
+
+  // View mode — no answers provided
+  if (parsed.answers.length === 0) {
+    return {
+      text: formatClarificationQuestions(
+        projectId,
+        clarifications.status,
+        clarifications.questions,
+        clarifications.answers,
+        clarifications.timedOut
+      )
+    };
+  }
+
+  // Submit mode — answers provided
+  if (clarifications.status !== "clarification_pending") {
+    return {
+      text: `Project ${projectId} is in status '${clarifications.status}' — cannot submit answers unless status is 'clarification_pending'.`
+    };
+  }
+
+  const questions = clarifications.questions;
+  if (parsed.answers.length !== questions.length) {
+    return {
+      text:
+        `Expected ${questions.length} answer(s) but received ${parsed.answers.length}.\n\n` +
+        "Questions:\n" +
+        questions.map((q, i) => `${i + 1}. ${q}`).join("\n") +
+        "\n\nProvide one answer per question separated by |."
+    };
+  }
+
+  // Build answers keyed by question text (matches the operator API contract)
+  const answersRecord: Record<string, string> = {};
+  for (let i = 0; i < questions.length; i++) {
+    answersRecord[questions[i]!] = parsed.answers[i]!;
+  }
+
+  const result = await operatorJson<{
+    project?: Record<string, unknown>;
+    replanRunId?: string;
+    replanError?: string;
+    message?: string;
+  }>(api, `/projects/${encodeURIComponent(projectId)}/clarify`, {
+    method: "POST",
+    body: JSON.stringify({ answers: answersRecord })
+  });
+
+  const status = trimString(result.project?.status) || "unknown";
+  let text =
+    `Clarification answers submitted for ${projectId}.\n` +
+    `- project status: ${status}\n`;
+
+  if (result.replanRunId) {
+    text += `- re-planning run: ${result.replanRunId}\n`;
+  }
+  if (result.replanError) {
+    text += `- re-planning error: ${result.replanError}\n`;
+  }
+  if (result.message) {
+    text += `\n${result.message}`;
+  }
+  return { text };
+}
+
 export default definePluginEntry({
   id: PLUGIN_ID,
   name: "RedDwarf Operator Commands",
   description: "WebChat helpers for RedDwarf operator status, approvals, intake, and runs.",
   register(api: OpenClawPluginApi) {
+    api.registerCommand({
+      name: "rdhelp",
+      description: "List all available RedDwarf operator commands with usage and descriptions.",
+      handler: async () => handleHelpCommand()
+    });
     api.registerCommand({
       name: "rdstatus",
       description:
@@ -689,6 +892,14 @@ export default definePluginEntry({
       description: "List recent RedDwarf pipeline runs with their status.",
       handler: async () => handleRunsCommand(api)
     });
+    api.registerCommand({
+      name: "rdclarify",
+      description:
+        "View or answer Holly's clarification questions for a project. " +
+        "Use `/rdclarify <project-id>` to view, or `/rdclarify <project-id> | answer1 | answer2` to submit.",
+      acceptsArgs: true,
+      handler: async (ctx) => handleClarifyCommand(api, ctx)
+    });
     // Feature 152: register before_tool_call hook for agent-side safety rails.
     // Gate behind REDDWARF_PLUGIN_APPROVAL_HOOK_ENABLED so existing deployments
     // are unaffected unless opted in.
@@ -706,7 +917,7 @@ export default definePluginEntry({
     }
 
     api.logger.info?.(
-      "reddwarf-operator: registered /rdstatus, /rdapprove, /rdreject, /submit, and /runs"
+      "reddwarf-operator: registered /rdhelp, /rdstatus, /rdapprove, /rdreject, /submit, /runs, and /rdclarify"
     );
   }
 });
