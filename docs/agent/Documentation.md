@@ -1,5 +1,11 @@
 # Agent Documentation
 
+## 2026-04-08
+
+- Fixed the packaged policy-pack verifier after the OpenClaw runtime roster expanded from five packaged role definitions to six with `reddwarf-developer-opus`.
+- Updated `scripts/verify-packaged-policy-pack.mjs` to assert the current packaged agent IDs instead of a stale hard-coded count, so packaging verification now tracks the shipped roster shape directly.
+- Local verification note: this checkout's `artifacts/policy-packs` directory is owned by `nobody:nogroup`, so the stock verifier cannot create a fresh package there from this shell. Verified the same packaged flow against `/tmp/reddwarf-policy-pack-verification`, which completed and reported `openClawRoleCount: 6`.
+
 ## 2026-04-07
 
 - Investigated live GitHub issue `derekrivers/FirstVoyage#84` after it appeared stuck. Intake created task `derekrivers-firstvoyage-84`, but planning failed in under one second before Holly started because local `.env` had `REDDWARF_ACPX_DISPATCH_ENABLED=true` while the running `ghcr.io/openclaw/openclaw:latest` gateway returned `404 Not Found` for `POST /acpx/sessions`. Confirmed `/hooks/agent` is healthy, switched the untracked local `.env` flag back to `false`, cleared a persisted `REDDWARF_SKIP_OPENCLAW=true` operator-config override, and removed stale fake `operator-api-*` poll repos from the managed roster. After restart, `#84` replanned successfully and is blocked only on the normal pending `policy_gate` approval; `/health` reports healthy polling and dispatcher state.

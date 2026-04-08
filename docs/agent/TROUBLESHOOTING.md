@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## `verify-packaged-policy-pack.mjs` fails with `AssertionError ... 6 !== 5`
+
+- Symptom: `node scripts/verify-packaged-policy-pack.mjs` or `corepack pnpm verify:package` fails in CI or locally with `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 6 !== 5` from the packaged verifier.
+- Root cause: the execution-plane now ships six packaged OpenClaw role definitions because `reddwarf-developer-opus` was added alongside the standard developer, but the verifier still asserted the older five-role count.
+- Failing approach: debugging the policy-pack staging logic, packaged `node_modules`, or workspace materialization first. The package contents are usually fine; the assertion is stale.
+- Working workaround: update `scripts/verify-packaged-policy-pack.mjs` to assert the current packaged roster shape directly, for example by checking the exported `agentId` list instead of a brittle hard-coded count.
+- Verification: rerun `corepack pnpm verify:package`; the script should complete and report `openClawRoleCount: 6`.
+
+## `verify:package` fails with `EACCES: permission denied, mkdir '.../artifacts/policy-packs/...`
+
+- Symptom: local runs of `node scripts/verify-packaged-policy-pack.mjs` or `corepack pnpm verify:package` fail before the packaged assertions run, with `EACCES: permission denied, mkdir '/home/derek/code/RedDwarf/artifacts/policy-packs/...'`.
+- Root cause: this checkout's `artifacts/` tree can be owned by `nobody:nogroup`, so the verifier cannot write its temporary packaged output to the repo-default `artifacts/policy-packs` destination.
+- Failing approach: re-running the same verifier command unchanged from the same shell.
+- Working workaround: verify the packaging flow with `createPolicyPackPackage({ outputRoot: '/tmp/reddwarf-policy-pack-verification' })`, or restore write ownership on `artifacts/policy-packs` before rerunning the stock script.
+- Verification: the `/tmp`-rooted verification should complete and print a JSON summary including `openClawRoleCount: 6`.
+
 ## New GitHub issue fails planning immediately with `OpenClaw ACPX session creation returned 404`
 
 - Symptom: a new `ai-eligible` GitHub issue is ingested, the task manifest is created, and planning fails within about a second. `/health` shows polling degraded with `lastPollError: OpenClaw ACPX session creation returned 404: Not Found`. The task snapshot has no `PlanningSpec` or approvals, only intake/eligibility passed and planning failed.
