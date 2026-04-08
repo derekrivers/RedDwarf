@@ -101,7 +101,13 @@ export class HttpOpenClawTaskFlowAdapter implements OpenClawTaskFlowAdapter {
           `Set the ${OPENCLAW_HOOK_TOKEN_ENV} environment variable or pass hookToken explicitly.`
       );
     }
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // Strip trailing slashes without a quantifier that could backtrack
+    // on strings of many forward slashes (CodeQL: polynomial-redos).
+    let sanitizedUrl = baseUrl;
+    while (sanitizedUrl.endsWith("/")) {
+      sanitizedUrl = sanitizedUrl.slice(0, -1);
+    }
+    this.baseUrl = sanitizedUrl;
     this.hookToken = hookToken;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_TASK_FLOW_TIMEOUT_MS;
   }

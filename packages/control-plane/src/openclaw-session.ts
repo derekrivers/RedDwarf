@@ -519,8 +519,10 @@ export function parseDreamsMarkdown(content: string): DreamingLearning[] {
     return [];
   }
 
-  // Split on top-level headings (## or ###)
-  const headingRegex = /^#{2,3}\s+(.+)$/m;
+  // Split on top-level headings (## or ###).
+  // Use \S.*$ instead of .+$ to avoid polynomial backtracking on
+  // lines with many trailing spaces (CodeQL: polynomial-redos).
+  const headingRegex = /^#{2,3}\s+(\S.*)$/m;
   const sections = trimmed.split(/^(?=#{2,3}\s)/m).filter(Boolean);
 
   const learnings: DreamingLearning[] = [];

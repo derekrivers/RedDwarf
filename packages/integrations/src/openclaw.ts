@@ -3,6 +3,16 @@ import { EnvVarSecretsAdapter } from "./secrets.js";
 
 const DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS = 15_000;
 
+/** Strip trailing slashes without a regex quantifier that can backtrack
+ *  on strings of many forward slashes (CodeQL: polynomial-redos). */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") {
+    end--;
+  }
+  return url.slice(0, end);
+}
+
 // ── OpenClaw hook-token scope name ───────────────────────────────────────────
 
 /**
@@ -159,7 +169,7 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
           `Set the ${OPENCLAW_HOOK_TOKEN_ENV} environment variable or pass hookToken explicitly.`
       );
     }
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.baseUrl = stripTrailingSlashes(baseUrl);
     this.hookToken = hookToken;
     this.maxAttempts = options.maxAttempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 2000;
@@ -326,7 +336,7 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
           `Set the ${OPENCLAW_HOOK_TOKEN_ENV} environment variable or pass hookToken explicitly.`
       );
     }
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.baseUrl = stripTrailingSlashes(baseUrl);
     this.hookToken = hookToken;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS;
     this.maxAttempts = options.maxAttempts ?? 3;

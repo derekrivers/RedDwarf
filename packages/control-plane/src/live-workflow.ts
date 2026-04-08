@@ -522,6 +522,7 @@ export function createGitHubWorkspaceRepoBootstrapper(
     async ensureRepo(input) {
       const repoRoot = join(input.workspace.workspaceRoot, "repo");
       const remoteUrl = buildGitHubRemoteUrl(input.manifest.source.repo);
+      assertSafeGitRef(input.baseBranch);
 
       if (await pathExists(join(repoRoot, ".git"))) {
         return {
@@ -1175,6 +1176,7 @@ export function createGitWorkspaceCommitPublisher(
         timeoutMs: commandTimeoutMs
       };
       const pushRemote = buildGitHubRemoteUrl(input.manifest.source.repo);
+      assertSafeGitRef(input.branchName);
 
       await runCommand(
         "git",
@@ -1498,6 +1500,35 @@ function globPatternToRegExp(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
+/**
+ * Validates that a GitHub repo slug matches the expected `owner/name` format.
+ * Rejects values that could inject shell arguments or path traversal.
+ */
+const SAFE_REPO_PATTERN = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+
+function assertSafeRepoSlug(repo: string): void {
+  if (!SAFE_REPO_PATTERN.test(repo)) {
+    throw new Error(
+      `Refusing to use repo slug that does not match owner/name format: ${repo.slice(0, 80)}`
+    );
+  }
+}
+
+/**
+ * Validates that a git ref name is safe to pass as a command argument.
+ * Rejects values containing shell metacharacters, double-dots, or leading dashes.
+ */
+const SAFE_REF_PATTERN = /^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$/;
+
+function assertSafeGitRef(ref: string): void {
+  if (!SAFE_REF_PATTERN.test(ref) || ref.includes("..")) {
+    throw new Error(
+      `Refusing to use git ref that contains unsafe characters: ${ref.slice(0, 80)}`
+    );
+  }
+}
+
 function buildGitHubRemoteUrl(repo: string): string {
+  assertSafeRepoSlug(repo);
   return `https://github.com/${repo}.git`;
 }

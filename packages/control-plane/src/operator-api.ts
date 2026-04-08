@@ -355,7 +355,7 @@ export function createOperatorApiServer(
 
         writeOperatorJsonResponse(res, 500, {
           error: "internal_error",
-          message: err instanceof Error ? err.message : "Unexpected error"
+          message: safeErrorMessage(err, "Unexpected error")
         });
       }
     }
@@ -441,6 +441,20 @@ function resolveAllowedDashboardOrigins(): string[] {
 // ============================================================
 // Internal helpers
 // ============================================================
+
+/**
+ * Extracts a safe error message for HTTP responses. Strips stack traces,
+ * file paths, and internal details that could leak implementation info
+ * to callers (CodeQL: information-exposure-through-stack-trace).
+ */
+function safeErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  // Take only the first line of the message to strip Zod's multi-line
+  // validation output and any embedded stack frames.
+  const firstLine = error.message.split("\n")[0] ?? fallback;
+  // Cap length to avoid dumping huge payloads into responses.
+  return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
+}
 
 function writeOperatorJsonResponse(
   res: ServerResponse,
@@ -714,7 +728,7 @@ async function resolveOpenClawUiStatus(
       reachable: false,
       checkedAt,
       statusCode: null,
-      message: error instanceof Error ? error.message : String(error)
+      message: safeErrorMessage(error, "OpenClaw health check failed")
     };
     openClawHealthCache = { result, cachedAt: Date.now() };
     return result;
@@ -1733,11 +1747,9 @@ async function handleOperatorRequest(
     try {
       updateRequest = operatorConfigUpdateRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid operator config payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid operator config payload.")
       });
       return;
     }
@@ -1841,11 +1853,9 @@ async function handleOperatorRequest(
     try {
       createRequest = operatorRepoCreateRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid repository payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid repository payload.")
       });
       return;
     }
@@ -2173,11 +2183,9 @@ async function handleOperatorRequest(
     try {
       injected = directTaskInjectionRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid injection payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid injection payload.")
       });
       return;
     }
@@ -2234,11 +2242,9 @@ async function handleOperatorRequest(
     try {
       submission = githubIssueSubmitSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid issue submission payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid issue submission payload.")
       });
       return;
     }
@@ -2295,11 +2301,9 @@ async function handleOperatorRequest(
     try {
       injectedGroup = taskGroupInjectionRequestSchema.parse(rawBody ?? {});
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Invalid task-group payload.";
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
-        message
+        message: safeErrorMessage(error, "Invalid task-group payload.")
       });
       return;
     }
