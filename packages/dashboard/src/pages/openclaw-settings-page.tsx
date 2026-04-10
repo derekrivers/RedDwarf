@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertCircle,
   IconBrandOpenai,
+  IconCheck,
   IconCircleCheck,
+  IconCopy,
   IconLink,
   IconPlayerPlay,
   IconRefresh,
-  IconTerminal2,
   IconTool
 } from "@tabler/icons-react";
 import type {
@@ -16,7 +17,6 @@ import type {
   OpenClawRestartResponse
 } from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
-import { CodexLoginTerminal } from "../components/codex-login-terminal";
 
 const PAIRING_STATUS_QUERY_KEY = ["openclaw-pairing-status"] as const;
 const CODEX_STATUS_QUERY_KEY = ["openclaw-codex-status"] as const;
@@ -55,10 +55,7 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const [providerResultMessage, setProviderResultMessage] = useState<
     string | null
   >(null);
-  const [codexTerminalOpen, setCodexTerminalOpen] = useState(false);
-  const [codexLoginMessage, setCodexLoginMessage] = useState<string | null>(
-    null
-  );
+  const [codexCommandCopied, setCodexCommandCopied] = useState(false);
   const [restartResult, setRestartResult] =
     useState<OpenClawRestartResponse | null>(null);
 
@@ -136,6 +133,30 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
     }
     setRestartResult(null);
     restartMutation.mutate();
+  };
+
+  const codexLoginCommand =
+    "docker compose -f infra/docker/docker-compose.yml --profile openclaw exec openclaw node dist/index.js models auth login --provider openai-codex --set-default";
+
+  const copyCodexCommand = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(codexLoginCommand);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = codexLoginCommand;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCodexCommandCopied(true);
+      window.setTimeout(() => setCodexCommandCopied(false), 2000);
+    } catch {
+      // best-effort copy
+    }
   };
 
   return (
@@ -352,51 +373,76 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
 
             <h4 className="mb-2">ChatGPT (Codex) sign-in</h4>
             <p className="text-secondary small mb-3">
-              Required before switching to <strong>OpenAI Codex</strong>. Opens
-              an embedded terminal connected to the openclaw CLI running inside
-              the container. The CLI will print an{" "}
-              <code>https://auth.openai.com/...</code> URL — open it in a local
-              browser tab, sign in, then paste the{" "}
-              <code>http://localhost:1455/?code=...</code> redirect URL back
-              into the terminal input and press Enter.
+              Required before switching to <strong>OpenAI Codex</strong>. The
+              openclaw CLI needs a real TTY for this flow, so run the command
+              below in a local terminal from the repository root and follow
+              openclaw's prompts.
             </p>
 
-            <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
-              <button
-                type="button"
-                className="btn btn-outline-primary d-inline-flex align-items-center gap-2"
-                onClick={() => {
-                  setCodexLoginMessage(null);
-                  setCodexTerminalOpen(true);
-                }}
-              >
-                <IconTerminal2 size={16} />
-                {codexSignedIn
-                  ? "Re-authenticate Codex (terminal)"
-                  : "Open Codex login terminal"}
-              </button>
-            </div>
+            <ol className="mb-3 ps-3">
+              <li className="mb-2">
+                Open a terminal at the RedDwarf repo root and run:
+                <div className="d-flex align-items-stretch gap-2 mt-2">
+                  <pre
+                    className="bg-dark text-light rounded p-3 mb-0 flex-grow-1"
+                    style={{
+                      fontFamily:
+                        '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+                      fontSize: "12px",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      overflowX: "auto"
+                    }}
+                  >
+                    {codexLoginCommand}
+                  </pre>
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary d-inline-flex align-items-center gap-1"
+                    onClick={() => {
+                      void copyCodexCommand();
+                    }}
+                    title="Copy command"
+                  >
+                    {codexCommandCopied ? (
+                      <IconCheck size={16} />
+                    ) : (
+                      <IconCopy size={16} />
+                    )}
+                    {codexCommandCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </li>
+              <li className="mb-2">
+                openclaw will print an{" "}
+                <code>https://auth.openai.com/...</code> URL. Open it in a
+                local browser tab and sign in with your ChatGPT account.
+              </li>
+              <li className="mb-2">
+                Your browser will be redirected to a{" "}
+                <code>http://localhost:1455/?code=...</code> URL (the page will
+                fail to load — that's expected). Copy the full URL from the
+                address bar.
+              </li>
+              <li className="mb-2">
+                Paste that redirect URL back into the same terminal where
+                openclaw is waiting and press <kbd>Enter</kbd>.
+              </li>
+              <li className="mb-0">
+                Once openclaw confirms the login, come back here and click{" "}
+                <strong>Refresh</strong> on the Model Provider card above —
+                you'll see Codex marked as signed in and you can switch the
+                active provider to <strong>OpenAI Codex</strong>.
+              </li>
+            </ol>
 
-            {codexLoginMessage ? (
-              <div className="alert alert-info mb-0">
-                <div className="small">{codexLoginMessage}</div>
-              </div>
-            ) : null}
+            <div className="alert alert-info mb-0 small">
+              <strong>Already signed in?</strong> The auth status above shows
+              whether this step is still needed. Re-run the command any time
+              you need to re-authenticate (e.g. after a token expiry).
+            </div>
           </div>
         </div>
-
-        {codexTerminalOpen ? (
-          <CodexLoginTerminal
-            apiClient={apiClient}
-            onClose={() => setCodexTerminalOpen(false)}
-            onSuccess={() => {
-              setCodexLoginMessage(
-                "Codex login completed. You can now switch the provider to OpenAI Codex."
-              );
-              queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
-            }}
-          />
-        ) : null}
 
         <div className="card">
           <div className="card-header">
