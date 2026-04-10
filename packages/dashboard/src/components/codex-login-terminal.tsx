@@ -104,8 +104,22 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
     };
     window.addEventListener("resize", handleResize);
 
-    // Forward every keystroke straight to the PTY on the server.
-    const onDataDisposable = term.onData((data) => {
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("resize", handleResize);
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Input is fully decoupled from xterm's focus management. Capture
+  // keydown + paste events at the document level while the modal is
+  // mounted and POST them directly to the PTY input endpoint. The
+  // xterm.js terminal is display-only.
+  useEffect(() => {
+    const sendToPty = (data: string) => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) {
         pendingInputRef.current += data;
@@ -123,57 +137,74 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
               : "Failed to send input to Codex login session."
           );
         });
-    });
-
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener("resize", handleResize);
-      onDataDisposable.dispose();
-      term.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Document-level paste fallback. The underlying page (not the xterm
-  // textarea) often owns focus when the user Ctrl+V's, so we intercept
-  // paste events on the whole document while the modal is mounted and
-  // forward the clipboard text straight to the PTY.
-  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      // If the user is typing into an unrelated input/textarea outside
+      // our modal, don't hijack.
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+      ) {
+        return;
+      }
+      // Let the browser's native paste handler fire for Ctrl/Cmd+V.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        return;
+      }
+      // Allow standard copy / select-all in the modal.
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        ["c", "a"].includes(event.key.toLowerCase())
+      ) {
+        return;
+      }
+
+      let data: string | null = null;
+      if (event.key === "Enter") {
+        data = "\r";
+      } else if (event.key === "Backspace") {
+        data = "\x7f";
+      } else if (event.key === "Tab") {
+        data = "\t";
+      } else if (event.key === "Escape") {
+        data = "\x1b";
+      } else if (event.key === "ArrowUp") {
+        data = "\x1b[A";
+      } else if (event.key === "ArrowDown") {
+        data = "\x1b[B";
+      } else if (event.key === "ArrowRight") {
+        data = "\x1b[C";
+      } else if (event.key === "ArrowLeft") {
+        data = "\x1b[D";
+      } else if (event.key === " ") {
+        data = " ";
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        data = event.key;
+      }
+
+      if (data === null) {
+        return;
+      }
+      event.preventDefault();
+      sendToPty(data);
+    };
+
     const onPaste = (event: ClipboardEvent) => {
       const text = event.clipboardData?.getData("text");
       if (!text) {
         return;
       }
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) {
-        pendingInputRef.current += text;
-        event.preventDefault();
-        return;
-      }
-      if (statusRef.current !== "streaming") {
-        return;
-      }
       event.preventDefault();
-      void apiClient
-        .sendOpenClawCodexLoginInput(sessionId, text)
-        .catch((err) => {
-          setErrorMessage(
-            err instanceof ApiError || err instanceof Error
-              ? err.message
-              : "Failed to send pasted input to Codex login session."
-          );
-        });
-      try {
-        terminalRef.current?.focus();
-      } catch {
-        // term may be disposed
-      }
+      sendToPty(text);
     };
-    document.addEventListener("paste", onPaste);
+
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("paste", onPaste, true);
     return () => {
-      document.removeEventListener("paste", onPaste);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("paste", onPaste, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
