@@ -20,8 +20,7 @@ import type {
   GitHubReposResponse,
   HealthResponse,
   OpenClawCodexAuthStatusResponse,
-  OpenClawCodexLoginCompleteResponse,
-  OpenClawCodexLoginStartResponse,
+  OpenClawCodexLoginInputResponse,
   OpenClawFixPairingResponse,
   OpenClawModelProvider,
   OpenClawModelProviderResponse,
@@ -171,10 +170,9 @@ export interface DashboardApiClient {
     provider: OpenClawModelProvider
   ): Promise<OpenClawModelProviderResponse>;
   getOpenClawCodexStatus(): Promise<OpenClawCodexAuthStatusResponse>;
-  startOpenClawCodexLogin(): Promise<OpenClawCodexLoginStartResponse>;
-  completeOpenClawCodexLogin(
+  sendOpenClawCodexLoginInput(
     sessionId: string,
-    callbackUrl: string
-  ): Promise<OpenClawCodexLoginCompleteResponse>;
+    data: string
+  ): Promise<OpenClawCodexLoginInputResponse>;
   restartOpenClaw(): Promise<OpenClawRestartResponse>;
 }

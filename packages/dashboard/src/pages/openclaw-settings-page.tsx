@@ -4,10 +4,10 @@ import {
   IconAlertCircle,
   IconBrandOpenai,
   IconCircleCheck,
-  IconExternalLink,
   IconLink,
   IconPlayerPlay,
   IconRefresh,
+  IconTerminal2,
   IconTool
 } from "@tabler/icons-react";
 import type {
@@ -16,6 +16,7 @@ import type {
   OpenClawRestartResponse
 } from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
+import { CodexLoginTerminal } from "../components/codex-login-terminal";
 
 const PAIRING_STATUS_QUERY_KEY = ["openclaw-pairing-status"] as const;
 const CODEX_STATUS_QUERY_KEY = ["openclaw-codex-status"] as const;
@@ -54,9 +55,7 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const [providerResultMessage, setProviderResultMessage] = useState<
     string | null
   >(null);
-  const [codexSessionId, setCodexSessionId] = useState<string | null>(null);
-  const [codexAuthUrl, setCodexAuthUrl] = useState<string | null>(null);
-  const [codexCallbackUrl, setCodexCallbackUrl] = useState("");
+  const [codexTerminalOpen, setCodexTerminalOpen] = useState(false);
   const [codexLoginMessage, setCodexLoginMessage] = useState<string | null>(
     null
   );
@@ -92,42 +91,12 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
     }
   });
 
-  const startCodexLoginMutation = useMutation({
-    mutationFn: () => apiClient.startOpenClawCodexLogin(),
-    onSuccess: (result) => {
-      setCodexSessionId(result.sessionId);
-      setCodexAuthUrl(result.authUrl);
-      setCodexCallbackUrl("");
-      setCodexLoginMessage(null);
-    }
-  });
-
   const restartMutation = useMutation({
     mutationFn: () => apiClient.restartOpenClaw(),
     onSuccess: (result) => {
       setRestartResult(result);
       queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: PAIRING_STATUS_QUERY_KEY });
-    }
-  });
-
-  const completeCodexLoginMutation = useMutation({
-    mutationFn: (args: { sessionId: string; callbackUrl: string }) =>
-      apiClient.completeOpenClawCodexLogin(args.sessionId, args.callbackUrl),
-    onSuccess: (result) => {
-      if (result.completed) {
-        setCodexLoginMessage(
-          "Codex login completed. You can now switch the provider to OpenAI Codex."
-        );
-        setCodexSessionId(null);
-        setCodexAuthUrl(null);
-        setCodexCallbackUrl("");
-        queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
-      } else {
-        setCodexLoginMessage(
-          `Codex login did not complete cleanly (exit code ${result.exitCode ?? "?"}). Check CLI output below.`
-        );
-      }
     }
   });
 
@@ -153,14 +122,6 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const providerError =
     setProviderMutation.error instanceof Error
       ? setProviderMutation.error.message
-      : null;
-  const startCodexError =
-    startCodexLoginMutation.error instanceof Error
-      ? startCodexLoginMutation.error.message
-      : null;
-  const completeCodexError =
-    completeCodexLoginMutation.error instanceof Error
-      ? completeCodexLoginMutation.error.message
       : null;
   const restartError =
     restartMutation.error instanceof Error ? restartMutation.error.message : null;
@@ -391,95 +352,30 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
 
             <h4 className="mb-2">ChatGPT (Codex) sign-in</h4>
             <p className="text-secondary small mb-3">
-              Required before switching to <strong>OpenAI Codex</strong>. Click
-              below to obtain an OpenAI auth URL, open it in a new tab, sign in
-              to ChatGPT, then paste the redirect URL from your browser's
-              address bar back into the field that appears.
+              Required before switching to <strong>OpenAI Codex</strong>. Opens
+              an embedded terminal connected to the openclaw CLI running inside
+              the container. The CLI will print an{" "}
+              <code>https://auth.openai.com/...</code> URL — open it in a local
+              browser tab, sign in, then paste the{" "}
+              <code>http://localhost:1455/?code=...</code> redirect URL back
+              into the terminal input and press Enter.
             </p>
 
             <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
               <button
                 type="button"
-                className="btn btn-outline-primary"
-                disabled={startCodexLoginMutation.isPending}
+                className="btn btn-outline-primary d-inline-flex align-items-center gap-2"
                 onClick={() => {
                   setCodexLoginMessage(null);
-                  startCodexLoginMutation.mutate();
+                  setCodexTerminalOpen(true);
                 }}
               >
-                {startCodexLoginMutation.isPending
-                  ? "Starting..."
-                  : codexSignedIn
-                    ? "Re-authenticate Codex"
-                    : "Sign in to ChatGPT (Codex)"}
+                <IconTerminal2 size={16} />
+                {codexSignedIn
+                  ? "Re-authenticate Codex (terminal)"
+                  : "Open Codex login terminal"}
               </button>
             </div>
-
-            {startCodexError ? (
-              <div className="alert alert-danger d-flex align-items-start gap-2 mb-3">
-                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
-                <div>
-                  <div className="fw-bold">Could not start Codex login</div>
-                  <div className="small">{startCodexError}</div>
-                </div>
-              </div>
-            ) : null}
-
-            {codexAuthUrl && codexSessionId ? (
-              <div className="border rounded p-3 mb-3">
-                <div className="fw-bold mb-2">Step 1 — open this URL</div>
-                <a
-                  href={codexAuthUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="d-inline-flex align-items-center gap-1 small text-break mb-3"
-                >
-                  <IconExternalLink size={14} />
-                  {codexAuthUrl}
-                </a>
-                <div className="fw-bold mb-2">
-                  Step 2 — paste the redirect URL from your browser's address
-                  bar
-                </div>
-                <textarea
-                  className="form-control mb-2"
-                  rows={3}
-                  placeholder="http://localhost:1455/?code=..."
-                  value={codexCallbackUrl}
-                  onChange={(event) =>
-                    setCodexCallbackUrl(event.target.value)
-                  }
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={
-                    completeCodexLoginMutation.isPending ||
-                    codexCallbackUrl.trim().length === 0
-                  }
-                  onClick={() =>
-                    completeCodexLoginMutation.mutate({
-                      sessionId: codexSessionId,
-                      callbackUrl: codexCallbackUrl.trim()
-                    })
-                  }
-                >
-                  {completeCodexLoginMutation.isPending
-                    ? "Completing..."
-                    : "Submit redirect URL"}
-                </button>
-              </div>
-            ) : null}
-
-            {completeCodexError ? (
-              <div className="alert alert-danger d-flex align-items-start gap-2 mb-0">
-                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
-                <div>
-                  <div className="fw-bold">Failed to complete Codex login</div>
-                  <div className="small">{completeCodexError}</div>
-                </div>
-              </div>
-            ) : null}
 
             {codexLoginMessage ? (
               <div className="alert alert-info mb-0">
@@ -488,6 +384,19 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
             ) : null}
           </div>
         </div>
+
+        {codexTerminalOpen ? (
+          <CodexLoginTerminal
+            apiClient={apiClient}
+            onClose={() => setCodexTerminalOpen(false)}
+            onSuccess={() => {
+              setCodexLoginMessage(
+                "Codex login completed. You can now switch the provider to OpenAI Codex."
+              );
+              queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
+            }}
+          />
+        ) : null}
 
         <div className="card">
           <div className="card-header">

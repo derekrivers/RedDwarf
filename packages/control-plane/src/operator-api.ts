@@ -1830,40 +1830,24 @@ export interface OpenClawCodexAuthStatus {
   rawOutput: string;
 }
 
-export interface OpenClawCodexLoginStartResult {
-  sessionId: string;
-  /** OpenAI OAuth URL the operator must open in their browser. */
-  authUrl: string;
-  /** Raw CLI output captured before the auth URL was detected. */
-  preamble: string;
-}
-
-export interface OpenClawCodexLoginCompleteResult {
-  completed: boolean;
-  exitCode: number | null;
-  rawOutput: string;
-}
-
-interface CodexLoginSessionState {
+interface CodexLoginStreamSession {
   child: ChildProcessByStdio<Writable, Readable, Readable>;
   createdAt: number;
-  buffer: string;
-  authUrl: string | null;
+  /** Response currently streaming output chunks to the dashboard. */
+  response: ServerResponse | null;
+  /** Resolved once the child exits so stream handlers can await it. */
+  exitPromise: Promise<number | null>;
   exited: boolean;
   exitCode: number | null;
-  exitSignal: NodeJS.Signals | null;
-  timeoutHandle: NodeJS.Timeout;
-  waitForExit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
-/** Sessions expire this long after creation if not completed. */
-const CODEX_LOGIN_SESSION_TTL_MS = 10 * 60 * 1000;
-const CODEX_LOGIN_URL_WAIT_MS = 15_000;
-const CODEX_LOGIN_COMPLETE_WAIT_MS = 30_000;
+/** Hard upper bound on how long a stream session can live. */
+const CODEX_LOGIN_STREAM_TTL_MS = 15 * 60 * 1000;
 
-// Module-level session registry. The openclaw CLI holds a live child process
-// between the browser redirect and the operator pasting the callback URL back.
-const codexLoginSessions = new Map<string, CodexLoginSessionState>();
+// Module-level registry. Each /openclaw/codex-login/stream connection spawns
+// one live openclaw-models child; /openclaw/codex-login/input targets it by
+// sessionId so the dashboard can forward the pasted redirect URL.
+const codexLoginStreamSessions = new Map<string, CodexLoginStreamSession>();
 
 /**
  * Python PTY wrapper: forks a pseudo-terminal for the openclaw CLI so it
@@ -1930,12 +1914,6 @@ function stripAnsiControlSequences(text: string): string {
     .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
     .replace(/\r/g, "");
-}
-
-function extractCodexAuthUrl(buffer: string): string | null {
-  const cleaned = stripAnsiControlSequences(buffer);
-  const match = cleaned.match(/https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s]+/);
-  return match ? match[0]! : null;
 }
 
 function parseOpenClawModelsStatus(rawOutput: string): OpenClawCodexAuthStatus {
@@ -2019,22 +1997,6 @@ async function readOpenClawCodexAuthStatus(): Promise<OpenClawCodexAuthStatus> {
   return parseOpenClawModelsStatus(`${stdout}\n${stderr}`);
 }
 
-function cleanupCodexLoginSession(sessionId: string): void {
-  const session = codexLoginSessions.get(sessionId);
-  if (!session) {
-    return;
-  }
-  clearTimeout(session.timeoutHandle);
-  if (!session.exited) {
-    try {
-      session.child.kill("SIGTERM");
-    } catch {
-      // child may already be gone
-    }
-  }
-  codexLoginSessions.delete(sessionId);
-}
-
 /**
  * Reap orphaned openclaw Codex login processes inside the openclaw container.
  *
@@ -2066,8 +2028,53 @@ async function reapStaleCodexLoginProcesses(): Promise<void> {
   });
 }
 
-async function startOpenClawCodexLogin(): Promise<OpenClawCodexLoginStartResult> {
-  if (codexLoginSessions.size === 0) {
+function writeCodexStreamFrame(
+  res: ServerResponse,
+  frame:
+    | { type: "session"; sessionId: string }
+    | { type: "data"; text: string }
+    | { type: "exit"; code: number | null }
+    | { type: "error"; message: string }
+): void {
+  if (res.writableEnded) {
+    return;
+  }
+  try {
+    res.write(`${JSON.stringify(frame)}\n`);
+  } catch {
+    // downstream socket may already be closed
+  }
+}
+
+function destroyCodexLoginSession(sessionId: string): void {
+  const session = codexLoginStreamSessions.get(sessionId);
+  if (!session) {
+    return;
+  }
+  codexLoginStreamSessions.delete(sessionId);
+  if (!session.exited) {
+    try {
+      session.child.kill("SIGTERM");
+    } catch {
+      // child may already be gone
+    }
+  }
+}
+
+/**
+ * Spawn the openclaw Codex login CLI and stream its output to the dashboard
+ * as newline-delimited JSON frames on a single long-lived response. The
+ * caller sends stdin back via POST /openclaw/codex-login/input using the
+ * sessionId emitted in the first frame.
+ *
+ * Closing the response (client navigated away / closed modal) SIGTERMs the
+ * child so we never leak processes the way the old REST flow did.
+ */
+async function streamOpenClawCodexLogin(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  if (codexLoginStreamSessions.size === 0) {
     await reapStaleCodexLoginProcesses();
   }
 
@@ -2092,144 +2099,96 @@ async function startOpenClawCodexLogin(): Promise<OpenClawCodexLoginStartResult>
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
 
   const sessionId = randomUUID();
-  let authUrl: string | null = null;
-  let buffer = "";
-  let urlResolver: ((url: string) => void) | null = null;
-  let urlRejector: ((error: Error) => void) | null = null;
 
-  const urlPromise = new Promise<string>((resolve, reject) => {
-    urlResolver = resolve;
-    urlRejector = reject;
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    Connection: "keep-alive"
   });
 
-  child.stdout.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString("utf8");
-    if (!authUrl) {
-      const candidate = extractCodexAuthUrl(buffer);
-      if (candidate) {
-        authUrl = candidate;
-        urlResolver?.(candidate);
-      }
+  const session: CodexLoginStreamSession = {
+    child,
+    createdAt: Date.now(),
+    response: res,
+    exited: false,
+    exitCode: null,
+    exitPromise: new Promise<number | null>((resolve) => {
+      child.once("exit", (code) => {
+        session.exited = true;
+        session.exitCode = code;
+        resolve(code);
+      });
+    })
+  };
+  codexLoginStreamSessions.set(sessionId, session);
+
+  writeCodexStreamFrame(res, { type: "session", sessionId });
+
+  const relay = (chunk: Buffer) => {
+    const text = stripAnsiControlSequences(chunk.toString("utf8"));
+    if (text.length > 0) {
+      writeCodexStreamFrame(res, { type: "data", text });
     }
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString("utf8");
-  });
+  };
+  child.stdout.on("data", relay);
+  child.stderr.on("data", relay);
 
-  const waitForExit = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve) => {
-    child.once("exit", (code, signal) => {
-      const state = codexLoginSessions.get(sessionId);
-      if (state) {
-        state.exited = true;
-        state.exitCode = code;
-        state.exitSignal = signal;
-      }
-      resolve({ code, signal });
+  child.once("error", (error) => {
+    writeCodexStreamFrame(res, {
+      type: "error",
+      message: safeErrorMessage(error, "openclaw CLI spawn error")
     });
   });
 
-  child.once("error", (error) => {
-    urlRejector?.(error);
+  const ttlHandle = setTimeout(() => {
+    destroyCodexLoginSession(sessionId);
+  }, CODEX_LOGIN_STREAM_TTL_MS);
+  ttlHandle.unref?.();
+
+  const closeResponse = () => {
+    clearTimeout(ttlHandle);
+    if (!res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        // response may already be closed
+      }
+    }
+  };
+
+  // When the client disconnects (closes the modal, navigates away) kill the
+  // live openclaw-models child so port 1455 is released immediately.
+  req.once("close", () => {
+    if (!session.exited) {
+      destroyCodexLoginSession(sessionId);
+    }
+    closeResponse();
   });
 
-  const timeoutHandle = setTimeout(() => {
-    cleanupCodexLoginSession(sessionId);
-  }, CODEX_LOGIN_SESSION_TTL_MS);
-  timeoutHandle.unref?.();
-
-  const session: CodexLoginSessionState = {
-    child,
-    createdAt: Date.now(),
-    buffer,
-    authUrl: null,
-    exited: false,
-    exitCode: null,
-    exitSignal: null,
-    timeoutHandle,
-    waitForExit
-  };
-  codexLoginSessions.set(sessionId, session);
-
-  // Race URL detection vs a hard timeout so a broken CLI does not hang forever.
-  const urlTimeout = new Promise<never>((_, reject) => {
-    const t = setTimeout(() => {
-      reject(
-        new Error(
-          "Timed out waiting for OpenAI OAuth URL from openclaw CLI. Is the openclaw container healthy?"
-        )
-      );
-    }, CODEX_LOGIN_URL_WAIT_MS);
-    t.unref?.();
-  });
-
-  let resolvedUrl: string;
-  try {
-    resolvedUrl = await Promise.race([urlPromise, urlTimeout]);
-  } catch (error) {
-    cleanupCodexLoginSession(sessionId);
-    throw error;
-  }
-
-  session.authUrl = resolvedUrl;
-  session.buffer = buffer;
-  return {
-    sessionId,
-    authUrl: resolvedUrl,
-    preamble: stripAnsiControlSequences(buffer)
-  };
+  const exitCode = await session.exitPromise;
+  writeCodexStreamFrame(res, { type: "exit", code: exitCode });
+  codexLoginStreamSessions.delete(sessionId);
+  closeResponse();
 }
 
-async function completeOpenClawCodexLogin(
+function writeOpenClawCodexLoginInput(
   sessionId: string,
-  callbackUrl: string
-): Promise<OpenClawCodexLoginCompleteResult> {
-  const session = codexLoginSessions.get(sessionId);
+  data: string
+): { accepted: boolean; reason?: string } {
+  const session = codexLoginStreamSessions.get(sessionId);
   if (!session) {
-    throw new Error("Codex login session not found or expired.");
+    return { accepted: false, reason: "session_not_found" };
   }
   if (session.exited) {
-    const output = stripAnsiControlSequences(session.buffer);
-    codexLoginSessions.delete(sessionId);
-    return {
-      completed: false,
-      exitCode: session.exitCode,
-      rawOutput: output
-    };
+    return { accepted: false, reason: "session_exited" };
   }
-
-  // Write the pasted callback URL to the CLI. The CLI terminates the prompt
-  // on a newline.
   try {
-    session.child.stdin.write(`${callbackUrl}\n`);
-  } catch (error) {
-    cleanupCodexLoginSession(sessionId);
-    throw error;
+    session.child.stdin.write(data);
+    return { accepted: true };
+  } catch {
+    return { accepted: false, reason: "stdin_write_failed" };
   }
-
-  const completeTimeout = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve) => {
-    const t = setTimeout(() => {
-      resolve({ code: null, signal: null });
-    }, CODEX_LOGIN_COMPLETE_WAIT_MS);
-    t.unref?.();
-  });
-
-  const result = await Promise.race([session.waitForExit, completeTimeout]);
-
-  // Drain any additional output that arrived before we captured it.
-  const finalOutput = stripAnsiControlSequences(session.buffer);
-  cleanupCodexLoginSession(sessionId);
-
-  return {
-    completed: result.code === 0,
-    exitCode: result.code,
-    rawOutput: finalOutput
-  };
 }
 
 async function handleOperatorRequest(
@@ -2613,48 +2572,75 @@ async function handleOperatorRequest(
     return;
   }
 
-  // POST /openclaw/codex-login/start — begin a Codex OAuth login session
-  if (method === "POST" && path === "/openclaw/codex-login/start") {
+  // GET /openclaw/codex-login/stream — long-lived NDJSON stream that spawns
+  // the openclaw Codex login CLI and relays its output back to the dashboard
+  // terminal. The first frame carries the sessionId the client must use to
+  // POST keystrokes back via /openclaw/codex-login/input.
+  if (method === "GET" && path === "/openclaw/codex-login/stream") {
     try {
-      const result = await startOpenClawCodexLogin();
-      writeOperatorJsonResponse(res, 200, result);
+      await streamOpenClawCodexLogin(req, res);
     } catch (error) {
-      writeOperatorJsonResponse(res, 502, {
-        error: "openclaw_codex_login_failed",
-        message: safeErrorMessage(
-          error,
-          "Failed to start OpenClaw Codex login. Is the openclaw container running?"
-        )
-      });
+      if (!res.headersSent) {
+        writeOperatorJsonResponse(res, 502, {
+          error: "openclaw_codex_login_failed",
+          message: safeErrorMessage(
+            error,
+            "Failed to start OpenClaw Codex login stream. Is the openclaw container running?"
+          )
+        });
+      } else if (!res.writableEnded) {
+        writeCodexStreamFrame(res, {
+          type: "error",
+          message: safeErrorMessage(error, "openclaw Codex login stream error")
+        });
+        try {
+          res.end();
+        } catch {
+          // already closed
+        }
+      }
     }
     return;
   }
 
-  // POST /openclaw/codex-login/complete — finish a Codex OAuth login session
-  if (method === "POST" && path === "/openclaw/codex-login/complete") {
+  // POST /openclaw/codex-login/input — write the pasted callback URL (or any
+  // other keystroke sequence the dashboard terminal captures) into the live
+  // login session's stdin. Body: { sessionId: string, data: string }.
+  if (method === "POST" && path === "/openclaw/codex-login/input") {
     try {
       const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
-        | { sessionId?: unknown; callbackUrl?: unknown }
+        | { sessionId?: unknown; data?: unknown }
         | null;
       const sessionId =
         typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
-      const callbackUrl =
-        typeof body?.callbackUrl === "string" ? body.callbackUrl.trim() : "";
-      if (sessionId.length === 0 || callbackUrl.length === 0) {
+      const data = typeof body?.data === "string" ? body.data : "";
+      if (sessionId.length === 0) {
         writeOperatorJsonResponse(res, 400, {
           error: "invalid_request",
-          message: "sessionId and callbackUrl are required"
+          message: "sessionId is required"
         });
         return;
       }
-      const result = await completeOpenClawCodexLogin(sessionId, callbackUrl);
-      writeOperatorJsonResponse(res, 200, result);
+      const result = writeOpenClawCodexLoginInput(sessionId, data);
+      if (!result.accepted) {
+        writeOperatorJsonResponse(res, 409, {
+          error: result.reason ?? "input_rejected",
+          message:
+            result.reason === "session_not_found"
+              ? "Codex login session not found or already closed."
+              : result.reason === "session_exited"
+                ? "Codex login session already exited."
+                : "Failed to write to Codex login session stdin."
+        });
+        return;
+      }
+      writeOperatorJsonResponse(res, 200, { accepted: true });
     } catch (error) {
       writeOperatorJsonResponse(res, 502, {
         error: "openclaw_codex_login_failed",
         message: safeErrorMessage(
           error,
-          "Failed to complete OpenClaw Codex login."
+          "Failed to forward input to Codex login session."
         )
       });
     }
