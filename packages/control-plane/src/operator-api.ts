@@ -43,6 +43,7 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
+import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
 import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
@@ -1793,12 +1794,12 @@ async function fixOpenClawPairing(): Promise<OpenClawFixPairingResult> {
 export interface OpenClawCodexAuthStatus {
   /** True when an OAuth/token entry for openai-codex is registered. */
   signedIn: boolean;
-  /** Current default model reported by `openclaw models status`. */
-  defaultModel: string | null;
   /** Count of providers with active OAuth/token entries. */
   oauthProviderCount: number;
   /** Current REDDWARF_MODEL_PROVIDER from the running process env. */
   currentProvider: "anthropic" | "openai" | "openai-codex" | null;
+  /** Per-role model bindings for the currently selected provider. */
+  roleBindings: Record<string, string> | null;
   /** Raw combined stdout/stderr from the models status command. */
   rawOutput: string;
 }
@@ -1915,14 +1916,6 @@ function parseOpenClawModelsStatus(rawOutput: string): OpenClawCodexAuthStatus {
   const cleaned = stripAnsiControlSequences(rawOutput);
   const lines = cleaned.split(/\n/);
 
-  let defaultModel: string | null = null;
-  const defaultLine = lines.find((line) => /^\s*Default\s*:/i.test(line));
-  if (defaultLine) {
-    const parts = defaultLine.split(":");
-    const candidate = parts.slice(1).join(":").trim();
-    defaultModel = candidate.length > 0 && candidate !== "-" ? candidate : null;
-  }
-
   let oauthProviderCount = 0;
   const countLine = lines.find((line) =>
     /Providers w\/ OAuth\/tokens\s*\((\d+)\)/i.test(line)
@@ -1965,11 +1958,15 @@ function parseOpenClawModelsStatus(rawOutput: string): OpenClawCodexAuthStatus {
       ? envProviderRaw
       : null;
 
+  const roleBindings = currentProvider
+    ? { ...MODEL_PROVIDER_ROLE_MAP[currentProvider] }
+    : null;
+
   return {
     signedIn,
-    defaultModel,
     oauthProviderCount,
     currentProvider,
+    roleBindings,
     rawOutput: cleaned
   };
 }

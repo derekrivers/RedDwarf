@@ -195,24 +195,37 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
                 </div>
               </div>
             ) : (
-              <div className="mb-3 d-flex flex-wrap gap-2 align-items-center">
-                <span className="text-secondary">Current provider:</span>
-                <span className="badge bg-blue-lt">
-                  {currentProvider ?? "not set"}
-                </span>
-                <span className="text-secondary">Codex signed in:</span>
-                <span
-                  className={`badge ${codexSignedIn ? "bg-green-lt" : "bg-yellow-lt"}`}
-                >
-                  {codexSignedIn ? "yes" : "no"}
-                </span>
-                {codexStatus?.defaultModel ? (
-                  <>
-                    <span className="text-secondary">Default model:</span>
-                    <code className="small">{codexStatus.defaultModel}</code>
-                  </>
+              <>
+                <div className="mb-3 d-flex flex-wrap gap-2 align-items-center">
+                  <span className="text-secondary">Current provider:</span>
+                  <span className="badge bg-blue-lt">
+                    {currentProvider ?? "not set"}
+                  </span>
+                  <span className="text-secondary">Codex signed in:</span>
+                  <span
+                    className={`badge ${codexSignedIn ? "bg-green-lt" : "bg-yellow-lt"}`}
+                  >
+                    {codexSignedIn ? "yes" : "no"}
+                  </span>
+                </div>
+                {codexStatus?.roleBindings ? (
+                  <div className="mb-3">
+                    <div className="text-secondary small mb-1">
+                      Active agent model bindings:
+                    </div>
+                    <ul className="list-unstyled small mb-0">
+                      {Object.entries(codexStatus.roleBindings).map(
+                        ([role, model]) => (
+                          <li key={role}>
+                            <span className="text-secondary">{role}:</span>{" "}
+                            <code>{model}</code>
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
                 ) : null}
-              </div>
+              </>
             )}
 
             <div className="mb-3">

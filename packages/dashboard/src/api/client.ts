@@ -173,9 +173,9 @@ export interface OpenClawModelProviderResponse {
 
 export interface OpenClawCodexAuthStatusResponse {
   signedIn: boolean;
-  defaultModel: string | null;
   oauthProviderCount: number;
   currentProvider: OpenClawModelProvider | null;
+  roleBindings: Record<string, string> | null;
   rawOutput: string;
 }
 
