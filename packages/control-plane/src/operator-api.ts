@@ -2032,7 +2032,7 @@ function writeCodexStreamFrame(
   res: ServerResponse,
   frame:
     | { type: "session"; sessionId: string }
-    | { type: "data"; text: string }
+    | { type: "data"; data: string }
     | { type: "exit"; code: number | null }
     | { type: "error"; message: string }
 ): void {
@@ -2126,10 +2126,13 @@ async function streamOpenClawCodexLogin(
   writeCodexStreamFrame(res, { type: "session", sessionId });
 
   const relay = (chunk: Buffer) => {
-    const text = stripAnsiControlSequences(chunk.toString("utf8"));
-    if (text.length > 0) {
-      writeCodexStreamFrame(res, { type: "data", text });
+    if (chunk.length === 0) {
+      return;
     }
+    writeCodexStreamFrame(res, {
+      type: "data",
+      data: chunk.toString("base64")
+    });
   };
   child.stdout.on("data", relay);
   child.stderr.on("data", relay);

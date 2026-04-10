@@ -190,7 +190,7 @@ export interface OpenClawCodexLoginInputResponse {
  */
 export type OpenClawCodexLoginStreamFrame =
   | { type: "session"; sessionId: string }
-  | { type: "data"; text: string }
+  | { type: "data"; data: string }
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
 
