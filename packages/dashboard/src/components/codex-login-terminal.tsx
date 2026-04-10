@@ -15,7 +15,14 @@ interface CodexLoginTerminalProps {
 }
 
 function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
+  // Normalize: strip any whitespace, accept URL-safe variants, re-pad.
+  const clean = b64
+    .replace(/\s+/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const padLen = (4 - (clean.length % 4)) % 4;
+  const padded = clean + "=".repeat(padLen);
+  const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i);
@@ -75,9 +82,18 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
       // fit may fail if the modal is still animating in; ignore.
     }
     term.writeln("Connecting to openclaw...");
-    term.focus();
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // xterm.js focuses its internal hidden textarea; we must give it time
+    // to mount before calling focus or Bootstrap's modal focus trap steals it.
+    const focusTimer = window.setTimeout(() => {
+      try {
+        term.focus();
+      } catch {
+        // term may already be disposed
+      }
+    }, 50);
 
     const handleResize = () => {
       try {
@@ -110,11 +126,54 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
     });
 
     return () => {
+      window.clearTimeout(focusTimer);
       window.removeEventListener("resize", handleResize);
       onDataDisposable.dispose();
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Document-level paste fallback. The underlying page (not the xterm
+  // textarea) often owns focus when the user Ctrl+V's, so we intercept
+  // paste events on the whole document while the modal is mounted and
+  // forward the clipboard text straight to the PTY.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text");
+      if (!text) {
+        return;
+      }
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        pendingInputRef.current += text;
+        event.preventDefault();
+        return;
+      }
+      if (statusRef.current !== "streaming") {
+        return;
+      }
+      event.preventDefault();
+      void apiClient
+        .sendOpenClawCodexLoginInput(sessionId, text)
+        .catch((err) => {
+          setErrorMessage(
+            err instanceof ApiError || err instanceof Error
+              ? err.message
+              : "Failed to send pasted input to Codex login session."
+          );
+        });
+      try {
+        terminalRef.current?.focus();
+      } catch {
+        // term may be disposed
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => {
+      document.removeEventListener("paste", onPaste);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -148,7 +207,15 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
           }
           if (frame.type === "data") {
             if (term) {
-              term.write(base64ToBytes(frame.data));
+              try {
+                term.write(base64ToBytes(frame.data));
+              } catch (decodeErr) {
+                console.error(
+                  "[codex-login] base64 decode failed",
+                  decodeErr,
+                  frame.data.slice(0, 80)
+                );
+              }
             }
             continue;
           }
@@ -254,12 +321,20 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
             </p>
             <div
               ref={containerRef}
+              onClick={() => {
+                try {
+                  terminalRef.current?.focus();
+                } catch {
+                  // ignore
+                }
+              }}
               style={{
                 width: "100%",
                 height: "480px",
                 backgroundColor: "#0b0e14",
                 padding: "8px",
-                borderRadius: "6px"
+                borderRadius: "6px",
+                cursor: "text"
               }}
             />
             {errorMessage ? (
