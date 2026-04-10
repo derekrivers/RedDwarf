@@ -53,6 +53,10 @@ export interface PipelineRunsResponse {
   total: number;
 }
 
+export interface CancelRunResponse {
+  run: PipelineRun;
+}
+
 export interface BlockedApprovalsResponse {
   blockedRuns: PipelineRun[];
   pendingApprovals: ApprovalRequest[];
@@ -256,6 +260,12 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
     },
     getRunDetail(runId: string) {
       return request<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`);
+    },
+    cancelRun(runId: string) {
+      return request<CancelRunResponse>(
+        `/runs/${encodeURIComponent(runId)}/cancel`,
+        { method: "POST" }
+      );
     },
     getTask(taskId: string) {
       return request<TaskDetailResponse>(`/tasks/${encodeURIComponent(taskId)}`);

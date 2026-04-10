@@ -16,6 +16,7 @@ import type {
 import type {
   ApprovalResponse,
   BlockedApprovalsResponse,
+  CancelRunResponse,
   GitHubReposResponse,
   HealthResponse,
   OpenClawFixPairingResponse,
@@ -132,6 +133,7 @@ export interface DashboardApiClient {
   getApproval(id: string): Promise<ApprovalResponse>;
   getEvidenceForRun(runId: string): Promise<RunEvidenceResponse>;
   getRunDetail(runId: string): Promise<RunDetailResponse>;
+  cancelRun(runId: string): Promise<CancelRunResponse>;
   getTask(taskId: string): Promise<TaskDetailResponse>;
   resolveApproval(
     id: string,

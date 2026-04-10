@@ -545,6 +545,40 @@ async function handleRunsCommand(
   };
 }
 
+async function handleCancelCommand(
+  api: OpenClawPluginApi,
+  ctx: OperatorCommandContext
+): Promise<{ text: string }> {
+  const runId = trimString(ctx.args);
+  if (!runId) {
+    return {
+      text:
+        "Usage: /rdcancel <run-id>\n" +
+        "Cancels a blocked, failed, or stale pipeline run. " +
+        "Use /runs to find the run id. Active runs cannot be cancelled from chat."
+    };
+  }
+
+  const result = await operatorJson<{ run?: Record<string, unknown> }>(
+    api,
+    `/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST" }
+  );
+
+  const run = result.run ?? {};
+  const status = trimString(run["status"]) || "cancelled";
+  const taskId = trimString(run["taskId"]) || "unknown-task";
+  const completedAt = trimString(run["completedAt"]);
+
+  return {
+    text:
+      `Cancelled pipeline run ${runId}.\n` +
+      `- task: ${taskId}\n` +
+      `- status: ${status}` +
+      (completedAt ? `\n- completedAt: ${completedAt}` : "")
+  };
+}
+
 async function handleApproveCommand(
   api: OpenClawPluginApi,
   ctx: OperatorCommandContext
@@ -684,6 +718,12 @@ const COMMAND_HELP: Array<{ name: string; usage: string; description: string }> 
     name: "runs",
     usage: "/runs",
     description: "List recent pipeline runs with their status."
+  },
+  {
+    name: "rdcancel",
+    usage: "/rdcancel <run-id>",
+    description:
+      "Cancel a blocked, failed, or stale pipeline run. Active runs cannot be cancelled from chat."
   },
   {
     name: "rdclarify",
@@ -893,6 +933,13 @@ export default definePluginEntry({
       handler: async () => handleRunsCommand(api)
     });
     api.registerCommand({
+      name: "rdcancel",
+      description:
+        "Cancel a blocked, failed, or stale RedDwarf pipeline run by run id. Active runs cannot be cancelled from chat.",
+      acceptsArgs: true,
+      handler: async (ctx) => handleCancelCommand(api, ctx)
+    });
+    api.registerCommand({
       name: "rdclarify",
       description:
         "View or answer Holly's clarification questions for a project. " +
@@ -917,7 +964,7 @@ export default definePluginEntry({
     }
 
     api.logger.info?.(
-      "reddwarf-operator: registered /rdhelp, /rdstatus, /rdapprove, /rdreject, /submit, /runs, and /rdclarify"
+      "reddwarf-operator: registered /rdhelp, /rdstatus, /rdapprove, /rdreject, /submit, /runs, /rdcancel, and /rdclarify"
     );
   }
 });

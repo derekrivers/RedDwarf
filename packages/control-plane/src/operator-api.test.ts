@@ -23,6 +23,7 @@ import {
   FixtureGitHubAdapter
 } from "@reddwarf/integrations";
 import {
+  createPipelineRun,
   InMemoryPlanningRepository
 } from "@reddwarf/evidence";
 import type { PlanningTaskInput } from "@reddwarf/contracts";
@@ -2148,6 +2149,157 @@ describe("operator API server", () => {
     } finally {
       await apiServer.stop();
     }
+  });
+
+  describe("POST /runs/:runId/cancel", () => {
+    const cancelClock = () => new Date("2026-04-10T15:30:00.000Z");
+
+    async function seedRun(
+      repository: InMemoryPlanningRepository,
+      runId: string,
+      status: "blocked" | "failed" | "stale" | "active" | "completed" | "cancelled"
+    ): Promise<void> {
+      await repository.savePipelineRun(
+        createPipelineRun({
+          runId,
+          taskId: `task-${runId}`,
+          concurrencyKey: `github:acme/platform:${runId}`,
+          strategy: "serialize",
+          status,
+          startedAt: "2026-04-10T15:00:00.000Z",
+          lastHeartbeatAt: "2026-04-10T15:00:00.000Z",
+          metadata: {}
+        })
+      );
+    }
+
+    it("cancels a blocked pipeline run and returns the updated record", async () => {
+      const repository = new InMemoryPlanningRepository();
+      await seedRun(repository, "run-blocked", "blocked");
+      const apiServer = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        { repository, clock: cancelClock }
+      );
+      await apiServer.start();
+      const port = apiServer.port;
+
+      try {
+        const response = await operatorPost(port, "/runs/run-blocked/cancel", {});
+        expect(response.status).toBe(200);
+        const run = (response.body as Record<string, unknown>)["run"] as Record<string, unknown>;
+        expect(run["status"]).toBe("cancelled");
+        expect(run["completedAt"]).toBe("2026-04-10T15:30:00.000Z");
+        expect(run["lastHeartbeatAt"]).toBe("2026-04-10T15:30:00.000Z");
+
+        const persisted = await repository.getPipelineRun("run-blocked");
+        expect(persisted?.status).toBe("cancelled");
+        expect(persisted?.completedAt).toBe("2026-04-10T15:30:00.000Z");
+      } finally {
+        await apiServer.stop();
+      }
+    });
+
+    it.each(["failed" as const, "stale" as const])(
+      "cancels a %s pipeline run",
+      async (status) => {
+        const repository = new InMemoryPlanningRepository();
+        await seedRun(repository, `run-${status}`, status);
+        const apiServer = createOperatorApiServer(
+          { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+          { repository, clock: cancelClock }
+        );
+        await apiServer.start();
+        const port = apiServer.port;
+
+        try {
+          const response = await operatorPost(port, `/runs/run-${status}/cancel`, {});
+          expect(response.status).toBe(200);
+          const persisted = await repository.getPipelineRun(`run-${status}`);
+          expect(persisted?.status).toBe("cancelled");
+        } finally {
+          await apiServer.stop();
+        }
+      }
+    );
+
+    it("returns 404 when the run does not exist", async () => {
+      const repository = new InMemoryPlanningRepository();
+      const apiServer = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        { repository, clock: cancelClock }
+      );
+      await apiServer.start();
+      const port = apiServer.port;
+
+      try {
+        const response = await operatorPost(port, "/runs/missing/cancel", {});
+        expect(response.status).toBe(404);
+        expect((response.body as Record<string, unknown>)["error"]).toBe("not_found");
+      } finally {
+        await apiServer.stop();
+      }
+    });
+
+    it("refuses to cancel an active run", async () => {
+      const repository = new InMemoryPlanningRepository();
+      await seedRun(repository, "run-active", "active");
+      const apiServer = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        { repository, clock: cancelClock }
+      );
+      await apiServer.start();
+      const port = apiServer.port;
+
+      try {
+        const response = await operatorPost(port, "/runs/run-active/cancel", {});
+        expect(response.status).toBe(409);
+        const persisted = await repository.getPipelineRun("run-active");
+        expect(persisted?.status).toBe("active");
+      } finally {
+        await apiServer.stop();
+      }
+    });
+
+    it.each(["completed" as const, "cancelled" as const])(
+      "returns 409 for a %s run",
+      async (status) => {
+        const repository = new InMemoryPlanningRepository();
+        await seedRun(repository, `run-${status}`, status);
+        const apiServer = createOperatorApiServer(
+          { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+          { repository, clock: cancelClock }
+        );
+        await apiServer.start();
+        const port = apiServer.port;
+
+        try {
+          const response = await operatorPost(port, `/runs/run-${status}/cancel`, {});
+          expect(response.status).toBe(409);
+        } finally {
+          await apiServer.stop();
+        }
+      }
+    );
+
+    it("rejects unauthenticated cancel requests", async () => {
+      const repository = new InMemoryPlanningRepository();
+      await seedRun(repository, "run-blocked", "blocked");
+      const apiServer = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        { repository, clock: cancelClock }
+      );
+      await apiServer.start();
+      const port = apiServer.port;
+
+      try {
+        const response = await operatorPost(port, "/runs/run-blocked/cancel", {}, null);
+        expect(response.status).toBe(401);
+        const persisted = await repository.getPipelineRun("run-blocked");
+        expect(persisted?.status).toBe("blocked");
+      } finally {
+        await apiServer.stop();
+      }
+    });
   });
 });
 

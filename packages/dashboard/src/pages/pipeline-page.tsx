@@ -1,7 +1,13 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PipelineRun, RunEvent } from "@reddwarf/contracts";
 import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
+
+const CANCELLABLE_STATUSES: ReadonlySet<PipelineRun["status"]> = new Set([
+  "blocked",
+  "failed",
+  "stale"
+]);
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -161,14 +167,40 @@ function RunDetailPanel(props: {
 
 export function PipelinePage(props: { apiClient: DashboardApiClient }) {
   const { apiClient } = props;
+  const queryClient = useQueryClient();
   const [selectedStatus, setSelectedStatus] = useState<PipelineRun["status"] | "all">("all");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedStatus, sortDirection]);
+
+  const cancelMutation = useMutation({
+    mutationFn: (runId: string) => apiClient.cancelRun(runId),
+    onSuccess: () => {
+      setCancelError(null);
+      void queryClient.invalidateQueries({ queryKey: ["pipeline-runs"] });
+    },
+    onError: (error: unknown) => {
+      setCancelError(error instanceof Error ? error.message : "Failed to cancel run.");
+    }
+  });
+
+  const handleCancelRun = (runId: string) => {
+    if (cancelMutation.isPending) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Cancel pipeline run ${runId}? This marks the run as cancelled and cannot be undone.`
+    );
+    if (!confirmed) {
+      return;
+    }
+    cancelMutation.mutate(runId);
+  };
 
   const runsQuery = useQuery({
     queryKey: ["pipeline-runs", selectedStatus],
@@ -274,6 +306,11 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
           </button>
         </div>
       </div>
+      {cancelError ? (
+        <div className="alert alert-danger m-3 mb-0" role="alert">
+          {cancelError}
+        </div>
+      ) : null}
       <div className="table-responsive">
         <table className="table table-vcenter card-table">
           <thead>
@@ -313,15 +350,33 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
                     <td className="text-secondary">{formatDateTime(run.startedAt)}</td>
                     <td className="text-secondary">{formatDuration(run)}</td>
                     <td>
-                      <button
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() =>
-                          setExpandedRunId((current) => (current === run.runId ? null : run.runId))
-                        }
-                        type="button"
-                      >
-                        {isExpanded ? "Hide" : "Details"}
-                      </button>
+                      <div className="btn-list flex-nowrap">
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() =>
+                            setExpandedRunId((current) => (current === run.runId ? null : run.runId))
+                          }
+                          type="button"
+                        >
+                          {isExpanded ? "Hide" : "Details"}
+                        </button>
+                        {CANCELLABLE_STATUSES.has(run.status) ? (
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            disabled={
+                              cancelMutation.isPending &&
+                              cancelMutation.variables === run.runId
+                            }
+                            onClick={() => handleCancelRun(run.runId)}
+                            type="button"
+                          >
+                            {cancelMutation.isPending &&
+                            cancelMutation.variables === run.runId
+                              ? "Cancelling…"
+                              : "Cancel"}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                   {isExpanded ? (

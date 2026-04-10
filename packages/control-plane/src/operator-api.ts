@@ -2222,6 +2222,48 @@ async function handleOperatorRequest(
     return;
   }
 
+  // POST /runs/:runId/cancel
+  const runCancelMatch = /^\/runs\/([^/]+)\/cancel$/.exec(path);
+  if (method === "POST" && runCancelMatch) {
+    const runId = decodeURIComponent(runCancelMatch[1]!);
+    const run = await repository.getPipelineRun(runId);
+    if (!run) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Pipeline run ${runId} not found.`
+      });
+      return;
+    }
+
+    if (run.status === "active") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message:
+          "Active pipeline runs cannot be cancelled from the dashboard. Wait for the run to block, fail, or become stale before cancelling."
+      });
+      return;
+    }
+
+    if (run.status === "completed" || run.status === "cancelled") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Pipeline run ${runId} is already ${run.status}.`
+      });
+      return;
+    }
+
+    const now = clock().toISOString();
+    const cancelledRun: PipelineRun = {
+      ...run,
+      status: "cancelled",
+      completedAt: now,
+      lastHeartbeatAt: now
+    };
+    await repository.savePipelineRun(cancelledRun);
+    writeOperatorJsonResponse(res, 200, { run: cancelledRun });
+    return;
+  }
+
   // GET /approvals
   if (method === "GET" && path === "/rejected") {
     const limit = qp["limit"] ? parseInt(String(qp["limit"]), 10) : undefined;
