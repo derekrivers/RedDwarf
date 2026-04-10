@@ -4,7 +4,7 @@ import {
   type ServerResponse
 } from "node:http";
 import cors from "cors";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildOperatorConfigJsonSchema,
   groupedTaskInjectionRequestSchema,
@@ -49,7 +49,14 @@ import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
 } from "./openclaw-session-key.js";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  writeFile
+} from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
@@ -1975,6 +1982,81 @@ function parseOpenClawModelsStatus(rawOutput: string): OpenClawCodexAuthStatus {
   };
 }
 
+/**
+ * Check the bind-mounted workspace agent dirs for an openai-codex OAuth
+ * profile with an unexpired access token. The openclaw login CLI writes
+ * these per-role files but `openclaw models status` only inspects the
+ * default agent dir, so it reports 0 OAuth providers even when the
+ * runtime agents are fully authenticated.
+ */
+async function hasCodexAuthInWorkspaceAgents(): Promise<boolean> {
+  const agentsRoot = join(
+    process.cwd(),
+    "runtime-data",
+    "workspaces",
+    ".agents"
+  );
+  let roleDirs: string[];
+  try {
+    const entries = await readdir(agentsRoot, { withFileTypes: true });
+    roleDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return false;
+  }
+  const nowSeconds = Date.now();
+  for (const role of roleDirs) {
+    const profilePath = join(
+      agentsRoot,
+      role,
+      "agent",
+      "auth-profiles.json"
+    );
+    let raw: string;
+    try {
+      raw = await readFile(profilePath, "utf8");
+    } catch {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+    const profiles = (parsed as { profiles?: Record<string, unknown> })
+      .profiles;
+    if (!profiles || typeof profiles !== "object") {
+      continue;
+    }
+    for (const entry of Object.values(profiles)) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const e = entry as {
+        provider?: unknown;
+        access?: unknown;
+        expires?: unknown;
+      };
+      if (e.provider !== "openai-codex") {
+        continue;
+      }
+      if (typeof e.access !== "string" || e.access.length === 0) {
+        continue;
+      }
+      if (typeof e.expires === "number" && e.expires > 0 && e.expires < nowSeconds) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 async function readOpenClawCodexAuthStatus(): Promise<OpenClawCodexAuthStatus> {
   const dockerArgs = [
     "compose",
@@ -1994,7 +2076,17 @@ async function readOpenClawCodexAuthStatus(): Promise<OpenClawCodexAuthStatus> {
     cwd: process.cwd(),
     maxBuffer: 1024 * 1024
   });
-  return parseOpenClawModelsStatus(`${stdout}\n${stderr}`);
+  const status = parseOpenClawModelsStatus(`${stdout}\n${stderr}`);
+  if (!status.signedIn) {
+    // `openclaw models status` only checks the default agent dir; the login
+    // CLI persists tokens to every workspace-scoped role dir instead. Fall
+    // back to scanning those so the dashboard reflects reality.
+    const hasWorkspaceAuth = await hasCodexAuthInWorkspaceAgents();
+    if (hasWorkspaceAuth) {
+      return { ...status, signedIn: true };
+    }
+  }
+  return status;
 }
 
 /**
