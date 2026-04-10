@@ -2035,7 +2035,42 @@ function cleanupCodexLoginSession(sessionId: string): void {
   codexLoginSessions.delete(sessionId);
 }
 
+/**
+ * Reap orphaned openclaw Codex login processes inside the openclaw container.
+ *
+ * The login CLI binds 127.0.0.1:1455 inside the container for its OAuth
+ * callback listener. If a prior control-plane process crashed or was
+ * restarted mid-flow, its python3 PTY wrapper and openclaw-models child
+ * survive and keep the port held — every subsequent login attempt then
+ * EADDRINUSEs and falls back to the manual-paste flow with no session to
+ * match. Only safe to call when no live session is tracked in-process.
+ */
+async function reapStaleCodexLoginProcesses(): Promise<void> {
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "exec",
+    "-T",
+    "openclaw",
+    "sh",
+    "-c",
+    "pkill -KILL -f 'models[[:space:]]\\+auth[[:space:]]\\+login.*openai-codex' 2>/dev/null; pkill -KILL -f 'pty\\.fork' 2>/dev/null; exit 0"
+  ];
+  await new Promise<void>((resolve) => {
+    const child = spawn("docker", dockerArgs, { stdio: "ignore" });
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+}
+
 async function startOpenClawCodexLogin(): Promise<OpenClawCodexLoginStartResult> {
+  if (codexLoginSessions.size === 0) {
+    await reapStaleCodexLoginProcesses();
+  }
+
   const dockerArgs = [
     "compose",
     "-f",
