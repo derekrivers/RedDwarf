@@ -162,6 +162,35 @@ export interface OpenClawFixPairingResponse {
   rawOutput: string;
 }
 
+export type OpenClawModelProvider = "anthropic" | "openai" | "openai-codex";
+
+export interface OpenClawModelProviderResponse {
+  provider: OpenClawModelProvider;
+  requiresRestart: boolean;
+  message: string;
+  rawOutput: string;
+}
+
+export interface OpenClawCodexAuthStatusResponse {
+  signedIn: boolean;
+  defaultModel: string | null;
+  oauthProviderCount: number;
+  currentProvider: OpenClawModelProvider | null;
+  rawOutput: string;
+}
+
+export interface OpenClawCodexLoginStartResponse {
+  sessionId: string;
+  authUrl: string;
+  preamble: string;
+}
+
+export interface OpenClawCodexLoginCompleteResponse {
+  completed: boolean;
+  exitCode: number | null;
+  rawOutput: string;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   token?: string;
@@ -370,6 +399,30 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
       return request<OpenClawFixPairingResponse>("/openclaw/fix-pairing", {
         method: "POST"
       });
+    },
+    setOpenClawModelProvider(provider: OpenClawModelProvider) {
+      return request<OpenClawModelProviderResponse>("/openclaw/model-provider", {
+        method: "POST",
+        body: JSON.stringify({ provider })
+      });
+    },
+    getOpenClawCodexStatus() {
+      return request<OpenClawCodexAuthStatusResponse>("/openclaw/codex-status");
+    },
+    startOpenClawCodexLogin() {
+      return request<OpenClawCodexLoginStartResponse>(
+        "/openclaw/codex-login/start",
+        { method: "POST" }
+      );
+    },
+    completeOpenClawCodexLogin(sessionId: string, callbackUrl: string) {
+      return request<OpenClawCodexLoginCompleteResponse>(
+        "/openclaw/codex-login/complete",
+        {
+          method: "POST",
+          body: JSON.stringify({ sessionId, callbackUrl })
+        }
+      );
     }
   };
 }

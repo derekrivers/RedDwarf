@@ -19,6 +19,13 @@ export const MODEL_PROVIDER_ROLE_MAP = {
     reviewer: "openai/gpt-5",
     validator: "openai/gpt-5",
     developer: "openai/gpt-5.4"
+  },
+  "openai-codex": {
+    coordinator: "openai-codex/gpt-5.4",
+    analyst: "openai-codex/gpt-5.4",
+    reviewer: "openai-codex/gpt-5.4",
+    validator: "openai-codex/gpt-5.4",
+    developer: "openai-codex/gpt-5.4"
   }
 } as const satisfies Record<
   OpenClawModelProvider,
@@ -48,6 +55,15 @@ export const MODEL_FAILOVER_MAP: Record<
     reviewer: "anthropic/claude-sonnet-4-6",
     validator: "anthropic/claude-sonnet-4-6",
     developer: "anthropic/claude-sonnet-4-6"
+  },
+  // Codex subscription has no separate API billing path, so the failover target
+  // is the direct OpenAI API (requires OPENAI_API_KEY to actually activate).
+  "openai-codex": {
+    coordinator: "openai/gpt-5",
+    analyst: "openai/gpt-5.4",
+    reviewer: "openai/gpt-5",
+    validator: "openai/gpt-5",
+    developer: "openai/gpt-5.4"
   }
 };
 

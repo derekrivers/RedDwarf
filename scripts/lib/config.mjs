@@ -277,9 +277,13 @@ export function resolveModelProviderEnv() {
   const provider = canonical && canonical.length > 0 ? canonical : legacy;
   const resolved = provider && provider.length > 0 ? provider : "anthropic";
 
-  if (resolved !== "anthropic" && resolved !== "openai") {
+  if (
+    resolved !== "anthropic" &&
+    resolved !== "openai" &&
+    resolved !== "openai-codex"
+  ) {
     throw new Error(
-      `Invalid REDDWARF_MODEL_PROVIDER value "${resolved}". Expected "anthropic" or "openai".`
+      `Invalid REDDWARF_MODEL_PROVIDER value "${resolved}". Expected "anthropic", "openai", or "openai-codex".`
     );
   }
 

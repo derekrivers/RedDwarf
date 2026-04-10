@@ -198,6 +198,31 @@ describe("generateOpenClawConfig", () => {
     expect(reviewer?.model).toBe("openai/gpt-5");
   });
 
+  it("can generate the default agent roster with Codex subscription bindings", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai-codex"
+    });
+
+    const coordinator = config.agents.list.find(
+      (agent) => agent.id === "reddwarf-coordinator"
+    );
+    const analyst = config.agents.list.find(
+      (agent) => agent.id === "reddwarf-analyst"
+    );
+    const developer = config.agents.list.find(
+      (agent) => agent.id === "reddwarf-developer"
+    );
+    const developerOpus = config.agents.list.find(
+      (agent) => agent.id === "reddwarf-developer-opus"
+    );
+
+    expect(coordinator?.model).toBe("openai-codex/gpt-5.4");
+    expect(analyst?.model).toBe("openai-codex/gpt-5.4");
+    expect(developer?.model).toBe("openai-codex/gpt-5.4");
+    expect(developerOpus?.model).toBe("openai-codex/gpt-5.4");
+  });
+
   it("rejects unsupported model providers before emitting a roster", () => {
     expect(() =>
       generateOpenClawConfig({
