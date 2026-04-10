@@ -19,6 +19,7 @@ import {
   IconGitBranch,
   IconLogout,
   IconMoon,
+  IconPlugConnected,
   IconRobot,
   IconSun
 } from "@tabler/icons-react";
@@ -30,6 +31,7 @@ import { AgentsPage } from "./pages/agents-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
+import { OpenClawSettingsPage } from "./pages/openclaw-settings-page";
 import { PipelinePage } from "./pages/pipeline-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
 import { ProjectsPage } from "./pages/projects-page";
@@ -65,7 +67,8 @@ const navItems: NavItem[] = [
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
   { to: "/agents", label: "Agents", icon: IconRobot },
   { to: "/repos", label: "Repositories", icon: IconGitBranch },
-  { to: "/submit", label: "Submit Issue", icon: IconCloudUpload }
+  { to: "/submit", label: "Submit Issue", icon: IconCloudUpload },
+  { to: "/openclaw", label: "OpenClaw Settings", icon: IconPlugConnected }
 ];
 
 function getHealthTone(health: HealthResponse | undefined): ShellHealthTone {
@@ -332,6 +335,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/submit"
                 element={<SubmitIssuePage apiClient={apiClient} />}
+              />
+              <Route
+                path="/openclaw"
+                element={<OpenClawSettingsPage apiClient={apiClient} />}
               />
               {/* <Route path="/logs" element={<LogsPage />} /> */}
               <Route path="*" element={<Navigate replace to="/dashboard" />} />

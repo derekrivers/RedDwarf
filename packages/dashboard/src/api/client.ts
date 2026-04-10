@@ -139,6 +139,25 @@ export interface SubmitIssueResponse {
   repo: string;
 }
 
+export interface OpenClawPendingPairingRequest {
+  requestId: string;
+  role: string;
+}
+
+export interface OpenClawPairingStatusResponse {
+  pending: OpenClawPendingPairingRequest[];
+  totalPending: number;
+  rawOutput: string;
+}
+
+export interface OpenClawFixPairingResponse {
+  approved: OpenClawPendingPairingRequest[];
+  approvedCount: number;
+  alreadyClean: boolean;
+  message: string;
+  rawOutput: string;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   token?: string;
@@ -333,6 +352,14 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
           body: JSON.stringify({ answers })
         }
       );
+    },
+    getOpenClawPairingStatus() {
+      return request<OpenClawPairingStatusResponse>("/openclaw/pairing-status");
+    },
+    fixOpenClawPairing() {
+      return request<OpenClawFixPairingResponse>("/openclaw/fix-pairing", {
+        method: "POST"
+      });
     }
   };
 }
