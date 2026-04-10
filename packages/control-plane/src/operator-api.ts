@@ -1787,6 +1787,32 @@ async function fixOpenClawPairing(): Promise<OpenClawFixPairingResult> {
   };
 }
 
+export interface OpenClawRestartResult {
+  restarted: true;
+  rawOutput: string;
+}
+
+async function restartOpenClawContainer(): Promise<OpenClawRestartResult> {
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "restart",
+    "openclaw"
+  ];
+  const { stdout, stderr } = await execFileAsync("docker", dockerArgs, {
+    cwd: process.cwd(),
+    env: process.env,
+    maxBuffer: 1024 * 1024
+  });
+  return {
+    restarted: true,
+    rawOutput: `${stdout}\n${stderr}`.trim()
+  };
+}
+
 // ============================================================
 // OpenClaw Codex OAuth login helpers
 // ============================================================
@@ -2619,6 +2645,29 @@ async function handleOperatorRequest(
         message: safeErrorMessage(
           error,
           "Failed to fix OpenClaw pairing. Is the openclaw container running?"
+        )
+      });
+    }
+    return;
+  }
+
+  // POST /openclaw/restart — restart the openclaw compose service so new
+  // openclaw.json bindings (e.g. after a provider switch) take effect.
+  if (method === "POST" && path === "/openclaw/restart") {
+    try {
+      const result = await restartOpenClawContainer();
+      writeOperatorJsonResponse(res, 200, {
+        restarted: true,
+        message:
+          "OpenClaw container restarted. New agent model bindings are now active.",
+        rawOutput: result.rawOutput
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_restart_failed",
+        message: safeErrorMessage(
+          error,
+          "Failed to restart OpenClaw container."
         )
       });
     }

@@ -191,6 +191,12 @@ export interface OpenClawCodexLoginCompleteResponse {
   rawOutput: string;
 }
 
+export interface OpenClawRestartResponse {
+  restarted: true;
+  message: string;
+  rawOutput: string;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   token?: string;
@@ -423,6 +429,11 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
           body: JSON.stringify({ sessionId, callbackUrl })
         }
       );
+    },
+    restartOpenClaw() {
+      return request<OpenClawRestartResponse>("/openclaw/restart", {
+        method: "POST"
+      });
     }
   };
 }

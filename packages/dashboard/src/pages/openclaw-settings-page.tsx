@@ -6,12 +6,14 @@ import {
   IconCircleCheck,
   IconExternalLink,
   IconLink,
+  IconPlayerPlay,
   IconRefresh,
   IconTool
 } from "@tabler/icons-react";
 import type {
   OpenClawFixPairingResponse,
-  OpenClawModelProvider
+  OpenClawModelProvider,
+  OpenClawRestartResponse
 } from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
 
@@ -58,6 +60,8 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const [codexLoginMessage, setCodexLoginMessage] = useState<string | null>(
     null
   );
+  const [restartResult, setRestartResult] =
+    useState<OpenClawRestartResponse | null>(null);
 
   const statusQuery = useQuery({
     queryKey: PAIRING_STATUS_QUERY_KEY,
@@ -95,6 +99,15 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
       setCodexAuthUrl(result.authUrl);
       setCodexCallbackUrl("");
       setCodexLoginMessage(null);
+    }
+  });
+
+  const restartMutation = useMutation({
+    mutationFn: () => apiClient.restartOpenClaw(),
+    onSuccess: (result) => {
+      setRestartResult(result);
+      queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PAIRING_STATUS_QUERY_KEY });
     }
   });
 
@@ -149,6 +162,20 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
     completeCodexLoginMutation.error instanceof Error
       ? completeCodexLoginMutation.error.message
       : null;
+  const restartError =
+    restartMutation.error instanceof Error ? restartMutation.error.message : null;
+
+  const confirmAndRestart = () => {
+    if (
+      !window.confirm(
+        "Restart the OpenClaw container? This will drop any in-flight agent sessions and active pipeline runs will need to resume."
+      )
+    ) {
+      return;
+    }
+    setRestartResult(null);
+    restartMutation.mutate();
+  };
 
   return (
     <div className="row g-4">
@@ -289,10 +316,21 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
                   ? "Applying..."
                   : "Apply provider"}
               </button>
+              <button
+                type="button"
+                className="btn btn-outline-warning"
+                disabled={restartMutation.isPending}
+                onClick={confirmAndRestart}
+              >
+                <IconPlayerPlay size={16} className="me-1" />
+                {restartMutation.isPending
+                  ? "Restarting..."
+                  : "Restart OpenClaw"}
+              </button>
               <span className="text-secondary small">
                 Updates <code>REDDWARF_MODEL_PROVIDER</code>, regenerates{" "}
-                <code>openclaw.json</code>, and flags the container for
-                restart.
+                <code>openclaw.json</code>. A restart is required for new
+                agent bindings to take effect.
               </span>
             </div>
 
@@ -309,12 +347,42 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
             {providerResultMessage ? (
               <div className="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0">
                 <IconCircleCheck size={18} className="mt-1 flex-shrink-0" />
-                <div>
+                <div className="flex-grow-1">
                   <div className="fw-bold">{providerResultMessage}</div>
-                  <div className="small text-secondary">
+                  <div className="small text-secondary mb-2">
                     Restart the <code>openclaw</code> container for the new
                     agent model bindings to take effect.
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-warning"
+                    disabled={restartMutation.isPending}
+                    onClick={confirmAndRestart}
+                  >
+                    <IconPlayerPlay size={14} className="me-1" />
+                    {restartMutation.isPending
+                      ? "Restarting..."
+                      : "Restart OpenClaw now"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {restartError ? (
+              <div className="alert alert-danger d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">Failed to restart OpenClaw</div>
+                  <div className="small">{restartError}</div>
+                </div>
+              </div>
+            ) : null}
+
+            {restartResult ? (
+              <div className="alert alert-success d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconCircleCheck size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">{restartResult.message}</div>
                 </div>
               </div>
             ) : null}

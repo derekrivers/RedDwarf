@@ -26,6 +26,7 @@ import type {
   OpenClawModelProvider,
   OpenClawModelProviderResponse,
   OpenClawPairingStatusResponse,
+  OpenClawRestartResponse,
   PipelineRunsResponse,
   RepoDeleteResponse,
   RepoMutationResponse,
@@ -175,4 +176,5 @@ export interface DashboardApiClient {
     sessionId: string,
     callbackUrl: string
   ): Promise<OpenClawCodexLoginCompleteResponse>;
+  restartOpenClaw(): Promise<OpenClawRestartResponse>;
 }
