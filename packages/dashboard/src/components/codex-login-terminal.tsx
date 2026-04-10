@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { IconX } from "@tabler/icons-react";
+import { IconCheck, IconCopy, IconX } from "@tabler/icons-react";
 import { ApiError, openOpenClawCodexLoginStream } from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
 
@@ -12,13 +12,11 @@ interface CodexLoginTerminalProps {
 }
 
 /**
- * Streaming terminal replacement for the old start/paste REST flow.
- *
- * Opens GET /openclaw/codex-login/stream (NDJSON long-poll) and renders each
- * `data` frame into a scrolling monospace panel. The first `session` frame
- * carries the sessionId we pass to POST /openclaw/codex-login/input for
- * forwarding stdin (primarily the redirect URL the user pastes back after
- * authenticating in their local browser).
+ * Codex login modal. Primary path: shows the exact `docker compose exec`
+ * command to run in a local terminal so the operator can drive the openclaw
+ * CLI's OAuth flow directly (where they have a real TTY and can follow
+ * openclaw's prompts as designed). A secondary embedded NDJSON stream view
+ * mirrors the same flow inside the browser when it is working.
  */
 export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
   const { apiClient, onClose, onSuccess } = props;
@@ -28,8 +26,12 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [copied, setCopied] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLPreElement | null>(null);
+
+  const loginCommand =
+    "docker compose -f infra/docker/docker-compose.yml --profile openclaw exec openclaw node dist/index.js models auth login --provider openai-codex --set-default";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,8 +66,8 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
             continue;
           }
         }
-        if (!cancelled && status === "streaming") {
-          setStatus("closed");
+        if (!cancelled) {
+          setStatus((prev) => (prev === "streaming" ? "closed" : prev));
         }
       } catch (err) {
         if (cancelled) {
@@ -124,6 +126,27 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
     }
   };
 
+  const copyCommand = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(loginCommand);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = loginCommand;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // best-effort copy
+    }
+  };
+
   const statusBadgeClass =
     status === "streaming"
       ? "bg-blue-lt"
@@ -155,7 +178,7 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title d-flex align-items-center gap-2">
-              Codex login terminal
+              Codex login
               <span className={`badge ${statusBadgeClass}`}>{statusLabel}</span>
             </h5>
             <button
@@ -166,60 +189,107 @@ export function CodexLoginTerminal(props: CodexLoginTerminalProps) {
             />
           </div>
           <div className="modal-body">
-            <p className="text-secondary small mb-2">
-              Open the <code>https://auth.openai.com/...</code> URL printed below in a
-              local browser tab, sign in to ChatGPT, then paste the redirect URL
-              your browser lands on (it will look like{" "}
-              <code>http://localhost:1455/?code=...</code>) into the input box and
-              press Enter.
-            </p>
-            <pre
-              ref={scrollRef}
-              className="bg-dark text-light rounded p-3 mb-3"
-              style={{
-                fontFamily:
-                  '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
-                fontSize: "12px",
-                whiteSpace: "pre-wrap",
-                overflowY: "auto",
-                maxHeight: "400px",
-                minHeight: "240px"
-              }}
-            >
-              {lines || (status === "connecting" ? "Connecting...\n" : "")}
-            </pre>
-            {errorMessage ? (
-              <div className="alert alert-danger d-flex align-items-start gap-2 mb-3">
-                <IconX size={18} className="mt-1 flex-shrink-0" />
-                <div className="small">{errorMessage}</div>
+            <div className="mb-4">
+              <h6 className="mb-2">1. Start the Codex login flow</h6>
+              <p className="text-secondary small mb-2">
+                Run this command in a local terminal from the repository root.
+                openclaw will print an <code>https://auth.openai.com/...</code>{" "}
+                URL — open it in your browser, sign in to ChatGPT, then paste
+                the <code>http://localhost:1455/?code=...</code> redirect URL
+                back into the same terminal when openclaw asks for it.
+              </p>
+              <div className="d-flex align-items-stretch gap-2">
+                <pre
+                  className="bg-dark text-light rounded p-3 mb-0 flex-grow-1"
+                  style={{
+                    fontFamily:
+                      '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+                    fontSize: "12px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    overflowX: "auto"
+                  }}
+                >
+                  {loginCommand}
+                </pre>
+                <button
+                  type="button"
+                  className="btn btn-outline-primary d-inline-flex align-items-center gap-1"
+                  onClick={() => {
+                    void copyCommand();
+                  }}
+                  title="Copy command"
+                >
+                  {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
               </div>
-            ) : null}
-            <form
-              className="d-flex gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (canSend) {
-                  void sendInput(inputValue.trim(), true);
-                }
-              }}
-            >
-              <input
-                type="text"
-                className="form-control font-monospace"
-                placeholder="Paste redirect URL or type a reply, then press Enter"
-                value={inputValue}
-                onChange={(event) => setInputValue(event.target.value)}
-                disabled={status !== "streaming" || sending}
-                autoFocus
-              />
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={!canSend}
+              <p className="text-secondary small mt-2 mb-0">
+                When the login completes, come back here and switch the
+                provider to <strong>OpenAI Codex</strong>. The auth status card
+                will update automatically.
+              </p>
+            </div>
+
+            <div>
+              <h6 className="mb-2">
+                2. Live view (optional, mirrors openclaw inside the browser)
+              </h6>
+              <p className="text-secondary small mb-2">
+                If streaming works in your environment you can drive the same
+                flow from here: read the URL below, open it locally, then paste
+                the redirect URL into the input box and press Enter.
+              </p>
+              <pre
+                ref={scrollRef}
+                className="bg-dark text-light rounded p-3 mb-3"
+                style={{
+                  fontFamily:
+                    '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+                  fontSize: "12px",
+                  whiteSpace: "pre-wrap",
+                  overflowY: "auto",
+                  maxHeight: "360px",
+                  minHeight: "200px"
+                }}
               >
-                Send
-              </button>
-            </form>
+                {lines ||
+                  (status === "connecting"
+                    ? "Connecting to openclaw...\n"
+                    : "(no output yet)\n")}
+              </pre>
+              {errorMessage ? (
+                <div className="alert alert-danger d-flex align-items-start gap-2 mb-3">
+                  <IconX size={18} className="mt-1 flex-shrink-0" />
+                  <div className="small">{errorMessage}</div>
+                </div>
+              ) : null}
+              <form
+                className="d-flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (canSend) {
+                    void sendInput(inputValue.trim(), true);
+                  }
+                }}
+              >
+                <input
+                  type="text"
+                  className="form-control font-monospace"
+                  placeholder="Paste redirect URL or type a reply, then press Enter"
+                  value={inputValue}
+                  onChange={(event) => setInputValue(event.target.value)}
+                  disabled={status !== "streaming" || sending}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!canSend}
+                >
+                  Send
+                </button>
+              </form>
+            </div>
           </div>
           <div className="modal-footer">
             <button type="button" className="btn" onClick={onClose}>
