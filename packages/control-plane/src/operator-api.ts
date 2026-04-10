@@ -50,6 +50,10 @@ import {
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import {
   createApprovalRequest,
   createGitHubIssuePollingCursor,
@@ -1660,6 +1664,126 @@ async function writeOperatorSecret(
   await chmod(secretStorePath, 0o600);
 }
 
+// ============================================================
+// OpenClaw pairing helpers
+// ============================================================
+
+export interface OpenClawPendingPairingRequest {
+  requestId: string;
+  role: string;
+}
+
+export interface OpenClawPairingStatus {
+  pending: OpenClawPendingPairingRequest[];
+  rawOutput: string;
+}
+
+export interface OpenClawFixPairingResult {
+  approved: OpenClawPendingPairingRequest[];
+  alreadyClean: boolean;
+  rawOutput: string;
+}
+
+const OPENCLAW_COMPOSE_FILE = "infra/docker/docker-compose.yml";
+
+function parseOpenClawDevicesListOutput(output: string): OpenClawPendingPairingRequest[] {
+  const pending: OpenClawPendingPairingRequest[] = [];
+  // Only inspect the "Pending" section. The CLI emits a header line like
+  // `Pending (1)` or `Pending (0)` followed by a table of pending requests.
+  const pendingMatch = output.match(/Pending\s*\((\d+)\)([\s\S]*?)(?:\n\s*\n|$)/);
+  if (!pendingMatch) {
+    return pending;
+  }
+  const pendingCount = parseInt(pendingMatch[1] ?? "0", 10);
+  if (!pendingCount || pendingCount === 0) {
+    return pending;
+  }
+  const section = pendingMatch[2] ?? "";
+  // Each row looks like: │ <uuid> │ <device label> │ <role> │ ...
+  const rowRegex = /│\s*([0-9a-f-]{36})\s*│[^\n]*?│\s*([a-zA-Z0-9_-]+)\s*│/gi;
+  let row: RegExpExecArray | null;
+  while ((row = rowRegex.exec(section)) !== null) {
+    pending.push({
+      requestId: row[1]!,
+      role: row[2]!
+    });
+  }
+  return pending;
+}
+
+async function runOpenClawDevicesCommand(
+  args: readonly string[]
+): Promise<{ stdout: string; stderr: string }> {
+  // We always exec inside the running `openclaw` compose service so that the
+  // CLI uses the same `runtime-data/openclaw-home` state the gateway is bound
+  // to. We invoke `docker compose` via a fixed argv (no shell), then forward
+  // a fixed argv to `node dist/index.js`. The only caller-supplied values are
+  // the device CLI sub-args, which we restrict to a hard-coded allow list.
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "exec",
+    "-T",
+    "openclaw",
+    "node",
+    "dist/index.js",
+    "devices",
+    ...args
+  ];
+  return execFileAsync("docker", dockerArgs, {
+    cwd: process.cwd(),
+    maxBuffer: 1024 * 1024
+  });
+}
+
+async function readOpenClawPairingStatus(): Promise<OpenClawPairingStatus> {
+  const { stdout, stderr } = await runOpenClawDevicesCommand(["list"]);
+  const combined = `${stdout}\n${stderr}`;
+  return {
+    pending: parseOpenClawDevicesListOutput(combined),
+    rawOutput: combined
+  };
+}
+
+async function fixOpenClawPairing(): Promise<OpenClawFixPairingResult> {
+  const status = await readOpenClawPairingStatus();
+  // Only auto-approve operator-role requests; other roles require human review.
+  const operatorPending = status.pending.filter(
+    (entry) => entry.role.toLowerCase() === "operator"
+  );
+  if (operatorPending.length === 0) {
+    return {
+      approved: [],
+      alreadyClean: true,
+      rawOutput: status.rawOutput
+    };
+  }
+
+  const approved: OpenClawPendingPairingRequest[] = [];
+  const transcript: string[] = [status.rawOutput];
+  for (const entry of operatorPending) {
+    if (!/^[0-9a-f-]{36}$/i.test(entry.requestId)) {
+      // Defensive: parser should never produce a malformed id, but skip if it does.
+      continue;
+    }
+    const { stdout, stderr } = await runOpenClawDevicesCommand([
+      "approve",
+      entry.requestId
+    ]);
+    transcript.push(`approve ${entry.requestId}\n${stdout}${stderr}`);
+    approved.push(entry);
+  }
+
+  return {
+    approved,
+    alreadyClean: false,
+    rawOutput: transcript.join("\n---\n")
+  };
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1941,6 +2065,52 @@ async function handleOperatorRequest(
       writeOperatorJsonResponse(res, 502, {
         error: "github_error",
         message: safeErrorMessage(error, "Failed to list GitHub repositories.")
+      });
+    }
+    return;
+  }
+
+  // GET /openclaw/pairing-status — list pending OpenClaw device pairing requests
+  if (method === "GET" && path === "/openclaw/pairing-status") {
+    try {
+      const status = await readOpenClawPairingStatus();
+      writeOperatorJsonResponse(res, 200, {
+        pending: status.pending,
+        totalPending: status.pending.length,
+        rawOutput: status.rawOutput
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_unreachable",
+        message: safeErrorMessage(
+          error,
+          "Failed to read OpenClaw pairing status. Is the openclaw container running?"
+        )
+      });
+    }
+    return;
+  }
+
+  // POST /openclaw/fix-pairing — approve any pending operator pairing requests
+  if (method === "POST" && path === "/openclaw/fix-pairing") {
+    try {
+      const result = await fixOpenClawPairing();
+      writeOperatorJsonResponse(res, 200, {
+        approved: result.approved,
+        approvedCount: result.approved.length,
+        alreadyClean: result.alreadyClean,
+        message: result.alreadyClean
+          ? "No pending operator pairing requests. Reload the OpenClaw Control UI."
+          : `Approved ${result.approved.length} pending operator pairing request(s). Reload the OpenClaw Control UI to reconnect.`,
+        rawOutput: result.rawOutput
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_unreachable",
+        message: safeErrorMessage(
+          error,
+          "Failed to fix OpenClaw pairing. Is the openclaw container running?"
+        )
       });
     }
     return;

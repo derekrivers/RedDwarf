@@ -18,6 +18,8 @@ import type {
   BlockedApprovalsResponse,
   GitHubReposResponse,
   HealthResponse,
+  OpenClawFixPairingResponse,
+  OpenClawPairingStatusResponse,
   PipelineRunsResponse,
   RepoDeleteResponse,
   RepoMutationResponse,
@@ -155,4 +157,6 @@ export interface DashboardApiClient {
     id: string,
     answers: Record<string, string>
   ): Promise<ProjectClarifyResponse>;
+  getOpenClawPairingStatus(): Promise<OpenClawPairingStatusResponse>;
+  fixOpenClawPairing(): Promise<OpenClawFixPairingResponse>;
 }
