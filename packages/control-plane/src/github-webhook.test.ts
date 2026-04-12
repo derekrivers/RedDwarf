@@ -7,6 +7,7 @@ import {
   resolvePollMode,
   shouldStartPolling,
   describeIntakeMode,
+  extractTicketId,
   type WebhookHandlerDependencies
 } from "./github-webhook.js";
 import { InMemoryPlanningRepository, createGitHubIssuePollingCursor } from "@reddwarf/evidence";
@@ -307,5 +308,196 @@ describe("handleGitHubWebhook", () => {
 
     expect(result.status).toBe(200);
     expect(result.body.message).toBe("Issue does not have ai-eligible label. Ignored.");
+  });
+});
+
+// ============================================================
+// extractTicketId
+// ============================================================
+
+describe("extractTicketId", () => {
+  it("extracts ticket_id from branch name", () => {
+    expect(extractTicketId("reddwarf/ticket/abc-123", null)).toBe("abc-123");
+  });
+
+  it("extracts ticket_id from branch with nested path", () => {
+    expect(extractTicketId("reddwarf/ticket/proj:ticket:5", null)).toBe("proj:ticket:5");
+  });
+
+  it("falls back to PR body comment", () => {
+    expect(
+      extractTicketId("feature/unrelated", "Some text\n<!-- reddwarf:ticket_id:xyz-789 -->\nMore text")
+    ).toBe("xyz-789");
+  });
+
+  it("prefers branch name over PR body", () => {
+    expect(
+      extractTicketId("reddwarf/ticket/from-branch", "<!-- reddwarf:ticket_id:from-body -->")
+    ).toBe("from-branch");
+  });
+
+  it("returns null when no ticket reference is found", () => {
+    expect(extractTicketId("feature/some-branch", "No ticket reference here")).toBeNull();
+  });
+
+  it("returns null for empty branch and null body", () => {
+    expect(extractTicketId("main", null)).toBeNull();
+  });
+
+  it("rejects ticket_id with invalid characters", () => {
+    expect(extractTicketId("reddwarf/ticket/bad id spaces", null)).toBeNull();
+  });
+});
+
+// ============================================================
+// PR merge webhook handling
+// ============================================================
+
+function makePrPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    action: "closed",
+    pull_request: {
+      number: 99,
+      merged: true,
+      head: { ref: "reddwarf/ticket/test-ticket-1" },
+      body: "Implements test ticket 1",
+      html_url: "https://github.com/acme/platform/pull/99"
+    },
+    repository: {
+      full_name: "acme/platform"
+    },
+    ...overrides
+  };
+}
+
+describe("handleGitHubWebhook — pull_request events", () => {
+  it("ignores non-closed pull_request events", async () => {
+    const deps = await createTestDeps();
+    const payload = makePrPayload({ action: "opened" });
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body.message).toBe("Only closed+merged pull requests are processed.");
+  });
+
+  it("ignores closed but not merged pull_request events", async () => {
+    const deps = await createTestDeps();
+    const payload = makePrPayload({
+      pull_request: {
+        ...makePrPayload().pull_request,
+        merged: false
+      }
+    });
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body.message).toBe("Only closed+merged pull requests are processed.");
+  });
+
+  it("ignores merged PRs with no ticket reference", async () => {
+    const deps = await createTestDeps();
+    const payload = makePrPayload({
+      pull_request: {
+        ...makePrPayload().pull_request,
+        head: { ref: "feature/unrelated-work" },
+        body: "Just a regular PR"
+      }
+    });
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body.message).toBe("No ticket reference found in branch name or PR body. Ignored.");
+  });
+
+  it("accepts a merged PR with a ticket reference and returns 202", async () => {
+    const deps = await createTestDeps();
+    const payload = makePrPayload();
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    // The handler responds 202 immediately; advanceProjectTicket runs async
+    // and will fail (no ticket in repo) but that doesn't affect the response.
+    expect(result.status).toBe(202);
+    expect(result.body.event).toBe("pull_request");
+    expect(result.body.ticketId).toBe("test-ticket-1");
+    expect(result.body.prNumber).toBe(99);
+    expect(result.body.message).toBe("Merged PR accepted for ticket advancement.");
+  });
+
+  it("extracts ticket_id from PR body when branch doesn't match", async () => {
+    const deps = await createTestDeps();
+    const payload = makePrPayload({
+      pull_request: {
+        ...makePrPayload().pull_request,
+        head: { ref: "feature/custom-branch" },
+        body: "Some text\n<!-- reddwarf:ticket_id:body-ticket-42 -->\nMore text"
+      }
+    });
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    expect(result.status).toBe(202);
+    expect(result.body.ticketId).toBe("body-ticket-42");
+  });
+
+  it("returns 400 for malformed pull_request payload", async () => {
+    const deps = await createTestDeps();
+    const payload = { action: "closed", not_a_pr: true };
+    const rawBody = makeRawBody(payload);
+    const signature = sign(rawBody);
+
+    const result = await handleGitHubWebhook(
+      rawBody,
+      signature,
+      "pull_request",
+      TEST_SECRET,
+      deps
+    );
+
+    expect(result.status).toBe(400);
+    expect(result.body.error).toBe("bad_request");
   });
 });
