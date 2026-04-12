@@ -96,6 +96,10 @@ const skipDashboard = process.env.REDDWARF_SKIP_DASHBOARD === "true";
 const skipOpenClaw = process.env.REDDWARF_SKIP_OPENCLAW === "true";
 const operatorApiToken = (process.env.REDDWARF_OPERATOR_TOKEN ?? "").trim();
 const dryRun = process.env.REDDWARF_DRY_RUN === "true";
+const webhookSecret = (process.env.REDDWARF_WEBHOOK_SECRET ?? "").trim() || null;
+const webhookPath = process.env.REDDWARF_WEBHOOK_PATH ?? "/webhooks/github";
+const pollModeRaw = (process.env.REDDWARF_POLL_MODE ?? "auto").trim().toLowerCase();
+const pollMode = pollModeRaw === "always" || pollModeRaw === "never" ? pollModeRaw : "auto";
 
 if (operatorApiToken.length === 0) {
   logError("REDDWARF_OPERATOR_TOKEN is required before the operator API can start.");
@@ -524,33 +528,51 @@ if (!skipOpenClaw) {
   );
 }
 
-// Phase 3c: Polling daemon (optional)
+// Phase 3c: Polling daemon (conditional on poll mode)
 
 let daemon = null;
 const modelProvider = resolveModelProviderEnv();
 const planner = createPlanningAgentForModelProvider(modelProvider);
 
-daemon = createGitHubIssuePollingDaemon(
-  {
-    intervalMs: pollIntervalMs,
-    perRepoTimeoutMs,
-    repositories: [],
-    dryRun,
-    runOnStart: true
-  },
-  {
-    repository,
-    github,
-    planner,
-    ...(dispatchDeps
-      ? {
-          openClawDispatch: dispatchDeps.openClawDispatch,
-          architectTargetRoot: workspaceTargetRoot
-        }
-      : {}),
-    logger: runtimeLogger
-  }
-);
+const shouldPoll =
+  pollMode === "always" ||
+  (pollMode === "auto" && !webhookSecret);
+
+if (shouldPoll) {
+  daemon = createGitHubIssuePollingDaemon(
+    {
+      intervalMs: pollIntervalMs,
+      perRepoTimeoutMs,
+      repositories: [],
+      dryRun,
+      runOnStart: true
+    },
+    {
+      repository,
+      github,
+      planner,
+      ...(dispatchDeps
+        ? {
+            openClawDispatch: dispatchDeps.openClawDispatch,
+            architectTargetRoot: workspaceTargetRoot
+          }
+        : {}),
+      logger: runtimeLogger
+    }
+  );
+} else {
+  const modeReason = pollMode === "never"
+    ? "REDDWARF_POLL_MODE=never"
+    : "Webhook mode active (REDDWARF_WEBHOOK_SECRET is set)";
+  log(`Polling disabled — ${modeReason}.`);
+}
+
+// Resolve intake mode for health reporting
+const intakeMode = pollMode === "always"
+  ? (webhookSecret ? "webhook+polling" : "polling")
+  : pollMode === "never"
+    ? (webhookSecret ? "webhook" : "disabled")
+    : (webhookSecret ? "webhook" : "polling");
 
 // Phase 3d: Operator API
 
@@ -559,7 +581,9 @@ const server = createOperatorApiServer(
     port: apiPort,
     authToken: operatorApiToken,
     managedTargetRoot: workspaceTargetRoot,
-    managedEvidenceRoot: evidenceRoot
+    managedEvidenceRoot: evidenceRoot,
+    ...(webhookSecret ? { webhookSecret, webhookPath } : {}),
+    intakeMode
   },
   {
     repository,
@@ -572,6 +596,8 @@ const server = createOperatorApiServer(
     ...(daemon ? { pollingDaemon: daemon } : {}),
     ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {}),
     ...(taskFlowAdapter ? { taskFlowAdapter } : {}),
+    // Webhook needs the GitHub adapter for convertToPlanningInput
+    ...(webhookSecret ? { github, webhookOpenClawDispatch: dispatchDeps?.openClawDispatch, webhookArchitectTargetRoot: workspaceTargetRoot } : {}),
     downstreamHealthProbes: [
       createGitHubHealthProbe(process.env.GITHUB_TOKEN ?? ""),
       ...(skipOpenClaw ? [] : [createOpenClawHealthProbe(
@@ -593,7 +619,10 @@ const server = createOperatorApiServer(
   }
 );
 await server.start();
-log(`Operator API listening on http://127.0.0.1:${server.port}`);
+log(`Operator API listening on http://127.0.0.1:${server.port} (intake mode: ${intakeMode})`);
+if (webhookSecret) {
+  log(`GitHub webhook receiver active at ${webhookPath}`);
+}
 
 if (!skipOpenClaw) {
   log("Starting OpenClaw after operator API is ready...");
