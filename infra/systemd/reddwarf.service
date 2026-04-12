@@ -1,0 +1,72 @@
+# R-19: systemd unit file for RedDwarf operator process.
+#
+# Installation:
+#   1. Copy this file to /etc/systemd/system/reddwarf.service
+#   2. Edit the paths below to match your deployment
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable reddwarf
+#   5. sudo systemctl start reddwarf
+#
+# Prerequisites:
+#   - Node.js >= 22 installed
+#   - corepack enabled (corepack enable)
+#   - .env configured at REDDWARF_ROOT
+#   - Docker Compose services running (postgres, openclaw)
+#   - corepack pnpm build completed
+#
+# Logs:
+#   journalctl -u reddwarf -f
+#   journalctl -u reddwarf --since "1 hour ago"
+
+[Unit]
+Description=RedDwarf Autonomous Engineering Operator
+Documentation=https://github.com/derekrivers/RedDwarf
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=derek
+Group=derek
+
+# ── Paths ──────────────────────────────────────────────────────────────
+# Update these to match your deployment
+WorkingDirectory=/home/derek/code/RedDwarf
+Environment=NODE_ENV=production
+EnvironmentFile=/home/derek/code/RedDwarf/.env
+
+# ── Execution ──────────────────────────────────────────────────────────
+ExecStartPre=/usr/bin/corepack pnpm build
+ExecStart=/usr/bin/node scripts/start-stack.mjs
+
+# ── Restart policy ─────────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# ── Graceful shutdown ──────────────────────────────────────────────────
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+
+# ── Resource limits ────────────────────────────────────────────────────
+MemoryMax=1G
+MemoryHigh=800M
+TasksMax=256
+
+# ── Logging ────────────────────────────────────────────────────────────
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=reddwarf
+
+# ── Security hardening ─────────────────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/derek/code/RedDwarf/runtime-data
+ReadWritePaths=/home/derek/code/RedDwarf/artifacts
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

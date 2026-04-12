@@ -86,14 +86,43 @@ export async function sweepStaleRuns(
     }
   }
 
+  // Cancel any blocked runs whose blocker was just swept — they will never
+  // unblock on their own because the blocking run is now stale.
+  const cancelledBlockedRunIds: string[] = [];
+
+  if (sweptRunIds.length > 0) {
+    const sweptSet = new Set(sweptRunIds);
+    const blockedRuns = await repository.listPipelineRuns({
+      statuses: ["blocked"],
+      limit: 100
+    });
+    for (const blockedRun of blockedRuns) {
+      if (blockedRun.blockedByRunId && sweptSet.has(blockedRun.blockedByRunId)) {
+        await repository.savePipelineRun(
+          createPipelineRun({
+            ...blockedRun,
+            status: "cancelled",
+            completedAt: nowIso,
+            metadata: {
+              ...blockedRun.metadata,
+              cancelledBy: "sweep-blocked-by-stale",
+              originalBlockedByRunId: blockedRun.blockedByRunId
+            }
+          })
+        );
+        cancelledBlockedRunIds.push(blockedRun.runId);
+      }
+    }
+  }
+
   if (sweptRunIds.length > 0) {
     options?.logger?.info(
-      `Startup sweep marked ${sweptRunIds.length} stale run(s).`,
-      { sweptRunIds, cancelledSessionKeys }
+      `Startup sweep marked ${sweptRunIds.length} stale run(s) and cancelled ${cancelledBlockedRunIds.length} blocked run(s).`,
+      { sweptRunIds, cancelledBlockedRunIds, cancelledSessionKeys }
     );
   }
 
-  return { sweptRunIds, cancelledSessionKeys, sweptAt: nowIso };
+  return { sweptRunIds, cancelledBlockedRunIds, cancelledSessionKeys, sweptAt: nowIso };
 }
 
 const DEFAULT_ORPHAN_SCAN_LIMIT = 50;

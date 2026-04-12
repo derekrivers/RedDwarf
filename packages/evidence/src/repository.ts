@@ -10,6 +10,8 @@ import {
   type EligibilityRejectionQuery,
   type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
+  type IntentRecord,
+  type IntentStatus,
   type MemoryContext,
   type MemoryQuery,
   type MemoryRecord,
@@ -88,6 +90,13 @@ export interface PlanningCommandRepository extends PlanningTransactionRepository
   runInTransaction<T>(
     operation: (repository: PlanningTransactionRepository) => Promise<T>
   ): Promise<T>;
+  // R-18: Write-ahead intent log
+  saveIntent(intent: IntentRecord): Promise<void>;
+  updateIntentStatus(
+    intentId: string,
+    status: IntentStatus,
+    patch?: { result?: Record<string, unknown> | null; error?: string | null; completedAt?: string | null }
+  ): Promise<void>;
 }
 
 export interface PlanningQueryRepository {
@@ -133,6 +142,8 @@ export interface PlanningQueryRepository {
   getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
   listTicketSpecs(projectId: string): Promise<TicketSpec[]>;
   resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null>;
+  // R-18: Write-ahead intent log
+  listPendingIntents(limit?: number): Promise<IntentRecord[]>;
 }
 
 export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;

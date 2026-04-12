@@ -23,7 +23,7 @@ import { getPhaseRetryBudgetMemoryKey, readPhaseRetryBudgetState } from "./retry
 import {
   restoreProjectTicketExecutionFromSnapshot
 } from "./project-ticket-state.js";
-import { failureAutomationRequestedBy } from "./types.js";
+import { EventCodes, failureAutomationRequestedBy } from "./types.js";
 import {
   type ResolveApprovalRequestDependencies,
   type ResolveApprovalRequestInput,
@@ -107,30 +107,8 @@ export async function resolveApprovalRequest(
     }
   }
 
-  const lifecycleStatus = input.decision === "approve" ? "ready" : "cancelled";
-  assertTaskLifecycleTransition(manifest.lifecycleStatus, lifecycleStatus);
-
-  const updatedApprovalRequest = createApprovalRequest({
-    ...approvalRequest,
-    status: input.decision === "approve" ? "approved" : "rejected",
-    decidedBy,
-    decision: input.decision,
-    decisionSummary,
-    comment: input.comment ?? null,
-    updatedAt: resolvedAtIso,
-    resolvedAt: resolvedAtIso
-  });
-  const updatedManifest = patchManifest(manifest, {
-    lifecycleStatus,
-    ...(input.decision === "approve" && approvalRequest.phase === "architecture_review"
-      ? { currentPhase: "validation" as const }
-      : {}),
-    evidenceLinks: [
-      ...manifest.evidenceLinks,
-      `db://gate_decision/${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`
-    ],
-    updatedAt: resolvedAtIso
-  });
+  // ── Rework validation ──────────────────────────────────────────────────
+  const isRework = input.decision === "rework";
   const recoverableApprovalPhase =
     approvalRequest.phase === "development" ||
     approvalRequest.phase === "architecture_review" ||
@@ -138,31 +116,94 @@ export async function resolveApprovalRequest(
     approvalRequest.phase === "scm"
       ? approvalRequest.phase
       : null;
+
+  if (isRework) {
+    if (recoverableApprovalPhase === null) {
+      throw new Error(
+        `Rework is not available for phase "${approvalRequest.phase}". ` +
+        `Only development, architecture_review, validation, and scm phases support rework.`
+      );
+    }
+    if (approvalRequest.requestedBy !== failureAutomationRequestedBy) {
+      throw new Error(
+        "Rework is only available for failure-escalation approvals."
+      );
+    }
+    if (!input.comment || input.comment.trim().length === 0) {
+      throw new Error(
+        "Rework requires a comment describing what the agent should fix."
+      );
+    }
+  }
+
+  // ── Lifecycle transitions ─────────────────────────────────────────────
+  const isApproveOrRework = input.decision === "approve" || isRework;
+  const lifecycleStatus = isApproveOrRework ? "ready" : "cancelled";
+  assertTaskLifecycleTransition(manifest.lifecycleStatus, lifecycleStatus);
+
+  const updatedApprovalRequest = createApprovalRequest({
+    ...approvalRequest,
+    status: isApproveOrRework ? "approved" : "rejected",
+    decidedBy,
+    decision: input.decision,
+    decisionSummary,
+    comment: input.comment ?? null,
+    updatedAt: resolvedAtIso,
+    resolvedAt: resolvedAtIso
+  });
+
+  // For rework on architecture_review: send back to development (not forward to validation).
+  // For approve on architecture_review: skip to validation (existing behaviour).
+  // For rework on other phases: stay at the same phase for retry.
+  const currentPhaseOverride = isRework
+    ? approvalRequest.phase === "architecture_review"
+      ? ("development" as const)
+      : undefined
+    : input.decision === "approve" && approvalRequest.phase === "architecture_review"
+      ? ("validation" as const)
+      : undefined;
+
+  const updatedManifest = patchManifest(manifest, {
+    lifecycleStatus,
+    ...(currentPhaseOverride !== undefined ? { currentPhase: currentPhaseOverride } : {}),
+    evidenceLinks: [
+      ...manifest.evidenceLinks,
+      `db://gate_decision/${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`
+    ],
+    updatedAt: resolvedAtIso
+  });
+
   const snapshot = await repository.getTaskSnapshot(approvalRequest.taskId);
   const retryBudgetState =
     recoverableApprovalPhase !== null
       ? readPhaseRetryBudgetState(snapshot, recoverableApprovalPhase)
       : null;
-  const resetRetryBudgetOnApproval =
+  const resetRetryBudget =
     approvalRequest.requestedBy === failureAutomationRequestedBy &&
-    input.decision === "approve" &&
+    isApproveOrRework &&
     retryBudgetState !== null;
-  const finalManifest = resetRetryBudgetOnApproval
+  const finalManifest = resetRetryBudget
     ? patchManifest(updatedManifest, {
         retryCount: 0,
         updatedAt: resolvedAtIso
       })
     : updatedManifest;
-  const decisionCode =
-    input.decision === "approve" ? "APPROVAL_APPROVED" : "APPROVAL_REJECTED";
-  const decisionMessage =
-    input.decision === "approve"
+
+  // ── Event codes and messages ──────────────────────────────────────────
+  const decisionCode = isRework
+    ? EventCodes.REWORK_REQUESTED
+    : isApproveOrRework
+      ? "APPROVAL_APPROVED"
+      : "APPROVAL_REJECTED";
+  const decisionMessage = isRework
+    ? `Rework requested for ${approvalRequest.phase} phase. The agent will retry with operator feedback.`
+    : input.decision === "approve"
       ? approvalRequest.phase === "architecture_review"
         ? "Architecture review override approved; the task is ready to continue at validation."
         : "Approval granted for downstream execution."
       : "Approval rejected and the task was cancelled.";
-  const phaseStatus: PhaseLifecycleStatus =
-    input.decision === "approve" ? "passed" : "failed";
+  const phaseStatus: PhaseLifecycleStatus = isApproveOrRework ? "passed" : "failed";
+
   const runLogger = bindPlanningLogger(logger, {
     runId: approvalRequest.runId,
     taskId: approvalRequest.taskId,
@@ -173,14 +214,14 @@ export async function resolveApprovalRequest(
   await repository.runInTransaction(async (transactionalRepository) => {
     await transactionalRepository.saveApprovalRequest(updatedApprovalRequest);
     await transactionalRepository.updateManifest(finalManifest);
-    if (resetRetryBudgetOnApproval) {
+    if (resetRetryBudget) {
       await restoreProjectTicketExecutionFromSnapshot({
         repository: transactionalRepository,
         snapshot,
         updatedAt: resolvedAtIso
       });
     }
-    if (resetRetryBudgetOnApproval && retryBudgetState !== null) {
+    if (resetRetryBudget && retryBudgetState !== null) {
       const phase = recoverableApprovalPhase!;
       await transactionalRepository.saveMemoryRecord(
         createMemoryRecord({
@@ -208,6 +249,34 @@ export async function resolveApprovalRequest(
         })
       );
     }
+    // ── Rework feedback memory record ─────────────────────────────────
+    if (isRework && recoverableApprovalPhase !== null) {
+      const reworkPhase = currentPhaseOverride ?? recoverableApprovalPhase;
+      await transactionalRepository.saveMemoryRecord(
+        createMemoryRecord({
+          memoryId: `${approvalRequest.taskId}:memory:task:rework-feedback:${reworkPhase}`,
+          taskId: approvalRequest.taskId,
+          scope: "task",
+          provenance: "operator_provided",
+          key: `rework.feedback:${reworkPhase}`,
+          title: `Operator rework feedback for ${reworkPhase} phase`,
+          value: {
+            phase: reworkPhase,
+            originalFailedPhase: approvalRequest.phase,
+            feedback: input.comment!.trim(),
+            decidedBy,
+            decisionSummary,
+            approvalRequestId: approvalRequest.requestId,
+            requestedAt: resolvedAtIso
+          },
+          repo: manifest.source.repo,
+          organizationId: null,
+          tags: ["rework", "feedback", reworkPhase],
+          createdAt: resolvedAtIso,
+          updatedAt: resolvedAtIso
+        })
+      );
+    }
     await transactionalRepository.savePhaseRecord(
       createPhaseRecord({
         id: `${approvalRequest.taskId}:phase:${approvalRequest.phase}:approval:${approvalRequest.requestId}`,
@@ -230,8 +299,11 @@ export async function resolveApprovalRequest(
         recordId: `${approvalRequest.taskId}:approval-decision:${approvalRequest.requestId}`,
         taskId: approvalRequest.taskId,
         kind: "gate_decision",
-        title:
-          input.decision === "approve" ? "Approval granted" : "Approval rejected",
+        title: isRework
+          ? "Rework requested"
+          : isApproveOrRework
+            ? "Approval granted"
+            : "Approval rejected",
         metadata: {
           phase: approvalRequest.phase,
           requestId: approvalRequest.requestId,
@@ -251,7 +323,7 @@ export async function resolveApprovalRequest(
       taskId: approvalRequest.taskId,
       runId: approvalRequest.runId,
       phase: approvalRequest.phase,
-      level: input.decision === "approve" ? "info" : "warn",
+      level: isRework ? "info" : isApproveOrRework ? "info" : "warn",
       code: decisionCode,
       message: decisionMessage,
       data: {
@@ -260,7 +332,8 @@ export async function resolveApprovalRequest(
         decidedBy,
         decisionSummary,
         lifecycleStatus,
-        ...(input.comment ? { comment: input.comment } : {})
+        ...(input.comment ? { comment: input.comment } : {}),
+        ...(isRework ? { reworkFeedback: input.comment!.trim() } : {})
       },
       createdAt: resolvedAtIso
     });

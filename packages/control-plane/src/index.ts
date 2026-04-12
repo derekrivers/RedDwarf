@@ -10,3 +10,4 @@ export * from "./operator-mcp.js";
 export * from "./openclaw-session.js";
 export * from "./openclaw-session-key.js";
 export * from "./live-workflow.js";
+export * from "./intent-log.js";
