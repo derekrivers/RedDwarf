@@ -47,7 +47,9 @@ import {
   scaleTokenBudgetConfig,
   runValidationPhase,
   sweepOrphanedDispatcherState,
-  sweepStaleRuns
+  sweepStaleRuns,
+  withIntent,
+  sweepPendingIntents
 } from "@reddwarf/control-plane";
 import {
   FixtureOpenClawDispatchAdapter
@@ -7798,6 +7800,119 @@ describe("sweepStaleRuns", () => {
       (r) => r.runId === "run-fail-cancel"
     );
     expect(run?.status).toBe("stale");
+  });
+});
+
+// ============================================================================
+// withIntent / sweepPendingIntents tests (R-18)
+// ============================================================================
+
+describe("withIntent", () => {
+  it("records a completed intent on success", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await withIntent(
+      repository,
+      {
+        intentId: "intent-1",
+        taskId: "task-1",
+        runId: "run-1",
+        phase: "development",
+        intentType: "openclaw_dispatch",
+        payload: { agentId: "developer" }
+      },
+      async () => ({ sessionId: "sess-123" })
+    );
+
+    expect(result).toEqual({ sessionId: "sess-123" });
+    const intent = repository.intents.get("intent-1");
+    expect(intent).toBeDefined();
+    expect(intent?.status).toBe("completed");
+    expect(intent?.error).toBeNull();
+  });
+
+  it("records a failed intent on error", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await expect(
+      withIntent(
+        repository,
+        {
+          intentId: "intent-fail",
+          taskId: "task-1",
+          runId: "run-1",
+          phase: "scm",
+          intentType: "github_create_pr",
+          payload: { repo: "acme/platform" }
+        },
+        async () => { throw new Error("GitHub API 500"); }
+      )
+    ).rejects.toThrow("GitHub API 500");
+
+    const intent = repository.intents.get("intent-fail");
+    expect(intent).toBeDefined();
+    expect(intent?.status).toBe("failed");
+    expect(intent?.error).toBe("GitHub API 500");
+  });
+});
+
+describe("sweepPendingIntents", () => {
+  it("abandons stale pending intents", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-04-01T12:00:00.000Z");
+
+    // Insert a pending intent from 10 minutes ago
+    await repository.saveIntent({
+      intentId: "intent-stale",
+      taskId: "task-1",
+      runId: "run-1",
+      phase: "development",
+      intentType: "openclaw_dispatch",
+      status: "pending",
+      payload: {},
+      result: null,
+      error: null,
+      createdAt: "2026-04-01T11:45:00.000Z",
+      completedAt: null,
+      updatedAt: "2026-04-01T11:45:00.000Z"
+    });
+
+    const result = await sweepPendingIntents(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000
+    });
+
+    expect(result.abandonedCount).toBe(1);
+    expect(result.abandonedIntentIds).toEqual(["intent-stale"]);
+    const intent = repository.intents.get("intent-stale");
+    expect(intent?.status).toBe("abandoned");
+  });
+
+  it("does not abandon recent pending intents", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-04-01T12:00:00.000Z");
+
+    await repository.saveIntent({
+      intentId: "intent-recent",
+      taskId: "task-1",
+      runId: "run-1",
+      phase: "development",
+      intentType: "openclaw_dispatch",
+      status: "pending",
+      payload: {},
+      result: null,
+      error: null,
+      createdAt: "2026-04-01T11:58:00.000Z",
+      completedAt: null,
+      updatedAt: "2026-04-01T11:58:00.000Z"
+    });
+
+    const result = await sweepPendingIntents(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000
+    });
+
+    expect(result.abandonedCount).toBe(0);
+    const intent = repository.intents.get("intent-recent");
+    expect(intent?.status).toBe("pending");
   });
 });
 

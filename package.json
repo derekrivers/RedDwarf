@@ -63,6 +63,7 @@
     "e2e:chaos:openclaw-kill": "corepack pnpm build && node scripts/e2e-chaos-openclaw-kill.mjs",
     "e2e:chaos": "corepack pnpm e2e:chaos:kill-recover && corepack pnpm e2e:chaos:pg-restart && corepack pnpm e2e:chaos:openclaw-kill",
     "loadtest": "k6 run tests/k6-operator-api.js",
+    "chaos:run": "node scripts/chaos-run.mjs",
     "cleanup:approvals": "node scripts/cleanup-approvals.mjs"
   },
   "devDependencies": {

@@ -264,13 +264,13 @@ This board is separate from `FEATURE_BOARD.md` and focuses exclusively on system
 | R-16 | **OpenClaw container kill test** -- `scripts/e2e-chaos-openclaw-kill.mjs` (`pnpm e2e:chaos:openclaw-kill`): starts stack, verifies OpenClaw downstream ok, kills OpenClaw container, asserts health detects unreachable status (with 15s probe cache TTL), restarts container, asserts readiness recovers to ok. Reports circuit breaker state. | P4 | Testing infra | **Done** |
 | R-17 | **Load test suite for operator API** -- `tests/k6-operator-api.js` (`pnpm loadtest`): k6 constant-arrival-rate scenario sustaining 50 req/s (configurable via `K6_RPS`) across `GET /health` (50%), `GET /runs` (25%), `GET /tasks` (25%). Thresholds: p99 < 2s, error rate < 1%, zero 5xx. Supports `K6_DEGRADED=true` mode for Toxiproxy-injected latency testing. Per-endpoint latency trends. | P4 | Testing infra | **Done** |
 
-### Phase 5 -- Advanced Resilience (future)
+### Phase 5 -- Advanced Resilience ✅ COMPLETE
 
-| # | Feature | Priority | Gaps Addressed | Effort |
+| # | Feature | Priority | Gaps Addressed | Status |
 |---|---------|----------|----------------|--------|
-| R-18 | **Write-ahead intent log for external side effects** -- Before creating a GitHub PR or OpenClaw dispatch, write an intent record to Postgres. On crash recovery, replay or compensate incomplete intents. Addresses the fundamental gap where external mutations happen outside DB transactions. | P5 | G-10 | Large |
-| R-19 | **Process manager integration (PM2 / systemd)** -- Document and provide PM2 ecosystem config or systemd unit file for host-side process management with automatic restart, log rotation, and memory limits. | P5 | Production readiness | Medium |
-| R-20 | **Structured chaos experiment runner** -- CLI tool (`pnpm chaos:run <scenario>`) that combines Toxiproxy toxics, container manipulation, and assertions into named reproducible experiments. Scenarios map to the failure matrix in this document. | P5 | Testing infra | Large |
+| R-18 | **Write-ahead intent log for external side effects** -- New `intent_log` Postgres table (migration `0017`), `IntentRecord` contract type, repository methods (`saveIntent`, `updateIntentStatus`, `listPendingIntents`), `withIntent()` wrapper that records pending→completed/failed lifecycle around external mutations, `sweepPendingIntents()` that abandons stale intents on startup. Wired into startup sweep in `start-stack.mjs`. 4 unit tests. | P5 | G-10 | **Done** |
+| R-19 | **Process manager integration (PM2 / systemd)** -- PM2 ecosystem config at `infra/pm2/ecosystem.config.cjs` with auto-restart, 1G memory limit, exponential backoff, JSON logging, log rotation docs. Systemd unit file at `infra/systemd/reddwarf.service` with security hardening (NoNewPrivileges, ProtectSystem=strict, PrivateTmp, MemoryMax=1G), proper shutdown handling (SIGTERM, 15s timeout), and journal logging. | P5 | Production readiness | **Done** |
+| R-20 | **Structured chaos experiment runner** -- `scripts/chaos-run.mjs` (`pnpm chaos:run <scenario>`) with 8 named scenarios: `postgres-latency`, `postgres-reset-peer`, `postgres-timeout`, `openclaw-latency`, `openclaw-timeout`, `openclaw-blackhole`, `bandwidth-throttle`, `full-outage`. Each scenario has setup/teardown/verify phases with health monitoring during the hold period. Requires Toxiproxy chaos overlay running. | P5 | Testing infra | **Done** |
 
 ---
 

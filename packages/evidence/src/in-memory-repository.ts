@@ -5,6 +5,8 @@ import {
   type EvidenceRecord,
   type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
+  type IntentRecord,
+  type IntentStatus,
   type MemoryContext,
   type MemoryRecord,
   type OperatorConfigEntry,
@@ -57,6 +59,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly eligibilityRejections: EligibilityRejectionRecord[] = [];
   public readonly projectSpecs = new Map<string, ProjectSpec>();
   public readonly ticketSpecs = new Map<string, TicketSpec>();
+  public readonly intents = new Map<string, IntentRecord>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -627,6 +630,36 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       status: "healthy",
       postgresPool: null
     };
+  }
+
+  // ── R-18: Write-ahead intent log ────────────────────────────────────────
+
+  async saveIntent(intent: IntentRecord): Promise<void> {
+    this.intents.set(intent.intentId, structuredClone(intent));
+  }
+
+  async updateIntentStatus(
+    intentId: string,
+    status: IntentStatus,
+    patch?: { result?: Record<string, unknown> | null; error?: string | null; completedAt?: string | null }
+  ): Promise<void> {
+    const existing = this.intents.get(intentId);
+    if (!existing) return;
+    this.intents.set(intentId, {
+      ...existing,
+      status,
+      result: patch?.result !== undefined ? patch.result : existing.result,
+      error: patch?.error !== undefined ? patch.error : existing.error,
+      completedAt: patch?.completedAt !== undefined ? patch.completedAt : existing.completedAt,
+      updatedAt: asIsoTimestamp(new Date())
+    });
+  }
+
+  async listPendingIntents(limit = 100): Promise<IntentRecord[]> {
+    return [...this.intents.values()]
+      .filter((i) => i.status === "pending")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit);
   }
 }
 

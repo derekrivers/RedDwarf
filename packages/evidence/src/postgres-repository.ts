@@ -27,6 +27,9 @@ import {
   type PolicySnapshot,
   type ProjectSpec,
   type PromptSnapshot,
+  type IntentRecord,
+  type IntentStatus,
+  intentRecordSchema,
   type RunEvent,
   type RunSummary,
   type TaskManifest,
@@ -1798,6 +1801,86 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
   async resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null> {
     return this.resolveNextReadyTicketWithExecutor(this.pool, projectId);
+  }
+
+  // ── R-18: Write-ahead intent log ────────────────────────────────────────
+
+  async saveIntent(intent: IntentRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO intent_log (intent_id, task_id, run_id, phase, intent_type, status, payload, result, error, created_at, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT (intent_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         payload = EXCLUDED.payload,
+         result = EXCLUDED.result,
+         error = EXCLUDED.error,
+         completed_at = EXCLUDED.completed_at,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        intent.intentId,
+        intent.taskId,
+        intent.runId,
+        intent.phase,
+        intent.intentType,
+        intent.status,
+        JSON.stringify(intent.payload),
+        intent.result ? JSON.stringify(intent.result) : null,
+        intent.error,
+        intent.createdAt,
+        intent.completedAt,
+        intent.updatedAt
+      ]
+    );
+  }
+
+  async updateIntentStatus(
+    intentId: string,
+    status: IntentStatus,
+    patch?: { result?: Record<string, unknown> | null; error?: string | null; completedAt?: string | null }
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE intent_log
+       SET status = $2,
+           result = COALESCE($3, result),
+           error = COALESCE($4, error),
+           completed_at = COALESCE($5, completed_at),
+           updated_at = NOW()
+       WHERE intent_id = $1`,
+      [
+        intentId,
+        status,
+        patch?.result ? JSON.stringify(patch.result) : null,
+        patch?.error ?? null,
+        patch?.completedAt ?? null
+      ]
+    );
+  }
+
+  async listPendingIntents(limit = 100): Promise<IntentRecord[]> {
+    const result = await this.pool.query(
+      `SELECT intent_id, task_id, run_id, phase, intent_type, status, payload, result, error, created_at, completed_at, updated_at
+       FROM intent_log
+       WHERE status = 'pending'
+       ORDER BY created_at ASC
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows.map((row: Record<string, unknown>) =>
+      intentRecordSchema.parse({
+        intentId: row.intent_id,
+        taskId: row.task_id,
+        runId: row.run_id,
+        phase: row.phase,
+        intentType: row.intent_type,
+        status: row.status,
+        payload: row.payload ?? {},
+        result: row.result ?? null,
+        error: row.error ?? null,
+        createdAt: asIsoTimestamp(row.created_at as Date),
+        completedAt: row.completed_at ? asIsoTimestamp(row.completed_at as Date) : null,
+        updatedAt: asIsoTimestamp(row.updated_at as Date)
+      })
+    );
   }
 }
 

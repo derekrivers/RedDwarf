@@ -311,6 +311,7 @@ const {
   createGitWorkspaceCommitPublisher,
   createPinoPlanningLogger,
   sweepStaleRuns,
+  sweepPendingIntents,
   DeterministicDeveloperAgent,
   DeterministicValidationAgent,
   DeterministicScmAgent,
@@ -366,6 +367,19 @@ try {
   }
 } catch (err) {
   logError(`Stale-run sweep failed (non-fatal): ${formatError(err)}`);
+}
+
+// ���─ 2a-2: Sweep pending intents (R-18) ──────────────────────────────────
+
+try {
+  const intentResult = await sweepPendingIntents(repository);
+  if (intentResult.abandonedCount > 0) {
+    log(`Abandoned ${intentResult.abandonedCount} pending intent(s) from previous crash.`);
+  } else {
+    log("No pending intents to reconcile.");
+  }
+} catch (err) {
+  logError(`Intent sweep failed (non-fatal): ${formatError(err)}`);
 }
 
 // ── 2b: Clean up old workspace directories ────────────────────────────

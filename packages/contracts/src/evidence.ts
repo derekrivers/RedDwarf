@@ -264,3 +264,37 @@ export type EligibilityRejectionRecord = z.infer<
 export type EligibilityRejectionQuery = z.infer<
   typeof eligibilityRejectionQuerySchema
 >;
+
+// ── R-18: Write-ahead intent log ────────────────────────────────────────
+
+export const intentStatusSchema = z.enum([
+  "pending",
+  "completed",
+  "failed",
+  "abandoned"
+]);
+
+export const intentTypeSchema = z.enum([
+  "openclaw_dispatch",
+  "github_create_pr",
+  "github_create_branch"
+]);
+
+export const intentRecordSchema = z.object({
+  intentId: z.string().min(1),
+  taskId: z.string().min(1),
+  runId: z.string().min(1),
+  phase: z.string().min(1),
+  intentType: intentTypeSchema,
+  status: intentStatusSchema.default("pending"),
+  payload: z.record(jsonValueSchema).default({}),
+  result: z.record(jsonValueSchema).nullable().default(null),
+  error: z.string().nullable().default(null),
+  createdAt: isoDateTimeSchema,
+  completedAt: isoDateTimeSchema.nullable().default(null),
+  updatedAt: isoDateTimeSchema
+});
+
+export type IntentStatus = z.infer<typeof intentStatusSchema>;
+export type IntentType = z.infer<typeof intentTypeSchema>;
+export type IntentRecord = z.infer<typeof intentRecordSchema>;
