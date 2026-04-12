@@ -152,6 +152,8 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `REDDWARF_WEBHOOK_PATH` | `/webhooks/github` | Webhook route path for the GitHub webhook receiver |
+| `REDDWARF_POLL_MODE` | `auto` | Polling mode: `auto` (poll if no webhook secret), `always`, or `never` |
 | `REDDWARF_POLL_INTERVAL_MS` | `30000` | Polling interval in milliseconds |
 | `REDDWARF_DISPATCH_INTERVAL_MS` | `15000` | Ready-task dispatch loop interval in milliseconds |
 | `REDDWARF_API_PORT` | `8080` | Operator API port |
@@ -209,6 +211,7 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `OPENCLAW_GATEWAY_TOKEN` | _(required for Control UI)_ | Browser auth token for the OpenClaw Control UI |
 | `OPENCLAW_DISCORD_BOT_TOKEN` | _(required when Discord is enabled)_ | Bot token for OpenClaw's native Discord integration |
 | `REDDWARF_OPERATOR_TOKEN` | _(required)_ | Bearer token for all operator API routes except `/health` |
+| `REDDWARF_WEBHOOK_SECRET` | _(optional)_ | GitHub webhook secret for HMAC-SHA256 verification; enables the webhook receiver when set |
 
 **Dev / E2E**
 

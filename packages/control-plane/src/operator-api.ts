@@ -95,6 +95,12 @@ import type {
   PollingLoopHealthSnapshot,
   ReadyTaskDispatcher
 } from "./polling.js";
+import {
+  describeIntakeMode,
+  handleGitHubWebhook,
+  readRawBody,
+  type WebhookHandlerDependencies
+} from "./github-webhook.js";
 
 // ============================================================
 // Operator API interfaces
@@ -112,6 +118,12 @@ export interface OperatorApiConfig {
   rateLimitMaxRequests?: number;
   /** Rate-limit window duration in milliseconds. Defaults to 60_000 ms. */
   rateLimitWindowMs?: number;
+  /** GitHub webhook secret for HMAC-SHA256 verification. When set, the webhook receiver route is activated. */
+  webhookSecret?: string;
+  /** Webhook route path. Defaults to `/webhooks/github`. */
+  webhookPath?: string;
+  /** Intake mode description for the health endpoint, resolved by the caller. */
+  intakeMode?: string;
 }
 
 // ============================================================
@@ -167,6 +179,12 @@ export interface OperatorApiDependencies {
   downstreamHealthProbes?: DownstreamHealthProbe[];
   /** Callback returning circuit breaker snapshots for health reporting (R-05, R-06). */
   circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>;
+  /** GitHub adapter reader for webhook intake — required when webhookSecret is configured. */
+  github?: import("@reddwarf/integrations").GitHubAdapter;
+  /** OpenClaw dispatch adapter, forwarded to webhook-triggered pipelines. */
+  webhookOpenClawDispatch?: import("@reddwarf/integrations").OpenClawDispatchAdapter;
+  /** Target root for architect workspace, forwarded to webhook-triggered pipelines. */
+  webhookArchitectTargetRoot?: string;
 }
 
 export interface OperatorBlockedSummary {
@@ -235,6 +253,8 @@ export interface OperatorHealthResponse {
   timestamp: string;
   repository: RepositoryHealthSnapshot;
   polling: OperatorPollingHealthSummary;
+  /** Active intake mode: "webhook", "polling", "webhook+polling", or "disabled". */
+  intakeMode?: string;
   dispatcher?: OperatorDispatcherHealthSummary;
   downstream?: DownstreamHealthProbeResult[] | undefined;
   readiness?: DownstreamStatus | undefined;
@@ -326,11 +346,29 @@ export function createOperatorApiServer(
     githubRepoDiscovery,
     taskFlowAdapter,
     downstreamHealthProbes,
-    circuitBreakerSnapshots
+    circuitBreakerSnapshots,
+    github: webhookGitHub,
+    webhookOpenClawDispatch,
+    webhookArchitectTargetRoot
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
   let boundPort = config.port;
+  const webhookSecret = config.webhookSecret?.trim() ?? null;
+  const webhookPath = config.webhookPath ?? "/webhooks/github";
+  const intakeMode = config.intakeMode ?? (webhookSecret ? "webhook" : "polling");
+  const webhookDeps: WebhookHandlerDependencies | null =
+    webhookSecret && webhookGitHub && planner
+      ? {
+          repository,
+          github: webhookGitHub,
+          planner,
+          clock,
+          dryRun: defaultPlanningDryRun,
+          ...(webhookOpenClawDispatch ? { openClawDispatch: webhookOpenClawDispatch } : {}),
+          ...(webhookArchitectTargetRoot ? { architectTargetRoot: webhookArchitectTargetRoot } : {})
+        }
+      : null;
 
   if (authToken.length === 0) {
     throw new Error("Operator API authToken is required.");
@@ -365,6 +403,30 @@ export function createOperatorApiServer(
           return;
         }
 
+        // Webhook route is handled before the operator auth gate — it uses
+        // its own HMAC-based verification via X-Hub-Signature-256.
+        const reqMethod = req.method ?? "GET";
+        const reqUrl = req.url ?? "/";
+        const reqPath = new URL(reqUrl, "http://localhost").pathname;
+        if (reqMethod === "POST" && reqPath === webhookPath && webhookSecret && webhookDeps) {
+          const rawBody = await readRawBody(req, maxRequestBodyBytes);
+          const signatureHeader = typeof req.headers["x-hub-signature-256"] === "string"
+            ? req.headers["x-hub-signature-256"]
+            : undefined;
+          const eventType = typeof req.headers["x-github-event"] === "string"
+            ? req.headers["x-github-event"]
+            : undefined;
+          const result = await handleGitHubWebhook(
+            rawBody,
+            signatureHeader,
+            eventType,
+            webhookSecret,
+            webhookDeps
+          );
+          writeOperatorJsonResponse(res, result.status, result.body);
+          return;
+        }
+
         await handleOperatorRequest(
           req,
           res,
@@ -386,7 +448,8 @@ export function createOperatorApiServer(
           toolApprovals,
           taskFlowAdapter,
           downstreamHealthProbes,
-          circuitBreakerSnapshots
+          circuitBreakerSnapshots,
+          intakeMode
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -2347,7 +2410,8 @@ async function handleOperatorRequest(
   toolApprovals?: Map<string, ToolApprovalRequest>,
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null,
   downstreamHealthProbes?: DownstreamHealthProbe[],
-  circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>
+  circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>,
+  intakeMode?: string
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2397,6 +2461,7 @@ async function handleOperatorRequest(
             }
           }
         : {}),
+      ...(intakeMode ? { intakeMode } : {}),
       ...(downstreamResults ? { downstream: downstreamResults, readiness } : {}),
       ...(cbSnapshots && Object.keys(cbSnapshots).length > 0 ? { circuitBreakers: cbSnapshots } : {})
     };

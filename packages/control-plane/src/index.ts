@@ -5,6 +5,7 @@ export * from "./pipeline.js";
 export * from "./operator-api.js";
 export * from "./knowledge.js";
 export * from "./polling.js";
+export * from "./github-webhook.js";
 export * from "./openclaw-config.js";
 export * from "./operator-mcp.js";
 export * from "./openclaw-session.js";
