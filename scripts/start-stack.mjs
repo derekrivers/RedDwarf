@@ -533,7 +533,7 @@ const server = createOperatorApiServer(
     ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {}),
     ...(taskFlowAdapter ? { taskFlowAdapter } : {}),
     downstreamHealthProbes: [
-      createGitHubHealthProbe(githubToken),
+      createGitHubHealthProbe(process.env.GITHUB_TOKEN ?? ""),
       ...(skipOpenClaw ? [] : [createOpenClawHealthProbe(
         `http://localhost:${process.env.OPENCLAW_HOST_PORT ?? "3578"}`
       )])
