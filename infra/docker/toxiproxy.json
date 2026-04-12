@@ -1,0 +1,14 @@
+[
+  {
+    "name": "postgres",
+    "listen": "0.0.0.0:55533",
+    "upstream": "postgres:5432",
+    "enabled": true
+  },
+  {
+    "name": "openclaw",
+    "listen": "0.0.0.0:3579",
+    "upstream": "openclaw:18789",
+    "enabled": true
+  }
+]

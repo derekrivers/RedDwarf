@@ -58,6 +58,11 @@
     "teardown": "node scripts/teardown.mjs",
     "e2e": "corepack pnpm build && node scripts/e2e-integration.mjs",
     "e2e:cleanup": "node scripts/e2e-cleanup.mjs",
+    "e2e:chaos:kill-recover": "corepack pnpm build && node scripts/e2e-chaos-kill-recover.mjs",
+    "e2e:chaos:pg-restart": "corepack pnpm build && node scripts/e2e-chaos-postgres-restart.mjs",
+    "e2e:chaos:openclaw-kill": "corepack pnpm build && node scripts/e2e-chaos-openclaw-kill.mjs",
+    "e2e:chaos": "corepack pnpm e2e:chaos:kill-recover && corepack pnpm e2e:chaos:pg-restart && corepack pnpm e2e:chaos:openclaw-kill",
+    "loadtest": "k6 run tests/k6-operator-api.js",
     "cleanup:approvals": "node scripts/cleanup-approvals.mjs"
   },
   "devDependencies": {
