@@ -748,7 +748,7 @@ async function shutdown(exitCode = 0) {
   log("  Database pool closed.");
 
   log("Shutdown complete.");
-  process.exit(exitCode);
+  process.exit(typeof exitCode === "number" ? exitCode : 0);
 }
 
 if (dashboardProcess) {
@@ -809,8 +809,8 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
 
 // ── Signal and error handlers ─────────────────────────────────────────
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));
 
 // R-01: Global error boundaries — catch unhandled async rejections and
 // uncaught exceptions so the process logs a stack trace and shuts down
