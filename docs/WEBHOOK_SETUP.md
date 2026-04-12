@@ -76,7 +76,44 @@ WEBHOOK_PIPELINE_COMPLETED  taskId=...  runId=...
 Open a test issue with the `ai-eligible` label in your repo. The pipeline
 should start within seconds (vs. the 30-second poll cycle default).
 
-## 5. Reverse proxy (nginx)
+## 5. Tailscale Funnel (recommended for local/WSL)
+
+If you're running RedDwarf locally or on WSL, Tailscale Funnel is the
+simplest way to expose the operator API to GitHub without a VPS or
+reverse proxy.
+
+```bash
+# Expose port 8080 publicly via your Tailscale node
+tailscale funnel 8080
+```
+
+This gives you a public HTTPS URL like:
+`https://<machine-name>.<tailnet>.ts.net/`
+
+Use that as your webhook payload URL:
+`https://<machine-name>.<tailnet>.ts.net/webhooks/github`
+
+Tailscale handles TLS termination and forwards traffic to your local
+port 8080. No nginx or firewall config needed.
+
+To verify Funnel is working:
+
+```bash
+curl -s https://<machine-name>.<tailnet>.ts.net/health | jq '.intakeMode'
+```
+
+> **Note**: Funnel exposes all routes on port 8080 publicly. The webhook
+> route is protected by HMAC verification and all other routes require the
+> operator bearer token, so this is safe — but be aware that `/health` is
+> unauthenticated by design.
+
+To stop the funnel:
+
+```bash
+tailscale funnel --off 8080
+```
+
+## 6. Reverse proxy (nginx, optional)
 
 If the operator API sits behind nginx, forward the webhook path and keep
 other routes private:
@@ -114,7 +151,7 @@ server {
 }
 ```
 
-## 6. Local development with smee.io
+## 7. Local development with smee.io
 
 For testing webhooks locally without exposing your machine:
 
