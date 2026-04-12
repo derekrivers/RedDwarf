@@ -510,6 +510,79 @@ describe("parseProjectArchitectHandoff", () => {
     );
   });
 
+  it("fuzzy-resolves abbreviated dependency titles to known ticket titles", () => {
+    const handoff = [
+      "# Project Architecture Handoff",
+      "",
+      "- Confidence: high",
+      "- Confidence reason: Good decomposition.",
+      "",
+      "## Project Title",
+      "",
+      "Fuzzy deps",
+      "",
+      "## Project Summary",
+      "",
+      "A project testing fuzzy dependency resolution.",
+      "",
+      "## Tickets",
+      "",
+      "### Ticket: Scaffold app shell and game registry",
+      "",
+      "- Complexity: medium",
+      "- Depends on: none",
+      "",
+      "#### Description",
+      "",
+      "Set up the base project.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- App loads",
+      "",
+      "### Ticket: Implement score entry form with localStorage persistence",
+      "",
+      "- Complexity: medium",
+      "- Depends on: Scaffold app shell and game registry",
+      "",
+      "#### Description",
+      "",
+      "Build the score form.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Scores persist",
+      "",
+      "### Ticket: Build admin data management and export workflows",
+      "",
+      "- Complexity: low",
+      // Abbreviated reference — should fuzzy-match the full title above
+      "- Depends on: Implement score entry",
+      "",
+      "#### Description",
+      "",
+      "Admin panel.",
+      "",
+      "#### Acceptance Criteria",
+      "",
+      "- Export works"
+    ].join("\n");
+
+    // Should NOT throw — fuzzy matching should resolve "Implement score entry"
+    // to "Implement score entry form with localStorage persistence"
+    const result = parseProjectArchitectHandoff(handoff);
+    if (result.outcome !== "project_spec") throw new Error("Expected project_spec");
+    expect(result.draft.tickets).toHaveLength(3);
+
+    const adminTicket = result.draft.tickets.find(
+      (t) => t.title === "Build admin data management and export workflows"
+    );
+    expect(adminTicket).toBeDefined();
+    expect(adminTicket!.dependsOn).toEqual([
+      "Implement score entry form with localStorage persistence"
+    ]);
+  });
+
   it("parses numbered list clarification questions", () => {
     const handoff = [
       "# Project Architecture Handoff",

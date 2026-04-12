@@ -694,7 +694,7 @@ export function buildOpenClawProjectArchitectPrompt(
     "### Ticket: <ticket title>",
     "",
     "- Complexity: <low|medium|high>",
-    "- Depends on: <comma-separated ticket titles, or \"none\">",
+    "- Depends on: <comma-separated ticket titles that exactly match other ticket titles in this list, or \"none\">",
     "",
     "#### Description",
     "",
@@ -870,7 +870,84 @@ function parseProjectTicketDependencies(
   return normalized
     .split(",")
     .map((dependencyTitle) => dependencyTitle.trim())
-    .filter((dependencyTitle) => dependencyTitle.length > 0);
+    .filter((dependencyTitle) => dependencyTitle.length > 0)
+    .map((dep) => fuzzyResolveTicketTitle(dep, knownTicketTitles));
+}
+
+/**
+ * Attempt to resolve a dependency string to an exact known ticket title.
+ *
+ * LLMs sometimes abbreviate or slightly rephrase dependency references.
+ * This tries, in order:
+ *   1. Exact match (identity)
+ *   2. Case-insensitive exact match
+ *   3. Known title that starts with / contains the dependency string (or vice-versa)
+ *   4. Best Dice-coefficient match above a 0.6 threshold
+ *
+ * Returns the resolved known title, or the original string if no match is found
+ * (the downstream validation will then throw a clear error).
+ */
+function fuzzyResolveTicketTitle(
+  candidate: string,
+  knownTitles: readonly string[]
+): string {
+  // 1. Exact
+  if (knownTitles.includes(candidate)) return candidate;
+
+  const candidateLower = candidate.toLowerCase();
+
+  // 2. Case-insensitive
+  for (const known of knownTitles) {
+    if (known.toLowerCase() === candidateLower) return known;
+  }
+
+  // 3. Substring / prefix containment (both directions)
+  for (const known of knownTitles) {
+    const knownLower = known.toLowerCase();
+    if (knownLower.startsWith(candidateLower) || candidateLower.startsWith(knownLower)) {
+      return known;
+    }
+  }
+  for (const known of knownTitles) {
+    const knownLower = known.toLowerCase();
+    if (knownLower.includes(candidateLower) || candidateLower.includes(knownLower)) {
+      return known;
+    }
+  }
+
+  // 4. Dice coefficient on bigrams
+  let bestScore = 0;
+  let bestMatch: string | null = null;
+  const candidateBigrams = bigrams(candidateLower);
+  for (const known of knownTitles) {
+    const score = diceCoefficient(candidateBigrams, bigrams(known.toLowerCase()));
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = known;
+    }
+  }
+  if (bestMatch && bestScore >= 0.6) return bestMatch;
+
+  // No match — return original so the validation error is clear
+  return candidate;
+}
+
+function bigrams(s: string): Set<string> {
+  const result = new Set<string>();
+  for (let i = 0; i < s.length - 1; i++) {
+    result.add(s.slice(i, i + 2));
+  }
+  return result;
+}
+
+function diceCoefficient(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const gram of a) {
+    if (b.has(gram)) intersection++;
+  }
+  return (2 * intersection) / (a.size + b.size);
 }
 
 export function buildOpenClawDeveloperPrompt(
