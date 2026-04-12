@@ -398,6 +398,15 @@ try {
   const now = Date.now();
 
   for (const entry of entries) {
+    // Skip infrastructure directories that are not per-task workspaces.
+    // `.agents/` holds persistent per-role auth-profiles.json (including
+    // Codex OAuth tokens). Its mtime only advances when role subdirs are
+    // added/removed, not when files inside them change, so the 24h
+    // expiry would incorrectly wipe it and all codex auth state with it.
+    // Any other dotfile directory is treated the same way.
+    if (entry.startsWith(".")) {
+      continue;
+    }
     const entryPath = join(workspaceRoot, entry);
     try {
       const info = await stat(entryPath);
@@ -624,33 +633,6 @@ if (webhookSecret) {
   log(`GitHub webhook receiver active at ${webhookPath}`);
 }
 
-if (!skipOpenClaw) {
-  log("Starting OpenClaw after operator API is ready...");
-  try {
-    execSync(`docker compose -f "${COMPOSE_FILE}" --profile openclaw up -d openclaw`, {
-      stdio: "inherit",
-      cwd: repoRoot
-    });
-    await waitForOpenClawGateway(process.env.OPENCLAW_HOST_PORT ?? "3578");
-    openClawAvailable = true;
-    openClawStatusSummary = `running (port ${process.env.OPENCLAW_HOST_PORT ?? "3578"})`;
-    const pairingSummary = readPendingOpenClawPairingSummary();
-    if (pairingSummary?.requestId) {
-      openClawPairingRequestId = pairingSummary.requestId;
-      log(
-        `OpenClaw gateway is healthy, but an operator pairing approval is pending (${pairingSummary.requestId}).`
-      );
-    } else {
-      log("OpenClaw gateway is healthy.");
-    }
-  } catch (err) {
-    openClawStatusSummary = `unavailable (${formatError(err)})`;
-    log(
-      `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
-    );
-  }
-}
-
 // ── Codex OAuth auth propagation ──────────────────────────────────────
 // When a user completes Codex OAuth login, the token is written to one
 // agent directory. Other agent roles need the same auth-profiles.json.
@@ -662,6 +644,9 @@ if (!skipOpenClaw) {
 // wipes per-agent auth-profiles.json files on restart, so the snapshot
 // acts as a recovery source: on the next start we can restore the
 // profile to every agent without the user re-running OAuth.
+//
+// This MUST run before `docker compose ... openclaw up` so OpenClaw reads
+// the restored auth state on first boot instead of caching an empty one.
 
 const CODEX_AUTH_SNAPSHOT_PATH = join(
   repoRoot,
@@ -715,14 +700,39 @@ async function writeCodexAuthSnapshot(raw) {
   }
 }
 
+// Read the list of OpenClaw agent role IDs from the resolved openclaw.json
+// so we can reconstruct per-agent auth-profiles.json even when the
+// workspaces/.agents directory has been wiped (e.g. by the 24h workspace
+// cleanup in a previous release, or by a manual rm). Falls back to an
+// empty list on any read/parse error.
+async function readOpenClawAgentRoleIds() {
+  try {
+    const raw = await readFile(openClawConfigRuntimePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const list = parsed?.agents?.list;
+    if (!Array.isArray(list)) return [];
+    const ids = [];
+    for (const entry of list) {
+      if (entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0) {
+        ids.push(entry.id);
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
 async function propagateCodexAuth() {
   const agentsRoot = join(repoRoot, "runtime-data", "workspaces", ".agents");
-  let roleDirs;
+  let roleDirs = [];
   try {
     const entries = await readdir(agentsRoot, { withFileTypes: true });
     roleDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
-    return { propagated: 0, source: "none", snapshotted: false };
+    // agentsRoot is missing (first boot, or wiped by cleanup). We'll fall
+    // back to openclaw.json's agents.list below so recovery from the
+    // snapshot can still materialize per-agent auth-profiles.json files.
   }
 
   // Find a source auth-profiles.json containing an openai-codex provider.
@@ -756,6 +766,19 @@ async function propagateCodexAuth() {
 
   if (!sourceContent) {
     return { propagated: 0, source: "none", snapshotted: false };
+  }
+
+  // When recovering from the snapshot, roleDirs may be empty because the
+  // `.agents` tree hasn't been created yet. Seed the target list from
+  // openclaw.json so the snapshot can be fanned out to every configured
+  // agent role on cold start.
+  if (roleDirs.length === 0) {
+    const configuredRoles = await readOpenClawAgentRoleIds();
+    if (configuredRoles.length === 0) {
+      return { propagated: 0, source: sourceKind, snapshotted: false };
+    }
+    await mkdir(agentsRoot, { recursive: true });
+    roleDirs = configuredRoles;
   }
 
   // Copy to all agent dirs that are missing the file or lack a codex entry
@@ -815,6 +838,33 @@ if (!skipOpenClaw) {
     }
   } catch (err) {
     logError(`Codex auth propagation failed (non-fatal): ${formatError(err)}`);
+  }
+}
+
+if (!skipOpenClaw) {
+  log("Starting OpenClaw after operator API is ready...");
+  try {
+    execSync(`docker compose -f "${COMPOSE_FILE}" --profile openclaw up -d openclaw`, {
+      stdio: "inherit",
+      cwd: repoRoot
+    });
+    await waitForOpenClawGateway(process.env.OPENCLAW_HOST_PORT ?? "3578");
+    openClawAvailable = true;
+    openClawStatusSummary = `running (port ${process.env.OPENCLAW_HOST_PORT ?? "3578"})`;
+    const pairingSummary = readPendingOpenClawPairingSummary();
+    if (pairingSummary?.requestId) {
+      openClawPairingRequestId = pairingSummary.requestId;
+      log(
+        `OpenClaw gateway is healthy, but an operator pairing approval is pending (${pairingSummary.requestId}).`
+      );
+    } else {
+      log("OpenClaw gateway is healthy.");
+    }
+  } catch (err) {
+    openClawStatusSummary = `unavailable (${formatError(err)})`;
+    log(
+      `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
+    );
   }
 }
 
@@ -1072,9 +1122,11 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
 
     // Re-propagate Codex auth to any new agent dirs created since last cycle
     try {
-      const propagated = await propagateCodexAuth();
-      if (propagated > 0) {
-        log(`[periodic-sweep] Propagated Codex OAuth auth to ${propagated} new agent role(s).`);
+      const result = await propagateCodexAuth();
+      if (result.propagated > 0) {
+        log(
+          `[periodic-sweep] Propagated Codex OAuth auth to ${result.propagated} new agent role(s).`
+        );
       }
     } catch { /* non-fatal */ }
   }, periodicSweepIntervalMs);
