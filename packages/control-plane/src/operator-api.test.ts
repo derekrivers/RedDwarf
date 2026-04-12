@@ -506,7 +506,7 @@ describe("operator API server", () => {
       );
       expect(
         (properties["REDDWARF_MODEL_PROVIDER"] as Record<string, unknown>)["enum"]
-      ).toEqual(["anthropic", "openai"]);
+      ).toEqual(["anthropic", "openai", "openai-codex"]);
 
       const badUpdate = await operatorPut(port, "/config", {
         entries: [{ key: "REDDWARF_POLL_INTERVAL_MS", value: "not-a-number" }]

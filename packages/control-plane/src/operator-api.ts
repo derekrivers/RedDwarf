@@ -4,7 +4,7 @@ import {
   type ServerResponse
 } from "node:http";
 import cors from "cors";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildOperatorConfigJsonSchema,
   groupedTaskInjectionRequestSchema,
@@ -19,6 +19,7 @@ import {
   operatorConfigResponseSchema,
   operatorConfigSchemaResponseSchema,
   operatorConfigUpdateRequestSchema,
+  openClawModelProviderSchema,
   operatorSecretKeySchema,
   operatorSecretMetadata,
   operatorSecretRotationRequestSchema,
@@ -42,16 +43,25 @@ import {
   type PlanningTaskInput,
   type PipelineRun
 } from "@reddwarf/contracts";
+import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
 import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
 } from "./openclaw-session-key.js";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  writeFile
+} from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { promisify } from "node:util";
+import type { Writable, Readable } from "node:stream";
 
 const execFileAsync = promisify(execFile);
 import {
@@ -1784,6 +1794,498 @@ async function fixOpenClawPairing(): Promise<OpenClawFixPairingResult> {
   };
 }
 
+export interface OpenClawRestartResult {
+  restarted: true;
+  rawOutput: string;
+}
+
+async function restartOpenClawContainer(): Promise<OpenClawRestartResult> {
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "restart",
+    "openclaw"
+  ];
+  const { stdout, stderr } = await execFileAsync("docker", dockerArgs, {
+    cwd: process.cwd(),
+    env: process.env,
+    maxBuffer: 1024 * 1024
+  });
+  return {
+    restarted: true,
+    rawOutput: `${stdout}\n${stderr}`.trim()
+  };
+}
+
+// ============================================================
+// OpenClaw Codex OAuth login helpers
+// ============================================================
+
+export interface OpenClawCodexAuthStatus {
+  /** True when an OAuth/token entry for openai-codex is registered. */
+  signedIn: boolean;
+  /** Count of providers with active OAuth/token entries. */
+  oauthProviderCount: number;
+  /** Current REDDWARF_MODEL_PROVIDER from the running process env. */
+  currentProvider: "anthropic" | "openai" | "openai-codex" | null;
+  /** Per-role model bindings for the currently selected provider. */
+  roleBindings: Record<string, string> | null;
+  /** Raw combined stdout/stderr from the models status command. */
+  rawOutput: string;
+}
+
+interface CodexLoginStreamSession {
+  child: ChildProcessByStdio<Writable, Readable, Readable>;
+  createdAt: number;
+  /** Response currently streaming output chunks to the dashboard. */
+  response: ServerResponse | null;
+  /** Resolved once the child exits so stream handlers can await it. */
+  exitPromise: Promise<number | null>;
+  exited: boolean;
+  exitCode: number | null;
+}
+
+/** Hard upper bound on how long a stream session can live. */
+const CODEX_LOGIN_STREAM_TTL_MS = 15 * 60 * 1000;
+
+// Module-level registry. Each /openclaw/codex-login/stream connection spawns
+// one live openclaw-models child; /openclaw/codex-login/input targets it by
+// sessionId so the dashboard can forward the pasted redirect URL.
+const codexLoginStreamSessions = new Map<string, CodexLoginStreamSession>();
+
+/**
+ * Python PTY wrapper: forks a pseudo-terminal for the openclaw CLI so it
+ * receives a real TTY (required by `models auth login`), then relays this
+ * process's stdin/stdout through the PTY. A fixed 200x50 window size stops
+ * the CLI's TUI from wrapping the auth URL character-by-character.
+ */
+const CODEX_LOGIN_PYTHON_WRAPPER = `
+import pty, os, sys, select, signal, fcntl, termios, struct
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("node", ["node", "dist/index.js", "models", "auth", "login",
+                        "--provider", "openai-codex", "--set-default"])
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
+stdin_fd = sys.stdin.buffer.fileno() if hasattr(sys.stdin, "buffer") else sys.stdin.fileno()
+stdout_fd = sys.stdout.buffer.fileno() if hasattr(sys.stdout, "buffer") else sys.stdout.fileno()
+exit_code = 1
+try:
+    while True:
+        r, _, _ = select.select([fd, stdin_fd], [], [], 1.0)
+        if fd in r:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            os.write(stdout_fd, data)
+        if stdin_fd in r:
+            try:
+                data = os.read(stdin_fd, 4096)
+            except OSError:
+                break
+            if not data:
+                # Closing stdin is OK — the child may still be running.
+                pass
+            else:
+                os.write(fd, data)
+        try:
+            wpid, status = os.waitpid(pid, os.WNOHANG)
+            if wpid != 0:
+                if os.WIFEXITED(status):
+                    exit_code = os.WEXITSTATUS(status)
+                break
+        except ChildProcessError:
+            break
+finally:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+sys.stdout.flush()
+sys.exit(exit_code)
+`;
+
+function stripAnsiControlSequences(text: string): string {
+  // Strip ANSI CSI/OSC sequences + carriage returns so the parsed output is
+  // readable and regex matches are stable.
+  return text
+    .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\r/g, "");
+}
+
+function parseOpenClawModelsStatus(rawOutput: string): OpenClawCodexAuthStatus {
+  const cleaned = stripAnsiControlSequences(rawOutput);
+  const lines = cleaned.split(/\n/);
+
+  let oauthProviderCount = 0;
+  const countLine = lines.find((line) =>
+    /Providers w\/ OAuth\/tokens\s*\((\d+)\)/i.test(line)
+  );
+  if (countLine) {
+    const m = countLine.match(/\((\d+)\)/);
+    if (m && m[1]) {
+      oauthProviderCount = Number.parseInt(m[1], 10) || 0;
+    }
+  }
+
+  // The detailed OAuth/token status section follows the header
+  // "OAuth/token status". A signed-in codex profile appears as a bullet line
+  // mentioning `openai-codex`. When no providers are signed in the CLI prints
+  // a literal `- none` line.
+  const oauthStatusIdx = lines.findIndex((line) =>
+    /OAuth\/token status/i.test(line)
+  );
+  let codexMentioned = false;
+  if (oauthStatusIdx >= 0) {
+    for (let i = oauthStatusIdx + 1; i < lines.length; i += 1) {
+      const line = lines[i] ?? "";
+      if (/openai-codex/i.test(line)) {
+        codexMentioned = true;
+        break;
+      }
+      if (line.trim().length === 0 && i > oauthStatusIdx + 1) {
+        break;
+      }
+    }
+  }
+
+  const signedIn = codexMentioned || oauthProviderCount > 0;
+
+  const envProviderRaw = process.env.REDDWARF_MODEL_PROVIDER?.trim();
+  const currentProvider =
+    envProviderRaw === "anthropic" ||
+    envProviderRaw === "openai" ||
+    envProviderRaw === "openai-codex"
+      ? envProviderRaw
+      : null;
+
+  const roleBindings = currentProvider
+    ? { ...MODEL_PROVIDER_ROLE_MAP[currentProvider] }
+    : null;
+
+  return {
+    signedIn,
+    oauthProviderCount,
+    currentProvider,
+    roleBindings,
+    rawOutput: cleaned
+  };
+}
+
+/**
+ * Check the bind-mounted workspace agent dirs for an openai-codex OAuth
+ * profile with an unexpired access token. The openclaw login CLI writes
+ * these per-role files but `openclaw models status` only inspects the
+ * default agent dir, so it reports 0 OAuth providers even when the
+ * runtime agents are fully authenticated.
+ */
+async function hasCodexAuthInWorkspaceAgents(): Promise<boolean> {
+  const agentsRoot = join(
+    process.cwd(),
+    "runtime-data",
+    "workspaces",
+    ".agents"
+  );
+  let roleDirs: string[];
+  try {
+    const entries = await readdir(agentsRoot, { withFileTypes: true });
+    roleDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return false;
+  }
+  const nowSeconds = Date.now();
+  for (const role of roleDirs) {
+    const profilePath = join(
+      agentsRoot,
+      role,
+      "agent",
+      "auth-profiles.json"
+    );
+    let raw: string;
+    try {
+      raw = await readFile(profilePath, "utf8");
+    } catch {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      continue;
+    }
+    const profiles = (parsed as { profiles?: Record<string, unknown> })
+      .profiles;
+    if (!profiles || typeof profiles !== "object") {
+      continue;
+    }
+    for (const entry of Object.values(profiles)) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const e = entry as {
+        provider?: unknown;
+        access?: unknown;
+        expires?: unknown;
+      };
+      if (e.provider !== "openai-codex") {
+        continue;
+      }
+      if (typeof e.access !== "string" || e.access.length === 0) {
+        continue;
+      }
+      if (typeof e.expires === "number" && e.expires > 0 && e.expires < nowSeconds) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+async function readOpenClawCodexAuthStatus(): Promise<OpenClawCodexAuthStatus> {
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "exec",
+    "-T",
+    "openclaw",
+    "node",
+    "dist/index.js",
+    "models",
+    "status"
+  ];
+  const { stdout, stderr } = await execFileAsync("docker", dockerArgs, {
+    cwd: process.cwd(),
+    maxBuffer: 1024 * 1024
+  });
+  const status = parseOpenClawModelsStatus(`${stdout}\n${stderr}`);
+  if (!status.signedIn) {
+    // `openclaw models status` only checks the default agent dir; the login
+    // CLI persists tokens to every workspace-scoped role dir instead. Fall
+    // back to scanning those so the dashboard reflects reality.
+    const hasWorkspaceAuth = await hasCodexAuthInWorkspaceAgents();
+    if (hasWorkspaceAuth) {
+      return { ...status, signedIn: true };
+    }
+  }
+  return status;
+}
+
+/**
+ * Reap orphaned openclaw Codex login processes inside the openclaw container.
+ *
+ * The login CLI binds 127.0.0.1:1455 inside the container for its OAuth
+ * callback listener. If a prior control-plane process crashed or was
+ * restarted mid-flow, its python3 PTY wrapper and openclaw-models child
+ * survive and keep the port held — every subsequent login attempt then
+ * EADDRINUSEs and falls back to the manual-paste flow with no session to
+ * match. Only safe to call when no live session is tracked in-process.
+ */
+async function reapStaleCodexLoginProcesses(): Promise<void> {
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "exec",
+    "-T",
+    "openclaw",
+    "sh",
+    "-c",
+    "pkill -KILL -f 'models[[:space:]]\\+auth[[:space:]]\\+login.*openai-codex' 2>/dev/null; pkill -KILL -f 'pty\\.fork' 2>/dev/null; exit 0"
+  ];
+  await new Promise<void>((resolve) => {
+    const child = spawn("docker", dockerArgs, { stdio: "ignore" });
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+}
+
+function writeCodexStreamFrame(
+  res: ServerResponse,
+  frame:
+    | { type: "session"; sessionId: string }
+    | { type: "data"; data: string }
+    | { type: "exit"; code: number | null }
+    | { type: "error"; message: string }
+): void {
+  if (res.writableEnded) {
+    return;
+  }
+  try {
+    res.write(`${JSON.stringify(frame)}\n`);
+  } catch {
+    // downstream socket may already be closed
+  }
+}
+
+function destroyCodexLoginSession(sessionId: string): void {
+  const session = codexLoginStreamSessions.get(sessionId);
+  if (!session) {
+    return;
+  }
+  codexLoginStreamSessions.delete(sessionId);
+  if (!session.exited) {
+    try {
+      session.child.kill("SIGTERM");
+    } catch {
+      // child may already be gone
+    }
+  }
+}
+
+/**
+ * Spawn the openclaw Codex login CLI and stream its output to the dashboard
+ * as newline-delimited JSON frames on a single long-lived response. The
+ * caller sends stdin back via POST /openclaw/codex-login/input using the
+ * sessionId emitted in the first frame.
+ *
+ * Closing the response (client navigated away / closed modal) SIGTERMs the
+ * child so we never leak processes the way the old REST flow did.
+ */
+async function streamOpenClawCodexLogin(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  if (codexLoginStreamSessions.size === 0) {
+    await reapStaleCodexLoginProcesses();
+  }
+
+  const dockerArgs = [
+    "compose",
+    "-f",
+    OPENCLAW_COMPOSE_FILE,
+    "--profile",
+    "openclaw",
+    "exec",
+    "-T",
+    "openclaw",
+    "python3",
+    "-u",
+    "-c",
+    CODEX_LOGIN_PYTHON_WRAPPER
+  ];
+
+  const child = spawn("docker", dockerArgs, {
+    cwd: process.cwd(),
+    stdio: ["pipe", "pipe", "pipe"]
+  }) as ChildProcessByStdio<Writable, Readable, Readable>;
+
+  const sessionId = randomUUID();
+
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    Connection: "keep-alive"
+  });
+
+  const session: CodexLoginStreamSession = {
+    child,
+    createdAt: Date.now(),
+    response: res,
+    exited: false,
+    exitCode: null,
+    exitPromise: new Promise<number | null>((resolve) => {
+      child.once("exit", (code) => {
+        session.exited = true;
+        session.exitCode = code;
+        resolve(code);
+      });
+    })
+  };
+  codexLoginStreamSessions.set(sessionId, session);
+
+  writeCodexStreamFrame(res, { type: "session", sessionId });
+
+  const relay = (chunk: Buffer) => {
+    if (chunk.length === 0) {
+      return;
+    }
+    writeCodexStreamFrame(res, {
+      type: "data",
+      data: chunk.toString("base64")
+    });
+  };
+  child.stdout.on("data", relay);
+  child.stderr.on("data", relay);
+
+  child.once("error", (error) => {
+    writeCodexStreamFrame(res, {
+      type: "error",
+      message: safeErrorMessage(error, "openclaw CLI spawn error")
+    });
+  });
+
+  const ttlHandle = setTimeout(() => {
+    destroyCodexLoginSession(sessionId);
+  }, CODEX_LOGIN_STREAM_TTL_MS);
+  ttlHandle.unref?.();
+
+  const closeResponse = () => {
+    clearTimeout(ttlHandle);
+    if (!res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        // response may already be closed
+      }
+    }
+  };
+
+  // When the client disconnects (closes the modal, navigates away) kill the
+  // live openclaw-models child so port 1455 is released immediately.
+  req.once("close", () => {
+    if (!session.exited) {
+      destroyCodexLoginSession(sessionId);
+    }
+    closeResponse();
+  });
+
+  const exitCode = await session.exitPromise;
+  writeCodexStreamFrame(res, { type: "exit", code: exitCode });
+  codexLoginStreamSessions.delete(sessionId);
+  closeResponse();
+}
+
+function writeOpenClawCodexLoginInput(
+  sessionId: string,
+  data: string
+): { accepted: boolean; reason?: string } {
+  const session = codexLoginStreamSessions.get(sessionId);
+  if (!session) {
+    return { accepted: false, reason: "session_not_found" };
+  }
+  if (session.exited) {
+    return { accepted: false, reason: "session_exited" };
+  }
+  try {
+    session.child.stdin.write(data);
+    return { accepted: true };
+  } catch {
+    return { accepted: false, reason: "stdin_write_failed" };
+  }
+}
+
 async function handleOperatorRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -2091,6 +2593,155 @@ async function handleOperatorRequest(
     return;
   }
 
+  // GET /openclaw/codex-status — auth status for the openai-codex provider
+  if (method === "GET" && path === "/openclaw/codex-status") {
+    try {
+      const status = await readOpenClawCodexAuthStatus();
+      writeOperatorJsonResponse(res, 200, status);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_unreachable",
+        message: safeErrorMessage(
+          error,
+          "Failed to read OpenClaw Codex auth status. Is the openclaw container running?"
+        )
+      });
+    }
+    return;
+  }
+
+  // POST /openclaw/model-provider — atomically switch REDDWARF_MODEL_PROVIDER
+  // across the operator config DB, the running process env, and the generated
+  // openclaw.json. The openclaw container must still be restarted for the
+  // new agent model bindings to take effect.
+  if (method === "POST" && path === "/openclaw/model-provider") {
+    try {
+      const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+        | { provider?: unknown }
+        | null;
+      const parsed = openClawModelProviderSchema.safeParse(body?.provider);
+      if (!parsed.success) {
+        writeOperatorJsonResponse(res, 400, {
+          error: "invalid_request",
+          message: "provider must be one of: anthropic, openai, openai-codex"
+        });
+        return;
+      }
+      const provider = parsed.data;
+      const updatedAt = clock().toISOString();
+      await repository.saveOperatorConfigEntry({
+        key: "REDDWARF_MODEL_PROVIDER",
+        value: provider,
+        updatedAt
+      });
+      process.env.REDDWARF_MODEL_PROVIDER = provider;
+
+      // Regenerate openclaw.json by running the existing script so the runtime
+      // config matches the new provider. The script reads the same env we just
+      // updated.
+      const scriptOutput = await execFileAsync(
+        "node",
+        ["scripts/generate-openclaw-config.mjs"],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          maxBuffer: 1024 * 1024
+        }
+      );
+
+      writeOperatorJsonResponse(res, 200, {
+        provider,
+        requiresRestart: true,
+        message: `Model provider set to ${provider}. Restart the openclaw container for the new agent model bindings to take effect.`,
+        rawOutput: `${scriptOutput.stdout}\n${scriptOutput.stderr}`.trim()
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 500, {
+        error: "model_provider_update_failed",
+        message: safeErrorMessage(
+          error,
+          "Failed to update OpenClaw model provider."
+        )
+      });
+    }
+    return;
+  }
+
+  // GET /openclaw/codex-login/stream — long-lived NDJSON stream that spawns
+  // the openclaw Codex login CLI and relays its output back to the dashboard
+  // terminal. The first frame carries the sessionId the client must use to
+  // POST keystrokes back via /openclaw/codex-login/input.
+  if (method === "GET" && path === "/openclaw/codex-login/stream") {
+    try {
+      await streamOpenClawCodexLogin(req, res);
+    } catch (error) {
+      if (!res.headersSent) {
+        writeOperatorJsonResponse(res, 502, {
+          error: "openclaw_codex_login_failed",
+          message: safeErrorMessage(
+            error,
+            "Failed to start OpenClaw Codex login stream. Is the openclaw container running?"
+          )
+        });
+      } else if (!res.writableEnded) {
+        writeCodexStreamFrame(res, {
+          type: "error",
+          message: safeErrorMessage(error, "openclaw Codex login stream error")
+        });
+        try {
+          res.end();
+        } catch {
+          // already closed
+        }
+      }
+    }
+    return;
+  }
+
+  // POST /openclaw/codex-login/input — write the pasted callback URL (or any
+  // other keystroke sequence the dashboard terminal captures) into the live
+  // login session's stdin. Body: { sessionId: string, data: string }.
+  if (method === "POST" && path === "/openclaw/codex-login/input") {
+    try {
+      const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+        | { sessionId?: unknown; data?: unknown }
+        | null;
+      const sessionId =
+        typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
+      const data = typeof body?.data === "string" ? body.data : "";
+      if (sessionId.length === 0) {
+        writeOperatorJsonResponse(res, 400, {
+          error: "invalid_request",
+          message: "sessionId is required"
+        });
+        return;
+      }
+      const result = writeOpenClawCodexLoginInput(sessionId, data);
+      if (!result.accepted) {
+        writeOperatorJsonResponse(res, 409, {
+          error: result.reason ?? "input_rejected",
+          message:
+            result.reason === "session_not_found"
+              ? "Codex login session not found or already closed."
+              : result.reason === "session_exited"
+                ? "Codex login session already exited."
+                : "Failed to write to Codex login session stdin."
+        });
+        return;
+      }
+      writeOperatorJsonResponse(res, 200, { accepted: true });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_codex_login_failed",
+        message: safeErrorMessage(
+          error,
+          "Failed to forward input to Codex login session."
+        )
+      });
+    }
+    return;
+  }
+
   // POST /openclaw/fix-pairing — approve any pending operator pairing requests
   if (method === "POST" && path === "/openclaw/fix-pairing") {
     try {
@@ -2110,6 +2761,29 @@ async function handleOperatorRequest(
         message: safeErrorMessage(
           error,
           "Failed to fix OpenClaw pairing. Is the openclaw container running?"
+        )
+      });
+    }
+    return;
+  }
+
+  // POST /openclaw/restart — restart the openclaw compose service so new
+  // openclaw.json bindings (e.g. after a provider switch) take effect.
+  if (method === "POST" && path === "/openclaw/restart") {
+    try {
+      const result = await restartOpenClawContainer();
+      writeOperatorJsonResponse(res, 200, {
+        restarted: true,
+        message:
+          "OpenClaw container restarted. New agent model bindings are now active.",
+        rawOutput: result.rawOutput
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 502, {
+        error: "openclaw_restart_failed",
+        message: safeErrorMessage(
+          error,
+          "Failed to restart OpenClaw container."
         )
       });
     }

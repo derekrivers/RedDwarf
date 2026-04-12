@@ -336,7 +336,7 @@ describe("contracts", () => {
         string,
         unknown
       >)["enum"]
-    ).toEqual(["anthropic", "openai"]);
+    ).toEqual(["anthropic", "openai", "openai-codex"]);
     expect(response.schema.descriptions["REDDWARF_SKIP_OPENCLAW"]).toContain(
       "OpenClaw"
     );

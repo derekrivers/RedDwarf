@@ -449,7 +449,7 @@ const jsonSchemaTypeByKey: Record<OperatorConfigKey, unknown> = {
   },
   REDDWARF_MODEL_PROVIDER: {
     type: "string",
-    enum: ["anthropic", "openai"]
+    enum: ["anthropic", "openai", "openai-codex"]
   },
   REDDWARF_DB_POOL_MAX: { type: "integer", minimum: 1 },
   REDDWARF_DB_POOL_CONNECTION_TIMEOUT_MS: { type: "integer", minimum: 1 },

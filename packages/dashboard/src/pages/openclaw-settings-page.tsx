@@ -2,15 +2,47 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertCircle,
+  IconBrandOpenai,
+  IconCheck,
   IconCircleCheck,
+  IconCopy,
   IconLink,
+  IconPlayerPlay,
   IconRefresh,
   IconTool
 } from "@tabler/icons-react";
-import type { OpenClawFixPairingResponse } from "../api/client";
+import type {
+  OpenClawFixPairingResponse,
+  OpenClawModelProvider,
+  OpenClawRestartResponse
+} from "../api/client";
 import type { DashboardApiClient } from "../types/dashboard";
 
 const PAIRING_STATUS_QUERY_KEY = ["openclaw-pairing-status"] as const;
+const CODEX_STATUS_QUERY_KEY = ["openclaw-codex-status"] as const;
+
+const MODEL_PROVIDER_OPTIONS: Array<{
+  value: OpenClawModelProvider;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "openai-codex",
+    label: "OpenAI Codex (ChatGPT subscription)",
+    description:
+      "Routes agents through your ChatGPT Plus/Pro subscription via OpenClaw's Codex OAuth. No API billing."
+  },
+  {
+    value: "openai",
+    label: "OpenAI API",
+    description: "Uses the OpenAI API directly. Billed per token."
+  },
+  {
+    value: "anthropic",
+    label: "Anthropic API",
+    description: "Uses the Anthropic API directly. Billed per token."
+  }
+];
 
 export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const { apiClient } = props;
@@ -18,6 +50,14 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const [lastFixResult, setLastFixResult] =
     useState<OpenClawFixPairingResponse | null>(null);
   const [showRawOutput, setShowRawOutput] = useState(false);
+  const [selectedProvider, setSelectedProvider] =
+    useState<OpenClawModelProvider | null>(null);
+  const [providerResultMessage, setProviderResultMessage] = useState<
+    string | null
+  >(null);
+  const [codexCommandCopied, setCodexCommandCopied] = useState(false);
+  const [restartResult, setRestartResult] =
+    useState<OpenClawRestartResponse | null>(null);
 
   const statusQuery = useQuery({
     queryKey: PAIRING_STATUS_QUERY_KEY,
@@ -25,10 +65,34 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
     refetchInterval: 15_000
   });
 
+  const codexStatusQuery = useQuery({
+    queryKey: CODEX_STATUS_QUERY_KEY,
+    queryFn: () => apiClient.getOpenClawCodexStatus(),
+    refetchInterval: 30_000
+  });
+
   const fixMutation = useMutation({
     mutationFn: () => apiClient.fixOpenClawPairing(),
     onSuccess: (result) => {
       setLastFixResult(result);
+      queryClient.invalidateQueries({ queryKey: PAIRING_STATUS_QUERY_KEY });
+    }
+  });
+
+  const setProviderMutation = useMutation({
+    mutationFn: (provider: OpenClawModelProvider) =>
+      apiClient.setOpenClawModelProvider(provider),
+    onSuccess: (result) => {
+      setProviderResultMessage(result.message);
+      queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
+    }
+  });
+
+  const restartMutation = useMutation({
+    mutationFn: () => apiClient.restartOpenClaw(),
+    onSuccess: (result) => {
+      setRestartResult(result);
+      queryClient.invalidateQueries({ queryKey: CODEX_STATUS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: PAIRING_STATUS_QUERY_KEY });
     }
   });
@@ -44,9 +108,342 @@ export function OpenClawSettingsPage(props: { apiClient: DashboardApiClient }) {
   const statusError =
     statusQuery.error instanceof Error ? statusQuery.error.message : null;
 
+  const codexStatus = codexStatusQuery.data ?? null;
+  const codexStatusError =
+    codexStatusQuery.error instanceof Error
+      ? codexStatusQuery.error.message
+      : null;
+  const currentProvider: OpenClawModelProvider | null =
+    codexStatus?.currentProvider ?? null;
+  const codexSignedIn = codexStatus?.signedIn ?? false;
+  const providerError =
+    setProviderMutation.error instanceof Error
+      ? setProviderMutation.error.message
+      : null;
+  const restartError =
+    restartMutation.error instanceof Error ? restartMutation.error.message : null;
+
+  const confirmAndRestart = () => {
+    if (
+      !window.confirm(
+        "Restart the OpenClaw container? This will drop any in-flight agent sessions and active pipeline runs will need to resume."
+      )
+    ) {
+      return;
+    }
+    setRestartResult(null);
+    restartMutation.mutate();
+  };
+
+  const codexLoginCommand =
+    "docker compose -f infra/docker/docker-compose.yml --profile openclaw exec openclaw node dist/index.js models auth login --provider openai-codex --set-default";
+
+  const copyCodexCommand = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(codexLoginCommand);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = codexLoginCommand;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCodexCommandCopied(true);
+      window.setTimeout(() => setCodexCommandCopied(false), 2000);
+    } catch {
+      // best-effort copy
+    }
+  };
+
   return (
     <div className="row g-4">
       <div className="col-lg-8">
+        <div className="card mb-4">
+          <div className="card-header">
+            <h3 className="card-title d-flex align-items-center gap-2">
+              <IconBrandOpenai size={20} stroke={1.75} />
+              Model Provider
+            </h3>
+            <div className="card-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost-secondary"
+                onClick={() => codexStatusQuery.refetch()}
+                disabled={codexStatusQuery.isFetching}
+              >
+                <IconRefresh size={14} className="me-1" />
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div className="card-body">
+            <p className="text-secondary mb-3">
+              Select which upstream provider RedDwarf agents should use. The{" "}
+              <strong>OpenAI Codex</strong> option routes every agent through
+              your ChatGPT subscription via OpenClaw's Codex OAuth flow, so
+              token usage is not billed to an API key.
+            </p>
+
+            {codexStatusQuery.isLoading ? (
+              <div className="placeholder-glow mb-3">
+                <div className="placeholder col-5 mb-2" />
+                <div className="placeholder col-3" />
+              </div>
+            ) : codexStatusError ? (
+              <div className="alert alert-danger d-flex align-items-start gap-2 mb-3">
+                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">
+                    Could not read Codex auth status
+                  </div>
+                  <div className="small">{codexStatusError}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 d-flex flex-wrap gap-2 align-items-center">
+                  <span className="text-secondary">Current provider:</span>
+                  <span className="badge bg-blue-lt">
+                    {currentProvider ?? "not set"}
+                  </span>
+                  <span className="text-secondary">Codex signed in:</span>
+                  <span
+                    className={`badge ${codexSignedIn ? "bg-green-lt" : "bg-yellow-lt"}`}
+                  >
+                    {codexSignedIn ? "yes" : "no"}
+                  </span>
+                </div>
+                {codexStatus?.roleBindings ? (
+                  <div className="mb-3">
+                    <div className="text-secondary small mb-1">
+                      Active agent model bindings:
+                    </div>
+                    <ul className="list-unstyled small mb-0">
+                      {Object.entries(codexStatus.roleBindings).map(
+                        ([role, model]) => (
+                          <li key={role}>
+                            <span className="text-secondary">{role}:</span>{" "}
+                            <code>{model}</code>
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            <div className="mb-3">
+              <label className="form-label">Switch provider</label>
+              <div className="d-flex flex-column gap-2">
+                {MODEL_PROVIDER_OPTIONS.map((option) => {
+                  const isCurrent = option.value === currentProvider;
+                  const isSelected =
+                    selectedProvider === option.value ||
+                    (selectedProvider === null && isCurrent);
+                  return (
+                    <label
+                      key={option.value}
+                      className={`form-selectgroup-item ${isSelected ? "active" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        name="model-provider"
+                        value={option.value}
+                        className="form-selectgroup-input"
+                        checked={isSelected}
+                        onChange={() => setSelectedProvider(option.value)}
+                      />
+                      <span className="form-selectgroup-label d-flex align-items-start gap-2 text-start">
+                        <span className="flex-grow-1">
+                          <span className="fw-bold d-block">
+                            {option.label}
+                            {isCurrent ? (
+                              <span className="badge bg-blue-lt ms-2">
+                                current
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="small text-secondary">
+                            {option.description}
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="d-flex flex-wrap gap-2 align-items-center">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={
+                  setProviderMutation.isPending ||
+                  selectedProvider === null ||
+                  selectedProvider === currentProvider
+                }
+                onClick={() => {
+                  if (!selectedProvider) return;
+                  setProviderResultMessage(null);
+                  setProviderMutation.mutate(selectedProvider);
+                }}
+              >
+                {setProviderMutation.isPending
+                  ? "Applying..."
+                  : "Apply provider"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline-warning"
+                disabled={restartMutation.isPending}
+                onClick={confirmAndRestart}
+              >
+                <IconPlayerPlay size={16} className="me-1" />
+                {restartMutation.isPending
+                  ? "Restarting..."
+                  : "Restart OpenClaw"}
+              </button>
+              <span className="text-secondary small">
+                Updates <code>REDDWARF_MODEL_PROVIDER</code>, regenerates{" "}
+                <code>openclaw.json</code>. A restart is required for new
+                agent bindings to take effect.
+              </span>
+            </div>
+
+            {providerError ? (
+              <div className="alert alert-danger d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">Failed to update provider</div>
+                  <div className="small">{providerError}</div>
+                </div>
+              </div>
+            ) : null}
+
+            {providerResultMessage ? (
+              <div className="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconCircleCheck size={18} className="mt-1 flex-shrink-0" />
+                <div className="flex-grow-1">
+                  <div className="fw-bold">{providerResultMessage}</div>
+                  <div className="small text-secondary mb-2">
+                    Restart the <code>openclaw</code> container for the new
+                    agent model bindings to take effect.
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-warning"
+                    disabled={restartMutation.isPending}
+                    onClick={confirmAndRestart}
+                  >
+                    <IconPlayerPlay size={14} className="me-1" />
+                    {restartMutation.isPending
+                      ? "Restarting..."
+                      : "Restart OpenClaw now"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {restartError ? (
+              <div className="alert alert-danger d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconAlertCircle size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">Failed to restart OpenClaw</div>
+                  <div className="small">{restartError}</div>
+                </div>
+              </div>
+            ) : null}
+
+            {restartResult ? (
+              <div className="alert alert-success d-flex align-items-start gap-2 mt-3 mb-0">
+                <IconCircleCheck size={18} className="mt-1 flex-shrink-0" />
+                <div>
+                  <div className="fw-bold">{restartResult.message}</div>
+                </div>
+              </div>
+            ) : null}
+
+            <hr className="my-4" />
+
+            <h4 className="mb-2">ChatGPT (Codex) sign-in</h4>
+            <p className="text-secondary small mb-3">
+              Required before switching to <strong>OpenAI Codex</strong>. The
+              openclaw CLI needs a real TTY for this flow, so run the command
+              below in a local terminal from the repository root and follow
+              openclaw's prompts.
+            </p>
+
+            <ol className="mb-3 ps-3">
+              <li className="mb-2">
+                Open a terminal at the RedDwarf repo root and run:
+                <div className="d-flex align-items-stretch gap-2 mt-2">
+                  <pre
+                    className="bg-dark text-light rounded p-3 mb-0 flex-grow-1"
+                    style={{
+                      fontFamily:
+                        '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+                      fontSize: "12px",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      overflowX: "auto"
+                    }}
+                  >
+                    {codexLoginCommand}
+                  </pre>
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary d-inline-flex align-items-center gap-1"
+                    onClick={() => {
+                      void copyCodexCommand();
+                    }}
+                    title="Copy command"
+                  >
+                    {codexCommandCopied ? (
+                      <IconCheck size={16} />
+                    ) : (
+                      <IconCopy size={16} />
+                    )}
+                    {codexCommandCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </li>
+              <li className="mb-2">
+                openclaw will print an{" "}
+                <code>https://auth.openai.com/...</code> URL. Open it in a
+                local browser tab and sign in with your ChatGPT account.
+              </li>
+              <li className="mb-2">
+                Your browser will be redirected to a{" "}
+                <code>http://localhost:1455/?code=...</code> URL (the page will
+                fail to load — that's expected). Copy the full URL from the
+                address bar.
+              </li>
+              <li className="mb-2">
+                Paste that redirect URL back into the same terminal where
+                openclaw is waiting and press <kbd>Enter</kbd>.
+              </li>
+              <li className="mb-0">
+                Once openclaw confirms the login, come back here and click{" "}
+                <strong>Refresh</strong> on the Model Provider card above —
+                you'll see Codex marked as signed in and you can switch the
+                active provider to <strong>OpenAI Codex</strong>.
+              </li>
+            </ol>
+
+            <div className="alert alert-info mb-0 small">
+              <strong>Already signed in?</strong> The auth status above shows
+              whether this step is still needed. Re-run the command any time
+              you need to re-authenticate (e.g. after a token expiry).
+            </div>
+          </div>
+        </div>
+
         <div className="card">
           <div className="card-header">
             <h3 className="card-title d-flex align-items-center gap-2">

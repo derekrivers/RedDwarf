@@ -162,6 +162,44 @@ export interface OpenClawFixPairingResponse {
   rawOutput: string;
 }
 
+export type OpenClawModelProvider = "anthropic" | "openai" | "openai-codex";
+
+export interface OpenClawModelProviderResponse {
+  provider: OpenClawModelProvider;
+  requiresRestart: boolean;
+  message: string;
+  rawOutput: string;
+}
+
+export interface OpenClawCodexAuthStatusResponse {
+  signedIn: boolean;
+  oauthProviderCount: number;
+  currentProvider: OpenClawModelProvider | null;
+  roleBindings: Record<string, string> | null;
+  rawOutput: string;
+}
+
+export interface OpenClawCodexLoginInputResponse {
+  accepted: boolean;
+}
+
+/**
+ * One frame from the NDJSON stream served by
+ * GET /openclaw/codex-login/stream. The stream is consumed via fetch() with
+ * a ReadableStream reader in the embedded terminal component.
+ */
+export type OpenClawCodexLoginStreamFrame =
+  | { type: "session"; sessionId: string }
+  | { type: "data"; data: string }
+  | { type: "exit"; code: number | null }
+  | { type: "error"; message: string };
+
+export interface OpenClawRestartResponse {
+  restarted: true;
+  message: string;
+  rawOutput: string;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   token?: string;
@@ -370,6 +408,29 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
       return request<OpenClawFixPairingResponse>("/openclaw/fix-pairing", {
         method: "POST"
       });
+    },
+    setOpenClawModelProvider(provider: OpenClawModelProvider) {
+      return request<OpenClawModelProviderResponse>("/openclaw/model-provider", {
+        method: "POST",
+        body: JSON.stringify({ provider })
+      });
+    },
+    getOpenClawCodexStatus() {
+      return request<OpenClawCodexAuthStatusResponse>("/openclaw/codex-status");
+    },
+    sendOpenClawCodexLoginInput(sessionId: string, data: string) {
+      return request<OpenClawCodexLoginInputResponse>(
+        "/openclaw/codex-login/input",
+        {
+          method: "POST",
+          body: JSON.stringify({ sessionId, data })
+        }
+      );
+    },
+    restartOpenClaw() {
+      return request<OpenClawRestartResponse>("/openclaw/restart", {
+        method: "POST"
+      });
     }
   };
 }
@@ -378,4 +439,80 @@ export function getPendingApprovalCount(
   approvals: Array<{ status: ApprovalRequestStatus }>
 ): number {
   return approvals.filter((approval) => approval.status === "pending").length;
+}
+
+/**
+ * Open a long-lived NDJSON stream that drives the embedded Codex login
+ * terminal. Yields one parsed frame at a time until the connection closes
+ * or the caller aborts via `signal`. The first frame carries the sessionId
+ * the caller must pass back to `sendOpenClawCodexLoginInput` to forward
+ * keystrokes to the container CLI.
+ */
+export async function* openOpenClawCodexLoginStream(
+  signal: AbortSignal,
+  baseUrl = "/api"
+): AsyncGenerator<OpenClawCodexLoginStreamFrame, void, unknown> {
+  const token = readOperatorToken();
+  const response = await fetch(`${baseUrl}/openclaw/codex-login/stream`, {
+    method: "GET",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Accept: "application/x-ndjson"
+    },
+    signal
+  });
+
+  if (response.status === 401) {
+    clearOperatorToken();
+    throw new ApiError(401, "Operator token is no longer valid.");
+  }
+  if (!response.ok || !response.body) {
+    const payload = (await response.json().catch(() => null)) as
+      | { message?: string }
+      | null;
+    throw new ApiError(
+      response.status,
+      payload?.message ?? `Codex login stream failed with status ${response.status}.`
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIdx = buffer.indexOf("\n");
+      while (newlineIdx >= 0) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+        if (line.length > 0) {
+          try {
+            yield JSON.parse(line) as OpenClawCodexLoginStreamFrame;
+          } catch {
+            // Skip malformed frames rather than killing the whole stream.
+          }
+        }
+        newlineIdx = buffer.indexOf("\n");
+      }
+    }
+    const trailing = buffer.trim();
+    if (trailing.length > 0) {
+      try {
+        yield JSON.parse(trailing) as OpenClawCodexLoginStreamFrame;
+      } catch {
+        // ignore
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released
+    }
+  }
 }

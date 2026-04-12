@@ -19,8 +19,13 @@ import type {
   CancelRunResponse,
   GitHubReposResponse,
   HealthResponse,
+  OpenClawCodexAuthStatusResponse,
+  OpenClawCodexLoginInputResponse,
   OpenClawFixPairingResponse,
+  OpenClawModelProvider,
+  OpenClawModelProviderResponse,
   OpenClawPairingStatusResponse,
+  OpenClawRestartResponse,
   PipelineRunsResponse,
   RepoDeleteResponse,
   RepoMutationResponse,
@@ -161,4 +166,13 @@ export interface DashboardApiClient {
   ): Promise<ProjectClarifyResponse>;
   getOpenClawPairingStatus(): Promise<OpenClawPairingStatusResponse>;
   fixOpenClawPairing(): Promise<OpenClawFixPairingResponse>;
+  setOpenClawModelProvider(
+    provider: OpenClawModelProvider
+  ): Promise<OpenClawModelProviderResponse>;
+  getOpenClawCodexStatus(): Promise<OpenClawCodexAuthStatusResponse>;
+  sendOpenClawCodexLoginInput(
+    sessionId: string,
+    data: string
+  ): Promise<OpenClawCodexLoginInputResponse>;
+  restartOpenClaw(): Promise<OpenClawRestartResponse>;
 }
