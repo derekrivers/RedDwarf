@@ -470,8 +470,7 @@ describe("RestGitHubAdapter", () => {
   });
 
   it("fails fast when the GitHub API request exceeds the timeout", async () => {
-    vi.useFakeTimers();
-
+    // Simulate a permanently hanging endpoint — each retry attempt times out.
     const fetchMock = vi.fn().mockImplementation((_url, init) =>
       new Promise((_, reject) => {
         const signal = (init as RequestInit).signal;
@@ -485,18 +484,18 @@ describe("RestGitHubAdapter", () => {
       requestTimeoutMs: 25
     });
 
-    const pending = adapter.listIssueCandidates({
-      repo: "acme/platform",
-      labels: ["ai-eligible"],
-      states: ["open"],
-      limit: 10
-    });
-    await vi.advanceTimersByTimeAsync(25);
+    await expect(
+      adapter.listIssueCandidates({
+        repo: "acme/platform",
+        labels: ["ai-eligible"],
+        states: ["open"],
+        limit: 10
+      })
+    ).rejects.toThrow(/timed out after 25ms/);
 
-    await expect(pending).rejects.toThrow(
-      "GitHub API GET /repos/acme/platform/issues?state=open&labels=ai-eligible&per_page=10 timed out after 25ms."
-    );
-  });
+    // All 3 retry attempts hit the timeout
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 30_000);
 });
 
 describe("HttpOpenClawDispatchAdapter", () => {

@@ -169,9 +169,8 @@ describe("RestGitHubAdapter.fetchIssueCandidate", () => {
 // ── Timeout ───────────────────────────────────────────────────────────────────
 
 describe("RestGitHubAdapter timeout handling", () => {
-  it("throws a timeout error when fetch times out", async () => {
-    vi.useFakeTimers();
-
+  it("throws a timeout error when all retry attempts time out", async () => {
+    // Simulate a permanently hanging endpoint — each attempt hits the AbortSignal timeout.
     const fetchMock = vi.fn().mockImplementation((_url, init) =>
       new Promise((_, reject) => {
         const signal = (init as RequestInit).signal;
@@ -181,20 +180,69 @@ describe("RestGitHubAdapter timeout handling", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = new RestGitHubAdapter({ token: "test-token", requestTimeoutMs: 50 });
-    const pending = adapter.fetchIssueCandidate("acme/platform", 42);
-    await vi.advanceTimersByTimeAsync(50);
+    await expect(adapter.fetchIssueCandidate("acme/platform", 42)).rejects.toThrow(/timed out/i);
 
-    await expect(pending).rejects.toThrow(/timed out/i);
-  });
+    // All 3 retry attempts hit the timeout
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 30_000);
 });
 
-// ── 429 rate-limit on list issues ────────────────────────────────────────────
+// ── Retry behavior ──────────────────────────────────────────────────────────
 
-describe("RestGitHubAdapter.listIssueCandidates 429 rate limit", () => {
-  it("throws immediately on 429 (no built-in retry)", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      makeErrorResponse(429, '{"message":"rate limit exceeded"}')
-    );
+function makeRetryableResponse(status: number, retryAfter?: string): Response {
+  const headers = new Headers();
+  if (retryAfter) headers.set("Retry-After", retryAfter);
+  return {
+    ok: false,
+    status,
+    headers,
+    json: async () => { throw new Error("not json"); },
+    text: async () => `{"message":"error ${status}"}`
+  } as unknown as Response;
+}
+
+describe("RestGitHubAdapter retry on transient errors", () => {
+  it("retries on 429 then succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeRetryableResponse(429, "0"))
+      .mockResolvedValueOnce(makeOkJsonResponse([makeIssueResponse()]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const candidates = await adapter.listIssueCandidates({ repo: "acme/platform" });
+
+    expect(candidates).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on 500 then succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeRetryableResponse(500))
+      .mockResolvedValueOnce(makeOkJsonResponse(makeIssueResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const candidate = await adapter.fetchIssueCandidate("acme/platform", 42);
+
+    expect(candidate.issueNumber).toBe(42);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on 503 then succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeRetryableResponse(503))
+      .mockResolvedValueOnce(makeOkJsonResponse(makeIssueResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const candidate = await adapter.fetchIssueCandidate("acme/platform", 42);
+
+    expect(candidate.issueNumber).toBe(42);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws after exhausting all retry attempts on 429", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(makeRetryableResponse(429, "0"));
     vi.stubGlobal("fetch", fetchMock);
 
     const adapter = new RestGitHubAdapter({ token: "test-token" });
@@ -202,7 +250,48 @@ describe("RestGitHubAdapter.listIssueCandidates 429 rate limit", () => {
       adapter.listIssueCandidates({ repo: "acme/platform" })
     ).rejects.toThrow("429");
 
-    // RestGitHubAdapter does not retry — single call expected
+    // 3 attempts total (initial + 2 retries)
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 10_000);
+
+  it("does not retry on 401 (non-retryable)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      makeErrorResponse(401, '{"message":"Bad credentials"}')
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "bad-token" });
+    await expect(
+      adapter.listIssueCandidates({ repo: "acme/platform" })
+    ).rejects.toThrow("401");
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry on 404 (non-retryable)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      makeErrorResponse(404, '{"message":"Not Found"}')
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    await expect(
+      adapter.fetchIssueCandidate("acme/platform", 9999)
+    ).rejects.toThrow("404");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on network error then succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce(makeOkJsonResponse([makeIssueResponse()]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new RestGitHubAdapter({ token: "test-token" });
+    const candidates = await adapter.listIssueCandidates({ repo: "acme/platform" });
+
+    expect(candidates).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

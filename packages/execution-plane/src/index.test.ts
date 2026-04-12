@@ -7,6 +7,7 @@ import {
   DeterministicPlanningAgent,
   DeterministicScmAgent,
   DeterministicValidationAgent,
+  MODEL_FAILOVER_MAP,
   MODEL_PROVIDER_ROLE_MAP,
   agentDefinitions,
   createOpenClawAgentRoleDefinitions,
@@ -484,6 +485,116 @@ describe("openClawAgentRoleDefinitions", () => {
     expect(MODEL_PROVIDER_ROLE_MAP.openai.developer).toBe("openai/gpt-5.4");
     expect(resolveOpenClawModelProvider("openai")).toBe("openai");
     expect(() => resolveOpenClawModelProvider("bedrock")).toThrow();
+  });
+
+  it("can build the default OpenClaw role roster with openai-codex models", () => {
+    const roles = createOpenClawAgentRoleDefinitions("openai-codex");
+    const coordinator = roles.find((role) => role.role === "coordinator");
+    const analyst = roles.find((role) => role.role === "analyst");
+    const reviewer = roles.find((role) => role.role === "reviewer");
+    const validator = roles.find((role) => role.role === "validator");
+    const developer = roles.find((role) => role.role === "developer");
+
+    // All codex roles use gpt-5.4 through the subscription
+    for (const role of [coordinator, analyst, reviewer, validator, developer]) {
+      expect(role?.runtimePolicy.model).toEqual({
+        provider: "openai-codex",
+        model: "openai-codex/gpt-5.4"
+      });
+    }
+
+    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].coordinator).toBe("openai-codex/gpt-5.4");
+    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].developer).toBe("openai-codex/gpt-5.4");
+    expect(resolveOpenClawModelProvider("openai-codex")).toBe("openai-codex");
+  });
+
+  it("resolveOpenClawModelProvider accepts all valid providers and rejects unknown ones", () => {
+    expect(resolveOpenClawModelProvider("anthropic")).toBe("anthropic");
+    expect(resolveOpenClawModelProvider("openai")).toBe("openai");
+    expect(resolveOpenClawModelProvider("openai-codex")).toBe("openai-codex");
+
+    // Falls back to default on empty/undefined
+    expect(resolveOpenClawModelProvider("")).toBe("anthropic");
+    expect(resolveOpenClawModelProvider(undefined)).toBe("anthropic");
+
+    // Rejects invalid providers
+    expect(() => resolveOpenClawModelProvider("bedrock")).toThrow();
+    expect(() => resolveOpenClawModelProvider("azure")).toThrow();
+  });
+
+  it("every provider in MODEL_PROVIDER_ROLE_MAP covers all agent roles", () => {
+    const expectedRoles: Array<keyof (typeof MODEL_PROVIDER_ROLE_MAP)["anthropic"]> = [
+      "coordinator",
+      "analyst",
+      "reviewer",
+      "validator",
+      "developer"
+    ];
+
+    for (const provider of ["anthropic", "openai", "openai-codex"] as const) {
+      for (const role of expectedRoles) {
+        const model = MODEL_PROVIDER_ROLE_MAP[provider][role];
+        expect(model).toBeDefined();
+        expect(model.length).toBeGreaterThan(0);
+        // Model string must be prefixed with its provider
+        expect(model).toMatch(new RegExp(`^${provider.replace("-", "[-]?")}/`));
+      }
+    }
+  });
+
+  it("MODEL_FAILOVER_MAP provides cross-provider fallback for every role", () => {
+    const expectedRoles: Array<keyof (typeof MODEL_FAILOVER_MAP)["anthropic"]> = [
+      "coordinator",
+      "analyst",
+      "reviewer",
+      "validator",
+      "developer"
+    ];
+
+    for (const provider of ["anthropic", "openai", "openai-codex"] as const) {
+      for (const role of expectedRoles) {
+        const primaryModel = MODEL_PROVIDER_ROLE_MAP[provider][role];
+        const failoverModel = MODEL_FAILOVER_MAP[provider][role];
+
+        expect(failoverModel).toBeDefined();
+        expect(failoverModel.length).toBeGreaterThan(0);
+        // Failover must point to a different provider than the primary
+        const primaryPrefix = primaryModel.split("/")[0];
+        const failoverPrefix = failoverModel.split("/")[0];
+        expect(failoverPrefix).not.toBe(primaryPrefix);
+      }
+    }
+  });
+
+  it("switching providers produces different model bindings for the same role set", () => {
+    const anthropicRoles = createOpenClawAgentRoleDefinitions("anthropic");
+    const openaiRoles = createOpenClawAgentRoleDefinitions("openai");
+    const codexRoles = createOpenClawAgentRoleDefinitions("openai-codex");
+
+    // All three produce the same number of role definitions
+    expect(anthropicRoles.length).toBe(openaiRoles.length);
+    expect(openaiRoles.length).toBe(codexRoles.length);
+
+    // Same agent IDs and roles across all providers
+    const anthropicIds = anthropicRoles.map((r) => r.agentId);
+    const openaiIds = openaiRoles.map((r) => r.agentId);
+    const codexIds = codexRoles.map((r) => r.agentId);
+    expect(openaiIds).toEqual(anthropicIds);
+    expect(codexIds).toEqual(anthropicIds);
+
+    // Models differ between providers
+    for (let i = 0; i < anthropicRoles.length; i++) {
+      const aModel = anthropicRoles[i]!.runtimePolicy.model;
+      const oModel = openaiRoles[i]!.runtimePolicy.model;
+      const cModel = codexRoles[i]!.runtimePolicy.model;
+
+      expect(aModel.provider).toBe("anthropic");
+      expect(oModel.provider).toBe("openai");
+      expect(cModel.provider).toBe("openai-codex");
+
+      expect(aModel.model).not.toBe(oModel.model);
+      expect(oModel.model).not.toBe(cModel.model);
+    }
   });
 
   it("points at bootstrap files that exist in the repo", async () => {

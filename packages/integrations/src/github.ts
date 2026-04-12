@@ -818,47 +818,22 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   }
 
   private async apiGet<T>(path: string): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "GET",
-        headers: this.apiHeaders(),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(
-        error,
-        `GitHub API GET ${path}`,
-        this.requestTimeoutMs
-      );
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "GET", headers: this.apiHeaders(), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API GET ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
   private async apiPost<T>(path: string, payload: unknown): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "POST",
-        headers: this.apiHeaders(),
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(
-        error,
-        `GitHub API POST ${path}`,
-        this.requestTimeoutMs
-      );
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "POST", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API POST ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
@@ -1058,21 +1033,12 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   }
 
   private async apiPut<T>(path: string, payload: unknown): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "PUT",
-        headers: this.apiHeaders(),
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(error, `GitHub API PUT ${path}`, this.requestTimeoutMs);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API PUT ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "PUT", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API PUT ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
@@ -1247,58 +1213,32 @@ export class RestGitHubIssuesAdapter implements GitHubIssuesAdapter {
   }
 
   private async apiGet<T>(path: string): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "GET",
-        headers: this.apiHeaders(),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(error, `GitHub API GET ${path}`, this.requestTimeoutMs);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API GET ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "GET", headers: this.apiHeaders(), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API GET ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
   private async apiPost<T>(path: string, payload: unknown): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "POST",
-        headers: this.apiHeaders(),
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(error, `GitHub API POST ${path}`, this.requestTimeoutMs);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API POST ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "POST", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API POST ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
   private async apiPatch<T>(path: string, payload: unknown): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "PATCH",
-        headers: this.apiHeaders(),
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
-      });
-    } catch (error) {
-      throw normalizeFetchTimeoutError(error, `GitHub API PATCH ${path}`, this.requestTimeoutMs);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`GitHub API PATCH ${path} returned ${response.status}: ${body}`);
-    }
+    const response = await githubFetchWithRetry(
+      `${this.baseUrl}${path}`,
+      { method: "PATCH", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+      `GitHub API PATCH ${path}`,
+      this.requestTimeoutMs
+    );
     return response.json() as Promise<T>;
   }
 
@@ -1614,4 +1554,90 @@ function normalizeFetchTimeoutError(
   }
 
   return error instanceof Error ? error : new Error(String(error));
+}
+
+// ── Retryable GitHub fetch ────────────────────────────────────────────
+
+const GITHUB_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const GITHUB_RETRY_MAX_ATTEMPTS = 3;
+const GITHUB_RETRY_BASE_DELAY_MS = 1_000;
+
+/**
+ * Wrap a single GitHub REST API fetch call with retry logic.
+ *
+ * - Retries on 429 (rate limit) and 5xx (server error) responses.
+ * - Respects the `Retry-After` header when present (seconds).
+ * - Uses exponential backoff with jitter (0.5x–1.5x of computed delay).
+ * - Non-retryable errors and client errors (4xx except 429) are thrown immediately.
+ */
+export async function githubFetchWithRetry(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal },
+  context: string,
+  timeoutMs: number,
+  maxAttempts: number = GITHUB_RETRY_MAX_ATTEMPTS
+): Promise<Response> {
+  let lastError: Error | undefined;
+  // Strip the caller's signal — a fresh per-attempt timeout is used instead.
+  // AbortSignal.timeout() creates a one-shot signal that stays aborted once
+  // fired, so reusing the same signal across retries would cause immediate
+  // abort on attempt 2+.
+  const { signal: _callerSignal, ...initWithoutSignal } = init;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...initWithoutSignal,
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error) {
+      // Network / timeout errors are retryable on all but the last attempt
+      if (attempt < maxAttempts) {
+        lastError = normalizeFetchTimeoutError(error, context, timeoutMs);
+        await githubRetryDelay(attempt, undefined);
+        continue;
+      }
+      throw normalizeFetchTimeoutError(error, context, timeoutMs);
+    }
+
+    if (response.ok) {
+      return response;
+    }
+
+    if (GITHUB_RETRYABLE_STATUS_CODES.has(response.status) && attempt < maxAttempts) {
+      const retryAfter = parseRetryAfterHeader(response.headers.get("Retry-After"));
+      lastError = new Error(
+        `${context} returned ${response.status} (attempt ${attempt}/${maxAttempts})`
+      );
+      await githubRetryDelay(attempt, retryAfter);
+      continue;
+    }
+
+    // Non-retryable status or final attempt — throw
+    const body = await response.text().catch(() => "");
+    throw new Error(`${context} returned ${response.status}: ${body}`);
+  }
+
+  // Should not be reachable, but satisfies the type checker
+  throw lastError ?? new Error(`${context} failed after ${maxAttempts} attempts`);
+}
+
+function parseRetryAfterHeader(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0 && seconds <= 300) {
+    return seconds * 1_000;
+  }
+  return undefined;
+}
+
+async function githubRetryDelay(
+  attempt: number,
+  retryAfterMs: number | undefined
+): Promise<void> {
+  const baseDelay = retryAfterMs ?? GITHUB_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+  const jitter = 0.5 + Math.random(); // 0.5x – 1.5x
+  const delayMs = Math.min(baseDelay * jitter, 30_000);
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
