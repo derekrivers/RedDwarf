@@ -1020,7 +1020,7 @@ export function createPlanningAgentForModelProvider(
   }
 ): PlanningAgent {
   const resolvedProvider = resolveOpenClawModelProvider(provider);
-  if (resolvedProvider === "openai") {
+  if (resolvedProvider === "openai" || resolvedProvider === "openai-codex") {
     return new OpenAIPlanningAgent(options?.openai);
   }
   return new AnthropicPlanningAgent(options?.anthropic);
