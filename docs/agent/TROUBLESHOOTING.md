@@ -623,3 +623,21 @@
 - Verification:
   - Run the project-mode awaiter regression test in `packages/control-plane/src/index.test.ts`.
   - Re-run intake for a medium issue and confirm `/projects` returns a persisted `ProjectSpec`.
+
+## CodeQL flags `polynomial-redos` on `/\/+$/` regex for trailing slash removal
+
+- Symptom: CodeQL code scanning check fails on a PR with a high-severity alert: "Polynomial regular expression used on uncontrolled data" targeting any `url.replace(/\/+$/, "")` pattern.
+- Root cause: the `\/+` quantifier can cause catastrophic backtracking on strings containing many consecutive `/` characters. Although the input is typically a short URL, CodeQL correctly flags it because the regex is applied to values that may originate from environment variables or user configuration.
+- Failing approach: using `String.replace(/\/+$/, "")` anywhere in the codebase for trailing slash stripping. This pattern will always be flagged.
+- Working workaround: use an iterative `stripTrailingSlashes()` helper that walks backward from the end of the string:
+  ```ts
+  function stripTrailingSlashes(url: string): string {
+    let end = url.length;
+    while (end > 0 && url[end - 1] === "/") {
+      end--;
+    }
+    return url.slice(0, end);
+  }
+  ```
+  This pattern is already used in `packages/integrations/src/openclaw.ts` and `packages/control-plane/src/operator-api.ts`. Always prefer it over regex.
+- Verification: push the fix and confirm the CodeQL check passes on the PR. Locally, grep for `/\/+\$/` across the codebase to catch any remaining instances: `grep -rn '/\\/+\$/' packages/ scripts/`

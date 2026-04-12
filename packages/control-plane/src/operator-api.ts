@@ -163,6 +163,10 @@ export interface OperatorApiDependencies {
   githubIssuesAdapter?: GitHubIssuesAdapter;
   /** When provided and REDDWARF_TASKFLOW_ENABLED=true, creates/advances Task Flows on project approval/advance. */
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
+  /** Downstream connectivity probes for the health endpoint (R-07). */
+  downstreamHealthProbes?: DownstreamHealthProbe[];
+  /** Callback returning circuit breaker snapshots for health reporting (R-05, R-06). */
+  circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>;
 }
 
 export interface OperatorBlockedSummary {
@@ -211,12 +215,30 @@ export interface OperatorDispatcherHealthSummary {
   lastError: string | null;
 }
 
+export type DownstreamStatus = "ok" | "degraded" | "unreachable";
+
+export interface DownstreamHealthProbeResult {
+  name: string;
+  status: DownstreamStatus;
+  latencyMs: number | null;
+  error: string | null;
+  checkedAt: string;
+}
+
+export interface DownstreamHealthProbe {
+  name: string;
+  probe(): Promise<DownstreamHealthProbeResult>;
+}
+
 export interface OperatorHealthResponse {
   status: "ok";
   timestamp: string;
   repository: RepositoryHealthSnapshot;
   polling: OperatorPollingHealthSummary;
   dispatcher?: OperatorDispatcherHealthSummary;
+  downstream?: DownstreamHealthProbeResult[] | undefined;
+  readiness?: DownstreamStatus | undefined;
+  circuitBreakers?: Record<string, { state: string; consecutiveFailures: number }> | undefined;
 }
 
 export interface OperatorApiServer {
@@ -302,7 +324,9 @@ export function createOperatorApiServer(
     githubWriter,
     githubIssuesAdapter,
     githubRepoDiscovery,
-    taskFlowAdapter
+    taskFlowAdapter,
+    downstreamHealthProbes,
+    circuitBreakerSnapshots
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
@@ -360,7 +384,9 @@ export function createOperatorApiServer(
           githubIssuesAdapter,
           githubRepoDiscovery,
           toolApprovals,
-          taskFlowAdapter
+          taskFlowAdapter,
+          downstreamHealthProbes,
+          circuitBreakerSnapshots
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -727,11 +753,11 @@ async function resolveOpenClawUiStatus(
     return openClawHealthCache.result;
   }
 
-  const baseUrl = process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578";
+  const baseUrl = stripTrailingSlashes(process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578");
   const checkedAt = clock().toISOString();
 
   try {
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
+    const response = await fetch(`${baseUrl}/health`, {
       signal: AbortSignal.timeout(2_000)
     });
 
@@ -2305,7 +2331,9 @@ async function handleOperatorRequest(
   githubIssuesAdapter?: GitHubIssuesAdapter,
   githubRepoDiscovery?: GitHubRepoDiscovery,
   toolApprovals?: Map<string, ToolApprovalRequest>,
-  taskFlowAdapter?: OpenClawTaskFlowAdapter | null
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null,
+  downstreamHealthProbes?: DownstreamHealthProbe[],
+  circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2315,6 +2343,23 @@ async function handleOperatorRequest(
 
   // GET /health remains unauthenticated for liveness checks.
   if (method === "GET" && path === "/health") {
+    const downstreamResults = downstreamHealthProbes && downstreamHealthProbes.length > 0
+      ? await Promise.all(downstreamHealthProbes.map((p) => p.probe().catch((err): DownstreamHealthProbeResult => ({
+          name: p.name,
+          status: "unreachable",
+          latencyMs: null,
+          error: err instanceof Error ? err.message : String(err),
+          checkedAt: clock().toISOString()
+        }))))
+      : undefined;
+    const readiness: DownstreamStatus | undefined = downstreamResults
+      ? downstreamResults.every((r) => r.status === "ok")
+        ? "ok"
+        : downstreamResults.some((r) => r.status === "unreachable")
+          ? "unreachable"
+          : "degraded"
+      : undefined;
+    const cbSnapshots = circuitBreakerSnapshots?.();
     const response: OperatorHealthResponse = {
       status: "ok",
       timestamp: clock().toISOString(),
@@ -2337,7 +2382,9 @@ async function handleOperatorRequest(
               lastError: dispatcher.health.lastError
             }
           }
-        : {})
+        : {}),
+      ...(downstreamResults ? { downstream: downstreamResults, readiness } : {}),
+      ...(cbSnapshots && Object.keys(cbSnapshots).length > 0 ? { circuitBreakers: cbSnapshots } : {})
     };
     writeOperatorJsonResponse(res, 200, response);
     return;
@@ -4411,4 +4458,102 @@ function summarizePollingHealth(
     lastCycleDurationMs: runtimeHealth.lastCycleDurationMs,
     lastError: runtimeHealth.lastError
   };
+}
+
+// ── Downstream health probe factories (R-07) ──────────────────────────────
+
+const DOWNSTREAM_PROBE_TIMEOUT_MS = 5_000;
+const DOWNSTREAM_PROBE_CACHE_TTL_MS = 15_000;
+
+function createCachedProbe(probe: DownstreamHealthProbe): DownstreamHealthProbe {
+  let cached: DownstreamHealthProbeResult | null = null;
+  let cachedAt = 0;
+  return {
+    name: probe.name,
+    async probe(): Promise<DownstreamHealthProbeResult> {
+      const now = Date.now();
+      if (cached && now - cachedAt < DOWNSTREAM_PROBE_CACHE_TTL_MS) {
+        return cached;
+      }
+      cached = await probe.probe();
+      cachedAt = now;
+      return cached;
+    }
+  };
+}
+
+/** Strip trailing slashes without a regex quantifier that can backtrack
+ *  on strings of many forward slashes (CodeQL: polynomial-redos). */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") {
+    end--;
+  }
+  return url.slice(0, end);
+}
+
+export function createOpenClawHealthProbe(baseUrl: string): DownstreamHealthProbe {
+  const cleanBaseUrl = stripTrailingSlashes(baseUrl);
+  return createCachedProbe({
+    name: "openclaw",
+    async probe(): Promise<DownstreamHealthProbeResult> {
+      const start = Date.now();
+      try {
+        const response = await fetch(`${cleanBaseUrl}/health`, {
+          signal: AbortSignal.timeout(DOWNSTREAM_PROBE_TIMEOUT_MS)
+        });
+        const latencyMs = Date.now() - start;
+        return {
+          name: "openclaw",
+          status: response.ok ? "ok" : "degraded",
+          latencyMs,
+          error: response.ok ? null : `HTTP ${response.status}`,
+          checkedAt: new Date().toISOString()
+        };
+      } catch (err) {
+        return {
+          name: "openclaw",
+          status: "unreachable",
+          latencyMs: Date.now() - start,
+          error: err instanceof Error ? err.message : String(err),
+          checkedAt: new Date().toISOString()
+        };
+      }
+    }
+  });
+}
+
+export function createGitHubHealthProbe(token: string, baseUrl = "https://api.github.com"): DownstreamHealthProbe {
+  return createCachedProbe({
+    name: "github",
+    async probe(): Promise<DownstreamHealthProbeResult> {
+      const start = Date.now();
+      try {
+        const response = await fetch(`${baseUrl}/rate_limit`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "reddwarf/0.1.0"
+          },
+          signal: AbortSignal.timeout(DOWNSTREAM_PROBE_TIMEOUT_MS)
+        });
+        const latencyMs = Date.now() - start;
+        return {
+          name: "github",
+          status: response.ok ? "ok" : "degraded",
+          latencyMs,
+          error: response.ok ? null : `HTTP ${response.status}`,
+          checkedAt: new Date().toISOString()
+        };
+      } catch (err) {
+        return {
+          name: "github",
+          status: "unreachable",
+          latencyMs: Date.now() - start,
+          error: err instanceof Error ? err.message : String(err),
+          checkedAt: new Date().toISOString()
+        };
+      }
+    }
+  });
 }

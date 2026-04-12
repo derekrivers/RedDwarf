@@ -236,14 +236,14 @@ This board is separate from `FEATURE_BOARD.md` and focuses exclusively on system
 | R-03 | **GitHub adapter retry with backoff on transient errors** -- `githubFetchWithRetry()` in `packages/integrations/src/github.ts`. 3 attempts, exponential backoff with jitter (0.5x-1.5x), retries on 429/500/502/503/504 and network errors. Respects `Retry-After` header. Fresh `AbortSignal.timeout()` per attempt. Both `RestGitHubAdapter` and `RestGitHubIssuesAdapter` refactored. 7 new tests covering retry-then-success, exhaustion, non-retryable pass-through, and network error recovery. | P1 | G-03, G-04 | **Done** |
 | R-04 | **Periodic runtime sweep** -- `setInterval`-based sweep in `start-stack.mjs`, configurable via `REDDWARF_PERIODIC_SWEEP_INTERVAL_MS` (default 300s) and `REDDWARF_PERIODIC_SWEEP_ENABLED` (default true). Timer is `.unref()`'d and cleared on shutdown. | P1 | G-05 | **Done** |
 
-### Phase 2 -- High-Value Hardening
+### Phase 2 -- High-Value Hardening -- COMPLETE
 
-| # | Feature | Priority | Gaps Addressed | Effort |
+| # | Feature | Priority | Gaps Addressed | Status |
 |---|---------|----------|----------------|--------|
-| R-05 | **Circuit breaker for GitHub API** -- Implement a simple circuit breaker (closed/open/half-open) around GitHub REST calls. Open after N consecutive failures within a window. Half-open after a cooldown period (configurable, default 60s). When open, skip polling and log a structured warning rather than hammering the endpoint. Report circuit state in `/health`. | P2 | G-02 | Medium |
-| R-06 | **Circuit breaker for OpenClaw dispatch** -- Same pattern as R-05 for the OpenClaw dispatch adapter. When open, tasks queue as `blocked` with a structured reason instead of failing immediately. Report circuit state in `/health`. | P2 | G-02 | Medium |
-| R-07 | **Downstream connectivity in health endpoint** -- Extend `GET /health` to include lightweight connectivity probes: `SELECT 1` for Postgres (already present), `GET /health` for OpenClaw, and `GET /rate_limit` for GitHub. Cache results for 15s. Report each downstream as `ok`, `degraded`, or `unreachable`. Expose a composite `readiness` field. | P2 | G-07 | Medium |
-| R-08 | **Per-repo polling timeout** -- Replace the single cycle-wide timeout with per-repo timeouts (`REDDWARF_POLL_PER_REPO_TIMEOUT_MS`, default 60s). A slow repo cannot starve other repos of their cycle budget. Log per-repo timing as structured events. | P2 | G-13 | Small |
+| R-05 | **Circuit breaker for GitHub API** -- Reusable `CircuitBreaker` class (closed/open/half-open) in `packages/integrations/src/circuit-breaker.ts`. Integrated into `RestGitHubAdapter` — wraps all `apiGet`/`apiPost`/`apiPut` calls. Configurable failure threshold (default 5) and cooldown (default 60s). Circuit state reported in `/health` via `circuitBreakers` field. 12 unit tests. | P2 | G-02 | **Done** |
+| R-06 | **Circuit breaker for OpenClaw dispatch** -- Same `CircuitBreaker` class integrated into `HttpOpenClawDispatchAdapter` and `AcpxOpenClawDispatchAdapter`. Wraps the entire dispatch retry loop. Circuit state reported in `/health`. Configurable via adapter options. | P2 | G-02 | **Done** |
+| R-07 | **Downstream connectivity in health endpoint** -- `GET /health` extended with `downstream` array (OpenClaw `GET /health`, GitHub `GET /rate_limit`), each reporting `ok`/`degraded`/`unreachable` with latency. Results cached 15s via `createCachedProbe()`. Composite `readiness` field. Circuit breaker snapshots in `circuitBreakers` field. Postgres health was already present via `repository.getRepositoryHealth()`. | P2 | G-07 | **Done** |
+| R-08 | **Per-repo polling timeout** -- `GitHubPollingRepoConfig.repoTimeoutMs` and `GitHubIssuePollingDaemonConfig.perRepoTimeoutMs` (default 60s, falls back to `min(cycleTimeoutMs, 60s)` for backward compatibility). Each `pollRepository` call uses its own timeout. Structured `POLLING_REPO_COMPLETED` log event with `durationMs`, `timeoutMs`, `issuesProcessed`. Env var `REDDWARF_POLL_PER_REPO_TIMEOUT_MS`. | P2 | G-13 | **Done** |
 
 ### Phase 3 -- Defensive Depth
 

@@ -1,4 +1,5 @@
 import { asIsoTimestamp } from "@reddwarf/contracts";
+import { CircuitBreaker, type CircuitBreakerSnapshot } from "./circuit-breaker.js";
 import { EnvVarSecretsAdapter } from "./secrets.js";
 
 const DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS = 15_000;
@@ -138,6 +139,10 @@ export interface HttpOpenClawDispatchAdapterOptions {
   retryableStatuses?: Set<number>;
   /** Per-request timeout in milliseconds. Defaults to 15000. */
   requestTimeoutMs?: number;
+  /** Circuit breaker failure threshold. Default: 5. Set 0 to disable. */
+  circuitBreakerThreshold?: number;
+  /** Circuit breaker cooldown in milliseconds. Default: 60_000. */
+  circuitBreakerCooldownMs?: number;
 }
 
 /**
@@ -153,6 +158,7 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   private readonly baseDelayMs: number;
   private readonly retryableStatuses: Set<number>;
   private readonly requestTimeoutMs: number;
+  private readonly circuitBreaker: CircuitBreaker | null;
 
   constructor(options: HttpOpenClawDispatchAdapterOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
@@ -176,76 +182,92 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     this.retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_OPENCLAW_DISPATCH_TIMEOUT_MS;
+    const threshold = options.circuitBreakerThreshold ?? 5;
+    this.circuitBreaker = threshold > 0
+      ? new CircuitBreaker({
+          name: "openclaw-dispatch",
+          failureThreshold: threshold,
+          cooldownMs: options.circuitBreakerCooldownMs ?? 60_000
+        })
+      : null;
+  }
+
+  /** Circuit breaker health snapshot, or null if disabled. */
+  get circuitBreakerSnapshot(): CircuitBreakerSnapshot | null {
+    return this.circuitBreaker?.snapshot() ?? null;
   }
 
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
-    const url = `${this.baseUrl}/hooks/agent`;
-    const prompt = enforcePromptLengthCap(request.prompt);
-    const body = JSON.stringify({
-      message: prompt,
-      name: "RedDwarf",
-      sessionKey: request.sessionKey,
-      agentId: request.agentId,
-      deliver: request.deliver ?? false,
-      wakeMode: "now",
-      ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
-    });
-
-    let attempt = 0;
-    while (true) {
-      attempt++;
-      let response: Response;
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${this.hookToken}`,
-            "Content-Type": "application/json"
-          },
-          body,
-          signal: AbortSignal.timeout(this.requestTimeoutMs)
-        });
-      } catch (error) {
-        throw normalizeFetchTimeoutError(
-          error,
-          `OpenClaw dispatch to ${url}`,
-          this.requestTimeoutMs
-        );
-      }
-
-      if (!response.ok) {
-        if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
-          const delay = attempt * this.baseDelayMs;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-        const responseBody = await response.text().catch(() => "");
-        throw new Error(
-          `OpenClaw dispatch to ${url} returned ${response.status}: ${responseBody}`
-        );
-      }
-
-      const responseBody = await response.text();
-      let result: Record<string, unknown> = {};
-      if (responseBody.length > 0) {
-        try {
-          result = JSON.parse(responseBody) as Record<string, unknown>;
-        } catch {
-          throw new Error(
-            `OpenClaw dispatch to ${url} returned non-JSON response (status ${response.status}): ${responseBody.slice(0, 200)}`
-          );
-        }
-      }
-
-      return {
-        accepted: true,
+    const doDispatch = async (): Promise<OpenClawDispatchResult> => {
+      const url = `${this.baseUrl}/hooks/agent`;
+      const prompt = enforcePromptLengthCap(request.prompt);
+      const body = JSON.stringify({
+        message: prompt,
+        name: "RedDwarf",
         sessionKey: request.sessionKey,
         agentId: request.agentId,
-        sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
-        respondedAt: asIsoTimestamp(),
-        statusMessage: typeof result["message"] === "string" ? result["message"] : null
-      };
-    }
+        deliver: request.deliver ?? false,
+        wakeMode: "now",
+        ...(request.metadata !== undefined ? { metadata: request.metadata } : {})
+      });
+
+      let attempt = 0;
+      while (true) {
+        attempt++;
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${this.hookToken}`,
+              "Content-Type": "application/json"
+            },
+            body,
+            signal: AbortSignal.timeout(this.requestTimeoutMs)
+          });
+        } catch (error) {
+          throw normalizeFetchTimeoutError(
+            error,
+            `OpenClaw dispatch to ${url}`,
+            this.requestTimeoutMs
+          );
+        }
+
+        if (!response.ok) {
+          if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
+            const delay = attempt * this.baseDelayMs;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          const responseBody = await response.text().catch(() => "");
+          throw new Error(
+            `OpenClaw dispatch to ${url} returned ${response.status}: ${responseBody}`
+          );
+        }
+
+        const responseBody = await response.text();
+        let result: Record<string, unknown> = {};
+        if (responseBody.length > 0) {
+          try {
+            result = JSON.parse(responseBody) as Record<string, unknown>;
+          } catch {
+            throw new Error(
+              `OpenClaw dispatch to ${url} returned non-JSON response (status ${response.status}): ${responseBody.slice(0, 200)}`
+            );
+          }
+        }
+
+        return {
+          accepted: true,
+          sessionKey: request.sessionKey,
+          agentId: request.agentId,
+          sessionId: typeof result["sessionId"] === "string" ? result["sessionId"] : null,
+          respondedAt: asIsoTimestamp(),
+          statusMessage: typeof result["message"] === "string" ? result["message"] : null
+        };
+      }
+    };
+    return this.circuitBreaker ? this.circuitBreaker.execute(doDispatch) : doDispatch();
   }
 }
 
@@ -297,6 +319,10 @@ export interface AcpxOpenClawDispatchAdapterOptions {
   baseDelayMs?: number;
   /** HTTP status codes that trigger a retry. Defaults to 429 and 529. */
   retryableStatuses?: Set<number>;
+  /** Circuit breaker failure threshold. Default: 5. Set 0 to disable. */
+  circuitBreakerThreshold?: number;
+  /** Circuit breaker cooldown in milliseconds. Default: 60_000. */
+  circuitBreakerCooldownMs?: number;
 }
 
 /**
@@ -320,6 +346,7 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
   private readonly maxAttempts: number;
   private readonly baseDelayMs: number;
   private readonly retryableStatuses: Set<number>;
+  private readonly circuitBreaker: CircuitBreaker | null;
 
   constructor(options: AcpxOpenClawDispatchAdapterOptions = {}) {
     const baseUrl = options.baseUrl ?? process.env[OPENCLAW_BASE_URL_ENV];
@@ -342,9 +369,23 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
     this.maxAttempts = options.maxAttempts ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 2000;
     this.retryableStatuses = options.retryableStatuses ?? new Set([429, 529]);
+    const threshold = options.circuitBreakerThreshold ?? 5;
+    this.circuitBreaker = threshold > 0
+      ? new CircuitBreaker({
+          name: "openclaw-acpx-dispatch",
+          failureThreshold: threshold,
+          cooldownMs: options.circuitBreakerCooldownMs ?? 60_000
+        })
+      : null;
+  }
+
+  /** Circuit breaker health snapshot, or null if disabled. */
+  get circuitBreakerSnapshot(): CircuitBreakerSnapshot | null {
+    return this.circuitBreaker?.snapshot() ?? null;
   }
 
   async dispatch(request: OpenClawDispatchRequest): Promise<OpenClawDispatchResult> {
+    const doDispatch = async (): Promise<OpenClawDispatchResult> => {
     const url = `${this.baseUrl}/acpx/sessions`;
     const prompt = enforcePromptLengthCap(request.prompt);
     const body = JSON.stringify({
@@ -395,6 +436,8 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
         statusMessage: typeof result["message"] === "string" ? result["message"] : null
       };
     }
+    };
+    return this.circuitBreaker ? this.circuitBreaker.execute(doDispatch) : doDispatch();
   }
 }
 

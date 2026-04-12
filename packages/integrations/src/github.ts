@@ -1,4 +1,5 @@
 import { asIsoTimestamp, capabilities, type Capability, type PlanningTaskInput, type TicketSpec } from "@reddwarf/contracts";
+import { CircuitBreaker, type CircuitBreakerSnapshot } from "./circuit-breaker.js";
 import type { CiAdapter, CiCheckSuiteSnapshot } from "./ci.js";
 import { V1MutationDisabledError } from "./errors.js";
 
@@ -528,6 +529,10 @@ export interface RestGitHubAdapterOptions {
   token: string;
   baseUrl?: string;
   requestTimeoutMs?: number;
+  /** Circuit breaker failure threshold. Default: 5. Set 0 to disable. */
+  circuitBreakerThreshold?: number;
+  /** Circuit breaker cooldown in milliseconds. Default: 60_000. */
+  circuitBreakerCooldownMs?: number;
 }
 
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 30_000;
@@ -689,12 +694,26 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
+  private readonly circuitBreaker: CircuitBreaker | null;
 
   constructor(options: RestGitHubAdapterOptions) {
     this.token = options.token;
     this.baseUrl = options.baseUrl ?? "https://api.github.com";
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_GITHUB_REQUEST_TIMEOUT_MS;
+    const threshold = options.circuitBreakerThreshold ?? 5;
+    this.circuitBreaker = threshold > 0
+      ? new CircuitBreaker({
+          name: "github-api",
+          failureThreshold: threshold,
+          cooldownMs: options.circuitBreakerCooldownMs ?? 60_000
+        })
+      : null;
+  }
+
+  /** Circuit breaker health snapshot, or null if disabled. */
+  get circuitBreakerSnapshot(): CircuitBreakerSnapshot | null {
+    return this.circuitBreaker?.snapshot() ?? null;
   }
 
   private parseRepo(repo: string): { owner: string; repoName: string } {
@@ -818,23 +837,29 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   }
 
   private async apiGet<T>(path: string): Promise<T> {
-    const response = await githubFetchWithRetry(
-      `${this.baseUrl}${path}`,
-      { method: "GET", headers: this.apiHeaders(), signal: AbortSignal.timeout(this.requestTimeoutMs) },
-      `GitHub API GET ${path}`,
-      this.requestTimeoutMs
-    );
-    return response.json() as Promise<T>;
+    const doFetch = async (): Promise<T> => {
+      const response = await githubFetchWithRetry(
+        `${this.baseUrl}${path}`,
+        { method: "GET", headers: this.apiHeaders(), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+        `GitHub API GET ${path}`,
+        this.requestTimeoutMs
+      );
+      return response.json() as Promise<T>;
+    };
+    return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
   }
 
   private async apiPost<T>(path: string, payload: unknown): Promise<T> {
-    const response = await githubFetchWithRetry(
-      `${this.baseUrl}${path}`,
-      { method: "POST", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
-      `GitHub API POST ${path}`,
-      this.requestTimeoutMs
-    );
-    return response.json() as Promise<T>;
+    const doFetch = async (): Promise<T> => {
+      const response = await githubFetchWithRetry(
+        `${this.baseUrl}${path}`,
+        { method: "POST", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+        `GitHub API POST ${path}`,
+        this.requestTimeoutMs
+      );
+      return response.json() as Promise<T>;
+    };
+    return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
   }
 
   private labelNames(labels: Array<GitHubApiIssueLabel | string>): string[] {
@@ -1033,13 +1058,16 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   }
 
   private async apiPut<T>(path: string, payload: unknown): Promise<T> {
-    const response = await githubFetchWithRetry(
-      `${this.baseUrl}${path}`,
-      { method: "PUT", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
-      `GitHub API PUT ${path}`,
-      this.requestTimeoutMs
-    );
-    return response.json() as Promise<T>;
+    const doFetch = async (): Promise<T> => {
+      const response = await githubFetchWithRetry(
+        `${this.baseUrl}${path}`,
+        { method: "PUT", headers: this.apiHeaders(), body: JSON.stringify(payload), signal: AbortSignal.timeout(this.requestTimeoutMs) },
+        `GitHub API PUT ${path}`,
+        this.requestTimeoutMs
+      );
+      return response.json() as Promise<T>;
+    };
+    return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
   }
 
   async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {

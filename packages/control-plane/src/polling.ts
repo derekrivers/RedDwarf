@@ -44,6 +44,12 @@ export interface GitHubPollingRepoConfig {
   states?: GitHubIssueState[];
   maxBatchSize?: number;
   /**
+   * Per-repository polling timeout in milliseconds.  When present, overrides
+   * the daemon-level `cycleTimeoutMs` for this repository.  A slow repo cannot
+   * starve other repos of their cycle budget.
+   */
+  repoTimeoutMs?: number;
+  /**
    * Per-repository author allowlist.  When present, overrides the daemon-level
    * `authorAllowlist` for this repository.  An empty array means default-deny
    * (all authors rejected).  Omit the field entirely to inherit the daemon
@@ -58,6 +64,8 @@ export interface GitHubIssuePollingDaemonConfig {
   dryRun?: boolean;
   runOnStart?: boolean;
   cycleTimeoutMs?: number;
+  /** Default per-repo polling timeout in ms. Overridden by per-repo repoTimeoutMs. Default: 60_000. */
+  perRepoTimeoutMs?: number;
   /**
    * Global author allowlist applied to every polled repository unless
    * overridden by a per-repository `authorAllowlist`.
@@ -137,6 +145,7 @@ const defaultGitHubIssueStates: GitHubIssueState[] = ["open"];
 const defaultPollingLabels = ["ai-eligible"];
 const DEFAULT_MAX_BATCH_SIZE = 50;
 const DEFAULT_POLLING_CYCLE_TIMEOUT_MS = 120_000;
+const DEFAULT_PER_REPO_TIMEOUT_MS = 60_000;
 const DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS = 5 * 60_000;
 
 interface MutableLoopHealthState {
@@ -196,6 +205,7 @@ export function createGitHubIssuePollingDaemon(
 
   const clock = deps.clock ?? (() => new Date());
   const cycleTimeoutMs = config.cycleTimeoutMs ?? DEFAULT_POLLING_CYCLE_TIMEOUT_MS;
+  const defaultPerRepoTimeoutMs = config.perRepoTimeoutMs ?? Math.min(cycleTimeoutMs, DEFAULT_PER_REPO_TIMEOUT_MS);
   const scheduler =
     deps.scheduler ??
     {
@@ -253,6 +263,7 @@ export function createGitHubIssuePollingDaemon(
     > = null;
     const pollStartedAt = clock();
     const pollStartedAtIso = asIsoTimestamp(pollStartedAt);
+    const repoTimeoutMs = repoConfig.repoTimeoutMs ?? defaultPerRepoTimeoutMs;
     const cycleLabel = `GitHub issue polling cycle for ${repoConfig.repo}`;
     const repoLogger = logger
       ? bindPlanningLogger(logger, { sourceRepo: repoConfig.repo })
@@ -261,7 +272,7 @@ export function createGitHubIssuePollingDaemon(
     let unseenCandidates: GitHubIssueCandidate[] = [];
 
     try {
-      await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
+      await runWithTimeout(cycleLabel, repoTimeoutMs, async () => {
         existingCursor = await deps.repository.getGitHubIssuePollingCursor(repoConfig.repo);
 
         const query: GitHubIssueQuery = {
@@ -379,7 +390,14 @@ export function createGitHubIssuePollingDaemon(
 
       const lastSeenCandidate = unseenCandidates.at(-1) ?? null;
       const pollCompletedAtIso = asIsoTimestamp(clock());
-      await runWithTimeout(cycleLabel, cycleTimeoutMs, async () => {
+      const repoDurationMs = clock().getTime() - pollStartedAt.getTime();
+      repoLogger?.info("GitHub polling repository completed.", {
+        code: "POLLING_REPO_COMPLETED",
+        durationMs: repoDurationMs,
+        timeoutMs: repoTimeoutMs,
+        issuesProcessed: unseenCandidates.length
+      });
+      await runWithTimeout(cycleLabel, repoTimeoutMs, async () => {
         await deps.repository.saveGitHubIssuePollingCursor(
           createGitHubIssuePollingCursor({
             repo: repoConfig.repo,
@@ -405,7 +423,7 @@ export function createGitHubIssuePollingDaemon(
       try {
         await runWithTimeout(
           `GitHub issue polling cursor persistence for ${repoConfig.repo}`,
-          cycleTimeoutMs,
+          repoTimeoutMs,
           async () =>
             deps.repository.saveGitHubIssuePollingCursor(
               createGitHubIssuePollingCursor({

@@ -84,6 +84,10 @@ const pollIntervalMs = parseInt(
   process.env.REDDWARF_POLL_INTERVAL_MS ?? "30000",
   10
 );
+const perRepoTimeoutMs = parseInt(
+  process.env.REDDWARF_POLL_PER_REPO_TIMEOUT_MS ?? "60000",
+  10
+);
 const dashboardPort = parseInt(
   process.env.REDDWARF_DASHBOARD_PORT ?? "5173",
   10
@@ -309,7 +313,9 @@ const {
   sweepStaleRuns,
   DeterministicDeveloperAgent,
   DeterministicValidationAgent,
-  DeterministicScmAgent
+  DeterministicScmAgent,
+  createOpenClawHealthProbe,
+  createGitHubHealthProbe
 } = await import("../packages/control-plane/dist/index.js");
 const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
@@ -487,6 +493,7 @@ const planner = createPlanningAgentForModelProvider(modelProvider);
 daemon = createGitHubIssuePollingDaemon(
   {
     intervalMs: pollIntervalMs,
+    perRepoTimeoutMs,
     repositories: [],
     dryRun,
     runOnStart: true
@@ -524,7 +531,25 @@ const server = createOperatorApiServer(
     ...(dispatcher ? { dispatcher } : {}),
     ...(daemon ? { pollingDaemon: daemon } : {}),
     ...(dispatchDeps ? { dispatchDependencies: dispatchDeps } : {}),
-    ...(taskFlowAdapter ? { taskFlowAdapter } : {})
+    ...(taskFlowAdapter ? { taskFlowAdapter } : {}),
+    downstreamHealthProbes: [
+      createGitHubHealthProbe(process.env.GITHUB_TOKEN ?? ""),
+      ...(skipOpenClaw ? [] : [createOpenClawHealthProbe(
+        `http://localhost:${process.env.OPENCLAW_HOST_PORT ?? "3578"}`
+      )])
+    ],
+    circuitBreakerSnapshots: () => {
+      const snapshots = {};
+      if (github.circuitBreakerSnapshot) {
+        const s = github.circuitBreakerSnapshot;
+        snapshots[s.name] = { state: s.state, consecutiveFailures: s.consecutiveFailures };
+      }
+      if (dispatchDeps?.openClawDispatch?.circuitBreakerSnapshot) {
+        const s = dispatchDeps.openClawDispatch.circuitBreakerSnapshot;
+        snapshots[s.name] = { state: s.state, consecutiveFailures: s.consecutiveFailures };
+      }
+      return snapshots;
+    }
   }
 );
 await server.start();
