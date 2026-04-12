@@ -369,6 +369,7 @@ export interface SweepStaleRunsOptions {
 
 export interface SweepStaleRunsResult {
   sweptRunIds: string[];
+  cancelledBlockedRunIds: string[];
   cancelledSessionKeys: string[];
   sweptAt: string;
 }

@@ -34,7 +34,7 @@
  */
 
 import { execFileSync, execSync, spawn } from "node:child_process";
-import { readdir, stat, rm, readFile } from "node:fs/promises";
+import { readdir, stat, rm, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
 import {
@@ -359,6 +359,9 @@ try {
   const sweepResult = await sweepStaleRuns(repository, { cancelOpenClawSession });
   if (sweepResult.sweptRunIds.length > 0) {
     log(`Swept ${sweepResult.sweptRunIds.length} stale run(s): ${sweepResult.sweptRunIds.join(", ")}`);
+    if (sweepResult.cancelledBlockedRunIds.length > 0) {
+      log(`  Cancelled ${sweepResult.cancelledBlockedRunIds.length} blocked run(s) orphaned by stale sweeps.`);
+    }
     if (sweepResult.cancelledSessionKeys.length > 0) {
       log(`  Cancelled ${sweepResult.cancelledSessionKeys.length} orphaned OpenClaw session(s).`);
     }
@@ -619,6 +622,94 @@ if (!skipOpenClaw) {
   }
 }
 
+// ── Codex OAuth auth propagation ──────────────────────────────────────
+// When a user completes Codex OAuth login, the token is written to one
+// agent directory. Other agent roles need the same auth-profiles.json.
+// This function finds any valid openai-codex profile and copies it to
+// every other agent dir so all roles can authenticate.
+
+async function propagateCodexAuth() {
+  const agentsRoot = join(repoRoot, "runtime-data", "workspaces", ".agents");
+  let roleDirs;
+  try {
+    const entries = await readdir(agentsRoot, { withFileTypes: true });
+    roleDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return 0;
+  }
+
+  // Find a source auth-profiles.json containing an openai-codex provider
+  let sourceContent = null;
+  for (const role of roleDirs) {
+    const profilePath = join(agentsRoot, role, "agent", "auth-profiles.json");
+    let raw;
+    try {
+      raw = await readFile(profilePath, "utf8");
+    } catch {
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const profiles = parsed?.profiles;
+    if (!profiles || typeof profiles !== "object") continue;
+    const hasCodex = Object.values(profiles).some(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        entry.provider === "openai-codex" &&
+        typeof entry.access === "string" &&
+        entry.access.length > 0
+    );
+    if (hasCodex) {
+      sourceContent = raw;
+      break;
+    }
+  }
+
+  if (!sourceContent) return 0;
+
+  // Copy to all agent dirs that are missing the file or lack a codex entry
+  let propagated = 0;
+  for (const role of roleDirs) {
+    const targetDir = join(agentsRoot, role, "agent");
+    const targetPath = join(targetDir, "auth-profiles.json");
+    // Check if target already has a valid codex entry
+    try {
+      const existing = await readFile(targetPath, "utf8");
+      const parsed = JSON.parse(existing);
+      const profiles = parsed?.profiles;
+      if (profiles && typeof profiles === "object") {
+        const hasCodex = Object.values(profiles).some(
+          (e) => e && typeof e === "object" && e.provider === "openai-codex" && e.access
+        );
+        if (hasCodex) continue;
+      }
+    } catch {
+      // Missing or invalid — will be overwritten
+    }
+    await mkdir(targetDir, { recursive: true });
+    await writeFile(targetPath, sourceContent, "utf8");
+    propagated += 1;
+  }
+
+  return propagated;
+}
+
+if (!skipOpenClaw) {
+  try {
+    const propagated = await propagateCodexAuth();
+    if (propagated > 0) {
+      log(`Propagated Codex OAuth auth to ${propagated} agent role(s).`);
+    }
+  } catch (err) {
+    logError(`Codex auth propagation failed (non-fatal): ${formatError(err)}`);
+  }
+}
+
 let shuttingDown = false;
 let dashboardProcess = null;
 let periodicSweepTimer = null;
@@ -840,7 +931,7 @@ if (dashboardProcess) {
 // are detected during runtime, not just at startup.
 
 const periodicSweepIntervalMs = Number(
-  process.env.REDDWARF_PERIODIC_SWEEP_INTERVAL_MS ?? 300_000
+  process.env.REDDWARF_PERIODIC_SWEEP_INTERVAL_MS ?? 60_000
 );
 const periodicSweepEnabled =
   process.env.REDDWARF_PERIODIC_SWEEP_ENABLED !== "false";
@@ -854,6 +945,11 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
         log(
           `[periodic-sweep] Swept ${sweepResult.sweptRunIds.length} stale run(s): ${sweepResult.sweptRunIds.join(", ")}`
         );
+        if (sweepResult.cancelledBlockedRunIds.length > 0) {
+          log(
+            `[periodic-sweep] Cancelled ${sweepResult.cancelledBlockedRunIds.length} blocked run(s) orphaned by stale sweeps.`
+          );
+        }
         if (sweepResult.cancelledSessionKeys.length > 0) {
           log(
             `[periodic-sweep] Cancelled ${sweepResult.cancelledSessionKeys.length} orphaned OpenClaw session(s).`
@@ -865,6 +961,14 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
         `[periodic-sweep] Sweep failed: ${formatError(error)}`
       );
     }
+
+    // Re-propagate Codex auth to any new agent dirs created since last cycle
+    try {
+      const propagated = await propagateCodexAuth();
+      if (propagated > 0) {
+        log(`[periodic-sweep] Propagated Codex OAuth auth to ${propagated} new agent role(s).`);
+      }
+    } catch { /* non-fatal */ }
   }, periodicSweepIntervalMs);
 
   // Do not let the sweep timer keep the process alive during shutdown.

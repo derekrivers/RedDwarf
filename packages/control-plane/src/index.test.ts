@@ -7686,6 +7686,7 @@ describe("sweepStaleRuns", () => {
     const repository = new InMemoryPlanningRepository();
     const result = await sweepStaleRuns(repository);
     expect(result.sweptRunIds).toEqual([]);
+    expect(result.cancelledBlockedRunIds).toEqual([]);
     expect(result.cancelledSessionKeys).toEqual([]);
   });
 
@@ -7800,6 +7801,70 @@ describe("sweepStaleRuns", () => {
       (r) => r.runId === "run-fail-cancel"
     );
     expect(run?.status).toBe("stale");
+  });
+
+  it("cancels blocked runs whose blocker was swept as stale", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-03-29T12:00:00.000Z");
+
+    // Stale active run (heartbeat 10 min ago)
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-stale-blocker",
+        taskId: "task-blocked-1",
+        status: "active",
+        concurrencyKey: "github:acme/platform:50",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:00:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:50:00.000Z"
+      })
+    );
+
+    // Blocked run that depends on the stale one
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-blocked-dependent",
+        taskId: "task-blocked-1",
+        status: "blocked",
+        concurrencyKey: "github:acme/platform:50",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:55:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:55:00.000Z",
+        blockedByRunId: "run-stale-blocker"
+      })
+    );
+
+    // Blocked run that depends on a different (non-stale) run — should NOT be cancelled
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-blocked-other",
+        taskId: "task-blocked-2",
+        status: "blocked",
+        concurrencyKey: "github:acme/platform:51",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:55:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:55:00.000Z",
+        blockedByRunId: "run-still-active"
+      })
+    );
+
+    const result = await sweepStaleRuns(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000
+    });
+
+    expect(result.sweptRunIds).toEqual(["run-stale-blocker"]);
+    expect(result.cancelledBlockedRunIds).toEqual(["run-blocked-dependent"]);
+
+    const runs = await repository.listPipelineRuns({});
+    const blocked = runs.find((r) => r.runId === "run-blocked-dependent");
+    expect(blocked?.status).toBe("cancelled");
+    expect(blocked?.metadata?.cancelledBy).toBe("sweep-blocked-by-stale");
+    expect(blocked?.metadata?.originalBlockedByRunId).toBe("run-stale-blocker");
+
+    // The other blocked run should remain blocked
+    const otherBlocked = runs.find((r) => r.runId === "run-blocked-other");
+    expect(otherBlocked?.status).toBe("blocked");
   });
 });
 
