@@ -142,8 +142,9 @@ export interface DashboardApiClient {
   getTask(taskId: string): Promise<TaskDetailResponse>;
   resolveApproval(
     id: string,
-    decision: "approve" | "reject",
-    decisionSummary: string
+    decision: "approve" | "reject" | "rework",
+    decisionSummary: string,
+    comment?: string
   ): Promise<ResolveApprovalResponse>;
   getRepos(): Promise<ReposResponse>;
   addRepo(repo: string): Promise<RepoMutationResponse>;

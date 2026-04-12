@@ -311,7 +311,8 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
     resolveApproval(
       id: string,
       decision: ApprovalDecision,
-      decisionSummary: string
+      decisionSummary: string,
+      comment?: string
     ) {
       return request<ResolveApprovalResponse>(
         `/approvals/${encodeURIComponent(id)}/resolve`,
@@ -320,7 +321,8 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
           body: JSON.stringify({
             decision,
             decidedBy: "operator",
-            decisionSummary
+            decisionSummary,
+            ...(comment ? { comment } : {})
           })
         }
       );

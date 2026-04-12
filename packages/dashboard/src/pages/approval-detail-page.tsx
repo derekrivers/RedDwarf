@@ -7,7 +7,7 @@ import { useToast } from "../components/toast-provider";
 import { getApprovalUiCopy } from "../lib/approval-presenters";
 import type { DashboardApiClient } from "../types/dashboard";
 
-type ResolveIntent = "approve" | "reject";
+type ResolveIntent = "approve" | "reject" | "rework";
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
@@ -42,6 +42,8 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
   const rejectReasonRef = useRef<HTMLTextAreaElement | null>(null);
   const [approveNote, setApproveNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+  const [reworkFeedback, setReworkFeedback] = useState("");
+  const reworkFeedbackRef = useRef<HTMLTextAreaElement | null>(null);
   const [activeModal, setActiveModal] = useState<ResolveIntent | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -99,6 +101,8 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
   const evidenceRecords = evidenceQuery.data?.evidenceRecords ?? [];
   const isResolved = approval?.status !== "pending";
   const rejectionValid = rejectReason.trim().length >= 10;
+  const reworkValid = reworkFeedback.trim().length >= 10;
+  const isFailureEscalation = approval?.requestedBy === "failure-automation";
   const uiCopy = approval ? getApprovalUiCopy(approval) : null;
 
   const taskDetails = useMemo(
@@ -116,9 +120,18 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
       return;
     }
 
-    const decisionSummary = intent === "approve" ? approveNote.trim() : rejectReason.trim();
+    const decisionSummary =
+      intent === "approve"
+        ? approveNote.trim()
+        : intent === "rework"
+          ? reworkFeedback.trim()
+          : rejectReason.trim();
 
     if (intent === "reject" && decisionSummary.length < 10) {
+      return;
+    }
+
+    if (intent === "rework" && decisionSummary.length < 10) {
       return;
     }
 
@@ -126,13 +139,18 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
     setSubmitError(null);
 
     try {
-      await apiClient.resolveApproval(approvalId, intent, decisionSummary);
+      const comment = intent === "rework" ? reworkFeedback.trim() : undefined;
+      await apiClient.resolveApproval(approvalId, intent, decisionSummary, comment);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["approvals-list"] }),
         queryClient.invalidateQueries({ queryKey: ["shell-approvals"] })
       ]);
       pushToast(
-        intent === "approve" ? "Approval request approved." : "Approval request rejected.",
+        intent === "approve"
+          ? "Approval request approved."
+          : intent === "rework"
+            ? "Rework requested. The agent will retry with your feedback."
+            : "Approval request rejected.",
         "success"
       );
       navigate("/approvals");
@@ -314,6 +332,46 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
               </div>
             </div>
 
+            {isFailureEscalation ? (
+            <div className="card border-warning mb-4">
+              <div className="card-body">
+                <h3 className="card-title text-warning">
+                  Rework
+                </h3>
+                <p className="text-secondary">
+                  Send the task back for rework with feedback describing what the agent should fix.
+                  The agent will retry the failed phase with your guidance.
+                </p>
+                <div className="mb-3">
+                  <label className="form-label" htmlFor="rework-feedback">
+                    Rework feedback
+                  </label>
+                  <textarea
+                    className="form-control"
+                    disabled={isSubmitting || isResolved}
+                    id="rework-feedback"
+                    onChange={(event) => setReworkFeedback(event.target.value)}
+                    placeholder="Describe what the agent should fix or change..."
+                    ref={reworkFeedbackRef}
+                    rows={5}
+                    value={reworkFeedback}
+                  />
+                  <small className="form-hint">At least 10 characters required.</small>
+                </div>
+                <button
+                  className="btn btn-warning w-100"
+                  disabled={isSubmitting || isResolved || !reworkValid}
+                  onClick={() => setActiveModal("rework")}
+                  type="button"
+                >
+                  {isSubmitting && activeModal === "rework"
+                    ? "Processing..."
+                    : "Request Rework"}
+                </button>
+              </div>
+            </div>
+            ) : null}
+
             <div className="card border-danger">
               <div className="card-body">
                 <h3 className="card-title text-danger">
@@ -364,14 +422,18 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                   className={
                     activeModal === "approve"
                       ? "modal-status bg-success"
-                      : "modal-status bg-danger"
+                      : activeModal === "rework"
+                        ? "modal-status bg-warning"
+                        : "modal-status bg-danger"
                   }
                 />
                 <div className="modal-header">
                   <h5 className="modal-title">
                     {activeModal === "approve"
                       ? (uiCopy?.approveModalTitle ?? "Approve this run?")
-                      : "Reject this run?"}
+                      : activeModal === "rework"
+                        ? "Request rework for this run?"
+                        : "Reject this run?"}
                   </h5>
                   <button
                     aria-label="Close"
@@ -383,6 +445,11 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                 <div className="modal-body">
                   {activeModal === "approve" ? (
                     <p className="mb-0">{uiCopy?.approveModalBody ?? "Are you sure you want to approve this run? This will allow the developer phase to proceed in OpenClaw."}</p>
+                  ) : activeModal === "rework" ? (
+                    <p className="mb-0">
+                      Are you sure you want to request rework? The agent will retry the
+                      failed phase using your feedback.
+                    </p>
                   ) : (
                     <p className="mb-0">
                       Are you sure you want to reject this run? The rejection reason
@@ -395,7 +462,13 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
                     Cancel
                   </button>
                   <button
-                    className={activeModal === "approve" ? "btn btn-success" : "btn btn-danger"}
+                    className={
+                      activeModal === "approve"
+                        ? "btn btn-success"
+                        : activeModal === "rework"
+                          ? "btn btn-warning"
+                          : "btn btn-danger"
+                    }
                     onClick={() => handleResolve(activeModal)}
                     type="button"
                   >

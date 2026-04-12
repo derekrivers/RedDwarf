@@ -85,7 +85,9 @@ export const memoryProvenances = [
   "pipeline_derived",
   "external_retrieval",
   /** Observations extracted from agent session outputs such as OpenClaw dreaming passes (Feature 156). */
-  "agent_observed"
+  "agent_observed",
+  /** Feedback provided by an operator via the approval rework flow (Feature 175). */
+  "operator_provided"
 ] as const;
 export const policyPackEntryKinds = ["directory", "file"] as const;
 export const concurrencyStrategies = ["serialize", "escalate"] as const;
@@ -129,7 +131,7 @@ export const approvalRequestStatuses = [
   "rejected",
   "cancelled"
 ] as const;
-export const approvalDecisions = ["approve", "reject"] as const;
+export const approvalDecisions = ["approve", "reject", "rework"] as const;
 export const githubIssuePollingCursorStatuses = ["succeeded", "failed"] as const;
 
 export const openClawAgentRoles = [

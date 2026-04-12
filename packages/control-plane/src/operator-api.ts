@@ -1003,6 +1003,7 @@ function renderOperatorUiHtml(): string {
       .button-primary:hover { background: var(--accent-strong); }
       .button-secondary { background: rgba(36, 31, 26, 0.08); color: var(--text); }
       .button-danger { background: rgba(171, 47, 63, 0.12); color: var(--danger); }
+      .button-warning { background: rgba(200, 150, 50, 0.15); color: #b58a20; }
       .button-row {
         display: flex;
         gap: 10px;
@@ -1491,6 +1492,7 @@ function renderOperatorUiHtml(): string {
             '<div class="label">' + approval.requestId + '</div>' +
             '<div class="button-row">' +
               '<button class="button-primary" data-approval="' + approval.requestId + '" data-decision="approve">Approve</button>' +
+              (approval.requestedBy === "failure-automation" ? '<button class="button-warning" data-approval="' + approval.requestId + '" data-decision="rework">Rework</button>' : '') +
               '<button class="button-danger" data-approval="' + approval.requestId + '" data-decision="reject">Reject</button>' +
             '</div>' +
           '</div>'
@@ -1499,6 +1501,11 @@ function renderOperatorUiHtml(): string {
           button.addEventListener("click", async () => {
             const approvalId = button.getAttribute("data-approval");
             const decision = button.getAttribute("data-decision");
+            let comment = null;
+            if (decision === "rework") {
+              comment = prompt("Describe what the agent should fix:");
+              if (!comment || comment.trim().length === 0) return;
+            }
             button.disabled = true;
             try {
               await api("/approvals/" + encodeURIComponent(approvalId) + "/resolve", {
@@ -1508,10 +1515,17 @@ function renderOperatorUiHtml(): string {
                   decidedBy: "operator",
                   decisionSummary: decision === "approve"
                     ? "Approved from the operator panel."
-                    : "Rejected from the operator panel."
+                    : decision === "rework"
+                      ? "Rework requested from the operator panel."
+                      : "Rejected from the operator panel.",
+                  ...(comment ? { comment } : {})
                 }
               });
-              setNotice("approvals-notice", "ok", decision === "approve" ? "Approval approved." : "Approval rejected.");
+              setNotice("approvals-notice", "ok",
+                decision === "approve" ? "Approval approved."
+                : decision === "rework" ? "Rework requested."
+                : "Approval rejected."
+              );
               await refreshData();
             } catch (error) {
               button.disabled = false;

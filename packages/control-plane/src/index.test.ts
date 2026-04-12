@@ -4052,6 +4052,359 @@ describe("control-plane", () => {
     ).toBe(true);
   });
 
+  it("resolves a failure-escalation approval with rework and resets the task to ready", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-rework-plan"
+      }
+    );
+
+    // Approve through the policy gate first
+    await resolveApprovalRequest(
+      {
+        requestId: result.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for rework testing."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    // Simulate a failure-escalation approval on the development phase
+    const manifest = await repository.getManifest(result.manifest.taskId);
+    const blockedManifest = taskManifestSchema.parse({
+      ...manifest,
+      lifecycleStatus: "blocked",
+      currentPhase: "development",
+      retryCount: 1,
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.updateManifest(blockedManifest);
+
+    const failureApproval = createApprovalRequest({
+      requestId: `${result.manifest.taskId}:approval:development:failure:run-rework-plan`,
+      taskId: result.manifest.taskId,
+      runId: "run-rework-plan",
+      phase: "development",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "low",
+      summary: "Development phase failed after retry budget exhausted.",
+      requestedCapabilities: [],
+      allowedPaths: [],
+      blockedPhases: ["development"],
+      policyReasons: [],
+      requestedBy: "failure-automation",
+      createdAt: "2026-03-25T18:10:00.000Z",
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.saveApprovalRequest(failureApproval);
+
+    // Save a retry budget memory record so the reset path is exercised
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId: `${result.manifest.taskId}:memory:task:retry-budget:development`,
+        taskId: result.manifest.taskId,
+        scope: "task",
+        provenance: "pipeline_derived",
+        key: "failure.retry_budget.development",
+        title: "development retry budget state",
+        value: {
+          phase: "development",
+          attempts: 1,
+          retryLimit: 1,
+          retryExhausted: true,
+          lastError: "Development failed",
+          lastFailureCode: "DEVELOPMENT_FAILED",
+          lastFailureClass: "integration_failure",
+          lastRunId: "run-rework-plan",
+          updatedAt: "2026-03-25T18:10:00.000Z"
+        },
+        createdAt: "2026-03-25T18:10:00.000Z",
+        updatedAt: "2026-03-25T18:10:00.000Z"
+      })
+    );
+
+    const decision = await resolveApprovalRequest(
+      {
+        requestId: failureApproval.requestId,
+        decision: "rework",
+        decidedBy: "operator",
+        decisionSummary: "Rework the development phase with updated approach.",
+        comment: "The implementation needs to use the existing database adapter instead of creating a new one."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:15:00.000Z")
+      }
+    );
+
+    const persistedRequest = await repository.getApprovalRequest(failureApproval.requestId);
+    const reworkMemory = repository.memoryRecords.find(
+      (record) => record.key === "rework.feedback:development"
+    );
+    const retryBudgetMemory = repository.memoryRecords.find(
+      (record) => record.key === "failure.retry_budget.development"
+    );
+
+    expect(decision.manifest.lifecycleStatus).toBe("ready");
+    expect(decision.manifest.retryCount).toBe(0);
+    expect(persistedRequest?.status).toBe("approved");
+    expect(persistedRequest?.decision).toBe("rework");
+    expect(persistedRequest?.comment).toBe(
+      "The implementation needs to use the existing database adapter instead of creating a new one."
+    );
+    expect(reworkMemory).toBeDefined();
+    expect(reworkMemory?.value).toMatchObject({
+      phase: "development",
+      feedback: "The implementation needs to use the existing database adapter instead of creating a new one.",
+      decidedBy: "operator"
+    });
+    expect(retryBudgetMemory?.value).toMatchObject({
+      attempts: 0,
+      retryExhausted: false
+    });
+    expect(
+      repository.runEvents.some((event) => event.code === "REWORK_REQUESTED")
+    ).toBe(true);
+  });
+
+  it("rejects rework for non-failure-escalation approvals", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-rework-non-failure",
+      lifecycleStatus: "blocked",
+      currentPhase: "development"
+    });
+    await repository.saveManifest(manifest);
+
+    // Create a development phase approval that was NOT raised by failure-automation
+    const manualApproval = createApprovalRequest({
+      requestId: `${manifest.taskId}:approval:development:manual`,
+      taskId: manifest.taskId,
+      runId: "run-manual",
+      phase: "development",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "low",
+      summary: "Manual approval for development.",
+      requestedCapabilities: [],
+      allowedPaths: [],
+      blockedPhases: ["development"],
+      policyReasons: [],
+      requestedBy: "operator",
+      createdAt: "2026-03-25T18:10:00.000Z",
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.saveApprovalRequest(manualApproval);
+
+    await expect(
+      resolveApprovalRequest(
+        {
+          requestId: manualApproval.requestId,
+          decision: "rework",
+          decidedBy: "operator",
+          decisionSummary: "Try to rework a non-failure approval.",
+          comment: "This should fail."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:15:00.000Z")
+        }
+      )
+    ).rejects.toThrow("only available for failure-escalation");
+  });
+
+  it("sends architecture_review rework back to the development phase", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const result = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/app.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-03-25T18:00:00.000Z"),
+        idGenerator: () => "run-arch-rework-plan"
+      }
+    );
+
+    // Approve the policy gate
+    await resolveApprovalRequest(
+      {
+        requestId: result.approvalRequest!.requestId,
+        decision: "approve",
+        decidedBy: "operator",
+        decisionSummary: "Approved for arch rework test."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:05:00.000Z")
+      }
+    );
+
+    // Simulate a failure-escalation at architecture_review
+    const manifest = await repository.getManifest(result.manifest.taskId);
+    const blockedManifest = taskManifestSchema.parse({
+      ...manifest,
+      lifecycleStatus: "blocked",
+      currentPhase: "architecture_review",
+      retryCount: 1,
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.updateManifest(blockedManifest);
+
+    const failureApproval = createApprovalRequest({
+      requestId: `${result.manifest.taskId}:approval:architecture_review:failure:run-arch-rework`,
+      taskId: result.manifest.taskId,
+      runId: "run-arch-rework",
+      phase: "architecture_review",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "low",
+      summary: "Architecture review failed after retry budget exhausted.",
+      requestedCapabilities: [],
+      allowedPaths: [],
+      blockedPhases: ["architecture_review"],
+      policyReasons: [],
+      requestedBy: "failure-automation",
+      createdAt: "2026-03-25T18:10:00.000Z",
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.saveApprovalRequest(failureApproval);
+
+    const decision = await resolveApprovalRequest(
+      {
+        requestId: failureApproval.requestId,
+        decision: "rework",
+        decidedBy: "operator",
+        decisionSummary: "Rework architecture review — go back to development.",
+        comment: "The architecture approach needs to use event sourcing instead of direct state mutation."
+      },
+      {
+        repository,
+        clock: () => new Date("2026-03-25T18:15:00.000Z")
+      }
+    );
+
+    const reworkMemory = repository.memoryRecords.find(
+      (record) => record.key === "rework.feedback:development"
+    );
+
+    // Architecture review rework goes back to development
+    expect(decision.manifest.currentPhase).toBe("development");
+    expect(decision.manifest.lifecycleStatus).toBe("ready");
+    expect(reworkMemory).toBeDefined();
+    expect(reworkMemory?.value).toMatchObject({
+      phase: "development",
+      originalFailedPhase: "architecture_review",
+      feedback: "The architecture approach needs to use event sourcing instead of direct state mutation."
+    });
+  });
+
+  it("rejects rework without a comment", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-rework-no-comment",
+      lifecycleStatus: "blocked",
+      currentPhase: "development"
+    });
+    await repository.saveManifest(manifest);
+
+    const failureApproval = createApprovalRequest({
+      requestId: `${manifest.taskId}:approval:development:failure:run-no-comment`,
+      taskId: manifest.taskId,
+      runId: "run-no-comment",
+      phase: "development",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "low",
+      summary: "Development phase failed.",
+      requestedCapabilities: [],
+      allowedPaths: [],
+      blockedPhases: ["development"],
+      policyReasons: [],
+      requestedBy: "failure-automation",
+      createdAt: "2026-03-25T18:10:00.000Z",
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.saveApprovalRequest(failureApproval);
+
+    await expect(
+      resolveApprovalRequest(
+        {
+          requestId: failureApproval.requestId,
+          decision: "rework",
+          decidedBy: "operator",
+          decisionSummary: "Rework without feedback."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:15:00.000Z")
+        }
+      )
+    ).rejects.toThrow("Rework requires a comment");
+  });
+
+  it("rejects rework for non-recoverable phases", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const manifest = makeOrphanManifest({
+      taskId: "acme-platform-rework-policy-gate",
+      lifecycleStatus: "blocked",
+      currentPhase: "policy_gate"
+    });
+    await repository.saveManifest(manifest);
+
+    const failureApproval = createApprovalRequest({
+      requestId: `${manifest.taskId}:approval:policy_gate:failure:run-policy`,
+      taskId: manifest.taskId,
+      runId: "run-policy",
+      phase: "policy_gate",
+      approvalMode: "human_signoff_required",
+      status: "pending",
+      riskClass: "low",
+      summary: "Policy gate failed.",
+      requestedCapabilities: [],
+      allowedPaths: [],
+      blockedPhases: ["policy_gate"],
+      policyReasons: [],
+      requestedBy: "failure-automation",
+      createdAt: "2026-03-25T18:10:00.000Z",
+      updatedAt: "2026-03-25T18:10:00.000Z"
+    });
+    await repository.saveApprovalRequest(failureApproval);
+
+    await expect(
+      resolveApprovalRequest(
+        {
+          requestId: failureApproval.requestId,
+          decision: "rework",
+          decidedBy: "operator",
+          decisionSummary: "Try to rework policy gate.",
+          comment: "This should fail because policy_gate is not recoverable."
+        },
+        {
+          repository,
+          clock: () => new Date("2026-03-25T18:15:00.000Z")
+        }
+      )
+    ).rejects.toThrow("Rework is not available for phase");
+  });
+
   it("blocks a fresh overlapping run for the same task source", async () => {
     const repository = new InMemoryPlanningRepository();
     await repository.savePipelineRun(
