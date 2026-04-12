@@ -1,5 +1,6 @@
 export * from "./errors.js";
 export * from "./ci.js";
+export * from "./circuit-breaker.js";
 export * from "./knowledge.js";
 export * from "./secrets.js";
 export * from "./openclaw.js";
