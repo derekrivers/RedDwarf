@@ -559,6 +559,7 @@ if (!skipOpenClaw) {
 
 let shuttingDown = false;
 let dashboardProcess = null;
+let periodicSweepTimer = null;
 
 if (!skipDashboard) {
   const corepackCommand = process.platform === "win32" ? "corepack.cmd" : "corepack";
@@ -685,6 +686,26 @@ log("═════════════════════════
 
 // ── Graceful shutdown ─────────────────────────────────────────────────
 
+const SHUTDOWN_STEP_TIMEOUT_MS = 10_000;
+
+/**
+ * Race a promise against a deadline. If the promise doesn't resolve within
+ * `ms` milliseconds, log a warning and continue.
+ */
+async function withDeadline(promise, label, ms = SHUTDOWN_STEP_TIMEOUT_MS) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    await Promise.race([promise, timeout]);
+  } catch (error) {
+    logError(`  Shutdown step warning: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -692,29 +713,42 @@ async function shutdown(exitCode = 0) {
   log("");
   log("Shutting down...");
 
+  if (periodicSweepTimer) {
+    clearInterval(periodicSweepTimer);
+    periodicSweepTimer = null;
+    log("  Periodic sweep stopped.");
+  }
+
   if (daemon) {
-    await daemon.stop();
+    await withDeadline(daemon.stop(), "Polling daemon stop");
     log("  Polling daemon stopped.");
   }
 
   if (dispatcher) {
-    await dispatcher.stop();
+    await withDeadline(dispatcher.stop(), "Ready-task dispatcher stop");
     log("  Ready-task dispatcher stopped.");
   }
 
-  await server.stop();
+  await withDeadline(server.stop(), "Operator API stop");
   log("  Operator API stopped.");
 
   if (dashboardProcess && dashboardProcess.exitCode === null) {
     dashboardProcess.kill("SIGTERM");
+    const killTimer = setTimeout(() => {
+      if (dashboardProcess && dashboardProcess.exitCode === null) {
+        dashboardProcess.kill("SIGKILL");
+        logError("  Dashboard did not exit after SIGTERM; sent SIGKILL.");
+      }
+    }, 5_000);
+    dashboardProcess.once("exit", () => clearTimeout(killTimer));
     log("  Operator dashboard stopped.");
   }
 
-  await repository.close();
+  await withDeadline(repository.close(), "Database pool close");
   log("  Database pool closed.");
 
   log("Shutdown complete.");
-  process.exit(exitCode);
+  process.exit(typeof exitCode === "number" ? exitCode : 0);
 }
 
 if (dashboardProcess) {
@@ -739,5 +773,58 @@ if (dashboardProcess) {
   });
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+// ── Periodic runtime sweep ────────────────────────────────────────────
+// R-04: Run stale-run sweep on a configurable interval so orphaned runs
+// are detected during runtime, not just at startup.
+
+const periodicSweepIntervalMs = Number(
+  process.env.REDDWARF_PERIODIC_SWEEP_INTERVAL_MS ?? 300_000
+);
+const periodicSweepEnabled =
+  process.env.REDDWARF_PERIODIC_SWEEP_ENABLED !== "false";
+
+if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
+  periodicSweepTimer = setInterval(async () => {
+    if (shuttingDown) return;
+    try {
+      const sweepResult = await sweepStaleRuns(repository);
+      if (sweepResult.sweptRunIds.length > 0) {
+        log(
+          `[periodic-sweep] Swept ${sweepResult.sweptRunIds.length} stale run(s): ${sweepResult.sweptRunIds.join(", ")}`
+        );
+      }
+    } catch (error) {
+      logError(
+        `[periodic-sweep] Sweep failed: ${formatError(error)}`
+      );
+    }
+  }, periodicSweepIntervalMs);
+
+  // Do not let the sweep timer keep the process alive during shutdown.
+  periodicSweepTimer.unref();
+  log(
+    `  Periodic stale-run sweep enabled (every ${Math.round(periodicSweepIntervalMs / 1000)}s).`
+  );
+}
+
+// ── Signal and error handlers ─────────────────────────────────────────
+
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));
+
+// R-01: Global error boundaries — catch unhandled async rejections and
+// uncaught exceptions so the process logs a stack trace and shuts down
+// gracefully instead of dying silently.
+process.on("unhandledRejection", (reason) => {
+  logError(
+    `Unhandled rejection: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}`
+  );
+  void shutdown(1);
+});
+
+process.on("uncaughtException", (error) => {
+  logError(
+    `Uncaught exception: ${error.stack ?? error.message}`
+  );
+  void shutdown(1);
+});
