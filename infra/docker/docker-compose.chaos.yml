@@ -1,0 +1,41 @@
+# Chaos testing overlay — inserts Toxiproxy between the host process and
+# both Postgres and OpenClaw containers.
+#
+# Usage:
+#   docker compose -f infra/docker/docker-compose.yml \
+#                  -f infra/docker/docker-compose.chaos.yml \
+#                  --profile openclaw up -d
+#
+# Toxiproxy API: http://localhost:8474
+# Proxied Postgres: localhost:55533 (-> postgres:5432)
+# Proxied OpenClaw: localhost:3579  (-> openclaw:18789)
+#
+# In chaos mode, point HOST_DATABASE_URL at the proxied port (55533) and
+# OPENCLAW_BASE_URL at http://localhost:3579 to route traffic through
+# Toxiproxy. The original direct ports remain available for comparison.
+
+services:
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.11.0
+    restart: unless-stopped
+    ports:
+      # Toxiproxy API
+      - "8474:8474"
+      # Proxied Postgres
+      - "55533:55533"
+      # Proxied OpenClaw
+      - "3579:3579"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./toxiproxy.json:/config/toxiproxy.json:ro
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+
+  # Make OpenClaw depend on toxiproxy so the proxy is ready before OpenClaw starts
+  openclaw:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      toxiproxy:
+        condition: service_started
