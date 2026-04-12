@@ -753,11 +753,11 @@ async function resolveOpenClawUiStatus(
     return openClawHealthCache.result;
   }
 
-  const baseUrl = process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578";
+  const baseUrl = stripTrailingSlashes(process.env.OPENCLAW_BASE_URL?.trim() || "http://127.0.0.1:3578");
   const checkedAt = clock().toISOString();
 
   try {
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
+    const response = await fetch(`${baseUrl}/health`, {
       signal: AbortSignal.timeout(2_000)
     });
 
@@ -4482,13 +4482,24 @@ function createCachedProbe(probe: DownstreamHealthProbe): DownstreamHealthProbe 
   };
 }
 
+/** Strip trailing slashes without a regex quantifier that can backtrack
+ *  on strings of many forward slashes (CodeQL: polynomial-redos). */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") {
+    end--;
+  }
+  return url.slice(0, end);
+}
+
 export function createOpenClawHealthProbe(baseUrl: string): DownstreamHealthProbe {
+  const cleanBaseUrl = stripTrailingSlashes(baseUrl);
   return createCachedProbe({
     name: "openclaw",
     async probe(): Promise<DownstreamHealthProbeResult> {
       const start = Date.now();
       try {
-        const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
+        const response = await fetch(`${cleanBaseUrl}/health`, {
           signal: AbortSignal.timeout(DOWNSTREAM_PROBE_TIMEOUT_MS)
         });
         const latencyMs = Date.now() - start;
