@@ -231,7 +231,8 @@ export function createGitHubIssuePollingDaemon(
       return 0;
     }
 
-    return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
+    const jitter = 0.5 + Math.random(); // 0.5x–1.5x prevents synchronized retry storms
+    return Math.min(config.intervalMs * Math.pow(2, failures - 1) * jitter, MAX_BACKOFF_MS);
   }
 
   async function resolveRepositoryConfigs(): Promise<GitHubPollingRepoConfig[]> {
@@ -919,7 +920,8 @@ export function createReadyTaskDispatcher(
       return 0;
     }
 
-    return Math.min(config.intervalMs * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
+    const jitter = 0.5 + Math.random(); // 0.5x–1.5x prevents synchronized retry storms
+    return Math.min(config.intervalMs * Math.pow(2, failures - 1) * jitter, MAX_BACKOFF_MS);
   }
 
   async function dispatchOnce(): Promise<ReadyTaskDispatchCycleResult> {

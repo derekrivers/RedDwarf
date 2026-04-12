@@ -334,10 +334,33 @@ const runtimeLogger = createPinoPlanningLogger({
 
 // ── 2a: Sweep stale pipeline runs ─────────────────────────────────────
 
+// R-12: Best-effort OpenClaw session cancellation during stale-run sweep.
+// Uses the gateway hook token to DELETE orphaned sessions.
+const openClawGatewayBase = `http://localhost:${process.env.OPENCLAW_HOST_PORT ?? "3578"}`;
+const openClawHookToken = (process.env.OPENCLAW_HOOK_TOKEN ?? "").trim();
+
+/** @param {string} sessionKey */
+const cancelOpenClawSession = openClawHookToken.length > 0
+  ? async (sessionKey) => {
+      const url = `${openClawGatewayBase}/hooks/sessions/${encodeURIComponent(sessionKey)}`;
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${openClawHookToken}` },
+        signal: AbortSignal.timeout(5_000)
+      });
+      if (!res.ok && res.status !== 404) {
+        throw new Error(`DELETE ${url} returned ${res.status}`);
+      }
+    }
+  : undefined;
+
 try {
-  const sweepResult = await sweepStaleRuns(repository);
+  const sweepResult = await sweepStaleRuns(repository, { cancelOpenClawSession });
   if (sweepResult.sweptRunIds.length > 0) {
     log(`Swept ${sweepResult.sweptRunIds.length} stale run(s): ${sweepResult.sweptRunIds.join(", ")}`);
+    if (sweepResult.cancelledSessionKeys.length > 0) {
+      log(`  Cancelled ${sweepResult.cancelledSessionKeys.length} orphaned OpenClaw session(s).`);
+    }
   } else {
     log("No stale pipeline runs found.");
   }
@@ -812,11 +835,16 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
   periodicSweepTimer = setInterval(async () => {
     if (shuttingDown) return;
     try {
-      const sweepResult = await sweepStaleRuns(repository);
+      const sweepResult = await sweepStaleRuns(repository, { cancelOpenClawSession });
       if (sweepResult.sweptRunIds.length > 0) {
         log(
           `[periodic-sweep] Swept ${sweepResult.sweptRunIds.length} stale run(s): ${sweepResult.sweptRunIds.join(", ")}`
         );
+        if (sweepResult.cancelledSessionKeys.length > 0) {
+          log(
+            `[periodic-sweep] Cancelled ${sweepResult.cancelledSessionKeys.length} orphaned OpenClaw session(s).`
+          );
+        }
       }
     } catch (error) {
       logError(

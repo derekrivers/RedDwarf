@@ -7,6 +7,7 @@ import {
   readFile,
   rm,
   stat,
+  statfs,
   writeFile
 } from "node:fs/promises";
 import {
@@ -54,6 +55,49 @@ import {
   expandAllowedPathsForGeneratedArtifacts,
   normalizeAllowedPaths
 } from "./allowed-paths.js";
+
+// ============================================================
+// Disk space pre-check (R-10)
+// ============================================================
+
+const DEFAULT_MIN_DISK_FREE_MB = 500;
+
+export class DiskSpaceError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly availableMb: number,
+    public readonly requiredMb: number
+  ) {
+    super(
+      `Insufficient disk space at ${path}: ${availableMb.toFixed(0)} MB available, ` +
+        `${requiredMb} MB required.`
+    );
+    this.name = "DiskSpaceError";
+  }
+}
+
+/**
+ * Assert that sufficient disk space is available at the given path.
+ * Uses `fs.statfs()` to check free blocks without spawning a subprocess.
+ * Returns quietly when space is adequate; throws `DiskSpaceError` otherwise.
+ */
+export async function assertDiskSpaceAvailable(
+  targetPath: string,
+  minFreeMb: number = DEFAULT_MIN_DISK_FREE_MB
+): Promise<void> {
+  try {
+    const stats = await statfs(targetPath);
+    const availableBytes = stats.bavail * stats.bsize;
+    const availableMb = availableBytes / (1024 * 1024);
+    if (availableMb < minFreeMb) {
+      throw new DiskSpaceError(targetPath, availableMb, minFreeMb);
+    }
+  } catch (error) {
+    if (error instanceof DiskSpaceError) throw error;
+    // If statfs fails (e.g. path doesn't exist yet), skip the check rather
+    // than blocking the write — mkdir will fail more clearly if the path is bad.
+  }
+}
 
 // ============================================================
 // Workspace interfaces
@@ -618,6 +662,8 @@ export async function materializeManagedWorkspace(input: {
   createdAt?: string;
   secretLease?: SecretLease | null;
 }): Promise<MaterializedManagedWorkspace> {
+  const minFreeMb = parseInt(process.env["REDDWARF_MIN_DISK_FREE_MB"] ?? "", 10);
+  await assertDiskSpaceAvailable(input.targetRoot, Number.isFinite(minFreeMb) ? minFreeMb : undefined);
   const materializedBundle = workspaceContextBundleSchema.parse({
     ...input.bundle,
     manifest: {
@@ -940,6 +986,8 @@ export async function archiveEvidenceArtifact(input: {
   fileName?: string;
 }): Promise<ArchivedEvidenceArtifact> {
   const evidenceRoot = resolveEvidenceRoot(input.targetRoot, input.evidenceRoot);
+  const minFreeMb = parseInt(process.env["REDDWARF_MIN_DISK_FREE_MB"] ?? "", 10);
+  await assertDiskSpaceAvailable(evidenceRoot, Number.isFinite(minFreeMb) ? minFreeMb : undefined);
   const relativePath = [
     evidenceTasksDirName,
     sanitizeEvidencePathSegment(input.taskId),

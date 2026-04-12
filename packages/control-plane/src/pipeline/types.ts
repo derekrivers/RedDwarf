@@ -362,10 +362,14 @@ export interface SweepStaleRunsOptions {
   staleAfterMs?: number;
   clock?: () => Date;
   logger?: PlanningPipelineLogger;
+  /** Best-effort callback to cancel an orphaned OpenClaw session by its
+   *  normalized session key. Errors are caught and logged — never fatal. */
+  cancelOpenClawSession?: (sessionKey: string) => Promise<void>;
 }
 
 export interface SweepStaleRunsResult {
   sweptRunIds: string[];
+  cancelledSessionKeys: string[];
   sweptAt: string;
 }
 
