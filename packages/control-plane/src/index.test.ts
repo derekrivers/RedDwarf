@@ -7684,6 +7684,120 @@ describe("sweepStaleRuns", () => {
     const repository = new InMemoryPlanningRepository();
     const result = await sweepStaleRuns(repository);
     expect(result.sweptRunIds).toEqual([]);
+    expect(result.cancelledSessionKeys).toEqual([]);
+  });
+
+  it("cancels OpenClaw sessions for stale runs when callback is provided", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-03-29T12:00:00.000Z");
+
+    const manifest = taskManifestSchema.parse({
+      taskId: "task-cancel-1",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 42 },
+      title: "Session cancellation test",
+      summary: "Test that stale runs cancel their OpenClaw sessions.",
+      priority: 1,
+      riskClass: "low",
+      approvalMode: "auto",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: [],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-03-29T11:00:00.000Z",
+      updatedAt: "2026-03-29T11:00:00.000Z"
+    });
+    await repository.saveManifest(manifest);
+
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-cancel-1",
+        taskId: "task-cancel-1",
+        status: "active",
+        concurrencyKey: "github:acme/platform:42",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:00:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:00:00.000Z"
+      })
+    );
+
+    const cancelledKeys: string[] = [];
+    const cancelOpenClawSession = async (key: string) => {
+      cancelledKeys.push(key);
+    };
+
+    const result = await sweepStaleRuns(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000,
+      cancelOpenClawSession
+    });
+
+    expect(result.sweptRunIds).toEqual(["run-cancel-1"]);
+    expect(result.cancelledSessionKeys).toEqual(["github:issue:acme/platform:42"]);
+    expect(cancelledKeys).toEqual(["github:issue:acme/platform:42"]);
+  });
+
+  it("handles session cancellation failures gracefully", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const now = new Date("2026-03-29T12:00:00.000Z");
+
+    const manifest = taskManifestSchema.parse({
+      taskId: "task-fail-cancel",
+      source: { provider: "github", repo: "acme/platform", issueNumber: 99 },
+      title: "Failed cancellation test",
+      summary: "Test that cancellation errors are swallowed.",
+      priority: 1,
+      riskClass: "low",
+      approvalMode: "auto",
+      currentPhase: "development",
+      lifecycleStatus: "active",
+      assignedAgentType: "developer",
+      requestedCapabilities: [],
+      retryCount: 0,
+      evidenceLinks: [],
+      workspaceId: null,
+      branchName: null,
+      prNumber: null,
+      policyVersion: "v1",
+      createdAt: "2026-03-29T11:00:00.000Z",
+      updatedAt: "2026-03-29T11:00:00.000Z"
+    });
+    await repository.saveManifest(manifest);
+
+    await repository.savePipelineRun(
+      createPipelineRun({
+        runId: "run-fail-cancel",
+        taskId: "task-fail-cancel",
+        status: "active",
+        concurrencyKey: "github:acme/platform:99",
+        strategy: "serialize",
+        startedAt: "2026-03-29T11:00:00.000Z",
+        lastHeartbeatAt: "2026-03-29T11:00:00.000Z"
+      })
+    );
+
+    const cancelOpenClawSession = async () => {
+      throw new Error("OpenClaw gateway unreachable");
+    };
+
+    const result = await sweepStaleRuns(repository, {
+      clock: () => now,
+      staleAfterMs: 5 * 60_000,
+      cancelOpenClawSession
+    });
+
+    // Run was still marked stale despite cancellation failure
+    expect(result.sweptRunIds).toEqual(["run-fail-cancel"]);
+    expect(result.cancelledSessionKeys).toEqual([]);
+    const run = (await repository.listPipelineRuns({})).find(
+      (r) => r.runId === "run-fail-cancel"
+    );
+    expect(run?.status).toBe("stale");
   });
 });
 

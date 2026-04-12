@@ -235,7 +235,8 @@ export class HttpOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
 
         if (!response.ok) {
           if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
-            const delay = attempt * this.baseDelayMs;
+            const jitter = 0.5 + Math.random(); // 0.5x–1.5x
+            const delay = Math.min(attempt * this.baseDelayMs * jitter, 30_000);
             await new Promise((resolve) => setTimeout(resolve, delay));
             continue;
           }
@@ -416,7 +417,8 @@ export class AcpxOpenClawDispatchAdapter implements OpenClawDispatchAdapter {
       if (!response.ok) {
         // Retry on transient rate-limit / overload responses
         if (this.retryableStatuses.has(response.status) && attempt < this.maxAttempts) {
-          const delay = attempt * this.baseDelayMs;
+          const jitter = 0.5 + Math.random(); // 0.5x–1.5x
+          const delay = Math.min(attempt * this.baseDelayMs * jitter, 30_000);
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }

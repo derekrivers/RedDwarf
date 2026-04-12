@@ -66,6 +66,39 @@ import {
   type PersistedTaskSnapshot,
   type RepositoryHealthSnapshot
 } from "./repository.js";
+// ── Transient Postgres error detection (R-11) ────────────────────────────────
+
+const TRANSIENT_PG_CODES = new Set([
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+  "08000", // connection_exception
+  "08003", // connection_does_not_exist
+  "08006"  // connection_failure
+]);
+
+const TRANSIENT_SYSCALL_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ETIMEDOUT"
+]);
+
+function isTransientPostgresError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const pgCode = (error as { code?: string }).code;
+  if (pgCode && TRANSIENT_PG_CODES.has(pgCode)) return true;
+  if (pgCode && TRANSIENT_SYSCALL_CODES.has(pgCode)) return true;
+  // pg wraps syscall errors in its own Error — check the message as fallback
+  const msg = error.message;
+  if (msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("EPIPE")) {
+    return true;
+  }
+  return false;
+}
+
+// ── Repository options ───────────────────────────────────────────────────────
+
 export interface PostgresPlanningRepositoryOptions {
   max?: number;
   connectionTimeoutMillis?: number;
@@ -207,8 +240,24 @@ export class PostgresPlanningRepository implements PlanningRepository {
     });
   }
 
+  /**
+   * Retry a single-query operation once on transient Postgres connection errors.
+   * Only used for critical non-transactional paths — transactional operations
+   * rely on rollback instead.
+   */
+  private async withTransientRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error: unknown) {
+      if (isTransientPostgresError(error)) {
+        return fn();
+      }
+      throw error;
+    }
+  }
+
   async healthcheck(): Promise<void> {
-    await this.pool.query("SELECT 1");
+    await this.withTransientRetry("healthcheck", () => this.pool.query("SELECT 1"));
   }
 
   async getRepositoryHealth(): Promise<RepositoryHealthSnapshot> {
@@ -551,7 +600,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
   }
 
   async saveEvidenceRecord(record: EvidenceRecord): Promise<void> {
-    await this.saveEvidenceRecordWithExecutor(this.pool, record);
+    await this.withTransientRetry("saveEvidenceRecord", () =>
+      this.saveEvidenceRecordWithExecutor(this.pool, record)
+    );
   }
 
   private async saveRunEventWithExecutor(
@@ -875,7 +926,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
   async saveGitHubIssuePollingCursor(
     cursor: GitHubIssuePollingCursor
   ): Promise<void> {
-    await this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor);
+    await this.withTransientRetry("saveGitHubIssuePollingCursor", () =>
+      this.saveGitHubIssuePollingCursorWithExecutor(this.pool, cursor)
+    );
   }
 
   async deleteGitHubIssuePollingCursor(repo: string): Promise<boolean> {

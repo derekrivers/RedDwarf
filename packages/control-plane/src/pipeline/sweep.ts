@@ -8,6 +8,7 @@ import {
   createRunEvent,
   type PlanningRepository
 } from "@reddwarf/evidence";
+import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
 import {
   findApprovedPolicyGateRequest,
   isPipelineRunStale,
@@ -41,6 +42,7 @@ export async function sweepStaleRuns(
   });
 
   const sweptRunIds: string[] = [];
+  const cancelledSessionKeys: string[] = [];
 
   for (const run of activeRuns) {
     const staleAfterMs = resolvePipelineRunStaleAfterMs(run, options?.staleAfterMs);
@@ -60,17 +62,38 @@ export async function sweepStaleRuns(
         })
       );
       sweptRunIds.push(run.runId);
+
+      // R-12: Best-effort OpenClaw session cancellation for orphaned sessions
+      if (options?.cancelOpenClawSession) {
+        try {
+          const manifest = await repository.getManifest(run.taskId);
+          if (manifest) {
+            const sessionKey = buildOpenClawIssueSessionKeyFromManifest(manifest);
+            await options.cancelOpenClawSession(sessionKey);
+            cancelledSessionKeys.push(sessionKey);
+            options.logger?.info(
+              `Cancelled orphaned OpenClaw session for stale run.`,
+              { runId: run.runId, taskId: run.taskId, sessionKey }
+            );
+          }
+        } catch (cancelErr) {
+          options.logger?.warn(
+            `Failed to cancel OpenClaw session for stale run (non-fatal).`,
+            { runId: run.runId, taskId: run.taskId, error: String(cancelErr) }
+          );
+        }
+      }
     }
   }
 
   if (sweptRunIds.length > 0) {
     options?.logger?.info(
       `Startup sweep marked ${sweptRunIds.length} stale run(s).`,
-      { sweptRunIds }
+      { sweptRunIds, cancelledSessionKeys }
     );
   }
 
-  return { sweptRunIds, sweptAt: nowIso };
+  return { sweptRunIds, cancelledSessionKeys, sweptAt: nowIso };
 }
 
 const DEFAULT_ORPHAN_SCAN_LIMIT = 50;
