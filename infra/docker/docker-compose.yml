@@ -15,8 +15,20 @@ services:
         exec node openclaw.mjs gateway --allow-unconfigured
     environment:
       # ── Model API keys (required for agent LLM calls) ──────────────
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # These reference OPENCLAW_*_API_KEY proxy vars — NOT the raw keys —
+      # so `scripts/lib/config.mjs::applyOpenClawApiKeyScope` can scope them
+      # down to only the keys the active provider actually needs (F-157).
+      # Rules (see the helper doc for the full matrix):
+      #   provider=anthropic  → Anthropic only
+      #   provider=openai     → OpenAI only
+      #   provider=openai-codex (no failover) → neither; Codex OAuth is the only path
+      #   failover enabled    → both (opt-in via REDDWARF_MODEL_FAILOVER_ENABLED)
+      # When compose is run without start-stack/setup having set the proxies,
+      # both keys are empty — the container starts with no direct-API access
+      # and any dispatch falls back to OAuth-only routing. Always prefer
+      # `corepack pnpm start` for correct scoping.
+      ANTHROPIC_API_KEY: ${OPENCLAW_ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENCLAW_OPENAI_API_KEY:-}
       # ── OpenClaw gateway / hook auth (resolved into openclaw.json by
       #    the config generator, but the gateway also reads these from
       #    the process environment at runtime for hot-reload) ──────────

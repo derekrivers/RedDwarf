@@ -44,6 +44,7 @@ import {
 } from "../packages/integrations/dist/index.js";
 
 import {
+  applyOpenClawApiKeyScope,
   applyOperatorRuntimeConfig,
   connectionString,
   postgresPoolConfig,
@@ -72,6 +73,7 @@ const OPENCLAW_POLL_INTERVAL_MS = 2_000;
 await loadRepoEnv();
 refreshDerivedConfig();
 await applyOperatorRuntimeConfig({ log });
+applyOpenClawApiKeyScope({ log });
 
 // ── Configuration ─────────────────────────────────────────────────────────
 
