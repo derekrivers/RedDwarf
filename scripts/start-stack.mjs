@@ -677,6 +677,13 @@ const intakeMode = pollMode === "always"
 
 const server = createOperatorApiServer(
   {
+    // REDDWARF_API_HOST controls the bind interface. Default 127.0.0.1 keeps
+    // the operator API loopback-only on dev machines. On Linux Docker hosts
+    // (e.g., a VPS) set REDDWARF_API_HOST=0.0.0.0 so containers can reach
+    // the callback URL via host.docker.internal → docker-bridge gateway.
+    // The Caddy / reverse-proxy layer continues to serve public traffic
+    // through 127.0.0.1:8080; 0.0.0.0 only adds the docker-bridge path.
+    host: process.env.REDDWARF_API_HOST ?? "127.0.0.1",
     port: apiPort,
     authToken: operatorApiToken,
     managedTargetRoot: workspaceTargetRoot,
