@@ -33,7 +33,7 @@ For a current system-level view, see [docs/ARCHITECTURE.md](/home/derek/code/Red
 
 ### OpenClaw registry access
 
-The Docker Compose stack pulls `ghcr.io/openclaw/openclaw:latest` from the GitHub Container Registry. If the image is not yet publicly available, you will need to authenticate:
+The Docker Compose stack pulls `ghcr.io/openclaw/openclaw:2026.4.10` from the GitHub Container Registry. If the image is not yet publicly available, you will need to authenticate:
 
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u <your-github-username> --password-stdin
@@ -128,7 +128,7 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:latest` | OpenClaw container image to run in the local Docker stack |
+| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:2026.4.10` | OpenClaw container image to run in the local Docker stack. Pin to an explicit tag for reproducibility; avoid `:latest` since that tag has lagged behind documented capability levels. |
 | `OPENCLAW_HOST_PORT` | `3578` | Host port for the OpenClaw Control UI |
 | `POSTGRES_DB` | `reddwarf` | Local Postgres database name |
 | `POSTGRES_USER` | `reddwarf` | Local Postgres username |

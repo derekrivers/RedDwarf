@@ -1,6 +1,6 @@
 services:
   openclaw:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.4.10}
     restart: unless-stopped
     profiles:
       - openclaw
