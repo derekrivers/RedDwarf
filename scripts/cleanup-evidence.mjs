@@ -33,9 +33,10 @@
  *   node scripts/cleanup-evidence.mjs --max-age-days 30 --delete
  */
 
-import { readdir, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import { repoRoot, createScriptLogger, formatError } from "./lib/config.mjs";
+import { scanEvidenceDirectories } from "./lib/runtime-data-cleanup.mjs";
 
 // ── Parse CLI arguments ────────────────────────────────────────────────────
 
@@ -81,8 +82,7 @@ if (Number.isNaN(maxAgeDays) || maxAgeDays < 0) {
   process.exit(1);
 }
 
-const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1_000;
-const cutoffDate = new Date(Date.now() - maxAgeMs);
+const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1_000);
 
 const { log } = createScriptLogger("cleanup-evidence");
 
@@ -93,80 +93,49 @@ log(`Retention threshold: ${maxAgeDays} days (cutoff: ${cutoffDate.toISOString()
 log(`Mode: ${deleteMode ? "DELETE" : "dry-run (pass --delete to actually remove files)"}`);
 log("");
 
-let entries;
+let scanned;
 try {
-  entries = await readdir(evidenceRoot, { withFileTypes: true });
+  scanned = await scanEvidenceDirectories({ evidenceRoot, maxAgeDays });
 } catch (err) {
-  if (err instanceof Error && "code" in err && err.code === "ENOENT") {
-    log(`Evidence root does not exist: ${evidenceRoot}`);
-    log("Nothing to clean up.");
-    process.exit(0);
-  }
-  throw err;
+  process.stderr.write(`[cleanup-evidence] ERROR: ${formatError(err)}\n`);
+  process.exit(1);
 }
 
-const taskDirs = entries.filter((e) => e.isDirectory());
-
-if (taskDirs.length === 0) {
-  log("Evidence root is empty. Nothing to clean up.");
+if (scanned.kept.length === 0 && scanned.eligible.length === 0) {
+  log("Evidence root is empty or missing. Nothing to clean up.");
   process.exit(0);
 }
 
-log(`Found ${taskDirs.length} task evidence director${taskDirs.length === 1 ? "y" : "ies"}.`);
+const totalDirs = scanned.kept.length + scanned.eligible.length;
+log(`Found ${totalDirs} task evidence director${totalDirs === 1 ? "y" : "ies"}.`);
 log("");
 
-let eligibleCount = 0;
-let eligibleBytes = 0;
+for (const keep of scanned.kept) {
+  log(`  KEEP  ${keep.name}  (${keep.ageDays.toFixed(1)}d old)`);
+}
+
 let deletedCount = 0;
 let deletedBytes = 0;
+let eligibleBytes = 0;
 const errors = [];
 
-for (const entry of taskDirs) {
-  const dirPath = join(evidenceRoot, entry.name);
-  const dirStat = await stat(dirPath);
-  const ageMs = Date.now() - dirStat.mtimeMs;
-  const ageDays = ageMs / (24 * 60 * 60 * 1_000);
-
-  if (dirStat.mtimeMs >= cutoffDate.getTime()) {
-    // Within retention window — keep it
-    log(`  KEEP  ${entry.name}  (${ageDays.toFixed(1)}d old)`);
-    continue;
-  }
-
-  // Estimate directory size by walking one level deep
-  let dirBytes = 0;
-  try {
-    const children = await readdir(dirPath, { recursive: true });
-    for (const child of children) {
-      try {
-        const childStat = await stat(join(dirPath, child));
-        if (childStat.isFile()) dirBytes += childStat.size;
-      } catch (err) {
-        log(`  WARN: could not stat ${join(entry.name, child)}: ${formatError(err)}`);
-      }
-    }
-  } catch (err) {
-    log(`  WARN: could not read directory ${entry.name}: ${formatError(err)}`);
-  }
-
-  eligibleCount += 1;
-  eligibleBytes += dirBytes;
-
-  const sizeMb = (dirBytes / (1024 * 1024)).toFixed(2);
+for (const entry of scanned.eligible) {
+  eligibleBytes += entry.bytes;
+  const sizeMb = (entry.bytes / (1024 * 1024)).toFixed(2);
 
   if (deleteMode) {
     try {
-      await rm(dirPath, { recursive: true, force: true });
+      await rm(entry.path, { recursive: true, force: true });
       deletedCount += 1;
-      deletedBytes += dirBytes;
-      log(`  DELETE ${entry.name}  (${ageDays.toFixed(1)}d old, ${sizeMb} MB) — removed`);
+      deletedBytes += entry.bytes;
+      log(`  DELETE ${entry.name}  (${entry.ageDays.toFixed(1)}d old, ${sizeMb} MB) — removed`);
     } catch (err) {
       const message = formatError(err);
       errors.push({ name: entry.name, message });
-      log(`  DELETE ${entry.name}  (${ageDays.toFixed(1)}d old, ${sizeMb} MB) — FAILED: ${message}`);
+      log(`  DELETE ${entry.name}  (${entry.ageDays.toFixed(1)}d old, ${sizeMb} MB) — FAILED: ${message}`);
     }
   } else {
-    log(`  WOULD DELETE  ${entry.name}  (${ageDays.toFixed(1)}d old, ${sizeMb} MB)`);
+    log(`  WOULD DELETE  ${entry.name}  (${entry.ageDays.toFixed(1)}d old, ${sizeMb} MB)`);
   }
 }
 
@@ -175,13 +144,13 @@ log("─────────────────────────
 
 if (deleteMode) {
   const deletedMb = (deletedBytes / (1024 * 1024)).toFixed(2);
-  log(`Deleted ${deletedCount} of ${eligibleCount} eligible director${eligibleCount === 1 ? "y" : "ies"} (${deletedMb} MB freed).`);
+  log(`Deleted ${deletedCount} of ${scanned.eligible.length} eligible director${scanned.eligible.length === 1 ? "y" : "ies"} (${deletedMb} MB freed).`);
   if (errors.length > 0) {
     log(`${errors.length} deletion${errors.length === 1 ? "" : "s"} failed — check output above.`);
     process.exit(1);
   }
 } else {
   const eligibleMb = (eligibleBytes / (1024 * 1024)).toFixed(2);
-  log(`Dry run: ${eligibleCount} director${eligibleCount === 1 ? "y" : "ies"} eligible for deletion (~${eligibleMb} MB).`);
+  log(`Dry run: ${scanned.eligible.length} director${scanned.eligible.length === 1 ? "y" : "ies"} eligible for deletion (~${eligibleMb} MB).`);
   log("Pass --delete to remove them.");
 }

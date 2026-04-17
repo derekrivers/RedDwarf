@@ -462,6 +462,94 @@ try {
   log(`Secret lease cleanup skipped: ${formatError(err)}`);
 }
 
+// ── 2d: Prune OpenClaw config backups and stale home-directory snapshots ──
+//
+// OpenClaw accumulates openclaw.json.bak* and openclaw.json.clobbered.*
+// files in runtime-data/openclaw-home/, plus the occasional ad-hoc
+// openclaw-home.backup.<unixtime>/ directory at the parent level. None are
+// read by any live code; they grow without bound unless cleaned. Default
+// retention is 14 days — override with REDDWARF_OPENCLAW_BACKUP_MAX_AGE_DAYS
+// or disable entirely with REDDWARF_OPENCLAW_BACKUP_CLEANUP_ENABLED=false.
+
+{
+  const openClawBackupCleanupEnabled =
+    process.env.REDDWARF_OPENCLAW_BACKUP_CLEANUP_ENABLED !== "false";
+  const openClawBackupMaxAgeDays = parseInt(
+    process.env.REDDWARF_OPENCLAW_BACKUP_MAX_AGE_DAYS ?? "14",
+    10
+  );
+
+  if (openClawBackupCleanupEnabled && openClawBackupMaxAgeDays > 0) {
+    try {
+      const { pruneOpenClawHomeBackups } = await import(
+        "./lib/runtime-data-cleanup.mjs"
+      );
+      const result = await pruneOpenClawHomeBackups({
+        openClawHomeDir: resolve(repoRoot, "runtime-data", "openclaw-home"),
+        runtimeDataRoot: resolve(repoRoot, "runtime-data"),
+        maxAgeMs: openClawBackupMaxAgeDays * 24 * 60 * 60_000,
+        logger: { log, error: logError }
+      });
+      if (result.removed > 0) {
+        log(
+          `Pruned ${result.removed} OpenClaw backup artifact(s) older than ${openClawBackupMaxAgeDays}d (${result.mb} MB freed).`
+        );
+      } else {
+        log("No stale OpenClaw backup artifacts found.");
+      }
+    } catch (err) {
+      log(`OpenClaw backup cleanup skipped: ${formatError(err)}`);
+    }
+  }
+}
+
+// ── 2e: Enforce evidence retention policy ────────────────────────────────
+//
+// runtime-data/evidence/tasks/<taskId>/<phase>/<runId>/ accumulates
+// per-run artifacts (handoffs, validation logs, review JSON) referenced
+// from the evidence_records table in Postgres. It grows linearly with
+// task throughput. Default retention is 14 days — override with
+// REDDWARF_EVIDENCE_MAX_AGE_DAYS or disable with
+// REDDWARF_EVIDENCE_BOOT_CLEANUP_ENABLED=false.
+
+{
+  const evidenceCleanupEnabled =
+    process.env.REDDWARF_EVIDENCE_BOOT_CLEANUP_ENABLED !== "false";
+  const evidenceMaxAgeDays = parseInt(
+    process.env.REDDWARF_EVIDENCE_MAX_AGE_DAYS ?? "14",
+    10
+  );
+
+  if (evidenceCleanupEnabled && evidenceMaxAgeDays > 0) {
+    try {
+      const { pruneStaleEvidence } = await import(
+        "./lib/runtime-data-cleanup.mjs"
+      );
+      const result = await pruneStaleEvidence({
+        evidenceRoot: resolve(repoRoot, "runtime-data", "evidence"),
+        maxAgeDays: evidenceMaxAgeDays,
+        logger: { log, error: logError }
+      });
+      if (result.removed > 0) {
+        log(
+          `Pruned ${result.removed} evidence director${
+            result.removed === 1 ? "y" : "ies"
+          } older than ${evidenceMaxAgeDays}d (${result.mb} MB freed).`
+        );
+      } else {
+        log("No stale evidence directories found.");
+      }
+      if (result.failures > 0) {
+        logError(
+          `Evidence cleanup completed with ${result.failures} failure(s); see prior log lines.`
+        );
+      }
+    } catch (err) {
+      log(`Evidence cleanup skipped: ${formatError(err)}`);
+    }
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Phase 3 — Start services
 // ══════════════════════════════════════════════════════════════════════════

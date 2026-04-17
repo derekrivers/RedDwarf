@@ -70,6 +70,11 @@ if (args.includes("--help")) {
   log("  --clean-evidence [N]   Remove evidence directories older than N days (default: 30)");
   log("  --destroy-volumes      Remove Docker volumes (DESTROYS ALL DATABASE STATE)");
   log("  --help                 Show this message");
+  log("");
+  log("OpenClaw config backups (openclaw.json.bak*, .clobbered.*, and");
+  log("openclaw-home.backup.<timestamp>/ dirs) are pruned on every teardown.");
+  log("The age threshold comes from REDDWARF_OPENCLAW_BACKUP_MAX_AGE_DAYS");
+  log("(default: 14). Set to 0 to remove every matching entry regardless of age.");
   process.exit(0);
 }
 
@@ -83,6 +88,7 @@ const summary = {
   servicesDown: false,
   workspacesRemoved: 0,
   evidenceRemoved: 0,
+  openClawBackupsRemoved: 0,
   volumesDestroyed: false,
   dockerServicesSeen: [],
   openClawRuntimeConfigResolved: null
@@ -272,32 +278,26 @@ log("Step 4/5: Cleaning old evidence directories...");
 
 if (cleanEvidence) {
   const evidenceRoot = resolve(repoRoot, "runtime-data", "evidence");
-  const maxAgeMs = evidenceMaxDays * 24 * 60 * 60_000;
-
   try {
-    const entries = await readdir(evidenceRoot).catch(() => []);
-    const now = Date.now();
-
-    for (const entry of entries) {
-      const entryPath = join(evidenceRoot, entry);
-      try {
-        const info = await stat(entryPath);
-        if (info.isDirectory() && now - info.mtimeMs > maxAgeMs) {
-          if (dryRun) {
-            log(`  Would remove: ${entry}`);
-          } else {
-            await rm(entryPath, { recursive: true, force: true });
-            log(`  Removed: ${entry}`);
-          }
-          summary.evidenceRemoved++;
-        }
-      } catch {
-        // Skip entries that cannot be stat'd
-      }
-    }
-
-    if (summary.evidenceRemoved === 0) {
+    const { pruneStaleEvidence } = await import(
+      "./lib/runtime-data-cleanup.mjs"
+    );
+    const result = await pruneStaleEvidence({
+      evidenceRoot,
+      maxAgeDays: evidenceMaxDays,
+      dryRun,
+      logger: { log, error: logError }
+    });
+    summary.evidenceRemoved = result.removed;
+    if (result.removed === 0) {
       log(`  No evidence directories older than ${evidenceMaxDays} day(s).`);
+    } else if (dryRun) {
+      log(`  Would remove ${result.removed} evidence director${result.removed === 1 ? "y" : "ies"} (~${result.mb} MB).`);
+    } else {
+      log(`  Removed ${result.removed} evidence director${result.removed === 1 ? "y" : "ies"} (${result.mb} MB freed).`);
+      if (result.failures > 0) {
+        logError(`  Evidence cleanup completed with ${result.failures} failure(s); see prior log lines.`);
+      }
     }
   } catch (err) {
     log(`  Evidence cleanup skipped: ${formatError(err)}`);
@@ -331,20 +331,37 @@ try {
     log("  No runtime openclaw.json found.");
   }
 
-  const entries = await readdir(openClawHome).catch(() => []);
-  const clobbered = entries.filter((e) => e.includes(".clobbered."));
-
-  if (clobbered.length > 0) {
-    for (const entry of clobbered) {
-      if (dryRun) {
-        log(`  Would remove stale config: ${entry}`);
-      } else {
-        await rm(join(openClawHome, entry), { force: true });
-        log(`  Removed stale config: ${entry}`);
-      }
+  // Prune accumulated OpenClaw config backups (.bak*, .clobbered.*) and the
+  // sibling openclaw-home.backup.<timestamp>/ snapshot directories. Same
+  // age threshold as the boot-path cleanup so the two paths behave
+  // consistently. Default 14 days; override via
+  // REDDWARF_OPENCLAW_BACKUP_MAX_AGE_DAYS, or set to 0 for aggressive
+  // cleanup that removes every matching entry regardless of age.
+  const openClawBackupMaxAgeDays = parseInt(
+    process.env.REDDWARF_OPENCLAW_BACKUP_MAX_AGE_DAYS ?? "14",
+    10
+  );
+  try {
+    const { pruneOpenClawHomeBackups } = await import(
+      "./lib/runtime-data-cleanup.mjs"
+    );
+    const result = await pruneOpenClawHomeBackups({
+      openClawHomeDir: openClawHome,
+      runtimeDataRoot: resolve(repoRoot, "runtime-data"),
+      maxAgeMs: openClawBackupMaxAgeDays * 24 * 60 * 60_000,
+      dryRun,
+      logger: { log, error: logError }
+    });
+    summary.openClawBackupsRemoved = result.removed;
+    if (result.removed === 0) {
+      log(`  No stale OpenClaw config artifacts found (threshold: ${openClawBackupMaxAgeDays}d).`);
+    } else if (dryRun) {
+      log(`  Would remove ${result.removed} OpenClaw backup artifact(s) (~${result.mb} MB).`);
+    } else {
+      log(`  Removed ${result.removed} OpenClaw backup artifact(s) (${result.mb} MB freed).`);
     }
-  } else {
-    log("  No stale OpenClaw config artifacts found.");
+  } catch (err) {
+    log(`  OpenClaw backup cleanup skipped: ${formatError(err)}`);
   }
 
   // Reset device pairing state to prevent stale token mismatches on next boot
@@ -385,6 +402,7 @@ if (summary.dockerServicesSeen.length > 0) {
 }
 log(`  Workspaces removed:    ${summary.workspacesRemoved}`);
 log(`  Evidence removed:      ${cleanEvidence ? summary.evidenceRemoved : "skipped"}`);
+log(`  OpenClaw backups removed: ${summary.openClawBackupsRemoved}`);
 log(`  Volumes destroyed:     ${summary.volumesDestroyed ? "YES — database state deleted" : "no — database preserved"}`);
 if (summary.openClawRuntimeConfigResolved !== null) {
   log(
