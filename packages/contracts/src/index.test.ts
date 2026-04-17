@@ -424,7 +424,7 @@ describe("contracts", () => {
         { kind: "agents", relativePath: "agents/openclaw/coordinator/AGENTS.md", description: "Agent roster." },
         { kind: "tools", relativePath: "agents/openclaw/coordinator/TOOLS.md", description: "Tool guidance." },
         { kind: "user", relativePath: "agents/openclaw/coordinator/USER.md", description: "Operator profile." },
-        { kind: "skill", relativePath: "agents/openclaw/coordinator/skills/reddwarf-openclaw/SKILL.md", description: "Runtime skill." }
+        { kind: "skill", relativePath: "agents/openclaw/coordinator/skills/reddwarf-conversational-runtime/SKILL.md", description: "Runtime skill." }
       ],
       canonicalSources: ["docs/open_claw_research.md", "openclaw_ai_dev_team_v_2_architecture.md"]
     });
