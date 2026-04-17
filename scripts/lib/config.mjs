@@ -257,6 +257,185 @@ function readPositiveIntegerEnv(name) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function readOneOfEnv(name, allowed) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) {
+    return undefined;
+  }
+  const value = raw.trim();
+  return allowed.includes(value) ? value : undefined;
+}
+
+/**
+ * Build the `agents.defaults.compaction` block from REDDWARF_OPENCLAW_COMPACTION_*
+ * env vars. Returns null when the mode is unset, so the generator skips the
+ * block entirely.
+ *
+ * Recommended production posture:
+ *   REDDWARF_OPENCLAW_COMPACTION_MODE=safeguard
+ *   REDDWARF_OPENCLAW_COMPACTION_IDENTIFIER_POLICY=strict
+ */
+export function buildCompactionConfigFromEnv() {
+  const mode = readOneOfEnv("REDDWARF_OPENCLAW_COMPACTION_MODE", [
+    "default",
+    "safeguard"
+  ]);
+  const identifierPolicy = readOneOfEnv(
+    "REDDWARF_OPENCLAW_COMPACTION_IDENTIFIER_POLICY",
+    ["strict", "custom", "off"]
+  );
+  const timeoutSeconds = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_COMPACTION_TIMEOUT_SECONDS"
+  );
+  const notifyUserRaw = process.env.REDDWARF_OPENCLAW_COMPACTION_NOTIFY_USER;
+  const memoryFlushEnabled =
+    process.env.REDDWARF_OPENCLAW_COMPACTION_MEMORY_FLUSH_ENABLED;
+  const memoryFlushThreshold = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_COMPACTION_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS"
+  );
+
+  const config = {};
+  if (mode) {
+    config.mode = mode;
+  }
+  if (identifierPolicy) {
+    config.identifierPolicy = identifierPolicy;
+  }
+  if (timeoutSeconds !== undefined) {
+    config.timeoutSeconds = timeoutSeconds;
+  }
+  if (notifyUserRaw !== undefined && notifyUserRaw.trim().length > 0) {
+    config.notifyUser = readBooleanEnv(
+      "REDDWARF_OPENCLAW_COMPACTION_NOTIFY_USER"
+    );
+  }
+  if (
+    memoryFlushEnabled !== undefined &&
+    memoryFlushEnabled.trim().length > 0
+  ) {
+    config.memoryFlush = {
+      enabled: readBooleanEnv(
+        "REDDWARF_OPENCLAW_COMPACTION_MEMORY_FLUSH_ENABLED"
+      ),
+      ...(memoryFlushThreshold !== undefined
+        ? { softThresholdTokens: memoryFlushThreshold }
+        : {})
+    };
+  }
+
+  return Object.keys(config).length > 0 ? config : null;
+}
+
+export function buildContextLimitsConfigFromEnv() {
+  const memoryGetMaxChars = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_CONTEXT_MEMORY_GET_MAX_CHARS"
+  );
+  const toolResultMaxChars = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_CONTEXT_TOOL_RESULT_MAX_CHARS"
+  );
+  const postCompactionMaxChars = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_CONTEXT_POST_COMPACTION_MAX_CHARS"
+  );
+
+  const config = {};
+  if (memoryGetMaxChars !== undefined) {
+    config.memoryGetMaxChars = memoryGetMaxChars;
+  }
+  if (toolResultMaxChars !== undefined) {
+    config.toolResultMaxChars = toolResultMaxChars;
+  }
+  if (postCompactionMaxChars !== undefined) {
+    config.postCompactionMaxChars = postCompactionMaxChars;
+  }
+
+  return Object.keys(config).length > 0 ? config : null;
+}
+
+export function buildBootstrapConfigFromEnv() {
+  const maxChars = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_BOOTSTRAP_MAX_CHARS"
+  );
+  const totalMaxChars = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_BOOTSTRAP_TOTAL_MAX_CHARS"
+  );
+  const promptTruncationWarning = readOneOfEnv(
+    "REDDWARF_OPENCLAW_BOOTSTRAP_PROMPT_TRUNCATION_WARNING",
+    ["off", "once", "always"]
+  );
+
+  const config = {};
+  if (maxChars !== undefined) {
+    config.maxChars = maxChars;
+  }
+  if (totalMaxChars !== undefined) {
+    config.totalMaxChars = totalMaxChars;
+  }
+  if (promptTruncationWarning) {
+    config.promptTruncationWarning = promptTruncationWarning;
+  }
+
+  return Object.keys(config).length > 0 ? config : null;
+}
+
+/**
+ * Build the `tools.loopDetection` block from REDDWARF_OPENCLAW_LOOP_DETECTION_*
+ * env vars. Set REDDWARF_OPENCLAW_LOOP_DETECTION_ENABLED=true to opt in; all
+ * detectors default on when the feature is enabled unless individually
+ * disabled.
+ */
+export function buildLoopDetectionConfigFromEnv() {
+  const enabledRaw = process.env.REDDWARF_OPENCLAW_LOOP_DETECTION_ENABLED;
+  if (enabledRaw === undefined || enabledRaw.trim().length === 0) {
+    return null;
+  }
+
+  const enabled = readBooleanEnv("REDDWARF_OPENCLAW_LOOP_DETECTION_ENABLED");
+  const warningThreshold = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_LOOP_DETECTION_WARNING_THRESHOLD"
+  );
+  const criticalThreshold = readPositiveIntegerEnv(
+    "REDDWARF_OPENCLAW_LOOP_DETECTION_CRITICAL_THRESHOLD"
+  );
+  const genericRepeatRaw =
+    process.env.REDDWARF_OPENCLAW_LOOP_DETECTION_GENERIC_REPEAT;
+  const knownPollNoProgressRaw =
+    process.env.REDDWARF_OPENCLAW_LOOP_DETECTION_KNOWN_POLL_NO_PROGRESS;
+  const pingPongRaw = process.env.REDDWARF_OPENCLAW_LOOP_DETECTION_PING_PONG;
+
+  const config = { enabled };
+  if (warningThreshold !== undefined) {
+    config.warningThreshold = warningThreshold;
+  }
+  if (criticalThreshold !== undefined) {
+    config.criticalThreshold = criticalThreshold;
+  }
+
+  const detectors = {};
+  if (genericRepeatRaw !== undefined && genericRepeatRaw.trim().length > 0) {
+    detectors.genericRepeat = readBooleanEnv(
+      "REDDWARF_OPENCLAW_LOOP_DETECTION_GENERIC_REPEAT"
+    );
+  }
+  if (
+    knownPollNoProgressRaw !== undefined &&
+    knownPollNoProgressRaw.trim().length > 0
+  ) {
+    detectors.knownPollNoProgress = readBooleanEnv(
+      "REDDWARF_OPENCLAW_LOOP_DETECTION_KNOWN_POLL_NO_PROGRESS"
+    );
+  }
+  if (pingPongRaw !== undefined && pingPongRaw.trim().length > 0) {
+    detectors.pingPong = readBooleanEnv(
+      "REDDWARF_OPENCLAW_LOOP_DETECTION_PING_PONG"
+    );
+  }
+  if (Object.keys(detectors).length > 0) {
+    config.detectors = detectors;
+  }
+
+  return config;
+}
+
 export function resolveModelProviderEnv() {
   const canonical = process.env.REDDWARF_MODEL_PROVIDER?.trim();
   const legacy = process.env.REDDWARF_OPENCLAW_MODEL_PROVIDER?.trim();
@@ -341,6 +520,11 @@ export async function resolveOpenClawConfig(options) {
   const discordApproverIds = readListEnv(
     "REDDWARF_OPENCLAW_DISCORD_APPROVER_IDS"
   );
+
+  const compactionConfig = buildCompactionConfigFromEnv();
+  const contextLimitsConfig = buildContextLimitsConfigFromEnv();
+  const bootstrapConfig = buildBootstrapConfigFromEnv();
+  const loopDetectionConfig = buildLoopDetectionConfigFromEnv();
   const config = generateOpenClawConfig({
     workspaceRoot: (
       process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces"
@@ -356,6 +540,10 @@ export async function resolveOpenClawConfig(options) {
     modelProvider: resolveModelProviderEnv(),
     enableModelFailover: readBooleanEnv("REDDWARF_MODEL_FAILOVER_ENABLED"),
     enableAgentToAgent: readBooleanEnv("REDDWARF_OPENCLAW_AGENT_TO_AGENT_ENABLED"),
+    ...(compactionConfig ? { compaction: compactionConfig } : {}),
+    ...(contextLimitsConfig ? { contextLimits: contextLimitsConfig } : {}),
+    ...(bootstrapConfig ? { bootstrap: bootstrapConfig } : {}),
+    ...(loopDetectionConfig ? { loopDetection: loopDetectionConfig } : {}),
     ...(discordEnabled
       ? {
           discord: {

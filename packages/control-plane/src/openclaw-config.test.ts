@@ -447,4 +447,146 @@ describe("generateOpenClawConfig — model failover", () => {
       expect(agent.modelFallback![0]).toMatch(/^anthropic\//);
     }
   });
+
+  // -- Compaction, context limits, bootstrap, and loop detection -------------
+
+  it("omits compaction, context limits, bootstrap, and loop detection by default", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    expect(config.agents.defaults.compaction).toBeUndefined();
+    expect(config.agents.defaults.contextLimits).toBeUndefined();
+    expect(config.agents.defaults.bootstrapMaxChars).toBeUndefined();
+    expect(config.agents.defaults.bootstrapTotalMaxChars).toBeUndefined();
+    expect(config.agents.defaults.bootstrapPromptTruncationWarning).toBeUndefined();
+    expect(config.tools?.loopDetection).toBeUndefined();
+  });
+
+  it("emits compaction defaults with safeguard mode and strict identifier policy", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      compaction: {
+        mode: "safeguard",
+        identifierPolicy: "strict",
+        timeoutSeconds: 900,
+        notifyUser: true,
+        memoryFlush: {
+          enabled: true,
+          softThresholdTokens: 6000
+        }
+      }
+    });
+
+    expect(config.agents.defaults.compaction).toEqual({
+      mode: "safeguard",
+      identifierPolicy: "strict",
+      timeoutSeconds: 900,
+      notifyUser: true,
+      memoryFlush: {
+        enabled: true,
+        softThresholdTokens: 6000
+      }
+    });
+  });
+
+  it("drops optional compaction sub-fields that are not supplied", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      compaction: {
+        mode: "safeguard"
+      }
+    });
+
+    expect(config.agents.defaults.compaction).toEqual({ mode: "safeguard" });
+    expect(config.agents.defaults.compaction?.identifierPolicy).toBeUndefined();
+    expect(config.agents.defaults.compaction?.memoryFlush).toBeUndefined();
+  });
+
+  it("emits context limits when supplied", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      contextLimits: {
+        memoryGetMaxChars: 12000,
+        toolResultMaxChars: 16000,
+        postCompactionMaxChars: 1800
+      }
+    });
+
+    expect(config.agents.defaults.contextLimits).toEqual({
+      memoryGetMaxChars: 12000,
+      toolResultMaxChars: 16000,
+      postCompactionMaxChars: 1800
+    });
+  });
+
+  it("emits only supplied bootstrap caps", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      bootstrap: {
+        maxChars: 20000,
+        totalMaxChars: 150000,
+        promptTruncationWarning: "once"
+      }
+    });
+
+    expect(config.agents.defaults.bootstrapMaxChars).toBe(20000);
+    expect(config.agents.defaults.bootstrapTotalMaxChars).toBe(150000);
+    expect(config.agents.defaults.bootstrapPromptTruncationWarning).toBe("once");
+  });
+
+  it("emits loop detection under tools when supplied", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      loopDetection: {
+        enabled: true,
+        warningThreshold: 10,
+        criticalThreshold: 20,
+        detectors: {
+          genericRepeat: true,
+          knownPollNoProgress: true,
+          pingPong: true
+        }
+      }
+    });
+
+    expect(config.tools?.loopDetection).toEqual({
+      enabled: true,
+      warningThreshold: 10,
+      criticalThreshold: 20,
+      detectors: {
+        genericRepeat: true,
+        knownPollNoProgress: true,
+        pingPong: true
+      }
+    });
+  });
+
+  it("coexists loop detection with agent-to-agent tools under the same tools block", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      enableAgentToAgent: true,
+      loopDetection: {
+        enabled: true
+      }
+    });
+
+    expect(config.tools?.agentToAgent?.enabled).toBe(true);
+    expect(config.tools?.sessions?.visibility).toBe("all");
+    expect(config.tools?.loopDetection).toEqual({ enabled: true });
+  });
+
+  it("drops loopDetection detectors block when no individual detectors are set", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      loopDetection: {
+        enabled: true,
+        warningThreshold: 5
+      }
+    });
+
+    expect(config.tools?.loopDetection).toEqual({
+      enabled: true,
+      warningThreshold: 5
+    });
+    expect(config.tools?.loopDetection?.detectors).toBeUndefined();
+  });
 });
