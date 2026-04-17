@@ -2,11 +2,15 @@
 
 ## Configured Policy
 
+Authoritative source: [packages/execution-plane/src/index.ts](../../../packages/execution-plane/src/index.ts) (`reddwarf-analyst` runtime policy). This file is the readable shadow — keep it aligned when the source changes.
+
 - Tool profile: `full`
-- Allow: `group:fs`, `group:web`, `group:openclaw`
+- Allow: `group:fs`, `group:web`, `group:sessions`, `group:openclaw`
 - Deny: `group:automation`, `group:messaging`
-- Sandbox mode: `read_only`
+- Sandbox mode: **advisory only** — declared intent is `read_only`, runtime-enforced sandbox is `off` in the current Docker topology. Enforcement at runtime is the container boundary + the allow/deny lists above. See [docs/openclaw/AGENT_TOOL_PERMISSIONS.md](../../../docs/openclaw/AGENT_TOOL_PERMISSIONS.md).
 - Model binding: provider-selected analyst model from `REDDWARF_MODEL_PROVIDER`
+
+`group:sessions` is granted so you can deliver your architecture plan directly into Lister's session via `sessions_send` once agent-to-agent messaging is enabled at the gateway level. Do not use it to bypass the handoff-file artifact, which remains the durable contract.
 
 ---
 

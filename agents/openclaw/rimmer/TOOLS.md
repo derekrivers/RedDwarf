@@ -2,10 +2,12 @@
 
 ## Configured Policy
 
+Authoritative source: [packages/execution-plane/src/index.ts](../../../packages/execution-plane/src/index.ts) (`reddwarf-coordinator` runtime policy). This file is the readable shadow — keep it aligned when the source changes.
+
 - Tool profile: `full`
 - Allow: `group:fs`, `group:sessions`, `group:openclaw`
 - Deny: `group:automation`, `group:messaging`, `group:nodes`
-- Sandbox mode: `read_only`
+- Sandbox mode: **advisory only** — declared intent is `read_only`, runtime-enforced sandbox is `off` in the current Docker topology. Enforcement at runtime is the container boundary + the allow/deny lists above. See [docs/openclaw/AGENT_TOOL_PERMISSIONS.md](../../../docs/openclaw/AGENT_TOOL_PERMISSIONS.md).
 - Model binding: provider-selected coordinator model from `REDDWARF_MODEL_PROVIDER`
 
 ---

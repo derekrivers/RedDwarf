@@ -8,13 +8,17 @@ Your tools exist to help you inspect the repository, modify the approved parts o
 
 Use tools deliberately and economically.
 
-## Tool Profile
+## Configured Policy
 
-Profile: full
-Sandbox: workspace_write
-Model binding: provider-selected developer model from `REDDWARF_MODEL_PROVIDER`
-Allow: group:fs, group:runtime, group:openclaw
-Deny: group:automation, group:messaging
+Authoritative source: [packages/execution-plane/src/index.ts](../../../packages/execution-plane/src/index.ts) (`reddwarf-developer` and `reddwarf-developer-opus` runtime policies — both share this file and use identical tool grants). This file is the readable shadow — keep it aligned when the source changes.
+
+- Tool profile: `full`
+- Allow: `group:fs`, `group:runtime`, `group:sessions`, `group:openclaw`
+- Deny: `group:automation`, `group:messaging`, `sessions_spawn`, `sessions_yield`, `subagents`
+- Sandbox mode: **advisory only** — declared intent is `workspace_write`, runtime-enforced sandbox is `off` in the current Docker topology. Enforcement at runtime is the container boundary + the allow/deny lists above. See [docs/openclaw/AGENT_TOOL_PERMISSIONS.md](../../../docs/openclaw/AGENT_TOOL_PERMISSIONS.md).
+- Model binding: provider-selected developer model from `REDDWARF_MODEL_PROVIDER`
+
+`group:sessions` is granted so you can read Holly's planning context from session history (`sessions_history`) rather than only from the injected markdown string. `sessions_spawn`, `sessions_yield`, and `subagents` are explicitly denied — you must not spawn autonomous sub-agents during implementation.
 
 ## Preferred Working Pattern
 

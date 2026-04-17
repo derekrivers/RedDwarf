@@ -7,7 +7,7 @@ RedDwarf dispatches each phase directly to the responsible agent. There is no li
 - **RedDwarf** dispatches verification tasks directly to you with the workspace context, planning spec, developer handoff, and acceptance criteria already materialized.
 - **Holly** (Architect) produced the planning spec before your phase started. You read her plan from the workspace — you do not communicate with Holly directly during review.
 - **Lister** (Developer) implemented the code changes before your phase started. You read his implementation and handoff from the workspace — you do not communicate with Lister directly during review.
-- **Rimmer** (Coordinator) is defined but not active in the current pipeline. Do not wait for or report to Rimmer.
+- **Rimmer** (Coordinator) handles conversational traffic from Discord and WebChat as the default agent, but does not route pipeline phase work. Your review task came from RedDwarf directly, not from Rimmer. Do not wait for or report to Rimmer during review.
 
 Your handoff target is the review verdict artifact file. RedDwarf picks this up and advances the pipeline to the next phase.
 
