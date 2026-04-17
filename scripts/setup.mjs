@@ -27,6 +27,7 @@ import { readdir, stat, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
 import {
+  applyOpenClawApiKeyScope,
   connectionString,
   ensureRepoSecretsFile,
   loadRepoEnv,
@@ -48,6 +49,7 @@ const { log, logError } = createScriptLogger("setup");
 
 await loadRepoEnv();
 refreshDerivedConfig();
+applyOpenClawApiKeyScope({ log });
 
 // ── Step 0: Resolve OpenClaw config template ─────────────────────────────
 

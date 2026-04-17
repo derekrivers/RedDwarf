@@ -469,6 +469,92 @@ export function resolveModelProviderEnv() {
   return resolved;
 }
 
+/**
+ * Decide which direct-API keys the OpenClaw container should be given based
+ * on the active provider posture. F-157 required the gateway's process
+ * environment to carry only the *active* model API key, and never the
+ * inactive one. The compose file previously forwarded both unconditionally,
+ * regressing F-157 — this helper restores the intended scoping.
+ *
+ * Rules:
+ *   - provider = anthropic                → Anthropic key only
+ *   - provider = openai                   → OpenAI key only
+ *   - provider = openai-codex             → neither key (Codex uses OAuth
+ *                                            via per-role auth-profiles.json)
+ *   - failover enabled                    → both keys, because a failover
+ *                                            chain's alternate provider
+ *                                            needs its key to succeed. This
+ *                                            is explicit opt-in via
+ *                                            REDDWARF_MODEL_FAILOVER_ENABLED
+ *                                            and is documented as billing-
+ *                                            material in .env.example.
+ *
+ * Returns the scoped values to inject. The caller is responsible for
+ * setting them on process.env before spawning docker compose.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ anthropic: string, openai: string, provider: string, failoverEnabled: boolean }}
+ */
+export function resolveOpenClawApiKeyScope(env = process.env) {
+  const provider = (env.REDDWARF_MODEL_PROVIDER ?? "anthropic")
+    .trim()
+    .toLowerCase() || "anthropic";
+  const failoverEnabled = env.REDDWARF_MODEL_FAILOVER_ENABLED === "true";
+
+  const rawAnthropic = env.ANTHROPIC_API_KEY ?? "";
+  const rawOpenAI = env.OPENAI_API_KEY ?? "";
+
+  if (failoverEnabled) {
+    return {
+      anthropic: rawAnthropic,
+      openai: rawOpenAI,
+      provider,
+      failoverEnabled
+    };
+  }
+
+  if (provider === "anthropic") {
+    return { anthropic: rawAnthropic, openai: "", provider, failoverEnabled };
+  }
+
+  if (provider === "openai") {
+    return { anthropic: "", openai: rawOpenAI, provider, failoverEnabled };
+  }
+
+  // provider === "openai-codex" (validated above). Neither direct key is
+  // injected; the container authenticates via the Codex OAuth profiles
+  // mounted at runtime-data/workspaces/.agents/<role>/agent/auth-profiles.json.
+  return { anthropic: "", openai: "", provider, failoverEnabled };
+}
+
+/**
+ * Apply the scoped API keys to process.env under the proxy var names the
+ * compose file references (OPENCLAW_ANTHROPIC_API_KEY,
+ * OPENCLAW_OPENAI_API_KEY). Must be called before `docker compose up` so
+ * the compose variable substitution picks up the scoped values.
+ *
+ * Logs which keys were injected and why so the operator can verify the
+ * posture at boot time.
+ *
+ * @param {{ log?: (msg: string) => void }} [options]
+ */
+export function applyOpenClawApiKeyScope(options = {}) {
+  const scope = resolveOpenClawApiKeyScope();
+  process.env.OPENCLAW_ANTHROPIC_API_KEY = scope.anthropic;
+  process.env.OPENCLAW_OPENAI_API_KEY = scope.openai;
+
+  const log = options.log;
+  if (!log) return;
+
+  const summary = [
+    `provider=${scope.provider}`,
+    `failover=${scope.failoverEnabled ? "on" : "off"}`,
+    `anthropic=${scope.anthropic.length > 0 ? "injected" : "absent"}`,
+    `openai=${scope.openai.length > 0 ? "injected" : "absent"}`
+  ].join(" ");
+  log(`OpenClaw container API key scope (F-157): ${summary}`);
+}
+
 async function readJsonFileIfExists(path) {
   const { readFile } = await import("node:fs/promises");
 
