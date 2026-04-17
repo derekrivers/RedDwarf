@@ -488,6 +488,7 @@ export function createPlanningInputFromGitHubIssue(
       : (defaults.fallbackAcceptanceCriteria ?? ["Task satisfies the issue acceptance criteria."])
   );
   const affectedPaths = dedupeStrings(sections.affectedPaths);
+  const proposedSubTasks = dedupeStrings(sections.proposedSubTasks);
   const requestedCapabilities = dedupeCapabilities(
     sections.requestedCapabilities.length > 0
       ? sections.requestedCapabilities
@@ -508,6 +509,7 @@ export function createPlanningInputFromGitHubIssue(
     labels: dedupeStrings(candidate.labels),
     acceptanceCriteria,
     affectedPaths,
+    ...(proposedSubTasks.length > 0 ? { proposedSubTasks } : {}),
     requestedCapabilities,
     metadata: {
       github: {
@@ -1407,16 +1409,19 @@ function parseIssueBodySections(body: string): {
   acceptanceCriteria: string[];
   affectedPaths: string[];
   requestedCapabilities: Capability[];
+  proposedSubTasks: string[];
 } {
   const lines = body.split(/\r?\n/);
   const sections: {
     acceptanceCriteria: string[];
     affectedPaths: string[];
     requestedCapabilities: Capability[];
+    proposedSubTasks: string[];
   } = {
     acceptanceCriteria: [],
     affectedPaths: [],
-    requestedCapabilities: []
+    requestedCapabilities: [],
+    proposedSubTasks: []
   };
   let current: keyof typeof sections | null = null;
 
@@ -1444,6 +1449,15 @@ function parseIssueBodySections(body: string): {
       continue;
     }
 
+    if (
+      normalizedHeading === "proposed sub-tasks" ||
+      normalizedHeading === "proposed sub tasks" ||
+      normalizedHeading === "proposed subtasks"
+    ) {
+      current = "proposedSubTasks";
+      continue;
+    }
+
     if (isMarkdownHeading(line)) {
       current = null;
       continue;
@@ -1453,7 +1467,10 @@ function parseIssueBodySections(body: string): {
       continue;
     }
 
-    const value = line.replace(/^[-*]\s*/, "").trim();
+    const value = line
+      .replace(/^[-*]\s*/, "")
+      .replace(/^\d+[.)]\s*/, "")
+      .trim();
 
     if (value.length === 0) {
       continue;

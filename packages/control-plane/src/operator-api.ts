@@ -4434,6 +4434,9 @@ function buildPlanningTaskInputFromInjection(
     labels: [...new Set(["ai-eligible", ...input.labels])],
     acceptanceCriteria: input.acceptanceCriteria,
     affectedPaths: input.affectedPaths,
+    ...(input.proposedSubTasks && input.proposedSubTasks.length > 0
+      ? { proposedSubTasks: input.proposedSubTasks }
+      : {}),
     requestedCapabilities: input.requestedCapabilities,
     metadata: {
       ...input.metadata,

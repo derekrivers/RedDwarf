@@ -71,6 +71,42 @@ describe("buildOpenClawProjectArchitectPrompt", () => {
     expect(prompt).toContain("Add project mode");
   });
 
+  it("surfaces proposedSubTasks as a decomposition hint when present", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      {
+        ...sampleInput,
+        proposedSubTasks: [
+          "Migrate the schema",
+          "Update the API layer",
+          "Wire the UI to the new API"
+        ]
+      },
+      sampleManifest,
+      "/workspace",
+      "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
+      "/workspace/handoff.md"
+    );
+
+    expect(prompt).toContain("proposedSubTasks");
+    expect(prompt).toContain("Migrate the schema");
+    expect(prompt).toContain("Update the API layer");
+    expect(prompt).toContain("strong hint");
+  });
+
+  it("does not mention proposedSubTasks payload when the hint is absent", () => {
+    const prompt = buildOpenClawProjectArchitectPrompt(
+      sampleInput,
+      sampleManifest,
+      "/workspace",
+      "/workspace/repo",
+      "/workspace/REPO_INDEX.md",
+      "/workspace/handoff.md"
+    );
+
+    expect(prompt).toContain('"proposedSubTasks": []');
+  });
+
   it("includes clarification context when provided", () => {
     const prompt = buildOpenClawProjectArchitectPrompt(
       sampleInput,
