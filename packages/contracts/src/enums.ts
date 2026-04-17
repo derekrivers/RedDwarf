@@ -148,6 +148,7 @@ export const openClawBootstrapFileKinds = [
   "soul",
   "agents",
   "tools",
+  "user",
   "skill"
 ] as const;
 export const openClawToolProfiles = ["minimal", "coding", "messaging", "full"] as const;
@@ -186,7 +187,7 @@ export const PRIORITY_MIN = 0;
 export const PRIORITY_MAX = 100;
 export const QUERY_LIMIT_MAX = 100;
 export const QUERY_LIMIT_DEFAULT = 50;
-export const OPENCLAW_BOOTSTRAP_FILE_COUNT = 5;
+export const OPENCLAW_BOOTSTRAP_FILE_COUNT = 6;
 
 // Shared utility schemas
 

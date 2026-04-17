@@ -423,6 +423,7 @@ describe("contracts", () => {
         { kind: "soul", relativePath: "agents/openclaw/coordinator/SOUL.md", description: "Operating posture." },
         { kind: "agents", relativePath: "agents/openclaw/coordinator/AGENTS.md", description: "Agent roster." },
         { kind: "tools", relativePath: "agents/openclaw/coordinator/TOOLS.md", description: "Tool guidance." },
+        { kind: "user", relativePath: "agents/openclaw/coordinator/USER.md", description: "Operator profile." },
         { kind: "skill", relativePath: "agents/openclaw/coordinator/skills/reddwarf-openclaw/SKILL.md", description: "Runtime skill." }
       ],
       canonicalSources: ["docs/open_claw_research.md", "openclaw_ai_dev_team_v_2_architecture.md"]
@@ -431,7 +432,7 @@ describe("contracts", () => {
     expect(definition.role).toBe("coordinator");
     expect(definition.runtimePolicy.toolProfile).toBe("full");
     expect(definition.runtimePolicy.model.provider).toBe("anthropic");
-    expect(definition.bootstrapFiles).toHaveLength(5);
+    expect(definition.bootstrapFiles).toHaveLength(6);
   });
 
   it("parses a runtime instruction layer", () => {
@@ -914,6 +915,11 @@ describe("contracts", () => {
           kind: "tools",
           relativePath: "agents/openclaw/lister/TOOLS.md",
           description: "tools"
+        },
+        {
+          kind: "user",
+          relativePath: "agents/openclaw/lister/USER.md",
+          description: "user"
         },
         {
           kind: "skill",

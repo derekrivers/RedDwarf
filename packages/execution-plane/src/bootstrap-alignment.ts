@@ -20,6 +20,7 @@ export const expectedBootstrapFileNames: Record<
   soul: "SOUL.md",
   agents: "AGENTS.md",
   tools: "TOOLS.md",
+  user: "USER.md",
   skill: "SKILL.md"
 };
 
@@ -47,6 +48,10 @@ export const bootstrapStructuralMarkers: Record<
   tools: [
     { label: "heading", pattern: /^#\s+.+/m },
     { label: "tool profile reference", pattern: /tool\s*profile|sandbox|allow|deny/i }
+  ],
+  user: [
+    { label: "heading", pattern: /^#\s+.+/m },
+    { label: "user profile reference", pattern: /user|operator|preference|communicate|audience/i }
   ],
   skill: [
     { label: "heading or frontmatter", pattern: /^(#\s+.+|---)/m },
