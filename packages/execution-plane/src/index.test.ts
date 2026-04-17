@@ -834,18 +834,20 @@ describe("createPlanningAgent", () => {
 // ============================================================
 
 describe("bootstrap alignment", () => {
-  it("expectedBootstrapFileNames maps all five kinds", () => {
+  it("expectedBootstrapFileNames maps all six kinds", () => {
     expect(Object.keys(expectedBootstrapFileNames)).toEqual([
       "identity",
       "soul",
       "agents",
       "tools",
+      "user",
       "skill"
     ]);
     expect(expectedBootstrapFileNames.identity).toBe("IDENTITY.md");
     expect(expectedBootstrapFileNames.soul).toBe("SOUL.md");
     expect(expectedBootstrapFileNames.agents).toBe("AGENTS.md");
     expect(expectedBootstrapFileNames.tools).toBe("TOOLS.md");
+    expect(expectedBootstrapFileNames.user).toBe("USER.md");
     expect(expectedBootstrapFileNames.skill).toBe("SKILL.md");
   });
 
@@ -888,7 +890,7 @@ describe("bootstrap alignment", () => {
     expect(result.agents).toHaveLength(6);
     for (const agent of result.agents) {
       expect(agent.valid).toBe(true);
-      expect(agent.filesChecked).toBe(5);
+      expect(agent.filesChecked).toBe(6);
     }
   });
 

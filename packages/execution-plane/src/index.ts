@@ -135,6 +135,12 @@ export function createOpenClawAgentRoleDefinitions(
         description: "Tool-usage guardrails for coordination work."
       },
       {
+        kind: "user",
+        relativePath: "agents/openclaw/rimmer/USER.md",
+        description:
+          "Operator profile and communication preferences for conversational work."
+      },
+      {
         kind: "skill",
         relativePath: "agents/openclaw/rimmer/skills/reddwarf-openclaw/SKILL.md",
         description:
@@ -180,6 +186,12 @@ export function createOpenClawAgentRoleDefinitions(
         kind: "tools",
         relativePath: "agents/openclaw/holly/TOOLS.md",
         description: "Tool-usage guardrails for read-only analysis."
+      },
+      {
+        kind: "user",
+        relativePath: "agents/openclaw/holly/USER.md",
+        description:
+          "Operator profile and communication preferences for planning work."
       },
       {
         kind: "skill",
@@ -238,6 +250,12 @@ export function createOpenClawAgentRoleDefinitions(
         description: "Tool-usage guardrails for bounded architecture review."
       },
       {
+        kind: "user",
+        relativePath: "agents/openclaw/kryten/USER.md",
+        description:
+          "Operator profile and communication preferences for review work."
+      },
+      {
         kind: "skill",
         relativePath: "agents/openclaw/kryten/skills/review_implementation_against_plan/SKILL.md",
         description:
@@ -289,6 +307,12 @@ export function createOpenClawAgentRoleDefinitions(
         description: "Tool-usage guardrails for bounded verification."
       },
       {
+        kind: "user",
+        relativePath: "agents/openclaw/kryten/USER.md",
+        description:
+          "Operator profile and communication preferences for validation work."
+      },
+      {
         kind: "skill",
         relativePath: "agents/openclaw/kryten/skills/review_implementation_against_plan/SKILL.md",
         description:
@@ -336,6 +360,12 @@ export function createOpenClawAgentRoleDefinitions(
         description: "Tool-usage guardrails for scoped implementation work."
       },
       {
+        kind: "user",
+        relativePath: "agents/openclaw/lister/USER.md",
+        description:
+          "Operator profile and communication preferences for implementation work."
+      },
+      {
         kind: "skill",
         relativePath: "agents/openclaw/lister/skills/implement_architecture_plan/SKILL.md",
         description:
@@ -380,6 +410,12 @@ export function createOpenClawAgentRoleDefinitions(
         kind: "tools",
         relativePath: "agents/openclaw/lister/TOOLS.md",
         description: "Tool-usage guardrails for scoped implementation work."
+      },
+      {
+        kind: "user",
+        relativePath: "agents/openclaw/lister/USER.md",
+        description:
+          "Operator profile and communication preferences for implementation work."
       },
       {
         kind: "skill",
