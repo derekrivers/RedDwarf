@@ -38,6 +38,7 @@ export const planningTaskInputSchema = z.object({
   labels: z.array(z.string().min(1)).default([]),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   affectedPaths: z.array(z.string().min(1)).default([]),
+  proposedSubTasks: z.array(z.string().min(1)).optional(),
   requestedCapabilities: z
     .array(capabilitySchema)
     .default(["can_plan", "can_archive_evidence"]),
@@ -53,6 +54,7 @@ export const directTaskInjectionRequestSchema = z.object({
   labels: z.array(z.string().min(1)).default(["ai-eligible"]),
   acceptanceCriteria: z.array(z.string().min(1)).min(1),
   affectedPaths: z.array(z.string().min(1)).default([]),
+  proposedSubTasks: z.array(z.string().min(1)).optional(),
   constraints: z.array(z.string().min(1)).default([]),
   requestedCapabilities: z
     .array(capabilitySchema)

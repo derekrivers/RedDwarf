@@ -94,6 +94,50 @@ describe("createPlanningInputFromGitHubIssue", () => {
     ]);
   });
 
+  it("parses a Proposed sub-tasks section as a decomposition hint", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Goal",
+        "",
+        "Ship a multi-step refactor.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Feature works end-to-end.",
+        "",
+        "## Proposed sub-tasks",
+        "",
+        "1. Migrate the schema",
+        "2. Update the API layer",
+        "- Wire the UI to the new API"
+      ].join("\n")
+    });
+
+    expect(input.proposedSubTasks).toEqual([
+      "Migrate the schema",
+      "Update the API layer",
+      "Wire the UI to the new API"
+    ]);
+  });
+
+  it("omits proposedSubTasks when the Proposed sub-tasks section is absent", () => {
+    const input = createPlanningInputFromGitHubIssue({
+      ...candidate,
+      body: [
+        "## Goal",
+        "",
+        "A small self-contained change.",
+        "",
+        "## Acceptance Criteria",
+        "",
+        "- Behavior matches spec."
+      ].join("\n")
+    });
+
+    expect(input.proposedSubTasks).toBeUndefined();
+  });
+
   it("parses markdown sections that include blank lines after headings", () => {
     const input = createPlanningInputFromGitHubIssue({
       ...candidate,
