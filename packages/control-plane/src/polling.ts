@@ -146,7 +146,17 @@ const defaultPollingLabels = ["ai-eligible"];
 const DEFAULT_MAX_BATCH_SIZE = 50;
 const DEFAULT_POLLING_CYCLE_TIMEOUT_MS = 120_000;
 const DEFAULT_PER_REPO_TIMEOUT_MS = 60_000;
-const DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS = 5 * 60_000;
+// The dispatcher cycle wraps a full phase run (planning, development,
+// architecture review, validation, or scm). The longest single phase budget is
+// DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS (15m) scaled by the maximum complexity
+// timeout multiplier (2x for "high" complexity dev work), giving a 30m ceiling
+// for the inner work. We then add headroom for workspace bootstrap, git
+// operations, completion polling, heartbeat grace, and dispatch overhead so
+// the outer sanity wrapper cannot reject a phase that is still making
+// legitimate progress. This was previously set to 5 minutes, which orphaned
+// developer phase Promises mid-execution while leaving the run "active" in the
+// database until the 60 minute stale sweep fired.
+const DEFAULT_DISPATCH_CYCLE_TIMEOUT_MS = 45 * 60_000;
 
 interface MutableLoopHealthState {
   startupStatus: PollingLoopHealthSnapshot["startupStatus"];
@@ -973,45 +983,45 @@ export function createReadyTaskDispatcher(
               }
             );
 
-            const result = await runWithTimeout(
-              `Ready-task dispatch cycle for ${manifest.taskId}`,
-              cycleTimeoutMs,
-              async () =>
-                dispatchReadyTask(
-                  {
-                    taskId: manifest.taskId,
-                    targetRoot: config.targetRoot,
-                    ...(config.evidenceRoot ? { evidenceRoot: config.evidenceRoot } : {})
-                  },
-                  {
-                    repository: deps.repository,
-                    developer: deps.developer,
-                    reviewer: deps.reviewer,
-                    validator: deps.validator,
-                    scm: deps.scm,
-                    github: deps.github,
-                    openClawDispatch: deps.openClawDispatch,
-                    ...(deps.secrets ? { secrets: deps.secrets } : {}),
-                    ...(deps.workspaceRepoBootstrapper
-                      ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper }
-                      : {}),
-                    ...(deps.openClawCompletionAwaiter
-                      ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter }
-                      : {}),
-                    ...(deps.architectureReviewAwaiter
-                      ? { architectureReviewAwaiter: deps.architectureReviewAwaiter }
-                      : {}),
-                    ...(deps.openClawReviewAgentId
-                      ? { openClawReviewAgentId: deps.openClawReviewAgentId }
-                      : {}),
-                    ...(deps.workspaceCommitPublisher
-                      ? { workspaceCommitPublisher: deps.workspaceCommitPublisher }
-                      : {}),
-                    ...(deps.logger ? { logger: deps.logger } : {}),
-                    ...(deps.clock ? { clock: deps.clock } : {}),
-                    ...(deps.concurrency ? { concurrency: deps.concurrency } : {})
-                  }
-                )
+            // The outer `runWithTimeout` at the start of this cycle already
+            // guards `dispatchReadyTask` against runaway execution. A nested
+            // wrapper here would share the same deadline without cancelling
+            // the inner promise, producing an orphaned phase Promise that
+            // leaves the run stuck in "active" state.
+            const result = await dispatchReadyTask(
+              {
+                taskId: manifest.taskId,
+                targetRoot: config.targetRoot,
+                ...(config.evidenceRoot ? { evidenceRoot: config.evidenceRoot } : {})
+              },
+              {
+                repository: deps.repository,
+                developer: deps.developer,
+                reviewer: deps.reviewer,
+                validator: deps.validator,
+                scm: deps.scm,
+                github: deps.github,
+                openClawDispatch: deps.openClawDispatch,
+                ...(deps.secrets ? { secrets: deps.secrets } : {}),
+                ...(deps.workspaceRepoBootstrapper
+                  ? { workspaceRepoBootstrapper: deps.workspaceRepoBootstrapper }
+                  : {}),
+                ...(deps.openClawCompletionAwaiter
+                  ? { openClawCompletionAwaiter: deps.openClawCompletionAwaiter }
+                  : {}),
+                ...(deps.architectureReviewAwaiter
+                  ? { architectureReviewAwaiter: deps.architectureReviewAwaiter }
+                  : {}),
+                ...(deps.openClawReviewAgentId
+                  ? { openClawReviewAgentId: deps.openClawReviewAgentId }
+                  : {}),
+                ...(deps.workspaceCommitPublisher
+                  ? { workspaceCommitPublisher: deps.workspaceCommitPublisher }
+                  : {}),
+                ...(deps.logger ? { logger: deps.logger } : {}),
+                ...(deps.clock ? { clock: deps.clock } : {}),
+                ...(deps.concurrency ? { concurrency: deps.concurrency } : {})
+              }
             );
 
             cycleResults.push(result);

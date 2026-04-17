@@ -366,7 +366,9 @@ export function createOperatorApiServer(
           clock,
           dryRun: defaultPlanningDryRun,
           ...(webhookOpenClawDispatch ? { openClawDispatch: webhookOpenClawDispatch } : {}),
-          ...(webhookArchitectTargetRoot ? { architectTargetRoot: webhookArchitectTargetRoot } : {})
+          ...(webhookArchitectTargetRoot ? { architectTargetRoot: webhookArchitectTargetRoot } : {}),
+          githubIssuesAdapter: githubIssuesAdapter ?? null,
+          taskFlowAdapter: taskFlowAdapter ?? null
         }
       : null;
 

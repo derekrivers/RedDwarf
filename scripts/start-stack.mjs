@@ -34,7 +34,7 @@
  */
 
 import { execFileSync, execSync, spawn } from "node:child_process";
-import { readdir, stat, rm, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdir, stat, rm, readFile, writeFile, mkdir, chmod } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import pg from "pg";
 import {
@@ -398,6 +398,15 @@ try {
   const now = Date.now();
 
   for (const entry of entries) {
+    // Skip infrastructure directories that are not per-task workspaces.
+    // `.agents/` holds persistent per-role auth-profiles.json (including
+    // Codex OAuth tokens). Its mtime only advances when role subdirs are
+    // added/removed, not when files inside them change, so the 24h
+    // expiry would incorrectly wipe it and all codex auth state with it.
+    // Any other dotfile directory is treated the same way.
+    if (entry.startsWith(".")) {
+      continue;
+    }
     const entryPath = join(workspaceRoot, entry);
     try {
       const info = await stat(entryPath);
@@ -624,6 +633,214 @@ if (webhookSecret) {
   log(`GitHub webhook receiver active at ${webhookPath}`);
 }
 
+// ── Codex OAuth auth propagation ──────────────────────────────────────
+// When a user completes Codex OAuth login, the token is written to one
+// agent directory. Other agent roles need the same auth-profiles.json.
+// This function finds any valid openai-codex profile and copies it to
+// every other agent dir so all roles can authenticate.
+//
+// A snapshot of the most recently observed valid profile is also kept
+// at runtime-data/secrets/codex-auth-profile.json. OpenClaw occasionally
+// wipes per-agent auth-profiles.json files on restart, so the snapshot
+// acts as a recovery source: on the next start we can restore the
+// profile to every agent without the user re-running OAuth.
+//
+// This MUST run before `docker compose ... openclaw up` so OpenClaw reads
+// the restored auth state on first boot instead of caching an empty one.
+
+const CODEX_AUTH_SNAPSHOT_PATH = join(
+  repoRoot,
+  "runtime-data",
+  "secrets",
+  "codex-auth-profile.json"
+);
+
+function authProfilesHaveCodex(raw) {
+  if (typeof raw !== "string" || raw.length === 0) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  const profiles = parsed?.profiles;
+  if (!profiles || typeof profiles !== "object") return false;
+  return Object.values(profiles).some(
+    (entry) =>
+      entry &&
+      typeof entry === "object" &&
+      entry.provider === "openai-codex" &&
+      typeof entry.access === "string" &&
+      entry.access.length > 0
+  );
+}
+
+async function readCodexAuthSnapshot() {
+  try {
+    const raw = await readFile(CODEX_AUTH_SNAPSHOT_PATH, "utf8");
+    return authProfilesHaveCodex(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCodexAuthSnapshot(raw) {
+  try {
+    await mkdir(join(repoRoot, "runtime-data", "secrets"), { recursive: true });
+    await writeFile(CODEX_AUTH_SNAPSHOT_PATH, raw, { encoding: "utf8", mode: 0o600 });
+    try {
+      await chmod(CODEX_AUTH_SNAPSHOT_PATH, 0o600);
+    } catch {
+      // chmod is best-effort (e.g. on Windows filesystems)
+    }
+    return true;
+  } catch (err) {
+    logError(`Failed to snapshot Codex auth profile: ${formatError(err)}`);
+    return false;
+  }
+}
+
+// Read the list of OpenClaw agent role IDs from the resolved openclaw.json
+// so we can reconstruct per-agent auth-profiles.json even when the
+// workspaces/.agents directory has been wiped (e.g. by the 24h workspace
+// cleanup in a previous release, or by a manual rm). Falls back to an
+// empty list on any read/parse error.
+async function readOpenClawAgentRoleIds() {
+  try {
+    const raw = await readFile(openClawConfigRuntimePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const list = parsed?.agents?.list;
+    if (!Array.isArray(list)) return [];
+    const ids = [];
+    for (const entry of list) {
+      if (entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0) {
+        ids.push(entry.id);
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
+async function propagateCodexAuth() {
+  const agentsRoot = join(repoRoot, "runtime-data", "workspaces", ".agents");
+  let roleDirs = [];
+  try {
+    const entries = await readdir(agentsRoot, { withFileTypes: true });
+    roleDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    // agentsRoot is missing (first boot, or wiped by cleanup). We'll fall
+    // back to openclaw.json's agents.list below so recovery from the
+    // snapshot can still materialize per-agent auth-profiles.json files.
+  }
+
+  // Find a source auth-profiles.json containing an openai-codex provider.
+  // Prefer any live agent dir first (captures refreshed tokens), then fall
+  // back to the persisted snapshot so we can recover after OpenClaw wipes
+  // per-agent files on restart.
+  let sourceContent = null;
+  let sourceKind = "none";
+  for (const role of roleDirs) {
+    const profilePath = join(agentsRoot, role, "agent", "auth-profiles.json");
+    let raw;
+    try {
+      raw = await readFile(profilePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (authProfilesHaveCodex(raw)) {
+      sourceContent = raw;
+      sourceKind = "agent_dir";
+      break;
+    }
+  }
+
+  if (!sourceContent) {
+    const snapshot = await readCodexAuthSnapshot();
+    if (snapshot) {
+      sourceContent = snapshot;
+      sourceKind = "snapshot";
+    }
+  }
+
+  if (!sourceContent) {
+    return { propagated: 0, source: "none", snapshotted: false };
+  }
+
+  // When recovering from the snapshot, roleDirs may be empty because the
+  // `.agents` tree hasn't been created yet. Seed the target list from
+  // openclaw.json so the snapshot can be fanned out to every configured
+  // agent role on cold start.
+  if (roleDirs.length === 0) {
+    const configuredRoles = await readOpenClawAgentRoleIds();
+    if (configuredRoles.length === 0) {
+      return { propagated: 0, source: sourceKind, snapshotted: false };
+    }
+    await mkdir(agentsRoot, { recursive: true });
+    roleDirs = configuredRoles;
+  }
+
+  // Copy to all agent dirs that are missing the file or lack a codex entry
+  let propagated = 0;
+  for (const role of roleDirs) {
+    const targetDir = join(agentsRoot, role, "agent");
+    const targetPath = join(targetDir, "auth-profiles.json");
+    let existing = null;
+    try {
+      existing = await readFile(targetPath, "utf8");
+    } catch {
+      // Missing or unreadable — will be overwritten
+    }
+    if (authProfilesHaveCodex(existing)) continue;
+    await mkdir(targetDir, { recursive: true });
+    await writeFile(targetPath, sourceContent, { encoding: "utf8", mode: 0o600 });
+    try {
+      await chmod(targetPath, 0o600);
+    } catch {
+      // best-effort
+    }
+    propagated += 1;
+  }
+
+  // Refresh the recovery snapshot whenever we have a live source, so the
+  // next start can still restore the profile even if the agent dirs are
+  // wiped. Skip the write when we sourced from the snapshot and did not
+  // discover a newer copy in an agent dir.
+  let snapshotted = false;
+  if (sourceKind === "agent_dir") {
+    snapshotted = await writeCodexAuthSnapshot(sourceContent);
+  }
+
+  return { propagated, source: sourceKind, snapshotted };
+}
+
+if (!skipOpenClaw) {
+  try {
+    const result = await propagateCodexAuth();
+    if (result.propagated > 0) {
+      const sourceLabel =
+        result.source === "snapshot"
+          ? "recovery snapshot"
+          : result.source === "agent_dir"
+            ? "live agent dir"
+            : "unknown";
+      log(
+        `Propagated Codex OAuth auth to ${result.propagated} agent role(s) from ${sourceLabel}.`
+      );
+    } else if (result.source === "none") {
+      log(
+        "Codex OAuth auth profile not found in any agent dir or recovery snapshot. Sign in via OpenClaw if you need Codex access."
+      );
+    }
+    if (result.snapshotted) {
+      log(`Refreshed Codex OAuth recovery snapshot at ${CODEX_AUTH_SNAPSHOT_PATH}.`);
+    }
+  } catch (err) {
+    logError(`Codex auth propagation failed (non-fatal): ${formatError(err)}`);
+  }
+}
+
 if (!skipOpenClaw) {
   log("Starting OpenClaw after operator API is ready...");
   try {
@@ -648,94 +865,6 @@ if (!skipOpenClaw) {
     log(
       `OpenClaw not available — deterministic fallback will be used. (${formatError(err)})`
     );
-  }
-}
-
-// ── Codex OAuth auth propagation ──────────────────────────────────────
-// When a user completes Codex OAuth login, the token is written to one
-// agent directory. Other agent roles need the same auth-profiles.json.
-// This function finds any valid openai-codex profile and copies it to
-// every other agent dir so all roles can authenticate.
-
-async function propagateCodexAuth() {
-  const agentsRoot = join(repoRoot, "runtime-data", "workspaces", ".agents");
-  let roleDirs;
-  try {
-    const entries = await readdir(agentsRoot, { withFileTypes: true });
-    roleDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return 0;
-  }
-
-  // Find a source auth-profiles.json containing an openai-codex provider
-  let sourceContent = null;
-  for (const role of roleDirs) {
-    const profilePath = join(agentsRoot, role, "agent", "auth-profiles.json");
-    let raw;
-    try {
-      raw = await readFile(profilePath, "utf8");
-    } catch {
-      continue;
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    const profiles = parsed?.profiles;
-    if (!profiles || typeof profiles !== "object") continue;
-    const hasCodex = Object.values(profiles).some(
-      (entry) =>
-        entry &&
-        typeof entry === "object" &&
-        entry.provider === "openai-codex" &&
-        typeof entry.access === "string" &&
-        entry.access.length > 0
-    );
-    if (hasCodex) {
-      sourceContent = raw;
-      break;
-    }
-  }
-
-  if (!sourceContent) return 0;
-
-  // Copy to all agent dirs that are missing the file or lack a codex entry
-  let propagated = 0;
-  for (const role of roleDirs) {
-    const targetDir = join(agentsRoot, role, "agent");
-    const targetPath = join(targetDir, "auth-profiles.json");
-    // Check if target already has a valid codex entry
-    try {
-      const existing = await readFile(targetPath, "utf8");
-      const parsed = JSON.parse(existing);
-      const profiles = parsed?.profiles;
-      if (profiles && typeof profiles === "object") {
-        const hasCodex = Object.values(profiles).some(
-          (e) => e && typeof e === "object" && e.provider === "openai-codex" && e.access
-        );
-        if (hasCodex) continue;
-      }
-    } catch {
-      // Missing or invalid — will be overwritten
-    }
-    await mkdir(targetDir, { recursive: true });
-    await writeFile(targetPath, sourceContent, "utf8");
-    propagated += 1;
-  }
-
-  return propagated;
-}
-
-if (!skipOpenClaw) {
-  try {
-    const propagated = await propagateCodexAuth();
-    if (propagated > 0) {
-      log(`Propagated Codex OAuth auth to ${propagated} agent role(s).`);
-    }
-  } catch (err) {
-    logError(`Codex auth propagation failed (non-fatal): ${formatError(err)}`);
   }
 }
 
@@ -993,9 +1122,11 @@ if (periodicSweepEnabled && periodicSweepIntervalMs > 0) {
 
     // Re-propagate Codex auth to any new agent dirs created since last cycle
     try {
-      const propagated = await propagateCodexAuth();
-      if (propagated > 0) {
-        log(`[periodic-sweep] Propagated Codex OAuth auth to ${propagated} new agent role(s).`);
+      const result = await propagateCodexAuth();
+      if (result.propagated > 0) {
+        log(
+          `[periodic-sweep] Propagated Codex OAuth auth to ${result.propagated} new agent role(s).`
+        );
       }
     } catch { /* non-fatal */ }
   }, periodicSweepIntervalMs);

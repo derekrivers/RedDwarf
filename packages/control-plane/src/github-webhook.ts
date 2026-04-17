@@ -1,9 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { GitHubAdapter, GitHubIssueCandidate } from "@reddwarf/integrations";
+import type { GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import type { PlanningAgent, PlanningTaskInput } from "@reddwarf/contracts";
 import type { PlanningRepository } from "@reddwarf/evidence";
 import { runPlanningPipeline } from "./pipeline.js";
+import { advanceProjectTicket } from "./pipeline/project-approval.js";
 import { classifyComplexity } from "./rimmer/index.js";
 import type { PlanningPipelineLogger } from "./logger.js";
 import { bindPlanningLogger } from "./logger.js";
@@ -177,6 +179,62 @@ function webhookIssueToCandidate(payload: GitHubWebhookIssuePayload): GitHubIssu
 }
 
 // ============================================================
+// GitHub webhook pull_request payload → ticket advance
+// ============================================================
+
+interface GitHubWebhookPullRequestPayload {
+  action: string;
+  pull_request: {
+    number: number;
+    merged: boolean;
+    head: { ref: string };
+    body: string | null;
+    html_url: string;
+  };
+  repository: {
+    full_name: string;
+  };
+}
+
+function isPullRequestPayload(body: unknown): body is GitHubWebhookPullRequestPayload {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+  const obj = body as Record<string, unknown>;
+  return (
+    typeof obj.action === "string" &&
+    typeof obj.pull_request === "object" &&
+    obj.pull_request !== null &&
+    typeof obj.repository === "object" &&
+    obj.repository !== null
+  );
+}
+
+const BRANCH_TICKET_RE = /^reddwarf\/ticket\/(.+)$/;
+const BODY_TICKET_RE = /<!-- reddwarf:ticket_id:(\S+) -->/;
+
+/**
+ * Extract ticket_id from a PR branch name (`reddwarf/ticket/{id}`) or PR body
+ * (`<!-- reddwarf:ticket_id:VALUE -->`). Returns `null` if no ticket reference
+ * is found.
+ */
+export function extractTicketId(branchName: string, prBody: string | null): string | null {
+  const branchMatch = BRANCH_TICKET_RE.exec(branchName);
+  const branchId = branchMatch?.[1];
+  if (branchId && /^[a-zA-Z0-9._:/-]+$/.test(branchId)) {
+    return branchId;
+  }
+  if (prBody) {
+    const bodyMatch = BODY_TICKET_RE.exec(prBody);
+    const bodyId = bodyMatch?.[1];
+    if (bodyId && /^[a-zA-Z0-9._:/-]+$/.test(bodyId)) {
+      return bodyId;
+    }
+  }
+  return null;
+}
+
+// ============================================================
 // Webhook handler
 // ============================================================
 
@@ -189,6 +247,10 @@ export interface WebhookHandlerDependencies {
   openClawDispatch?: OpenClawDispatchAdapter;
   architectTargetRoot?: string;
   dryRun?: boolean;
+  /** When provided, enables sub-issue close on ticket advance via webhook. */
+  githubIssuesAdapter?: GitHubIssuesAdapter | null;
+  /** When provided, enables Task Flow advance on ticket advance via webhook. */
+  taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
 }
 
 export interface WebhookHandlerResult {
@@ -235,9 +297,9 @@ export async function handleGitHubWebhook(
     return { status: 200, body: { event: "ping", message: "pong" } };
   }
 
-  // Step 3: Only process issues events
-  if (eventType !== "issues") {
-    logger?.info("Ignoring non-issues webhook event.", {
+  // Step 3: Route by event type
+  if (eventType !== "issues" && eventType !== "pull_request") {
+    logger?.info("Ignoring unhandled webhook event.", {
       code: "WEBHOOK_EVENT_IGNORED",
       eventType: eventType ?? "unknown"
     });
@@ -258,6 +320,140 @@ export async function handleGitHubWebhook(
     };
   }
 
+  // Step 5: Route to event-specific handler
+  if (eventType === "pull_request") {
+    return handlePullRequestEvent(payload, deps, logger);
+  }
+
+  return handleIssuesEvent(payload, deps, logger);
+}
+
+// ============================================================
+// pull_request event handler — ticket advance on PR merge
+// ============================================================
+
+async function handlePullRequestEvent(
+  payload: unknown,
+  deps: WebhookHandlerDependencies,
+  logger?: ReturnType<typeof bindPlanningLogger>
+): Promise<WebhookHandlerResult> {
+  if (!isPullRequestPayload(payload)) {
+    return {
+      status: 400,
+      body: { error: "bad_request", message: "Malformed pull_request webhook payload." }
+    };
+  }
+
+  const pr = payload.pull_request;
+  const repo = payload.repository.full_name;
+
+  // Only process closed + merged PRs
+  if (payload.action !== "closed" || !pr.merged) {
+    logger?.info("Ignoring non-merged pull_request event.", {
+      code: "WEBHOOK_PR_ACTION_IGNORED",
+      action: payload.action,
+      merged: pr.merged,
+      repo,
+      prNumber: pr.number
+    });
+    return {
+      status: 200,
+      body: {
+        event: "pull_request",
+        action: payload.action,
+        repo,
+        prNumber: pr.number,
+        message: "Only closed+merged pull requests are processed."
+      }
+    };
+  }
+
+  // Extract ticket_id from branch name or PR body
+  const ticketId = extractTicketId(pr.head.ref, pr.body);
+
+  if (!ticketId) {
+    logger?.info("Merged PR has no ticket reference, ignoring.", {
+      code: "WEBHOOK_PR_NO_TICKET",
+      repo,
+      prNumber: pr.number,
+      branch: pr.head.ref
+    });
+    return {
+      status: 200,
+      body: {
+        event: "pull_request",
+        action: "closed",
+        repo,
+        prNumber: pr.number,
+        message: "No ticket reference found in branch name or PR body. Ignored."
+      }
+    };
+  }
+
+  logger?.info("Processing merged PR for ticket advance.", {
+    code: "WEBHOOK_PR_MERGED",
+    repo,
+    prNumber: pr.number,
+    ticketId,
+    branch: pr.head.ref
+  });
+
+  const clock = deps.clock ?? (() => new Date());
+
+  // Fire and forget: advance the ticket but don't block the HTTP response
+  const advancePromise = advanceProjectTicket(
+    { ticketId, githubPrNumber: pr.number },
+    {
+      repository: deps.repository,
+      githubIssuesAdapter: deps.githubIssuesAdapter ?? null,
+      taskFlowAdapter: deps.taskFlowAdapter ?? null,
+      clock
+    }
+  );
+
+  advancePromise
+    .then((result) => {
+      logger?.info("Webhook-triggered ticket advance completed.", {
+        code: "WEBHOOK_TICKET_ADVANCED",
+        repo,
+        prNumber: pr.number,
+        ticketId,
+        outcome: result.outcome,
+        nextTicketId: result.nextDispatchedTicket?.ticketId ?? null
+      });
+    })
+    .catch((error) => {
+      logger?.error("Webhook-triggered ticket advance failed.", {
+        code: "WEBHOOK_TICKET_ADVANCE_FAILED",
+        repo,
+        prNumber: pr.number,
+        ticketId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+
+  return {
+    status: 202,
+    body: {
+      event: "pull_request",
+      action: "closed",
+      repo,
+      prNumber: pr.number,
+      ticketId,
+      message: "Merged PR accepted for ticket advancement."
+    }
+  };
+}
+
+// ============================================================
+// issues event handler — issue intake
+// ============================================================
+
+async function handleIssuesEvent(
+  payload: unknown,
+  deps: WebhookHandlerDependencies,
+  logger?: ReturnType<typeof bindPlanningLogger>
+): Promise<WebhookHandlerResult> {
   if (!isIssuePayload(payload)) {
     return {
       status: 400,
@@ -265,7 +461,7 @@ export async function handleGitHubWebhook(
     };
   }
 
-  // Step 5: Only process "opened" action
+  // Only process "opened" action
   if (payload.action !== "opened") {
     logger?.info("Ignoring non-opened issues event.", {
       code: "WEBHOOK_ISSUE_ACTION_IGNORED",
@@ -283,7 +479,7 @@ export async function handleGitHubWebhook(
     };
   }
 
-  // Step 6: Convert to candidate and check eligibility
+  // Convert to candidate and check eligibility
   const candidate = webhookIssueToCandidate(payload);
   const clock = deps.clock ?? (() => new Date());
 
@@ -340,10 +536,7 @@ export async function handleGitHubWebhook(
     };
   }
 
-  // Step 7: Check for existing planning spec (deduplication)
-  // The planning pipeline's pre-screener also performs this check, but
-  // checking here allows us to return a clear 200 response immediately
-  // without starting the pipeline.
+  // Check for existing planning spec (deduplication)
   const source = {
     provider: "github" as const,
     repo: candidate.repo,
@@ -370,8 +563,7 @@ export async function handleGitHubWebhook(
     };
   }
 
-  // Step 8: Convert and run through intake pipeline (async, fire-and-forget)
-  // We respond 202 Accepted immediately and let the pipeline run in the background.
+  // Convert and run through intake pipeline (async, fire-and-forget)
   const planningInput: PlanningTaskInput = await deps.github.convertToPlanningInput(candidate);
   const classification = classifyComplexity(planningInput);
   const planningMetadata = {
@@ -380,7 +572,6 @@ export async function handleGitHubWebhook(
     intakeSource: "webhook" as const
   };
 
-  // Fire and forget: start the pipeline but don't await it for the HTTP response
   const pipelinePromise = runPlanningPipeline(
     {
       ...planningInput,
@@ -397,7 +588,6 @@ export async function handleGitHubWebhook(
     }
   );
 
-  // Log pipeline completion/failure asynchronously
   pipelinePromise
     .then((result) => {
       logger?.info("Webhook-triggered pipeline completed.", {
