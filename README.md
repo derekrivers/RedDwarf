@@ -197,7 +197,7 @@ At startup, RedDwarf loads `.env`, then `.secrets`, and then overlays any matchi
 | `REDDWARF_TOKEN_BUDGET_REVIEWER` | `60000` | Architecture-review token budget |
 | `REDDWARF_TOKEN_BUDGET_SCM` | `40000` | SCM token budget |
 | `REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION` | `warn` | Budget overage behavior: warn or block |
-| `REDDWARF_MODEL_PROVIDER` | `anthropic` | LLM provider for direct planning calls and generated OpenClaw agent model bindings; allowed values are `anthropic` and `openai` |
+| `REDDWARF_MODEL_PROVIDER` | `anthropic` | LLM provider for direct planning calls and generated OpenClaw agent model bindings; allowed values are `anthropic`, `openai`, and `openai-codex` (ChatGPT Pro/Plus subscription via Codex OAuth) |
 
 **Secrets**
 

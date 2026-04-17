@@ -1,7 +1,13 @@
 import { dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { generateOpenClawConfig, serializeOpenClawConfig } from "../packages/control-plane/dist/index.js";
-import { resolveModelProviderEnv } from "./lib/config.mjs";
+import {
+  buildBootstrapConfigFromEnv,
+  buildCompactionConfigFromEnv,
+  buildContextLimitsConfigFromEnv,
+  buildLoopDetectionConfigFromEnv,
+  resolveModelProviderEnv
+} from "./lib/config.mjs";
 
 function readBooleanEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -72,6 +78,10 @@ const resolvedWorkspaceRoot = workspaceRoot.startsWith("/")
 const resolvedOutputPath = resolve(outputPath);
 
 const modelFailoverEnabled = process.env.REDDWARF_MODEL_FAILOVER_ENABLED === "true";
+const compactionConfig = buildCompactionConfigFromEnv();
+const contextLimitsConfig = buildContextLimitsConfigFromEnv();
+const bootstrapConfig = buildBootstrapConfigFromEnv();
+const loopDetectionConfig = buildLoopDetectionConfigFromEnv();
 
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
@@ -85,6 +95,10 @@ const config = generateOpenClawConfig({
   browser: {
     enabled: browserEnabled
   },
+  ...(compactionConfig ? { compaction: compactionConfig } : {}),
+  ...(contextLimitsConfig ? { contextLimits: contextLimitsConfig } : {}),
+  ...(bootstrapConfig ? { bootstrap: bootstrapConfig } : {}),
+  ...(loopDetectionConfig ? { loopDetection: loopDetectionConfig } : {}),
   ...(discordEnabled
     ? {
         discord: {

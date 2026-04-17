@@ -121,6 +121,74 @@ export interface OpenClawAgentConfig {
 }
 
 /**
+ * Gateway-level compaction tuning applied to every agent via
+ * `agents.defaults.compaction`. Per the OpenClaw configuration reference:
+ *
+ * - `safeguard` mode performs chunked summarisation for very long histories.
+ * - `identifierPolicy: "strict"` automatically preserves deployment, ticket,
+ *   and project IDs across compaction, which keeps Project Mode `TicketSpec`
+ *   identifiers visible to the agent after summarisation.
+ */
+export interface OpenClawCompactionConfig {
+  mode?: "default" | "safeguard";
+  identifierPolicy?: "strict" | "custom" | "off";
+  timeoutSeconds?: number;
+  notifyUser?: boolean;
+  memoryFlush?: {
+    enabled: boolean;
+    softThresholdTokens?: number;
+  };
+}
+
+/**
+ * Context limits applied at `agents.defaults.contextLimits`. Caps the number
+ * of characters returned by memory reads, tool results, and post-compaction
+ * summaries. Used here to avoid single large test-runner outputs blowing the
+ * context window during validation phases.
+ */
+export interface OpenClawContextLimitsConfig {
+  memoryGetMaxChars?: number;
+  toolResultMaxChars?: number;
+  postCompactionMaxChars?: number;
+}
+
+/**
+ * Bootstrap-file size controls applied at `agents.defaults.bootstrapMaxChars`,
+ * `agents.defaults.bootstrapTotalMaxChars`, and
+ * `agents.defaults.bootstrapPromptTruncationWarning`.
+ *
+ * RedDwarf generates its own IDENTITY/SOUL/AGENTS/TOOLS/SKILL files per
+ * workspace; exposing these limits lets operators trim or warn on noisy
+ * bootstraps without editing every agent role.
+ */
+export interface OpenClawBootstrapConfig {
+  maxChars?: number;
+  totalMaxChars?: number;
+  promptTruncationWarning?: "off" | "once" | "always";
+}
+
+/**
+ * Gateway-level loop detection applied under `tools.loopDetection`. Lets the
+ * OpenClaw runtime warn or abort when an agent repeats the same tool call,
+ * polls without progress, or ping-pongs between two responses.
+ *
+ * Detector names follow the documented defaults:
+ *   - `genericRepeat`: same tool+args repeated within the detection window
+ *   - `knownPollNoProgress`: a poll tool called repeatedly with no state change
+ *   - `pingPong`: two distinct calls alternating without progress
+ */
+export interface OpenClawLoopDetectionConfig {
+  enabled: boolean;
+  warningThreshold?: number;
+  criticalThreshold?: number;
+  detectors?: {
+    genericRepeat?: boolean;
+    knownPollNoProgress?: boolean;
+    pingPong?: boolean;
+  };
+}
+
+/**
  * Gateway-level tool settings that control cross-agent session access.
  * These live at the top level of openclaw.json under `tools`, not inside
  * individual agent entries.
@@ -138,6 +206,8 @@ export interface OpenClawGlobalToolsConfig {
     /** "tree" (default) | "agent" | "all". Use "all" for cross-agent visibility. */
     visibility: "self" | "tree" | "agent" | "all";
   };
+  /** Gateway-level loop detection. Emits warnings and aborts for repeated, stalled, or ping-pong tool calls. */
+  loopDetection?: OpenClawLoopDetectionConfig;
 }
 
 export interface OpenClawConfig {
@@ -171,6 +241,11 @@ export interface OpenClawConfig {
   agents: {
     defaults: {
       skipBootstrap: boolean;
+      compaction?: OpenClawCompactionConfig;
+      contextLimits?: OpenClawContextLimitsConfig;
+      bootstrapMaxChars?: number;
+      bootstrapTotalMaxChars?: number;
+      bootstrapPromptTruncationWarning?: "off" | "once" | "always";
     };
     list: OpenClawAgentConfig[];
   };
@@ -261,6 +336,46 @@ export interface GenerateOpenClawConfigOptions {
    * Set via REDDWARF_MODEL_FAILOVER_ENABLED env var.
    */
   enableModelFailover?: boolean;
+
+  /**
+   * Optional `agents.defaults.compaction` block. When provided, the generator
+   * emits it verbatim. Recommended posture for RedDwarf's long-running
+   * architect and developer sessions is `{ mode: "safeguard",
+   * identifierPolicy: "strict" }` so Project Mode ticket IDs survive
+   * summarisation.
+   *
+   * Set via REDDWARF_OPENCLAW_COMPACTION_* env vars.
+   */
+  compaction?: OpenClawCompactionConfig;
+
+  /**
+   * Optional `agents.defaults.contextLimits` block. Caps memory-read, tool
+   * result, and post-compaction character counts to avoid single large
+   * validation outputs blowing the context window.
+   *
+   * Set via REDDWARF_OPENCLAW_CONTEXT_LIMIT_* env vars.
+   */
+  contextLimits?: OpenClawContextLimitsConfig;
+
+  /**
+   * Optional bootstrap-file caps applied at the gateway defaults. Does not
+   * affect RedDwarf-generated bootstrap content itself, but lets operators
+   * surface a one-time truncation warning when a role's bootstrap is close
+   * to the configured ceiling.
+   *
+   * Set via REDDWARF_OPENCLAW_BOOTSTRAP_* env vars.
+   */
+  bootstrap?: OpenClawBootstrapConfig;
+
+  /**
+   * Optional `tools.loopDetection` block emitted under the existing top-level
+   * `tools` surface. When provided, OpenClaw watches for repeated, stalled,
+   * or ping-pong tool calls and emits warnings (or aborts) without RedDwarf
+   * needing to parse session transcripts for those patterns.
+   *
+   * Set via REDDWARF_OPENCLAW_LOOP_DETECTION_* env vars.
+   */
+  loopDetection?: OpenClawLoopDetectionConfig;
 }
 
 /**
@@ -351,6 +466,19 @@ export function generateOpenClawConfig(
   const enableAgentToAgent = options.enableAgentToAgent ?? false;
   const agentIds = roles.map((role) => role.agentId);
 
+  const globalTools = buildGlobalToolsConfig({
+    enableAgentToAgent,
+    agentIds,
+    ...(options.loopDetection ? { loopDetection: options.loopDetection } : {})
+  });
+
+  const agentDefaults = buildAgentDefaults({
+    skipBootstrap,
+    ...(options.compaction ? { compaction: options.compaction } : {}),
+    ...(options.contextLimits ? { contextLimits: options.contextLimits } : {}),
+    ...(options.bootstrap ? { bootstrap: options.bootstrap } : {})
+  });
+
   const config: OpenClawConfig = {
     gateway: {
       bind: "lan",
@@ -378,19 +506,7 @@ export function generateOpenClawConfig(
       text: true,
       native: "auto"
     },
-    ...(enableAgentToAgent
-      ? {
-          tools: {
-            agentToAgent: {
-              enabled: true,
-              allow: [...agentIds]
-            },
-            sessions: {
-              visibility: "all"
-            }
-          }
-        }
-      : {}),
+    ...(globalTools ? { tools: globalTools } : {}),
     ...(options.discord
       ? {
           channels: {
@@ -553,7 +669,7 @@ export function generateOpenClawConfig(
       }
     },
     agents: {
-      defaults: { skipBootstrap },
+      defaults: agentDefaults,
       list: []
     }
   };
@@ -576,6 +692,130 @@ export function generateOpenClawConfig(
  */
 export function serializeOpenClawConfig(config: OpenClawConfig): string {
   return JSON.stringify(config, null, 2) + "\n";
+}
+
+function buildGlobalToolsConfig(input: {
+  enableAgentToAgent: boolean;
+  agentIds: string[];
+  loopDetection?: OpenClawLoopDetectionConfig;
+}): OpenClawGlobalToolsConfig | null {
+  const tools: OpenClawGlobalToolsConfig = {};
+
+  if (input.enableAgentToAgent) {
+    tools.agentToAgent = {
+      enabled: true,
+      allow: [...input.agentIds]
+    };
+    tools.sessions = { visibility: "all" };
+  }
+
+  if (input.loopDetection) {
+    tools.loopDetection = {
+      enabled: input.loopDetection.enabled,
+      ...(input.loopDetection.warningThreshold !== undefined
+        ? { warningThreshold: input.loopDetection.warningThreshold }
+        : {}),
+      ...(input.loopDetection.criticalThreshold !== undefined
+        ? { criticalThreshold: input.loopDetection.criticalThreshold }
+        : {}),
+      ...(input.loopDetection.detectors
+        ? {
+            detectors: {
+              ...(input.loopDetection.detectors.genericRepeat !== undefined
+                ? { genericRepeat: input.loopDetection.detectors.genericRepeat }
+                : {}),
+              ...(input.loopDetection.detectors.knownPollNoProgress !== undefined
+                ? {
+                    knownPollNoProgress:
+                      input.loopDetection.detectors.knownPollNoProgress
+                  }
+                : {}),
+              ...(input.loopDetection.detectors.pingPong !== undefined
+                ? { pingPong: input.loopDetection.detectors.pingPong }
+                : {})
+            }
+          }
+        : {})
+    };
+  }
+
+  return Object.keys(tools).length > 0 ? tools : null;
+}
+
+function buildAgentDefaults(input: {
+  skipBootstrap: boolean;
+  compaction?: OpenClawCompactionConfig;
+  contextLimits?: OpenClawContextLimitsConfig;
+  bootstrap?: OpenClawBootstrapConfig;
+}): OpenClawConfig["agents"]["defaults"] {
+  const defaults: OpenClawConfig["agents"]["defaults"] = {
+    skipBootstrap: input.skipBootstrap
+  };
+
+  if (input.compaction) {
+    const compaction: OpenClawCompactionConfig = {
+      ...(input.compaction.mode ? { mode: input.compaction.mode } : {}),
+      ...(input.compaction.identifierPolicy
+        ? { identifierPolicy: input.compaction.identifierPolicy }
+        : {}),
+      ...(input.compaction.timeoutSeconds !== undefined
+        ? { timeoutSeconds: input.compaction.timeoutSeconds }
+        : {}),
+      ...(input.compaction.notifyUser !== undefined
+        ? { notifyUser: input.compaction.notifyUser }
+        : {}),
+      ...(input.compaction.memoryFlush
+        ? {
+            memoryFlush: {
+              enabled: input.compaction.memoryFlush.enabled,
+              ...(input.compaction.memoryFlush.softThresholdTokens !== undefined
+                ? {
+                    softThresholdTokens:
+                      input.compaction.memoryFlush.softThresholdTokens
+                  }
+                : {})
+            }
+          }
+        : {})
+    };
+    if (Object.keys(compaction).length > 0) {
+      defaults.compaction = compaction;
+    }
+  }
+
+  if (input.contextLimits) {
+    const contextLimits: OpenClawContextLimitsConfig = {
+      ...(input.contextLimits.memoryGetMaxChars !== undefined
+        ? { memoryGetMaxChars: input.contextLimits.memoryGetMaxChars }
+        : {}),
+      ...(input.contextLimits.toolResultMaxChars !== undefined
+        ? { toolResultMaxChars: input.contextLimits.toolResultMaxChars }
+        : {}),
+      ...(input.contextLimits.postCompactionMaxChars !== undefined
+        ? {
+            postCompactionMaxChars: input.contextLimits.postCompactionMaxChars
+          }
+        : {})
+    };
+    if (Object.keys(contextLimits).length > 0) {
+      defaults.contextLimits = contextLimits;
+    }
+  }
+
+  if (input.bootstrap) {
+    if (input.bootstrap.maxChars !== undefined) {
+      defaults.bootstrapMaxChars = input.bootstrap.maxChars;
+    }
+    if (input.bootstrap.totalMaxChars !== undefined) {
+      defaults.bootstrapTotalMaxChars = input.bootstrap.totalMaxChars;
+    }
+    if (input.bootstrap.promptTruncationWarning !== undefined) {
+      defaults.bootstrapPromptTruncationWarning =
+        input.bootstrap.promptTruncationWarning;
+    }
+  }
+
+  return defaults;
 }
 
 /**
