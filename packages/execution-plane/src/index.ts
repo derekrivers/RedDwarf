@@ -142,9 +142,9 @@ export function createOpenClawAgentRoleDefinitions(
       },
       {
         kind: "skill",
-        relativePath: "agents/openclaw/rimmer/skills/reddwarf-openclaw/SKILL.md",
+        relativePath: "agents/openclaw/rimmer/skills/reddwarf-conversational-runtime/SKILL.md",
         description:
-          "Runtime skill for coordinating bounded OpenClaw sessions."
+          "Runtime skill for handling conversational traffic via Discord, WebChat, and the reddwarf-operator plugin command set."
       }
     ],
     canonicalSources: [...sharedOpenClawCanonicalSources, "agents/architect.md"]
