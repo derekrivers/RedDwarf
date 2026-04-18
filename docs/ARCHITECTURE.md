@@ -197,19 +197,27 @@ RedDwarf is intentionally multi-surface so operators are not forced into one wor
 
 ```mermaid
 flowchart LR
-    OP[Operator] --> API[REST Operator API]
-    OP --> UIP[/ui single-file panel]
+    OP[Operator] --> DASH[Dashboard SPA\n127.0.0.1:5173]
+    OP --> API[REST Operator API\n127.0.0.1:8080]
+    OP --> UIP[Legacy /ui panel\n served by Operator API]
+    OP --> CLI[reddwarf CLI\nsubmit / report]
     OP --> WC[OpenClaw WebChat commands]
     OP --> DIS[Discord via OpenClaw]
-    WC --> API
+    DASH --> API
     UIP --> API
+    CLI --> API
+    WC --> API
     DIS --> OCG[OpenClaw Gateway]
     OCG --> API
 ```
 
-### 7.1 Operator API
+### 7.1 Operator Dashboard (primary)
 
-The Operator API is the canonical control surface. It provides:
+`packages/dashboard` is a React SPA served on `127.0.0.1:5173` during `pnpm start`, or statically from Caddy in production deploys. It is the primary day-to-day operator surface. Routes cover Dashboard, Projects, Approvals, Pipeline, Evidence, Agents, Repositories, Submit Issue, and OpenClaw Settings. The SPA stores `REDDWARF_OPERATOR_TOKEN` only in `sessionStorage`.
+
+### 7.2 Operator API
+
+The REST Operator API is the canonical programmatic control surface — everything else calls into it. It provides:
 
 - health and runtime status
 - approval resolution
@@ -219,16 +227,20 @@ The Operator API is the canonical control surface. It provides:
 - evidence inspection
 - UI bootstrap data
 - write-only secret rotation
+- project mode approval and advancement
+- OpenClaw plugin integration (tool approvals, session policy)
 
-### 7.2 Operator UI
+See [reference/OPERATOR_API.md](reference/OPERATOR_API.md) for the full route list.
 
-`GET /ui` serves a single-file operator panel. It is designed to stay lightweight and deployment-friendly:
+### 7.3 CLI
 
-- static shell can load without custom headers
-- all live actions still require `REDDWARF_OPERATOR_TOKEN`
-- current sections include config, repo management, paths, status, recent runs/tasks, and secret rotation
+`scripts/reddwarf.mjs` exposes `reddwarf submit` (inject tasks via `POST /tasks/inject`) and `reddwarf report` (export run reports as markdown or JSON). Installed as a repo `bin`; invoke with `pnpm exec reddwarf`.
 
-### 7.3 WebChat command plugin
+### 7.4 Legacy operator panel
+
+`GET /ui` serves a single-file HTML panel. It remains useful for config-heavy work (repo management, DB pool tuning, secret rotation) when the SPA is overkill. Unauthenticated shell; mutations gated by `REDDWARF_OPERATOR_TOKEN`.
+
+### 7.5 WebChat command plugin
 
 The repo-mounted OpenClaw plugin `reddwarf-operator` exposes RedDwarf-aware commands:
 
@@ -240,7 +252,7 @@ The repo-mounted OpenClaw plugin `reddwarf-operator` exposes RedDwarf-aware comm
 
 OpenClaw reserves `/status`, `/approve`, and `/reject`, so RedDwarf intentionally uses the `rd...` aliases instead of overriding native gateway commands.
 
-### 7.4 MCP bridge
+### 7.6 MCP bridge
 
 The RedDwarf MCP bridge runs inside OpenClaw and talks back to the Operator API.
 
@@ -381,15 +393,34 @@ Key boundaries:
 
 ## 14. Current Limitations
 
-- OpenClaw sandboxing is disabled in the current Docker-hosted topology because the gateway container does not have a supported inner Docker backend.
-- WebChat cannot safely override OpenClaw’s native `/status`, `/approve`, or `/reject` commands.
-- Polling is still the primary intake mechanism for GitHub issues; webhook intake is deferred to the VPS milestone.
-- The current deployment is local-first. VPS hosting, funnel exposure, and webhook-driven flows are still future work.
+- OpenClaw sandboxing is disabled in the current Docker-hosted topology because the gateway container does not have a supported inner Docker backend. Runtime enforcement relies on the outer container boundary plus tool allow/deny rules — see [openclaw/AGENT_TOOL_PERMISSIONS.md](openclaw/AGENT_TOOL_PERMISSIONS.md).
+- WebChat cannot safely override OpenClaw's native `/status`, `/approve`, or `/reject` commands — the RedDwarf plugin uses `/rdstatus`, `/rdapprove`, `/rdreject` aliases.
+- Polling is the default intake mechanism; webhook intake is live but disabled unless `REDDWARF_WEBHOOK_SECRET` is set. When both are active (`REDDWARF_POLL_MODE=always`), the deduplication guard prevents double-processing but you pay twice.
+- Project Mode tickets are serial in v1 — no parallel ticket execution.
 
 ## 15. Recommended Reading
 
-- [README.md](/home/derek/code/RedDwarf/README.md)
-- [docs/DEMO_RUNBOOK.md](/home/derek/code/RedDwarf/docs/DEMO_RUNBOOK.md)
-- [docs/implementation-map.md](/home/derek/code/RedDwarf/docs/implementation-map.md)
-- [docs/agent/Documentation.md](/home/derek/code/RedDwarf/docs/agent/Documentation.md)
-- [docs/agent/TROUBLESHOOTING.md](/home/derek/code/RedDwarf/docs/agent/TROUBLESHOOTING.md)
+Narrative:
+
+- [../README.md](../README.md)
+- [GETTING_STARTED.md](GETTING_STARTED.md)
+- [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)
+- [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md) · [VPS_OPERATIONS.md](VPS_OPERATIONS.md)
+- [WEBHOOK_SETUP.md](WEBHOOK_SETUP.md)
+
+Reference:
+
+- [reference/OPERATOR_API.md](reference/OPERATOR_API.md)
+- [reference/CONFIG.md](reference/CONFIG.md)
+- [reference/COMMANDS.md](reference/COMMANDS.md)
+
+Specs:
+
+- [reddwarf_project_mode_spec.md](reddwarf_project_mode_spec.md)
+- [openclaw/openclaw-integration-features-spec.md](openclaw/openclaw-integration-features-spec.md)
+- [openclaw/OPENCLAW_AUDIT.md](openclaw/OPENCLAW_AUDIT.md)
+
+Agent-internal memory:
+
+- [agent/Documentation.md](agent/Documentation.md)
+- [agent/TROUBLESHOOTING.md](agent/TROUBLESHOOTING.md)
