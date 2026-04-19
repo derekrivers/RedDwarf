@@ -44,6 +44,68 @@ function passRateTone(rate: number, total: number): string {
   return "bg-red-lt text-red";
 }
 
+// Feature 181 — Policy-pack outcome dashboard (M24 F-181).
+//
+// Pivots the per-(phase, policyVersion) rows from F-179 into a matrix with
+// phases as rows and pack versions as columns, then renders the pass-rate
+// delta between adjacent versions so operators can answer "did pack v15
+// improve the numbers over v14?" without exporting a spreadsheet.
+
+interface PolicyPackPivotCell {
+  total: number;
+  passRate: number;
+  passed: number;
+  failed: number;
+  escalated: number;
+}
+
+interface PolicyPackPivot {
+  phases: string[];
+  policyVersions: string[];
+  cells: Map<string, PolicyPackPivotCell>;
+}
+
+function pivotKey(phase: string, policyVersion: string): string {
+  return `${phase}\u0001${policyVersion}`;
+}
+
+function buildPolicyPackPivot(
+  rows: ReadonlyArray<{
+    phase: string;
+    policyVersion: string;
+    passed: number;
+    failed: number;
+    escalated: number;
+    total: number;
+    passRate: number;
+  }>
+): PolicyPackPivot {
+  const phases = [...new Set(rows.map((r) => r.phase))].sort();
+  const policyVersions = [...new Set(rows.map((r) => r.policyVersion))].sort();
+  const cells = new Map<string, PolicyPackPivotCell>();
+  for (const row of rows) {
+    cells.set(pivotKey(row.phase, row.policyVersion), {
+      total: row.total,
+      passRate: row.passRate,
+      passed: row.passed,
+      failed: row.failed,
+      escalated: row.escalated
+    });
+  }
+  return { phases, policyVersions, cells };
+}
+
+function formatDelta(delta: number): string {
+  const pct = delta * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}pp`;
+}
+
+function deltaTone(delta: number): string {
+  if (Math.abs(delta) < 0.01) return "text-secondary";
+  return delta > 0 ? "text-green" : "text-red";
+}
+
 export function AgentQualityPage(props: { apiClient: DashboardApiClient }) {
   const { apiClient } = props;
   const [sinceInput, setSinceInput] = useState("");
@@ -75,6 +137,7 @@ export function AgentQualityPage(props: { apiClient: DashboardApiClient }) {
   const outcomes = data?.phaseOutcomes ?? [];
   const latencies = data?.phaseLatencies ?? [];
   const failures = data?.failureClasses ?? [];
+  const pivot = buildPolicyPackPivot(outcomes);
 
   return (
     <div className="d-flex flex-column gap-3">
@@ -162,6 +225,74 @@ export function AgentQualityPage(props: { apiClient: DashboardApiClient }) {
                       {formatPercent(row.passRate)}
                     </span>
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h3 className="card-title mb-0">Policy pack comparison</h3>
+          <div className="text-secondary small">
+            Pass rate per phase, pivoted by policy-pack version. The delta column
+            shows the pass-rate change from the preceding pack — green means the
+            new pack improved outcomes, red means regression. Feature 181.
+          </div>
+        </div>
+        <div className="table-responsive">
+          <table className="table table-vcenter card-table">
+            <thead>
+              <tr>
+                <th>Phase</th>
+                {pivot.policyVersions.map((version, idx) => (
+                  <th key={version} className="text-end font-monospace">
+                    {version}
+                    {idx > 0 ? (
+                      <span className="text-secondary small ms-2">vs {pivot.policyVersions[idx - 1]}</span>
+                    ) : null}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pivot.phases.length === 0 && !metricsQuery.isLoading ? (
+                <tr>
+                  <td colSpan={Math.max(2, pivot.policyVersions.length + 1)} className="text-secondary text-center py-4">
+                    Need at least one recorded phase outcome to compare packs.
+                  </td>
+                </tr>
+              ) : null}
+              {pivot.phases.map((phase) => (
+                <tr key={`pivot:${phase}`}>
+                  <td>{phase}</td>
+                  {pivot.policyVersions.map((version, idx) => {
+                    const cell = pivot.cells.get(pivotKey(phase, version));
+                    const prevCell = idx > 0
+                      ? pivot.cells.get(pivotKey(phase, pivot.policyVersions[idx - 1]!))
+                      : null;
+                    const delta = cell && prevCell && prevCell.total > 0 && cell.total > 0
+                      ? cell.passRate - prevCell.passRate
+                      : null;
+                    return (
+                      <td key={version} className="text-end">
+                        {cell ? (
+                          <div className="d-flex flex-column align-items-end">
+                            <span className={`badge ${passRateTone(cell.passRate, cell.total)}`}>
+                              {formatPercent(cell.passRate)}
+                            </span>
+                            <span className="text-secondary small">n={cell.total}</span>
+                            {delta !== null ? (
+                              <span className={`small ${deltaTone(delta)}`}>{formatDelta(delta)}</span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-secondary">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
