@@ -310,6 +310,36 @@ describe("createDiscordNotifier", () => {
     );
   });
 
+  it("falls back to console.warn on delivery failure when no logger is supplied", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const notifier = createDiscordNotifier({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        env: ENABLED_ENV
+      });
+      await notifier.notifyApprovalCreated({
+        kind: "tool",
+        approval: {
+          id: "tool-1",
+          sessionKey: "s",
+          taskId: null,
+          toolName: "write",
+          targetPath: null,
+          reason: "needs approval"
+        }
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0]?.[0] as string;
+      expect(line).toContain("discord.notify.failed");
+      expect(line).toContain("network down");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("skips approval delivery when webhook URL is missing even if enabled", async () => {
     const fetchImpl = vi.fn();
     const notifier = createDiscordNotifier({
