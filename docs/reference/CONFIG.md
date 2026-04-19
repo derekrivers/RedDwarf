@@ -259,6 +259,29 @@ boundary. Already-running phases are not cancelled.
 The current burn-down is exposed at `GET /api/budget/daily` and rendered as a
 card on the dashboard home page when either daily cap is configured.
 
+### Intake Adapter Contract (M24 F-188)
+
+Provider-agnostic seam between the polling/webhook intake loop and whatever
+upstream system is producing tasks. The `IntakeAdapter` interface in
+`@reddwarf/integrations` exposes four methods:
+
+- `discoverCandidates(query)` — list new candidate tasks.
+- `fetchCanonicalTask(id)` — fetch one task by id (used by webhook flows).
+- `toPlanningTaskInput(candidate)` — translate to the planning input shape.
+- `markProcessed(id, outcome)` — record the pipeline outcome upstream.
+
+Two implementations ship:
+
+- **`GitHubIntakeAdapter`** — thin wrapper over the existing `GitHubAdapter`.
+  Provider id `"github"`. `markProcessed` is a no-op in v1; the polling
+  cursor in `github_issue_polling_cursors` is the persistence point.
+- **`FixtureIntakeAdapter`** — in-process double for tests and as a
+  reference shape for non-GitHub adapters.
+
+No env vars in v1. The polling daemon still calls the legacy `GitHubAdapter`
+methods directly; the migration to thread `IntakeAdapter` through the
+daemon is a small follow-up.
+
 ### Task playbooks (M24 F-187)
 
 Reusable task-shape bundles that intake matches against an issue's labels and
