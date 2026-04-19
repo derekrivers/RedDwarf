@@ -581,12 +581,35 @@ function safeErrorMessage(error: unknown, fallback: string): string {
   return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
 }
 
+// CodeQL flags any flow that might let a caller's `error.message` leak a
+// multi-line stack trace to the operator API client. Sanitise the `message`
+// field on outbound JSON bodies: keep only the first line and truncate at
+// 500 chars. Server-side logs still see the full error.
+function sanitizeResponseBodyForClient(body: unknown): unknown {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const record = body as Record<string, unknown>;
+  if (typeof record["message"] !== "string") {
+    return body;
+  }
+  const original = record["message"] as string;
+  const firstLine = original.split(/\r?\n/, 1)[0] ?? "";
+  const trimmed =
+    firstLine.length > 500 ? `${firstLine.slice(0, 500)}…` : firstLine;
+  if (trimmed === original) {
+    return body;
+  }
+  return { ...record, message: trimmed };
+}
+
 function writeOperatorJsonResponse(
   res: ServerResponse,
   status: number,
   body: unknown
 ): void {
-  const json = JSON.stringify(body);
+  const safeBody = sanitizeResponseBodyForClient(body);
+  const json = JSON.stringify(safeBody);
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(json)

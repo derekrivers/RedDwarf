@@ -1254,16 +1254,20 @@ export function sanitizeSecretBearingText(
     sanitized = sanitized.split(candidate).join("[REDACTED]");
   }
 
+  // Quantifiers are bounded to keep these patterns linear-time on adversarial
+  // inputs; CodeQL otherwise flags `[^@\s]+` style patterns as polynomial
+  // even though the `+` is greedy. GitHub PATs are well under 256 chars,
+  // basic auth tokens fit comfortably in 512, and bearer tokens in 4096.
   sanitized = sanitized.replace(
-    /https:\/\/x-access-token:[^@\s]+@github\.com\//gi,
+    /https:\/\/x-access-token:[^@\s]{1,256}@github\.com\//gi,
     "https://x-access-token:[REDACTED]@github.com/"
   );
   sanitized = sanitized.replace(
-    /authorization:\s*basic\s+[a-z0-9+/=]+/gi,
+    /authorization:\s*basic\s+[a-z0-9+/=]{1,512}/gi,
     "AUTHORIZATION: basic [REDACTED]"
   );
   sanitized = sanitized.replace(
-    /authorization:\s*bearer\s+[^\s]+/gi,
+    /authorization:\s*bearer\s+[^\s]{1,4096}/gi,
     "Authorization: Bearer [REDACTED]"
   );
 
