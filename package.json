@@ -31,6 +31,7 @@
     "verify:memory": "corepack pnpm build && node scripts/verify-memory.mjs",
     "verify:concurrency": "corepack pnpm build && node scripts/verify-concurrency.mjs",
     "package:policy-pack": "corepack pnpm build && node scripts/package-policy-pack.mjs",
+    "board:render": "node scripts/render-feature-board.mjs",
     "verify:package": "corepack pnpm build && node scripts/verify-packaged-policy-pack.mjs",
     "workspace:destroy": "corepack pnpm build && node scripts/destroy-openclaw-workspace.mjs",
     "verify:workspace-manager": "corepack pnpm build && node scripts/verify-workspace-manager.mjs",
