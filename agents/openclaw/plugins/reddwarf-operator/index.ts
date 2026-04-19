@@ -686,6 +686,173 @@ async function handleSubmitCommand(
     };
 }
 
+// ── /rdsubmit ───────────────────────────────────────────────────────────────
+//
+// Feature 174 — Discord-friendly issue submission.
+//
+// Creates a real GitHub issue via POST /issues/submit (which is then picked
+// up by the polling daemon), as opposed to /submit which uses the direct-
+// injection path. Keeps an audit trail in GitHub the way an operator would
+// expect for "I asked the bot to start work on X."
+//
+// v1 uses pipe-separated text args because the OpenClaw plugin surface
+// (`registerCommand` → `{ text }` reply) does not expose Discord's modal /
+// select-menu component APIs. The board's StringSelectMenu + Modal flow
+// would require either an OpenClaw plugin extension or a separate Discord
+// bot; both are larger work and out of scope here. The pipe format mirrors
+// the existing /submit command and works in both Discord and WebChat.
+//
+// Format:
+//   /rdsubmit owner/repo | Title | Summary text | criterion 1; criterion 2; ...
+//
+// Repo may be omitted when a single repo is managed.
+
+const RDSUBMIT_USAGE =
+  "Usage: /rdsubmit owner/repo | <title> | <summary> | <criterion 1>; <criterion 2>; ...\n" +
+  "Repo may be omitted when only one repo is managed. Title must be 5-200 characters, " +
+  "summary at least 20 characters, and at least one acceptance criterion is required.";
+
+const TITLE_MIN = 5;
+const TITLE_MAX = 200;
+const SUMMARY_MIN = 20;
+
+interface ParsedRdsubmitArgs {
+  ok: true;
+  repo: string | null;
+  title: string;
+  summary: string;
+  acceptanceCriteria: string[];
+}
+
+interface RdsubmitParseError {
+  ok: false;
+  error: string;
+}
+
+function parseRdsubmitInput(rawArgs: string): ParsedRdsubmitArgs | RdsubmitParseError {
+  const args = rawArgs.trim();
+  if (!args) {
+    return { ok: false, error: RDSUBMIT_USAGE };
+  }
+
+  const segments = args.split("|").map((part) => part.trim());
+  // Accepted shapes: [repo, title, summary, criteria] OR [title, summary, criteria]
+  if (segments.length !== 3 && segments.length !== 4) {
+    return {
+      ok: false,
+      error:
+        "Expected three or four pipe-separated segments. " + RDSUBMIT_USAGE
+    };
+  }
+
+  let repo: string | null;
+  let title: string;
+  let summary: string;
+  let criteriaRaw: string;
+  if (segments.length === 4) {
+    [repo = "", title = "", summary = "", criteriaRaw = ""] = segments;
+    repo = repo.length > 0 ? repo : null;
+  } else {
+    repo = null;
+    [title = "", summary = "", criteriaRaw = ""] = segments;
+  }
+
+  if (repo !== null && !/^[\w.-]+\/[\w.-]+$/u.test(repo)) {
+    return {
+      ok: false,
+      error: `'${repo}' does not look like 'owner/repo'.`
+    };
+  }
+  if (title.length < TITLE_MIN || title.length > TITLE_MAX) {
+    return {
+      ok: false,
+      error: `Title must be ${TITLE_MIN}-${TITLE_MAX} characters (got ${title.length}).`
+    };
+  }
+  if (summary.length < SUMMARY_MIN) {
+    return {
+      ok: false,
+      error: `Summary must be at least ${SUMMARY_MIN} characters (got ${summary.length}).`
+    };
+  }
+  const acceptanceCriteria = criteriaRaw
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (acceptanceCriteria.length === 0) {
+    return {
+      ok: false,
+      error:
+        "At least one acceptance criterion is required (semicolon-separated)."
+    };
+  }
+
+  return { ok: true, repo, title, summary, acceptanceCriteria };
+}
+
+async function handleRdsubmitCommand(
+  api: OpenClawPluginApi,
+  ctx: OperatorCommandContext
+): Promise<{ text: string }> {
+  const parsed = parseRdsubmitInput(trimString(ctx.args));
+  if (!parsed.ok) {
+    return { text: parsed.error };
+  }
+
+  let repo: string;
+  try {
+    repo = await resolveSubmitRepo(api, parsed.repo);
+  } catch (error) {
+    return {
+      text: error instanceof Error ? error.message : "Unable to resolve repo."
+    };
+  }
+
+  const payload = {
+    repo,
+    title: parsed.title,
+    summary: parsed.summary,
+    acceptanceCriteria: parsed.acceptanceCriteria,
+    affectedPaths: [] as string[],
+    constraints: [] as string[],
+    labels: [] as string[]
+    // Server fills requestedCapabilities + riskClassHint with sensible defaults.
+  };
+
+  let response;
+  try {
+    response = await operatorJson<{
+      issueNumber?: number;
+      issueUrl?: string;
+      repo?: string;
+    }>(api, "/issues/submit", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to create issue.";
+    return {
+      text: `Failed to create issue: ${message}`
+    };
+  }
+
+  const issueRef =
+    response.issueNumber !== undefined
+      ? `${trimString(response.repo) || repo}#${response.issueNumber}`
+      : trimString(response.repo) || repo;
+  const url = trimString(response.issueUrl);
+
+  return {
+    text:
+      "Created RedDwarf-eligible GitHub issue\n" +
+      `- repo: ${trimString(response.repo) || repo}\n` +
+      `- issue: ${issueRef}\n` +
+      (url ? `- url: ${url}\n` : "") +
+      "Polling will pick it up on the next cycle."
+  };
+}
+
 // ── /rdhelp ─────────────────────────────────────────────────────────────────
 
 const COMMAND_HELP: Array<{ name: string; usage: string; description: string }> = [
@@ -713,6 +880,13 @@ const COMMAND_HELP: Array<{ name: string; usage: string; description: string }> 
     name: "submit",
     usage: "/submit <description>  or  /submit owner/repo | description",
     description: "Submit a new RedDwarf task. If only one repo is managed the repo is inferred."
+  },
+  {
+    name: "rdsubmit",
+    usage:
+      "/rdsubmit [owner/repo] | <title> | <summary> | <criterion 1>; <criterion 2>; ...",
+    description:
+      "Create a real GitHub issue (Feature 174). Polling picks it up on the next cycle. Repo may be omitted when only one repo is managed."
   },
   {
     name: "runs",
@@ -926,6 +1100,13 @@ export default definePluginEntry({
         "Submit a RedDwarf task from WebChat. Use `/submit description` when one repo is managed, or `/submit owner/repo | description`.",
       acceptsArgs: true,
       handler: async (ctx) => handleSubmitCommand(api, ctx)
+    });
+    api.registerCommand({
+      name: "rdsubmit",
+      description:
+        "Create a real GitHub issue (auto-picked up by polling). Format: `/rdsubmit owner/repo | <title> | <summary> | <criterion 1>; <criterion 2>; ...`. Repo may be omitted when only one repo is managed.",
+      acceptsArgs: true,
+      handler: async (ctx) => handleRdsubmitCommand(api, ctx)
     });
     api.registerCommand({
       name: "runs",
