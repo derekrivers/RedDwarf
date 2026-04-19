@@ -259,6 +259,36 @@ boundary. Already-running phases are not cancelled.
 The current burn-down is exposed at `GET /api/budget/daily` and rendered as a
 card on the dashboard home page when either daily cap is configured.
 
+### Pre-flight contract checks (M24 F-184)
+
+Deterministic gate that runs over the workspace diff at SCM time, before the
+branch is published. Catches obvious bad-diffs without spending tokens on the
+Validator. Failures emit a `contract_violation` failure class and skip
+straight to operator triage.
+
+The check itself is not env-tunable in v1 — capabilities (`can_modify_schema`,
+`can_modify_dependencies`) and the policy snapshot's `deniedPaths` are the
+only inputs. A new capability `can_modify_dependencies` was added to the
+contracts enum: grant it on tasks that legitimately need to mutate
+`package.json` / lock files; absence trips a `dependency_mutation` violation.
+
+### Operator triage verbs (M24 F-186)
+
+Three operator-facing verbs against the manifest / pipeline-run state that
+were previously only achievable by editing Postgres by hand.
+
+| Method | Path                                  | Purpose |
+|-------:|---------------------------------------|---------|
+| POST   | `/api/tasks/:taskId/quarantine`       | Sets `lifecycleStatus = quarantined`. Required body: `{ "reason": "…" }`. The dispatcher skips quarantined tasks until released. |
+| POST   | `/api/tasks/:taskId/release`          | `quarantined` → `ready`. Optional `{ "reason": "…" }`. |
+| POST   | `/api/tasks/:taskId/notes`            | Appends a `memory_record` with `provenance: "operator_provided"`. Required body: `{ "note": "…", "author"?: "…" }`. |
+| POST   | `/api/runs/:runId/heartbeat-kick`     | Refreshes `lastHeartbeatAt` so the dispatcher reconsiders a stuck `active`/`blocked` run without a full cancel-and-retry. Optional `{ "reason": "…" }`. |
+
+Each verb emits a distinct audit-trail run event (`TASK_QUARANTINED`,
+`TASK_RELEASED`, `OPERATOR_NOTE_ADDED`, `HEARTBEAT_KICKED`). The dashboard's
+new **Triage** page lists every quarantined task with a one-click release
+button; the other verbs are reachable via curl in v1.
+
 ### Discord outbound notifications (M23 F-177)
 
 Independent of the native OpenClaw Discord bridge. Posts embed messages to an incoming Discord webhook when a new approval is created (plan, phase, project, or tool) or when a developer-phase session opens a PR. Delivery is best-effort — webhook failures log a warning and never fail the pipeline. Embeds deep-link to the dashboard when `REDDWARF_DASHBOARD_ORIGIN` is set and reuse `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` for embed colour.

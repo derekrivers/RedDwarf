@@ -466,6 +466,50 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
     },
     getDailyBudgetStatus() {
       return request<DailyBudgetStatusResponse>("/budget/daily");
+    },
+    listTasks(filters: { lifecycleStatuses?: string[]; repo?: string; limit?: number } = {}) {
+      return request<{ tasks: import("../types/dashboard").TaskSummary[]; total: number }>(
+        `/tasks${buildQueryString({
+          ...(filters.repo !== undefined ? { repo: filters.repo } : {}),
+          ...(filters.limit !== undefined ? { limit: filters.limit } : {}),
+          ...(filters.lifecycleStatuses && filters.lifecycleStatuses.length > 0
+            ? { statuses: filters.lifecycleStatuses }
+            : {})
+        })}`
+      );
+    },
+    quarantineTask(taskId: string, reason: string) {
+      return request<{ manifest: TaskDetailResponse["manifest"] }>(
+        `/tasks/${encodeURIComponent(taskId)}/quarantine`,
+        { method: "POST", body: JSON.stringify({ reason }) }
+      );
+    },
+    releaseTask(taskId: string, reason?: string) {
+      return request<{ manifest: TaskDetailResponse["manifest"] }>(
+        `/tasks/${encodeURIComponent(taskId)}/release`,
+        {
+          method: "POST",
+          body: JSON.stringify(reason ? { reason } : {})
+        }
+      );
+    },
+    addTaskNote(taskId: string, note: string, author?: string) {
+      return request<{ memoryId: string }>(
+        `/tasks/${encodeURIComponent(taskId)}/notes`,
+        {
+          method: "POST",
+          body: JSON.stringify(author ? { note, author } : { note })
+        }
+      );
+    },
+    kickRunHeartbeat(runId: string, reason?: string) {
+      return request<{ run: { runId: string; lastHeartbeatAt: string } }>(
+        `/runs/${encodeURIComponent(runId)}/heartbeat-kick`,
+        {
+          method: "POST",
+          body: JSON.stringify(reason ? { reason } : {})
+        }
+      );
     }
   };
 }

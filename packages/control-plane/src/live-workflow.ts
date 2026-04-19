@@ -281,24 +281,34 @@ export async function assertWorkspaceRepoChangesWithinAllowedPaths(
   workspace: MaterializedManagedWorkspace,
   logger?: PlanningPipelineLogger
 ): Promise<void> {
-  const repoRoot = readWorkspaceRepoRoot(workspace);
-  if (!repoRoot) {
-    return;
-  }
+  const changedFiles = await previewWorkspaceChangedFiles(workspace, logger);
+  if (changedFiles === null) return;
+  assertChangedFilesAvoidDeniedPaths({
+    workspaceId: workspace.workspaceId,
+    deniedPaths: workspace.descriptor.deniedPaths,
+    changedFiles
+  });
+}
 
+/**
+ * Feature 184: returns the list of changed (modified, added, untracked) files
+ * in the workspace's checked-out repo without raising. Returns `null` when
+ * the workspace has no repo bootstrapped — callers treat that as "no diff to
+ * gate on".
+ */
+export async function previewWorkspaceChangedFiles(
+  workspace: MaterializedManagedWorkspace,
+  logger?: PlanningPipelineLogger
+): Promise<string[] | null> {
+  const repoRoot = readWorkspaceRepoRoot(workspace);
+  if (!repoRoot) return null;
   const statusBefore = await runCommand(
     "git",
     ["status", "--porcelain", "--untracked-files=all"],
     repoRoot,
     logger
   );
-  const changedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
-
-  assertChangedFilesAvoidDeniedPaths({
-    workspaceId: workspace.workspaceId,
-    deniedPaths: workspace.descriptor.deniedPaths,
-    changedFiles
-  });
+  return parseGitStatusChangedFiles(statusBefore.stdout);
 }
 
 const CAN_WRITE_CODE_GUIDANCE =
@@ -1244,16 +1254,20 @@ export function sanitizeSecretBearingText(
     sanitized = sanitized.split(candidate).join("[REDACTED]");
   }
 
+  // Quantifiers are bounded to keep these patterns linear-time on adversarial
+  // inputs; CodeQL otherwise flags `[^@\s]+` style patterns as polynomial
+  // even though the `+` is greedy. GitHub PATs are well under 256 chars,
+  // basic auth tokens fit comfortably in 512, and bearer tokens in 4096.
   sanitized = sanitized.replace(
-    /https:\/\/x-access-token:[^@\s]+@github\.com\//gi,
+    /https:\/\/x-access-token:[^@\s]{1,256}@github\.com\//gi,
     "https://x-access-token:[REDACTED]@github.com/"
   );
   sanitized = sanitized.replace(
-    /authorization:\s*basic\s+[a-z0-9+/=]+/gi,
+    /authorization:\s*basic\s+[a-z0-9+/=]{1,512}/gi,
     "AUTHORIZATION: basic [REDACTED]"
   );
   sanitized = sanitized.replace(
-    /authorization:\s*bearer\s+[^\s]+/gi,
+    /authorization:\s*bearer\s+[^\s]{1,4096}/gi,
     "Authorization: Bearer [REDACTED]"
   );
 

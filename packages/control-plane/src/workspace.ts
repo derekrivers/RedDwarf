@@ -278,7 +278,9 @@ const capabilityGuidance: Record<Capability, string> = {
   can_review:
     "Review generated work and compare it to requirements when the review phase is enabled.",
   can_archive_evidence:
-    "Persist structured logs, specs, diffs, and verification output as durable evidence."
+    "Persist structured logs, specs, diffs, and verification output as durable evidence.",
+  can_modify_dependencies:
+    "Modify package.json or lock files only when explicitly granted; deterministic contract checks reject unsanctioned dependency mutations."
 };
 
 const planningWorkspaceToolPolicyNotes = [
