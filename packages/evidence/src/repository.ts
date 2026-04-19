@@ -1,9 +1,12 @@
 import {
+  agentQualityMetricsQuerySchema,
   approvalRequestQuerySchema,
   eligibilityRejectionQuerySchema,
   memoryQuerySchema,
   pipelineRunQuerySchema,
   taskManifestQuerySchema,
+  type AgentQualityMetrics,
+  type AgentQualityMetricsQuery,
   type ApprovalRequest,
   type ApprovalRequestQuery,
   type EvidenceRecord,
@@ -137,6 +140,10 @@ export interface PlanningQueryRepository {
     limitPerScope?: number;
   }): Promise<MemoryContext>;
   getRepositoryHealth(): Promise<RepositoryHealthSnapshot>;
+  /** Feature 179: per-phase + per-policy-pack-version outcome aggregates. */
+  getAgentQualityMetrics(
+    query?: Partial<AgentQualityMetricsQuery>
+  ): Promise<AgentQualityMetrics>;
   getProjectSpec(projectId: string): Promise<ProjectSpec | null>;
   listProjectSpecs(repo?: string): Promise<ProjectSpec[]>;
   getTicketSpec(ticketId: string): Promise<TicketSpec | null>;
@@ -196,6 +203,12 @@ export function normalizeTaskManifestQuery(
   query: Partial<TaskManifestQuery>
 ): TaskManifestQuery {
   return taskManifestQuerySchema.parse(query);
+}
+
+export function normalizeAgentQualityMetricsQuery(
+  query: Partial<AgentQualityMetricsQuery>
+): AgentQualityMetricsQuery {
+  return agentQualityMetricsQuerySchema.parse(query);
 }
 
 export function dedupeMemoryRecords(records: MemoryRecord[]): MemoryRecord[] {

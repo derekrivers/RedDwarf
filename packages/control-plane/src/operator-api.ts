@@ -3134,6 +3134,29 @@ async function handleOperatorRequest(
     return;
   }
 
+  // GET /metrics/agents — Feature 179 (agent quality telemetry aggregates).
+  // Pure aggregation over existing phase_records + run_events joined with
+  // task_manifests for policy_version. No new events captured; the caller
+  // pays no ingest-time cost — aggregation happens at read time.
+  if (method === "GET" && path === "/metrics/agents") {
+    const since = typeof qp["since"] === "string" ? qp["since"] : undefined;
+    const until = typeof qp["until"] === "string" ? qp["until"] : undefined;
+    try {
+      const metrics = await repository.getAgentQualityMetrics({
+        ...(since !== undefined ? { since } : {}),
+        ...(until !== undefined ? { until } : {})
+      });
+      writeOperatorJsonResponse(res, 200, metrics);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          error instanceof Error ? error.message : "Invalid metrics query."
+      });
+    }
+    return;
+  }
+
   // GET /audit/export — Feature 185 (audit-log export).
   // Returns a flat join of approval_requests × task_manifests so operators can
   // answer compliance questions like "every autonomous change that touched

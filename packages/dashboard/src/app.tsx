@@ -10,6 +10,7 @@ import {
 } from "react-router-dom";
 import {
   IconActivityHeartbeat,
+  IconChartBar,
   IconChecklist,
   IconClipboardList,
   IconCloudUpload,
@@ -28,6 +29,7 @@ import { LoginScreen } from "./components/login-screen";
 import { PagePlaceholder } from "./components/page-placeholder";
 import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
+import { AgentQualityPage } from "./pages/agent-quality-page";
 import { AgentsPage } from "./pages/agents-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { AuditPage } from "./pages/audit-page";
@@ -68,6 +70,7 @@ const navItems: NavItem[] = [
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
   { to: "/audit", label: "Audit", icon: IconClipboardList },
+  { to: "/metrics", label: "Agent Quality", icon: IconChartBar },
   { to: "/agents", label: "Agents", icon: IconRobot },
   { to: "/repos", label: "Repositories", icon: IconGitBranch },
   { to: "/submit", label: "Submit Issue", icon: IconCloudUpload },
@@ -330,6 +333,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/audit"
                 element={<AuditPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/metrics"
+                element={<AgentQualityPage apiClient={apiClient} />}
               />
               <Route
                 path="/agents"

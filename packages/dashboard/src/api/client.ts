@@ -7,6 +7,8 @@ import type {
   PipelineRun
 } from "@reddwarf/contracts";
 import type {
+  AgentQualityMetricsFilters,
+  AgentQualityMetricsResponse,
   ApprovalListFilters,
   ApprovalListResponse,
   AuditExportFilters,
@@ -452,6 +454,14 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
         ...(filters.until !== undefined ? { until: filters.until } : {}),
         ...(filters.repo !== undefined ? { repo: filters.repo } : {})
       })}`;
+    },
+    getAgentQualityMetrics(filters: AgentQualityMetricsFilters = {}) {
+      return request<AgentQualityMetricsResponse>(
+        `/metrics/agents${buildQueryString({
+          ...(filters.since !== undefined ? { since: filters.since } : {}),
+          ...(filters.until !== undefined ? { until: filters.until } : {})
+        })}`
+      );
     }
   };
 }

@@ -1121,6 +1121,77 @@ describe("operator API server", () => {
     }
   });
 
+  it("exposes agent quality metrics aggregated by phase and policy version", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/api.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-19T12:00:00.000Z"),
+        idGenerator: () => "op-metrics-001"
+      }
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    try {
+      const response = await operatorGet(apiServer.port, "/metrics/agents");
+      expect(response.status).toBe(200);
+      const body = response.body as {
+        phaseOutcomes: Array<{ phase: string; total: number; passRate: number; policyVersion: string }>;
+        phaseLatencies: unknown[];
+        failureClasses: unknown[];
+        window: { since: string | null; until: string | null };
+      };
+      expect(Array.isArray(body.phaseOutcomes)).toBe(true);
+      expect(body.phaseOutcomes.length).toBeGreaterThan(0);
+      // The deterministic planner produces at least a planning phase record.
+      const planning = body.phaseOutcomes.find((r) => r.phase === "planning");
+      expect(planning).toBeDefined();
+      expect(planning!.total).toBeGreaterThan(0);
+      expect(body.window).toEqual({ since: null, until: null });
+
+      const narrow = await operatorGet(
+        apiServer.port,
+        "/metrics/agents?since=2099-01-01T00:00:00.000Z"
+      );
+      expect(narrow.status).toBe(200);
+      expect(
+        (narrow.body as { phaseOutcomes: unknown[] }).phaseOutcomes
+      ).toHaveLength(0);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("requires the operator bearer token on /metrics/agents", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+    await apiServer.start();
+    try {
+      const unauthorized = await operatorGet(
+        apiServer.port,
+        "/metrics/agents",
+        null
+      );
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("requires the operator bearer token on /audit/export", async () => {
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(

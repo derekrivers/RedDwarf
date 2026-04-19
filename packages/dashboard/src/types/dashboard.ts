@@ -178,6 +178,48 @@ export interface DashboardApiClient {
   restartOpenClaw(): Promise<OpenClawRestartResponse>;
   getAuditExport(filters?: AuditExportFilters): Promise<AuditExportResponse>;
   buildAuditCsvUrl(filters?: AuditExportFilters): string;
+  getAgentQualityMetrics(filters?: AgentQualityMetricsFilters): Promise<AgentQualityMetricsResponse>;
+}
+
+// Feature 179 — Agent quality telemetry aggregates (M24 F-179).
+export interface AgentQualityMetricsFilters {
+  since?: string;
+  until?: string;
+}
+
+export interface AgentPhaseOutcomeRow {
+  phase: string;
+  policyVersion: string;
+  passed: number;
+  failed: number;
+  escalated: number;
+  total: number;
+  passRate: number;
+}
+
+export interface AgentPhaseLatencyRow {
+  phase: string;
+  policyVersion: string;
+  sampleCount: number;
+  meanMs: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+export interface AgentFailureClassRow {
+  failureClass: string;
+  phase: string;
+  count: number;
+}
+
+export interface AgentQualityMetricsResponse {
+  phaseOutcomes: AgentPhaseOutcomeRow[];
+  phaseLatencies: AgentPhaseLatencyRow[];
+  failureClasses: AgentFailureClassRow[];
+  window: {
+    since: string | null;
+    until: string | null;
+  };
 }
 
 // Feature 185 — Audit-log export (M24 F-185).
