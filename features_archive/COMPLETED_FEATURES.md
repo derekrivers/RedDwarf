@@ -1,6 +1,6 @@
 # RedDwarf Completed Features Archive
 
-This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
+This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](../FEATURE_BOARD.md).
 
 Last archive sweep: 2026-04-19 (M23 + M24 closed). Completed feature count: 182.
 
