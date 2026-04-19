@@ -65,9 +65,20 @@ export interface RunDetailResponse {
   summary: RunSummary | null;
   events: RunEvent[];
   totalEvents: number;
+  // Mirrors RunTokenUsageSummary from @reddwarf/control-plane. Pre-F-197
+  // this type used `inputTokens` / `outputTokens` which never matched the
+  // actual server response, so "X in / Y out" rendered as `undefined`.
+  // Feature 197 aligns the names and adds the cost rollup.
   tokenUsage: {
-    inputTokens: number;
-    outputTokens: number;
+    totalEstimatedTokens: number;
+    totalActualInputTokens: number;
+    totalActualOutputTokens: number;
+    totalActualTokens: number;
+    /** Total USD across phases that reported a model id; 0 when none did. */
+    totalCostUsd: number;
+    anyPhaseExceeded: boolean;
+    /** True if any phase in the run exceeded its per-task cost budget. */
+    anyCostBudgetExceeded: boolean;
   };
 }
 

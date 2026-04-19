@@ -50,6 +50,24 @@ function statusBadgeClass(status: PipelineRun["status"]): string {
   }
 }
 
+// Feature 197 — render token counts with thousands separators and cost in
+// USD. Cost is small per-phase but accumulates across long runs; show four
+// decimal places so sub-cent figures are still legible.
+function formatTokenCount(value: number | undefined): string {
+  if (value === undefined || value === null) return "0";
+  return new Intl.NumberFormat(undefined).format(Math.round(value));
+}
+
+function formatCostUsd(value: number | undefined): string {
+  if (value === undefined || value === null) return "$0.0000";
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4
+  }).format(value);
+}
+
 function progressItemStatusBadge(status: string): string {
   switch (status) {
     case "done":
@@ -151,7 +169,15 @@ function RunDetailPanel(props: {
       <div className="col-md-4">
         <div className="text-secondary mb-1">Token usage</div>
         <div className="fw-medium">
-          {detail.tokenUsage.inputTokens} in / {detail.tokenUsage.outputTokens} out
+          {formatTokenCount(detail.tokenUsage.totalActualInputTokens)} in /
+          {" "}
+          {formatTokenCount(detail.tokenUsage.totalActualOutputTokens)} out
+        </div>
+        <div className="text-secondary small mt-1">
+          Cost: <strong>{formatCostUsd(detail.tokenUsage.totalCostUsd)}</strong>
+          {detail.tokenUsage.anyCostBudgetExceeded ? (
+            <span className="badge bg-red-lt text-red ms-2">budget exceeded</span>
+          ) : null}
         </div>
       </div>
       <AgentProgressTimeline events={detail.events} />
@@ -236,6 +262,17 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
     }))
   });
 
+  // Feature 197 — fetch run-detail per visible row so the Cost column has
+  // its rollup. Same N+1 the page already pays for task details; bounded
+  // by `pageSize` (25). Server-side aggregate is the right long-term fix.
+  const runDetailQueries = useQueries({
+    queries: pageRuns.map((run) => ({
+      queryKey: ["pipeline-run-detail", run.runId],
+      queryFn: () => apiClient.getRunDetail(run.runId),
+      staleTime: 30000
+    }))
+  });
+
   const taskMap = useMemo(() => {
     const entries = new Map<string, TaskDetailResponse>();
 
@@ -249,6 +286,21 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
 
     return entries;
   }, [taskQueries]);
+
+  const runCostMap = useMemo(() => {
+    const entries = new Map<
+      string,
+      { totalCostUsd: number; anyCostBudgetExceeded: boolean }
+    >();
+    runDetailQueries.forEach((query) => {
+      if (!query.data) return;
+      entries.set(query.data.run.runId, {
+        totalCostUsd: query.data.tokenUsage.totalCostUsd,
+        anyCostBudgetExceeded: query.data.tokenUsage.anyCostBudgetExceeded
+      });
+    });
+    return entries;
+  }, [runDetailQueries]);
 
   if (runsQuery.isLoading) {
     return (
@@ -321,6 +373,7 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
               <th>Phase</th>
               <th>Started At</th>
               <th>Duration</th>
+              <th className="text-end">Cost</th>
               <th className="w-1">Actions</th>
             </tr>
           </thead>
@@ -349,6 +402,30 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
                     </td>
                     <td className="text-secondary">{formatDateTime(run.startedAt)}</td>
                     <td className="text-secondary">{formatDuration(run)}</td>
+                    <td className="text-end">
+                      {(() => {
+                        const cost = runCostMap.get(run.runId);
+                        if (!cost) {
+                          return <span className="text-secondary">—</span>;
+                        }
+                        return (
+                          <span
+                            className={
+                              cost.anyCostBudgetExceeded
+                                ? "text-red fw-medium"
+                                : "text-secondary"
+                            }
+                            title={
+                              cost.anyCostBudgetExceeded
+                                ? "Run exceeded its per-task cost budget"
+                                : undefined
+                            }
+                          >
+                            {formatCostUsd(cost.totalCostUsd)}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td>
                       <div className="btn-list flex-nowrap">
                         <button
@@ -381,7 +458,7 @@ export function PipelinePage(props: { apiClient: DashboardApiClient }) {
                   </tr>
                   {isExpanded ? (
                     <tr>
-                      <td colSpan={7}>
+                      <td colSpan={8}>
                         <RunDetailPanel apiClient={apiClient} runId={run.runId} />
                       </td>
                     </tr>
