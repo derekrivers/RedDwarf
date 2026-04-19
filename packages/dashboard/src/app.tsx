@@ -11,6 +11,7 @@ import {
 import {
   IconActivityHeartbeat,
   IconChecklist,
+  IconClipboardList,
   IconCloudUpload,
   IconDatabase,
   IconFileSearch,
@@ -29,6 +30,7 @@ import { ToastProvider } from "./components/toast-provider";
 import { ApprovalDetailPage } from "./pages/approval-detail-page";
 import { AgentsPage } from "./pages/agents-page";
 import { ApprovalsPage } from "./pages/approvals-page";
+import { AuditPage } from "./pages/audit-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
 import { OpenClawSettingsPage } from "./pages/openclaw-settings-page";
@@ -65,6 +67,7 @@ const navItems: NavItem[] = [
   { to: "/approvals", label: "Approvals", icon: IconChecklist },
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
+  { to: "/audit", label: "Audit", icon: IconClipboardList },
   { to: "/agents", label: "Agents", icon: IconRobot },
   { to: "/repos", label: "Repositories", icon: IconGitBranch },
   { to: "/submit", label: "Submit Issue", icon: IconCloudUpload },
@@ -323,6 +326,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/evidence"
                 element={<EvidencePage apiClient={apiClient} />}
+              />
+              <Route
+                path="/audit"
+                element={<AuditPage apiClient={apiClient} />}
               />
               <Route
                 path="/agents"

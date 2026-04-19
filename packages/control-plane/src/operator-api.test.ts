@@ -1031,6 +1031,116 @@ describe("operator API server", () => {
     }
   });
 
+  it("exports audit entries as JSON and CSV joining approvals with manifests", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/api.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-19T12:00:00.000Z"),
+        idGenerator: () => "op-audit-001"
+      }
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const jsonResponse = await operatorGet(port, "/audit/export");
+      expect(jsonResponse.status).toBe(200);
+      const body = jsonResponse.body as {
+        entries: Array<Record<string, unknown>>;
+        total: number;
+        window: { since: string | null; until: string | null };
+        truncated: boolean;
+      };
+      expect(body.total).toBeGreaterThan(0);
+      expect(body.truncated).toBe(false);
+      expect(body.window.since).toBeNull();
+      expect(body.window.until).toBeNull();
+      const entry = body.entries[0]!;
+      expect(entry["taskId"]).toBe(planResult.manifest.taskId);
+      expect(entry["repo"]).toBe(planResult.manifest.source.repo);
+      expect(entry["phase"]).toBe("policy_gate");
+
+      const narrow = await operatorGet(
+        port,
+        "/audit/export?since=2099-01-01T00:00:00.000Z"
+      );
+      expect(narrow.status).toBe(200);
+      expect((narrow.body as { total: number }).total).toBe(0);
+
+      const wrongRepo = await operatorGet(
+        port,
+        "/audit/export?repo=someone-else/does-not-exist"
+      );
+      expect(wrongRepo.status).toBe(200);
+      expect((wrongRepo.body as { total: number }).total).toBe(0);
+
+      const csv = await new Promise<{ status: number; body: string; headers: IncomingHttpHeaders }>(
+        (resolve, reject) => {
+          const req = httpRequest(
+            {
+              hostname: "127.0.0.1",
+              port,
+              path: "/audit/export?format=csv",
+              method: "GET",
+              headers: buildOperatorHeaders()
+            },
+            (res) => {
+              let raw = "";
+              res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+              res.on("end", () =>
+                resolve({ status: res.statusCode ?? 0, body: raw, headers: res.headers })
+              );
+            }
+          );
+          req.on("error", reject);
+          req.end();
+        }
+      );
+      expect(csv.status).toBe(200);
+      expect(String(csv.headers["content-type"])).toContain("text/csv");
+      expect(String(csv.headers["content-disposition"])).toContain("attachment");
+      const csvLines = csv.body.split("\r\n").filter((l) => l.length > 0);
+      expect(csvLines[0]).toContain("requestId,taskId,runId,repo");
+      expect(csvLines.length).toBeGreaterThanOrEqual(2);
+      expect(csvLines[1]).toContain(planResult.manifest.taskId);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("requires the operator bearer token on /audit/export", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+
+    await apiServer.start();
+    try {
+      const unauthorized = await operatorGet(
+        apiServer.port,
+        "/audit/export",
+        null
+      );
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("surfaces retry-budget-exhausted entries from /blocked", async () => {
     const previousRetryLimit = process.env.REDDWARF_MAX_RETRIES_VALIDATOR;
     process.env.REDDWARF_MAX_RETRIES_VALIDATOR = "1";

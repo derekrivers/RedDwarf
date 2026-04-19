@@ -9,6 +9,8 @@ import type {
 import type {
   ApprovalListFilters,
   ApprovalListResponse,
+  AuditExportFilters,
+  AuditExportResponse,
   DashboardApiClient,
   ProjectApproveResponse,
   ProjectClarificationsResponse,
@@ -433,6 +435,23 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
       return request<OpenClawRestartResponse>("/openclaw/restart", {
         method: "POST"
       });
+    },
+    getAuditExport(filters: AuditExportFilters = {}) {
+      return request<AuditExportResponse>(
+        `/audit/export${buildQueryString({
+          ...(filters.since !== undefined ? { since: filters.since } : {}),
+          ...(filters.until !== undefined ? { until: filters.until } : {}),
+          ...(filters.repo !== undefined ? { repo: filters.repo } : {})
+        })}`
+      );
+    },
+    buildAuditCsvUrl(filters: AuditExportFilters = {}) {
+      return `${baseUrl}/audit/export${buildQueryString({
+        format: "csv",
+        ...(filters.since !== undefined ? { since: filters.since } : {}),
+        ...(filters.until !== undefined ? { until: filters.until } : {}),
+        ...(filters.repo !== undefined ? { repo: filters.repo } : {})
+      })}`;
     }
   };
 }

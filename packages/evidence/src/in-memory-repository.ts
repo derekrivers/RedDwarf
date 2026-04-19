@@ -484,6 +484,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
           ? parsed.statuses.includes(request.status)
           : true
       )
+      .filter((request) =>
+        parsed.since ? request.updatedAt >= parsed.since : true
+      )
+      .filter((request) =>
+        parsed.until ? request.updatedAt <= parsed.until : true
+      )
       .sort(compareApprovalRequests)
       .slice(0, parsed.limit);
   }

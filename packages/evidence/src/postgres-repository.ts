@@ -1466,6 +1466,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
       parameterIndex += 1;
     }
 
+    if (parsed.since) {
+      conditions.push(`updated_at >= $${parameterIndex}`);
+      params.push(parsed.since);
+      parameterIndex += 1;
+    }
+
+    if (parsed.until) {
+      conditions.push(`updated_at <= $${parameterIndex}`);
+      params.push(parsed.until);
+      parameterIndex += 1;
+    }
+
     params.push(parsed.limit);
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
