@@ -1,6 +1,8 @@
 import {
   asIsoTimestamp,
   pipelineRunSchema,
+  type AgentQualityMetrics,
+  type AgentQualityMetricsQuery,
   type ApprovalRequest,
   type EvidenceRecord,
   type EligibilityRejectionRecord,
@@ -22,11 +24,13 @@ import {
   assertValidProjectStatusTransition,
   assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
+import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
   compareApprovalRequests,
   compareMemoryRecords,
   comparePipelineRuns,
+  normalizeAgentQualityMetricsQuery,
   normalizeEligibilityRejectionQuery,
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
@@ -484,6 +488,12 @@ export class InMemoryPlanningRepository implements PlanningRepository {
           ? parsed.statuses.includes(request.status)
           : true
       )
+      .filter((request) =>
+        parsed.since ? request.updatedAt >= parsed.since : true
+      )
+      .filter((request) =>
+        parsed.until ? request.updatedAt <= parsed.until : true
+      )
       .sort(compareApprovalRequests)
       .slice(0, parsed.limit);
   }
@@ -630,6 +640,18 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       status: "healthy",
       postgresPool: null
     };
+  }
+
+  async getAgentQualityMetrics(
+    query: Partial<AgentQualityMetricsQuery> = {}
+  ): Promise<AgentQualityMetrics> {
+    const parsed = normalizeAgentQualityMetricsQuery(query);
+    return computeAgentQualityMetrics({
+      query: parsed,
+      phaseRecords: this.phaseRecords,
+      runEvents: this.runEvents,
+      manifestsByTaskId: this.manifests
+    });
   }
 
   // ── R-18: Write-ahead intent log ────────────────────────────────────────

@@ -57,6 +57,7 @@ import {
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
+  normalizeAgentQualityMetricsQuery,
   normalizeEligibilityRejectionQuery,
   normalizeApprovalRequestQuery,
   normalizeMemoryQuery,
@@ -69,6 +70,7 @@ import {
   type PersistedTaskSnapshot,
   type RepositoryHealthSnapshot
 } from "./repository.js";
+import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
 // ── Transient Postgres error detection (R-11) ────────────────────────────────
 
 const TRANSIENT_PG_CODES = new Set([
@@ -1466,6 +1468,18 @@ export class PostgresPlanningRepository implements PlanningRepository {
       parameterIndex += 1;
     }
 
+    if (parsed.since) {
+      conditions.push(`updated_at >= $${parameterIndex}`);
+      params.push(parsed.since);
+      parameterIndex += 1;
+    }
+
+    if (parsed.until) {
+      conditions.push(`updated_at <= $${parameterIndex}`);
+      params.push(parsed.until);
+      parameterIndex += 1;
+    }
+
     params.push(parsed.limit);
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -1854,6 +1868,70 @@ export class PostgresPlanningRepository implements PlanningRepository {
         patch?.completedAt ?? null
       ]
     );
+  }
+
+  async getAgentQualityMetrics(
+    query: Partial<import("@reddwarf/contracts").AgentQualityMetricsQuery> = {}
+  ): Promise<import("@reddwarf/contracts").AgentQualityMetrics> {
+    const parsed = normalizeAgentQualityMetricsQuery(query);
+
+    // Narrow rows to the requested window in SQL; bucketing + percentiles
+    // happen in the shared compute helper so the JS path and the Postgres
+    // path stay identical.
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
+    if (parsed.since) {
+      conditions.push(`created_at >= $${idx}`);
+      params.push(parsed.since);
+      idx += 1;
+    }
+    if (parsed.until) {
+      conditions.push(`created_at <= $${idx}`);
+      params.push(parsed.until);
+      idx += 1;
+    }
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [phaseRecordsResult, runEventsResult] = await Promise.all([
+      this.pool.query(
+        `SELECT * FROM phase_records ${whereClause} ORDER BY created_at ASC`,
+        params
+      ),
+      this.pool.query(
+        `SELECT * FROM run_events ${whereClause} ORDER BY created_at ASC`,
+        params
+      )
+    ]);
+
+    const phaseRecords = phaseRecordsResult.rows.map(mapPhaseRecordRow);
+    const runEvents = runEventsResult.rows.map(mapRunEventRow);
+
+    const taskIds = new Set<string>([
+      ...phaseRecords.map((r) => r.taskId),
+      ...runEvents.map((e) => e.taskId)
+    ]);
+    const manifestsByTaskId = new Map<
+      string,
+      import("@reddwarf/contracts").TaskManifest
+    >();
+    if (taskIds.size > 0) {
+      const manifestsResult = await this.pool.query(
+        `SELECT * FROM task_manifests WHERE task_id = ANY($1)`,
+        [[...taskIds]]
+      );
+      for (const row of manifestsResult.rows) {
+        const manifest = mapManifestRow(row);
+        manifestsByTaskId.set(manifest.taskId, manifest);
+      }
+    }
+
+    return computeAgentQualityMetrics({
+      query: parsed,
+      phaseRecords,
+      runEvents,
+      manifestsByTaskId
+    });
   }
 
   async listPendingIntents(limit = 100): Promise<IntentRecord[]> {

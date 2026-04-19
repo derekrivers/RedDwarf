@@ -90,6 +90,11 @@ import {
 } from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
 import { createDiscordNotifier } from "./notifications/discord-notifier.js";
+import {
+  buildAuditEntries,
+  filterAuditEntriesByRepo,
+  renderAuditCsv
+} from "./audit-export.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
   GitHubIssuePollingDaemon,
@@ -3125,6 +3130,101 @@ async function handleOperatorRequest(
       }),
       total: items.length,
       byReason
+    });
+    return;
+  }
+
+  // GET /metrics/agents — Feature 179 (agent quality telemetry aggregates).
+  // Pure aggregation over existing phase_records + run_events joined with
+  // task_manifests for policy_version. No new events captured; the caller
+  // pays no ingest-time cost — aggregation happens at read time.
+  if (method === "GET" && path === "/metrics/agents") {
+    const since = typeof qp["since"] === "string" ? qp["since"] : undefined;
+    const until = typeof qp["until"] === "string" ? qp["until"] : undefined;
+    try {
+      const metrics = await repository.getAgentQualityMetrics({
+        ...(since !== undefined ? { since } : {}),
+        ...(until !== undefined ? { until } : {})
+      });
+      writeOperatorJsonResponse(res, 200, metrics);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          error instanceof Error ? error.message : "Invalid metrics query."
+      });
+    }
+    return;
+  }
+
+  // GET /audit/export — Feature 185 (audit-log export).
+  // Returns a flat join of approval_requests × task_manifests so operators can
+  // answer compliance questions like "every autonomous change that touched
+  // packages/billing in Q2" without bespoke SQL. Supports CSV download or
+  // JSON. Paginated behind the shared QUERY_LIMIT_MAX (100) — callers who hit
+  // the cap should narrow the time window.
+  if (method === "GET" && path === "/audit/export") {
+    const since = typeof qp["since"] === "string" ? qp["since"] : undefined;
+    const until = typeof qp["until"] === "string" ? qp["until"] : undefined;
+    const repoFilter =
+      typeof qp["repo"] === "string" && qp["repo"].length > 0
+        ? qp["repo"]
+        : null;
+    const format =
+      typeof qp["format"] === "string" && qp["format"].toLowerCase() === "csv"
+        ? "csv"
+        : "json";
+
+    let approvals;
+    try {
+      approvals = await repository.listApprovalRequests({
+        ...(since !== undefined ? { since } : {}),
+        ...(until !== undefined ? { until } : {}),
+        limit: 100
+      });
+    } catch (error) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message:
+          error instanceof Error ? error.message : "Invalid audit query."
+      });
+      return;
+    }
+
+    const uniqueTaskIds = [...new Set(approvals.map((a) => a.taskId))];
+    const manifestEntries = await Promise.all(
+      uniqueTaskIds.map(async (taskId) => {
+        const manifest = await repository.getManifest(taskId);
+        return manifest ? ([taskId, manifest] as const) : null;
+      })
+    );
+    const manifestsByTaskId = new Map(
+      manifestEntries.filter((entry): entry is readonly [string, import("@reddwarf/contracts").TaskManifest] => entry !== null)
+    );
+
+    const allEntries = buildAuditEntries(approvals, manifestsByTaskId);
+    const entries = filterAuditEntriesByRepo(allEntries, repoFilter);
+    const truncated = approvals.length >= 100;
+
+    if (format === "csv") {
+      const fileStamp = new Date().toISOString().slice(0, 10);
+      res.writeHead(200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="reddwarf-audit-${fileStamp}.csv"`
+      });
+      res.end(renderAuditCsv(entries));
+      return;
+    }
+
+    writeOperatorJsonResponse(res, 200, {
+      entries,
+      total: entries.length,
+      window: {
+        since: since ?? null,
+        until: until ?? null
+      },
+      repo: repoFilter,
+      truncated
     });
     return;
   }

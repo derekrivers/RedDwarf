@@ -241,6 +241,62 @@ export const eligibilityRejectionQuerySchema = z.object({
   since: isoDateTimeSchema.optional()
 });
 
+// Feature 179 — Agent quality telemetry aggregates (M24 F-179).
+//
+// Read-model surfaced by `GET /metrics/agents`. All values are aggregates over
+// data already persisted in phase_records, run_events, and task_manifests —
+// no new events captured, no new tables.
+
+export const agentQualityMetricsQuerySchema = z.object({
+  /** ISO date-time; filters on phase_records.created_at (lower bound). */
+  since: isoDateTimeSchema.optional(),
+  /** ISO date-time; filters on phase_records.created_at (upper bound). */
+  until: isoDateTimeSchema.optional()
+});
+
+export const phaseOutcomeRowSchema = z.object({
+  phase: taskPhaseSchema,
+  policyVersion: z.string().min(1),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  escalated: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  passRate: z.number().min(0).max(1)
+});
+
+export const phaseLatencyRowSchema = z.object({
+  phase: taskPhaseSchema,
+  policyVersion: z.string().min(1),
+  sampleCount: z.number().int().nonnegative(),
+  meanMs: z.number().nonnegative(),
+  p50Ms: z.number().nonnegative(),
+  p95Ms: z.number().nonnegative()
+});
+
+export const failureClassRowSchema = z.object({
+  failureClass: failureClassSchema,
+  phase: taskPhaseSchema,
+  count: z.number().int().nonnegative()
+});
+
+export const agentQualityMetricsSchema = z.object({
+  phaseOutcomes: z.array(phaseOutcomeRowSchema),
+  phaseLatencies: z.array(phaseLatencyRowSchema),
+  failureClasses: z.array(failureClassRowSchema),
+  window: z.object({
+    since: isoDateTimeSchema.nullable(),
+    until: isoDateTimeSchema.nullable()
+  })
+});
+
+export type AgentQualityMetricsQuery = z.infer<
+  typeof agentQualityMetricsQuerySchema
+>;
+export type PhaseOutcomeRow = z.infer<typeof phaseOutcomeRowSchema>;
+export type PhaseLatencyRow = z.infer<typeof phaseLatencyRowSchema>;
+export type FailureClassRow = z.infer<typeof failureClassRowSchema>;
+export type AgentQualityMetrics = z.infer<typeof agentQualityMetricsSchema>;
+
 export type PhaseRecord = z.infer<typeof phaseRecordSchema>;
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
 export type RunEvent = z.infer<typeof runEventSchema>;

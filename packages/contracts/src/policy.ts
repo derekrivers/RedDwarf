@@ -53,6 +53,10 @@ export const approvalRequestQuerySchema = z.object({
   taskId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
   statuses: z.array(approvalRequestStatusSchema).default([]),
+  /** ISO date-time; filters on updatedAt (the last decision timestamp). */
+  since: isoDateTimeSchema.optional(),
+  /** ISO date-time; filters on updatedAt (the last decision timestamp). */
+  until: isoDateTimeSchema.optional(),
   limit: z.number().int().positive().max(QUERY_LIMIT_MAX).default(QUERY_LIMIT_DEFAULT)
 });
 
