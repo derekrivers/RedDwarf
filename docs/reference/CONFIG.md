@@ -259,6 +259,32 @@ boundary. Already-running phases are not cancelled.
 The current burn-down is exposed at `GET /api/budget/daily` and rendered as a
 card on the dashboard home page when either daily cap is configured.
 
+### Discord `/rdsubmit` command (M23 F-174)
+
+Plugin command on the existing `reddwarf-operator` OpenClaw plugin that
+creates a real GitHub issue (which the polling daemon then picks up). Lives
+alongside the existing `/submit` command (which uses the direct-injection
+path); the difference is that `/rdsubmit` leaves a permanent issue tracker
+entry the way operators expect for human-initiated work.
+
+Format:
+
+```
+/rdsubmit owner/repo | <title> | <summary> | <criterion 1>; <criterion 2>; ...
+```
+
+The repo segment may be omitted when only one repo is managed. Title is
+5-200 characters, summary at least 20 characters, at least one
+acceptance criterion required (semicolon-separated).
+
+**v1 scope note.** The original board entry described a `StringSelectMenu` →
+`Modal` flow. The OpenClaw plugin surface (`registerCommand` returning a
+text reply) does not expose Discord's modal/select-menu component APIs in
+v1; implementing the rich UI would need either an OpenClaw plugin
+extension or a separate Discord bot. The pipe-format text command
+preserves the same workflow without the rich UI. Requires
+`REDDWARF_OPENCLAW_DISCORD_ENABLED=true`.
+
 ### Intake Adapter Contract (M24 F-188)
 
 Provider-agnostic seam between the polling/webhook intake loop and whatever
