@@ -322,7 +322,9 @@ const {
   DeterministicValidationAgent,
   DeterministicScmAgent,
   createOpenClawHealthProbe,
-  createGitHubHealthProbe
+  createGitHubHealthProbe,
+  loadPlaybooks,
+  resolvePlaybookForLabels
 } = await import("../packages/control-plane/dist/index.js");
 const { createGitHubIssuePollingCursor, createPostgresPlanningRepository } =
   await import("../packages/evidence/dist/index.js");
@@ -338,6 +340,25 @@ const repository = createPostgresPlanningRepository(
 const runtimeLogger = createPinoPlanningLogger({
   baseBindings: { surface: "runtime" }
 });
+
+// Feature 187: load the task playbook catalogue and bind a label resolver
+// onto the GitHub adapter so polled / webhook intake stamps a matching
+// playbook onto PlanningTaskInput.metadata.playbook.
+const playbookResult = await loadPlaybooks();
+if (playbookResult.errors.length > 0) {
+  for (const err of playbookResult.errors) {
+    runtimeLogger.warn(`playbook.load.error file=${err.file} reason=${err.reason}`);
+  }
+}
+if (playbookResult.playbooks.length > 0) {
+  github.setPlanningInputDefaults({
+    playbookResolver: (labels) =>
+      resolvePlaybookForLabels(playbookResult.playbooks, labels)
+  });
+  log(
+    `Loaded ${playbookResult.playbooks.length} task playbook(s) from ${playbookResult.rootDir ?? "(none)"}.`
+  );
+}
 
 // ── 2a: Sweep stale pipeline runs ─────────────────────────────────────
 

@@ -42,6 +42,33 @@ describe("createPlanningInputFromGitHubIssue", () => {
     expect(input.requestedCapabilities).toContain("can_plan");
   });
 
+  it("stamps the playbook id and architect hints on metadata when the resolver matches (Feature 187)", () => {
+    const input = createPlanningInputFromGitHubIssue(candidate, {
+      playbookResolver: (labels) =>
+        labels.includes("ai-eligible")
+          ? {
+              id: "docs-update",
+              name: "Documentation update",
+              architectHints: ["Restrict the diff to .md files."]
+            }
+          : null
+    });
+    expect(input.metadata).toMatchObject({
+      playbook: {
+        id: "docs-update",
+        name: "Documentation update",
+        architectHints: ["Restrict the diff to .md files."]
+      }
+    });
+  });
+
+  it("does not stamp playbook metadata when the resolver returns null", () => {
+    const input = createPlanningInputFromGitHubIssue(candidate, {
+      playbookResolver: () => null
+    });
+    expect((input.metadata as Record<string, unknown>)["playbook"]).toBeUndefined();
+  });
+
   it("uses fallback acceptance criteria when body has none", () => {
     const input = createPlanningInputFromGitHubIssue(
       { ...candidate, body: "Simple description." },

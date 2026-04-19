@@ -13,3 +13,4 @@ export * from "./openclaw-session-key.js";
 export * from "./live-workflow.js";
 export * from "./intent-log.js";
 export * from "./shadow-replay/shadow-run.js";
+export * from "./playbooks/playbook-loader.js";
