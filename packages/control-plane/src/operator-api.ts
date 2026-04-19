@@ -89,6 +89,7 @@ import {
   executeProjectApproval
 } from "./pipeline/project-approval.js";
 import { readPhaseRetryBudgetState } from "./pipeline/retry-budget.js";
+import { createDiscordNotifier } from "./notifications/discord-notifier.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
   GitHubIssuePollingDaemon,
@@ -4367,6 +4368,10 @@ async function handleOperatorRequest(
       requestedAt: clock().toISOString()
     };
     store.set(id, approval);
+    await createDiscordNotifier().notifyApprovalCreated({
+      kind: "tool",
+      approval
+    });
     writeOperatorJsonResponse(res, 201, { toolApproval: approval });
     return;
   }

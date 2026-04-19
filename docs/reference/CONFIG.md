@@ -241,6 +241,17 @@ Emit `agents.defaults.compaction` and `agents.defaults.contextLimits` into the g
 | `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVAL_TARGET` | `channel` | `dm` \| `channel` \| `both`. |
 | `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` | `#d7263d` | Accent color for Discord components. |
 
+### Discord outbound notifications (M23 F-177)
+
+Independent of the native OpenClaw Discord bridge. Posts embed messages to an incoming Discord webhook when a new approval is created (plan, phase, project, or tool) or when a developer-phase session opens a PR. Delivery is best-effort — webhook failures log a warning and never fail the pipeline. Embeds deep-link to the dashboard when `REDDWARF_DASHBOARD_ORIGIN` is set and reuse `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` for embed colour.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REDDWARF_DISCORD_NOTIFY_ENABLED` | `false` | Master switch for outbound notifications. |
+| `REDDWARF_DISCORD_NOTIFY_WEBHOOK_URL` | _(unset)_ | Discord incoming webhook URL. Required when enabled. Treated as a credential. |
+| `REDDWARF_DISCORD_NOTIFY_APPROVALS` | `true` | Notify on new approval creation. |
+| `REDDWARF_DISCORD_NOTIFY_PR_CREATED` | `true` | Notify on PR creation. |
+
 ---
 
 ## Secrets

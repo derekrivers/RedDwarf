@@ -9,6 +9,7 @@ import {
   type PlanningRepository
 } from "@reddwarf/evidence";
 import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 import {
   findApprovedPolicyGateRequest,
   isPipelineRunStale,
@@ -324,6 +325,13 @@ export async function sweepOrphanedDispatcherState(
           createdAt: nowIso
         })
       );
+    });
+    await createDiscordNotifier(
+      logger ? { logger } : {}
+    ).notifyApprovalCreated({
+      kind: "phase",
+      approval: newApproval,
+      repo: manifest.source.repo
     });
 
     repairs.push({

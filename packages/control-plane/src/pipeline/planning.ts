@@ -75,6 +75,7 @@ import {
   enforceTokenBudget,
   recordActualTokenUsage
 } from "./token-budget.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 import {
   heartbeatTrackedRun,
   waitWithHeartbeat
@@ -1113,6 +1114,11 @@ export async function runPlanningPipeline(
 
     if (approvalRequest) {
       await repository.saveApprovalRequest(approvalRequest);
+      await createDiscordNotifier({ logger: runLogger }).notifyApprovalCreated({
+        kind: "phase",
+        approval: approvalRequest,
+        repo: input.source.repo
+      });
     }
 
     await repository.savePhaseRecord(

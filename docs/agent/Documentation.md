@@ -1,5 +1,10 @@
 # Agent Documentation
 
+## 2026-04-19
+
+- Archived 35 completed rows from `FEATURE_BOARD.md` into `features_archive/COMPLETED_FEATURES.md` (all of M20, M21, M22 and M23 Features 175, 176). Counter bumped 134 → 169. Feature 175 was already live in [approval.ts](packages/control-plane/src/pipeline/approval.ts) but was still marked `pending`; flipped to complete after verifying the rework decision path plus `rework.feedback:<phase>` memory record.
+- Implemented M23 Feature 177: Discord outbound notifications. New `packages/control-plane/src/notifications/discord-notifier.ts` posts embeds to a Discord incoming webhook when a new approval request is created (plan, phase, project, tool) or when a developer-phase session opens a PR. Delivery is best-effort — webhook failures log `discord.notify.failed` and never fail the pipeline. Wired into planning, architecture-review, failure automation, orphan sweep, project planning, SCM PR creation, and tool-approval creation. Gated behind `REDDWARF_DISCORD_NOTIFY_ENABLED` (default `false`); requires `REDDWARF_DISCORD_NOTIFY_WEBHOOK_URL` when enabled. Embeds reuse `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` for colour and deep-link to the dashboard when `REDDWARF_DASHBOARD_ORIGIN` is set. 15 focused unit tests cover config parsing, embed builders, disabled/enabled gating, fetch success, fetch failure, and non-2xx responses. All 651 other tests still pass.
+
 ## 2026-04-08
 
 - Fixed the packaged policy-pack verifier after the OpenClaw runtime roster expanded from five packaged role definitions to six with `reddwarf-developer-opus`.
