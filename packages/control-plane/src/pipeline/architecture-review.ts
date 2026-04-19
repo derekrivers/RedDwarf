@@ -64,6 +64,7 @@ import {
 } from "./prompts.js";
 import { capturePromptSnapshot } from "./prompt-registry.js";
 import { buildOpenClawIssueSessionKeyFromManifest } from "../openclaw-session-key.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 
 export async function runArchitectureReviewPhase(
   input: RunArchitectureReviewPhaseInput,
@@ -891,6 +892,11 @@ export async function runArchitectureReviewPhase(
       updatedAt: blockedAtIso
     });
     await repository.saveApprovalRequest(reviewApprovalRequest);
+    await createDiscordNotifier({ logger: runLogger }).notifyApprovalCreated({
+      kind: "phase",
+      approval: reviewApprovalRequest,
+      repo: currentManifest.source.repo
+    });
     await recordRunEvent({
       repository,
       logger: runLogger,

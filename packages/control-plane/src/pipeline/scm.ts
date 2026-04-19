@@ -76,6 +76,7 @@ import {
   renderScmDiffMarkdown,
   renderScmReportMarkdown
 } from "./prompts.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 
 export function appendProjectTicketIdMarker(
   body: string,
@@ -916,6 +917,14 @@ export async function runScmPhase(
           commitSha: publication.commitSha
         },
         createdAt: scmCompletedAtIso
+      });
+      await createDiscordNotifier({ logger: runLogger }).notifyPullRequestCreated({
+        taskId,
+        runId,
+        repo: currentManifest.source.repo,
+        prNumber: pullRequest.number,
+        prUrl: pullRequest.url,
+        branchName: branch.branchName
       });
     }
     await recordRunEvent({

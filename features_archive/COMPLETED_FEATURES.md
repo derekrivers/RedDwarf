@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Archived from the live board on 2026-04-04. Completed feature count: 134.
+Last archive sweep: 2026-04-19. Completed feature count: 169.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -157,3 +157,38 @@ Archived from the live board on 2026-04-04. Completed feature count: 134.
 | 111      | Prompt version tracking | M16 | completed | Proposal source |
 | 112      | Phase retry budget | M16 | completed | Proposal source |
 | 113      | Structured eligibility rejection reasons | M16 | completed | Proposal source |
+| 140      | Rimmer coordinator: complexity classifier + project mode routing | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-01 |
+| 141      | ProjectSpec + TicketSpec schema, migration, contracts, and repositories | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-02 |
+| 142      | Holly planning phase: project mode (single/project flag, ClarificationRequest, ProjectSpec persistence) | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-03 |
+| 143      | Operator API: clarification endpoints for project planning loop | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-03 AC-3/4 |
+| 144      | GitHub Issues adapter for sub-issue creation on plan approval | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-05 |
+| 145      | Operator API: project listing + approval flow (GET /projects, POST /projects/:id/approve) | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-08 |
+| 146      | Sub-issue writer on plan approval + first ticket dispatch | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-06 |
+| 147      | Tailscale Funnel: operator API external reachability for GitHub Actions | M20 | completed | docs/reddwarf_project_mode_spec.md §4.1 step 11 |
+| 148      | GitHub Actions merge workflow + ticket advance endpoint (reddwarf-advance.yml) | M20 | completed | docs/reddwarf_project_mode_spec.md §6 T-07 |
+| 150      | Task Flow mirrored mode for project ticket pipeline | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §150 |
+| 151      | Structured execution items on dashboard (AGENT_PROGRESS_ITEM events + live timeline) | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §151 |
+| 152      | Plugin approval hook for agent-side safety rails (before_tool_call) | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §152 |
+| 153      | Model failover profiles (Anthropic ↔ OpenAI rotation on 429/5xx) | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §153 |
+| 154      | ACPX embedded dispatch (replaces HTTP hook POST /hooks/agent) | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §154 |
+| 155      | ClawHub skill publishing and dynamic discovery | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §155 |
+| 156      | Dreaming memory integration (dreams.md → memory_records, dedup, operator pruning) | M21 | completed | docs/openclaw/openclaw-integration-features-spec.md §156 |
+| 157      | Scope Docker env injection to minimal required OpenClaw secrets | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-157 |
+| 158      | Document and audit agent tool allow/deny groups as sole sandbox enforcement | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-158 |
+| 159      | Fail-closed on policy lookup failure in before-tool-call hook | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-159 |
+| 160      | Remove HOOK_TOKEN from openclaw secret scope | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-160 |
+| 161      | Add retry logic to AcpxOpenClawDispatchAdapter (429/529 backoff, 404 fallback) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-161 |
+| 162      | Default agent-to-agent messaging to opt-in | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-162 |
+| 163      | Startup-time stale secret lease audit and cleanup + periodic + SIGTERM scrub | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-163 |
+| 164      | Fix tool approval polling — jitter, single endpoint, pending state | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-164 |
+| 165      | Prompt sanitization and length cap before OpenClaw dispatch | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-165 |
+| 166      | Enforce session key normalization at the type level (branded NormalizedSessionKey) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-166 |
+| 167      | Cancel Task Flow on all abnormal pipeline termination paths | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-167 |
+| 168      | Consolidate tool approval polling to single HTTP call (GET /tool-approvals/:id) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-168 |
+| 169      | Expose `deliver` as a configurable dispatch option in OpenClawDispatchOptions | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-169 |
+| 170      | Move ClawHub publisher allow-list to operator configuration (REDDWARF_CLAWHUB_ALLOWED_PUBLISHERS) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-170 |
+| 171      | Harden session transcript parsing against malformed/crafted input (Zod schema per JSONL line) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-171 |
+| 172      | Cache and timeout OpenClaw health check in dashboard bootstrap (2s AbortSignal, 15s cache) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-172 |
+| 173      | Integration test coverage for HTTP hook and ACPX dispatch adapters (msw-based) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-173 |
+| 175      | Approval rework decision for failed phase retry (approve / rework / reject, rework.feedback memory record) | M23 | completed | M23 Dashboard & Operator UX — board-flipped 2026-04-19 after code verification |
+| 176      | Webhook-driven project ticket advancement on PR merge (GitHub webhook → advanceProjectTicket) | M23 | completed | M23 Dashboard & Operator UX |

@@ -42,6 +42,7 @@ import {
 import {
   dispatchHollyProjectPhase
 } from "./prompts.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 
 export interface ProjectPlanningInput {
   planningInput: PlanningTaskInput;
@@ -262,6 +263,18 @@ export async function runProjectPlanningPhase(
     await txRepo.saveProjectSpec(projectSpec);
     for (const ticket of ticketSpecs) {
       await txRepo.saveTicketSpec(ticket);
+    }
+  });
+  await createDiscordNotifier({ logger: runLogger }).notifyApprovalCreated({
+    kind: "project",
+    project: {
+      projectId: projectSpec.projectId,
+      title: projectSpec.title,
+      summary: projectSpec.summary,
+      sourceRepo: projectSpec.sourceRepo,
+      projectSize: projectSpec.projectSize,
+      ticketCount: ticketSpecs.length,
+      createdAt: projectSpec.createdAt
     }
   });
 

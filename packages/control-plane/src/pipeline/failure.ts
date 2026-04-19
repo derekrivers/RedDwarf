@@ -57,6 +57,7 @@ import {
 } from "./project-ticket-state.js";
 
 import { sanitizeSecretBearingText } from "../live-workflow.js";
+import { createDiscordNotifier } from "../notifications/discord-notifier.js";
 
 // ── Error mapper registry ─────────────────────────────────────────────────────
 
@@ -642,6 +643,11 @@ export async function handleAutomatedPhaseFailure(input: {
 
     if (shouldPersistApprovalRequest) {
       await transactionalRepository.saveApprovalRequest(approvalRequest);
+      await createDiscordNotifier({ logger: input.runLogger }).notifyApprovalCreated({
+        kind: "phase",
+        approval: approvalRequest,
+        repo: manifest.source.repo
+      });
     }
 
     if (createdFollowUpIssue) {
