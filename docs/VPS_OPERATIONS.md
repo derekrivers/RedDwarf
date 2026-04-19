@@ -118,6 +118,49 @@ curl -sI https://reddwarf.maniax-bros.uk | head -3
 
 If the build fails with TypeScript errors in the dashboard, it's usually because `@reddwarf/contracts` didn't get its `.d.ts` refreshed — `pnpm build` from the root handles that; don't skip it before the dashboard-filtered build.
 
+### 3.1 Deploying from CI (M23 F-178)
+
+The manual flow above is wrapped by [`scripts/vps-update.sh`](../scripts/vps-update.sh) and invoked by the [`Deploy to VPS`](../.github/workflows/deploy-vps.yml) GitHub Actions workflow. The workflow is `workflow_dispatch` only — it never fires on push, so deploys still require an explicit operator click.
+
+To enable it, configure these on the GitHub repo:
+
+| Kind     | Name                   | Purpose                                                                 |
+|----------|------------------------|-------------------------------------------------------------------------|
+| Secret   | `VPS_SSH_HOST`         | Hostname or IP of the VPS.                                              |
+| Secret   | `VPS_SSH_USER`         | SSH user (typically `root`).                                            |
+| Secret   | `VPS_SSH_PRIVATE_KEY`  | Private key whose public half is in `~/.ssh/authorized_keys` on the VPS. |
+| Variable | `VPS_SSH_PORT`         | Optional. SSH port. Default `22`.                                       |
+| Variable | `VPS_REPO_PATH`        | Optional. Checkout path on the VPS. Default `/root/RedDwarf`.           |
+| Variable | `VPS_SERVICE_NAME`     | Optional. systemd unit. Default `reddwarf`.                             |
+
+Generate a fresh keypair for the deploy workflow — don't reuse a human key:
+
+```bash
+ssh-keygen -t ed25519 -C "reddwarf-deploy" -f ~/.ssh/reddwarf_deploy -N ""
+# Copy the public half onto the VPS
+ssh-copy-id -i ~/.ssh/reddwarf_deploy.pub root@<vps-host>
+# Paste the private half into VPS_SSH_PRIVATE_KEY as a secret
+cat ~/.ssh/reddwarf_deploy
+```
+
+The workflow then:
+
+1. Resolves optional variables and writes the SSH key into the runner's agent.
+2. Pins the VPS host key via `ssh-keyscan`.
+3. SSHes in and runs `bash scripts/vps-update.sh --ref <ref> --service <service>` from the existing checkout.
+4. Deletes the private key from the runner on every exit path.
+
+`scripts/vps-update.sh` is idempotent: it fetches `origin`, checks out the requested ref (skipping if already there), runs `pnpm install`, builds the workspace and the dashboard, re-applies the Caddy-friendly asset permissions, and finally `systemctl restart`s the service. It then asserts the unit is `active` before returning; a failed restart exits non-zero and dumps the last 50 journal lines.
+
+The script is safe to run manually on the VPS too. Setting `--ref feature/foo` lets you test a branch on the live host without touching master:
+
+```bash
+cd /root/RedDwarf
+bash scripts/vps-update.sh --ref origin/feature/foo
+```
+
+If the SSH user is not root, they need NOPASSWD sudo for `systemctl restart <service>` — otherwise the restart step will hang waiting for a password the workflow can't supply. When running as root the script skips `sudo` entirely.
+
 ---
 
 ## 4. Viewing logs
