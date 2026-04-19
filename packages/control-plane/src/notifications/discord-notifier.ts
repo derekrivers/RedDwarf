@@ -278,7 +278,17 @@ export function createDiscordNotifier(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
-      logger?.warn?.("discord.notify.failed", { ...context, error: message });
+      const failurePayload = { ...context, error: message };
+      if (logger?.warn) {
+        logger.warn("discord.notify.failed", failurePayload);
+      } else {
+        // Best-effort fallback for call sites (e.g. tool-approvals POST) that
+        // run outside a pipeline phase and have no PlanningPipelineLogger in
+        // scope. Keeps delivery failures visible in the journal.
+        console.warn(
+          JSON.stringify({ msg: "discord.notify.failed", ...failurePayload })
+        );
+      }
     }
   }
 
