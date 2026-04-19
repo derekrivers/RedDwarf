@@ -1,0 +1,23 @@
+{
+  "id": "docs-update",
+  "name": "Documentation update",
+  "description": "Edit Markdown documentation only — no product code, no schema, no config changes. Typo fixes, runbook clarifications, README polish, etc.",
+  "matchLabels": ["docs", "documentation", "docs-only"],
+  "riskClass": "low",
+  "allowedPaths": ["docs/**", "*.md", "**/*.md"],
+  "requiredCapabilities": ["can_write_code", "can_open_pr", "can_archive_evidence"],
+  "architectHints": [
+    "Restrict the diff to .md files. If the task asks for a code change, refuse and surface that to the operator instead of straying.",
+    "Match the tone, voice, and heading depth of the surrounding documentation.",
+    "Cross-link rather than duplicate: if a fact already lives in another doc, link to it."
+  ],
+  "validatorRules": [
+    "No non-doc files may appear in the diff.",
+    "Run any existing markdown linters or prose checks if configured; otherwise skip.",
+    "Verify that internal links in the changed files still resolve."
+  ],
+  "reviewerRubric": [
+    "Does every claim in the new copy match the actual current behaviour of the system?",
+    "Is the change skimmable — headings, short paragraphs, code blocks where appropriate?"
+  ]
+}

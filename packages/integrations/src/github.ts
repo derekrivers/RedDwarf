@@ -171,6 +171,14 @@ export interface PlanningInputDefaults {
   priority?: number;
   fallbackAcceptanceCriteria?: string[];
   defaultCapabilities?: Capability[];
+  /** Feature 187: optional resolver that turns the candidate's labels into a
+   * playbook id. When the resolver returns a non-null result, the playbook
+   * is stamped onto `metadata.playbook` so downstream phases can see it. */
+  playbookResolver?: (labels: readonly string[]) => {
+    id: string;
+    name: string;
+    architectHints: readonly string[];
+  } | null;
 }
 
 export interface FixtureGitHubMutationOptions {
@@ -192,10 +200,13 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   private nextIssueNumber: number;
   private nextPullRequestNumber: number;
 
+  private planningInputDefaults: PlanningInputDefaults;
+
   constructor(input: {
     candidates: GitHubIssueCandidate[];
     statuses?: GitHubIssueStatusSnapshot[];
     mutations?: FixtureGitHubMutationOptions;
+    planningInputDefaults?: PlanningInputDefaults;
   }) {
     this.candidates = new Map(
       input.candidates.map((candidate) => [createIssueKey(candidate.repo, candidate.issueNumber), candidate])
@@ -210,6 +221,7 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
     this.createdPullRequests = new Map();
     this.nextIssueNumber = this.mutationOptions.issueNumberStart ?? 1_000;
     this.nextPullRequestNumber = this.mutationOptions.pullRequestNumberStart ?? 1;
+    this.planningInputDefaults = input.planningInputDefaults ?? {};
   }
 
   async fetchIssueCandidate(repo: string, issueNumber: number): Promise<GitHubIssueCandidate> {
@@ -260,7 +272,7 @@ export class FixtureGitHubAdapter implements GitHubAdapter {
   }
 
   async convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput> {
-    return createPlanningInputFromGitHubIssue(candidate);
+    return createPlanningInputFromGitHubIssue(candidate, this.planningInputDefaults);
   }
 
   async addLabels(repo: string, issueNumber: number, labels: string[]): Promise<void> {
@@ -495,6 +507,8 @@ export function createPlanningInputFromGitHubIssue(
       : (defaults.defaultCapabilities ?? ["can_plan", "can_write_code", "can_archive_evidence"])
   );
 
+  const playbookMatch = defaults.playbookResolver?.(candidate.labels) ?? null;
+
   return {
     source: {
       provider: "github",
@@ -518,6 +532,15 @@ export function createPlanningInputFromGitHubIssue(
         updatedAt: candidate.updatedAt ?? null,
         baseBranch: candidate.baseBranch ?? "main"
       },
+      ...(playbookMatch
+        ? {
+            playbook: {
+              id: playbookMatch.id,
+              name: playbookMatch.name,
+              architectHints: [...playbookMatch.architectHints]
+            }
+          }
+        : {}),
       ...(candidate.metadata ?? {})
     }
   };
@@ -535,6 +558,9 @@ export interface RestGitHubAdapterOptions {
   circuitBreakerThreshold?: number;
   /** Circuit breaker cooldown in milliseconds. Default: 60_000. */
   circuitBreakerCooldownMs?: number;
+  /** Feature 187 — defaults applied by `convertToPlanningInput`, including
+   * the optional `playbookResolver` that maps issue labels to a playbook. */
+  planningInputDefaults?: PlanningInputDefaults;
 }
 
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 30_000;
@@ -697,6 +723,7 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
   private readonly circuitBreaker: CircuitBreaker | null;
+  private planningInputDefaults: PlanningInputDefaults;
 
   constructor(options: RestGitHubAdapterOptions) {
     this.token = options.token;
@@ -711,6 +738,7 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
           cooldownMs: options.circuitBreakerCooldownMs ?? 60_000
         })
       : null;
+    this.planningInputDefaults = options.planningInputDefaults ?? {};
   }
 
   /** Circuit breaker health snapshot, or null if disabled. */
@@ -936,7 +964,14 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
   }
 
   async convertToPlanningInput(candidate: GitHubIssueCandidate): Promise<PlanningTaskInput> {
-    return createPlanningInputFromGitHubIssue(candidate);
+    return createPlanningInputFromGitHubIssue(candidate, this.planningInputDefaults);
+  }
+
+  /** Feature 187: late-bind planning defaults after the catalogue loads.
+   *  Used by start-stack which constructs the adapter before importing the
+   *  control-plane bundle that exposes the playbook loader. */
+  setPlanningInputDefaults(defaults: PlanningInputDefaults): void {
+    this.planningInputDefaults = defaults;
   }
 
   async addLabels(_repo: string, _issueNumber: number, labels: string[]): Promise<void> {
@@ -1155,7 +1190,12 @@ function mapApiRepoToSummary(repo: GitHubApiRepository): GitHubRepoSummary {
  * Reads GITHUB_TOKEN from the environment when no token is provided.
  */
 export function createRestGitHubAdapter(
-  options: { token?: string; baseUrl?: string; requestTimeoutMs?: number } = {}
+  options: {
+    token?: string;
+    baseUrl?: string;
+    requestTimeoutMs?: number;
+    planningInputDefaults?: PlanningInputDefaults;
+  } = {}
 ): RestGitHubAdapter {
   const token = options.token ?? process.env["GITHUB_TOKEN"];
   if (!token) {
@@ -1168,6 +1208,9 @@ export function createRestGitHubAdapter(
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
     ...(options.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: options.requestTimeoutMs }
+      : {}),
+    ...(options.planningInputDefaults !== undefined
+      ? { planningInputDefaults: options.planningInputDefaults }
       : {})
   });
 }

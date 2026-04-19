@@ -1,0 +1,24 @@
+{
+  "id": "feature-flag-add",
+  "name": "Add a feature flag",
+  "description": "Introduce a new env-driven feature flag, document it, default it to off, and gate the new behaviour behind it.",
+  "matchLabels": ["feature-flag", "flag", "rollout"],
+  "riskClass": "low",
+  "allowedPaths": [".env.example", "docs/reference/CONFIG.md", "packages/control-plane/src/**", "packages/contracts/src/**"],
+  "requiredCapabilities": ["can_write_code", "can_run_tests", "can_open_pr", "can_archive_evidence"],
+  "architectHints": [
+    "Default the flag to off so a deploy is a no-op until an operator opts in.",
+    "Use the existing REDDWARF_*_ENABLED naming pattern, e.g. REDDWARF_FOO_ENABLED.",
+    "Document the new flag in both .env.example (with a comment explaining what it does) and docs/reference/CONFIG.md (in the right section).",
+    "If the flag gates a new code path, include at least one test that exercises both states."
+  ],
+  "validatorRules": [
+    ".env.example must contain the new variable with an explanatory comment.",
+    "docs/reference/CONFIG.md must document the new variable in the appropriate section.",
+    "Default must be the off / safer state."
+  ],
+  "reviewerRubric": [
+    "Is the flag boundary in the right place — do callers branch on the flag, or does the flag flow into a single check site?",
+    "What's the rollback story? Flipping the flag back to off should leave no orphaned state."
+  ]
+}

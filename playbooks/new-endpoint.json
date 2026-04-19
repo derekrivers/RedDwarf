@@ -1,0 +1,25 @@
+{
+  "id": "new-endpoint",
+  "name": "New API endpoint",
+  "description": "Add one HTTP endpoint to the operator API or another existing surface. Includes route handler, request validation, response shape, and tests.",
+  "matchLabels": ["new-endpoint", "api", "operator-api"],
+  "riskClass": "medium",
+  "allowedPaths": ["packages/control-plane/src/operator-api.ts", "packages/control-plane/src/operator-api.test.ts", "packages/contracts/src/**", "packages/dashboard/src/api/client.ts", "packages/dashboard/src/types/dashboard.ts"],
+  "requiredCapabilities": ["can_write_code", "can_run_tests", "can_open_pr", "can_archive_evidence"],
+  "architectHints": [
+    "Mirror the shape of an existing nearby endpoint in operator-api.ts; do not invent a new framework.",
+    "Define request/response schemas in @reddwarf/contracts so the dashboard can share them.",
+    "Authentication: every endpoint that mutates state must require the operator bearer token.",
+    "If the new endpoint surfaces or filters by repo, include the same operator-config / repo-allowlist guards used by neighbouring routes."
+  ],
+  "validatorRules": [
+    "Add at least one happy-path integration test that hits the endpoint via http through createOperatorApiServer.",
+    "Add at least one auth-gate test confirming an unauthenticated request returns 401.",
+    "Document the new path in docs/reference/OPERATOR_API.md."
+  ],
+  "reviewerRubric": [
+    "Is the URL shape consistent with the rest of the API (plural collections, :id parameter style, verb naming)?",
+    "Does the response carry enough info that the dashboard does not need a follow-up request?",
+    "Are errors returned as structured `{error, message}` JSON, never raw stack traces?"
+  ]
+}

@@ -259,6 +259,25 @@ boundary. Already-running phases are not cancelled.
 The current burn-down is exposed at `GET /api/budget/daily` and rendered as a
 card on the dashboard home page when either daily cap is configured.
 
+### Task playbooks (M24 F-187)
+
+Reusable task-shape bundles that intake matches against an issue's labels and
+stamps onto `PlanningTaskInput.metadata.playbook` so the architect (Holly)
+sees them as additional context.
+
+Playbooks live as JSON files under [`playbooks/`](../../playbooks/) at the
+repo root. Each file conforms to `playbookSchema` in `@reddwarf/contracts`
+and can specify `matchLabels`, `riskClass`, `allowedPaths`,
+`requiredCapabilities`, `architectHints`, `validatorRules`, and
+`reviewerRubric`. The catalogue loads at boot; load errors are logged but
+do not block startup.
+
+Four starter playbooks ship in v1: `dependency-bump`, `new-endpoint`,
+`docs-update`, `feature-flag-add`. Add a new playbook by dropping a JSON
+file in the directory and restarting the stack.
+
+No env vars; the catalogue location is auto-discovered from the repo root.
+
 ### Pre-flight contract checks (M24 F-184)
 
 Deterministic gate that runs over the workspace diff at SCM time, before the

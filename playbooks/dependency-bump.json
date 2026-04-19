@@ -1,0 +1,24 @@
+{
+  "id": "dependency-bump",
+  "name": "Dependency bump",
+  "description": "Bump one or more npm dependencies, refresh the lockfile, and patch any straightforward breakage. No new product features.",
+  "matchLabels": ["dependencies", "dependency-bump", "renovate"],
+  "riskClass": "low",
+  "allowedPaths": ["package.json", "**/package.json", "pnpm-lock.yaml", "src/**", "tests/**"],
+  "requiredCapabilities": ["can_write_code", "can_modify_dependencies", "can_run_tests", "can_open_pr", "can_archive_evidence"],
+  "architectHints": [
+    "Bump the package(s) named in the issue body. Pick the latest patch within the existing major unless the issue explicitly calls for a major bump.",
+    "Run `corepack pnpm install` after changing package.json so the lockfile stays in sync.",
+    "Skim the upstream CHANGELOG for the bumped versions and surface any breaking changes as plan caveats.",
+    "If type errors appear in our codebase, fix them in this PR; if they appear in transitive deps, document them and stop."
+  ],
+  "validatorRules": [
+    "`pnpm typecheck` must remain clean.",
+    "`pnpm test` must pass; do not skip or remove tests to make it green.",
+    "Lockfile diff should match the package.json change set; flag unrelated lockfile churn."
+  ],
+  "reviewerRubric": [
+    "Was the bump justified by either security, perf, or a feature gap actually needed by our code?",
+    "Are any newly transitive dependencies acceptable (license, size, maintainer health)?"
+  ]
+}

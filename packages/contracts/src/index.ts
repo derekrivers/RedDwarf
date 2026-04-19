@@ -9,3 +9,4 @@ export * from "./workspace.js";
 export * from "./policy.js";
 export * from "./agents.js";
 export * from "./model-pricing.js";
+export * from "./playbook.js";
