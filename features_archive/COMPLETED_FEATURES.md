@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Last archive sweep: 2026-04-19. Completed feature count: 170.
+Last archive sweep: 2026-04-19 (M23 + M24 closed). Completed feature count: 182.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -193,3 +193,15 @@ Last archive sweep: 2026-04-19. Completed feature count: 170.
 | 175      | Approval rework decision for failed phase retry (approve / rework / reject, rework.feedback memory record) | M23 | completed | M23 Dashboard & Operator UX — board-flipped 2026-04-19 after code verification |
 | 176      | Webhook-driven project ticket advancement on PR merge (GitHub webhook → advanceProjectTicket) | M23 | completed | M23 Dashboard & Operator UX |
 | 177      | Discord outbound notifications for approvals and PR-created events (webhook-based notifier, best-effort, gated by REDDWARF_DISCORD_NOTIFY_ENABLED) | M23 | completed | M23 Dashboard & Operator UX — wired into planning, architecture-review, failure, sweep, project-planning, SCM, and tool-approvals (PR #27) |
+| 174      | Discord /rdsubmit command for issue creation (pipe-separated text args; StringSelectMenu+Modal flow deferred to a future plugin extension) | M23 | completed | M23 Dashboard & Operator UX (PR #38) |
+| 178      | Manual-trigger GitHub Actions deploy-vps workflow + scripts/vps-update.sh (workflow_dispatch only, host-key pinned, key scrubbed on every exit) | M23 | completed | M23 Dashboard & Operator UX (PR #29) |
+| 179      | Agent quality telemetry aggregates — GET /metrics/agents + dashboard page (phase outcomes / latencies / failure classes) | M24 | completed | RedDwarf_Research.md §5 B2 (PR #32) |
+| 180      | USD cost attribution + per-task cost budget (model pricing table, costUsd on token-usage events, COST_BUDGET_EXCEEDED enforcement) | M24 | completed | RedDwarf_Research.md §5 B1 (PR #34) |
+| 181      | Policy-pack outcome dashboard — comparison card on /metrics with pass-rate deltas between adjacent pack versions | M24 | completed | RedDwarf_Research.md §5 B3 (PR #33) |
+| 182      | Shadow-run replay harness for policy-pack regression — scripts/shadow-run.mjs replays the policy layer against archived tasks | M24 | completed | RedDwarf_Research.md §6 C5 (PR #33) |
+| 183      | Org-level daily autonomy budget — dispatcher gate (BUDGET_EXHAUSTED) + GET /budget/daily + dashboard burn-down card | M24 | completed | RedDwarf_Research.md §7 D5 (PR #34) |
+| 184      | Deterministic pre-flight contract checks (denied path, dependency mutation, schema drift, large/binary files; contract_violation failureClass) | M24 | completed | RedDwarf_Research.md §6 C3 (PR #35) |
+| 185      | Audit-log export endpoint (GET /audit/export) + dashboard /audit page with CSV download | M24 | completed | RedDwarf_Research.md §4 A4 (PR #32) |
+| 186      | Operator triage verbs (POST /tasks/:id/quarantine, /release, /notes, POST /runs/:id/heartbeat-kick) + dashboard /triage queue | M24 | completed | RedDwarf_Research.md §4 A3 (PR #35) |
+| 187      | Task playbooks (playbookSchema + 4 starter JSON playbooks + label-to-playbook resolver wired into intake) | M24 | completed | RedDwarf_Research.md §7 D3 (PR #36) |
+| 188      | Intake Adapter Contract (IntakeAdapter interface + GitHubIntakeAdapter + FixtureIntakeAdapter; daemon migration is a follow-up) | M24 | completed | RedDwarf_Research.md §7 D2 (PR #37) |
