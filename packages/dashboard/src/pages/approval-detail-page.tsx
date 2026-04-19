@@ -69,10 +69,17 @@ export function ApprovalDetailPage(props: { apiClient: DashboardApiClient }) {
   });
 
   useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      return target.isContentEditable;
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented) {
-        return;
-      }
+      if (event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
 
       if (event.key === "Escape") {
         navigate("/approvals");
