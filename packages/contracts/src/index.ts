@@ -8,3 +8,4 @@ export * from "./evidence.js";
 export * from "./workspace.js";
 export * from "./policy.js";
 export * from "./agents.js";
+export * from "./model-pricing.js";

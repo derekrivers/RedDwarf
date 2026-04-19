@@ -118,6 +118,16 @@ export interface PlanningQueryRepository {
     query?: Partial<EligibilityRejectionQuery>
   ): Promise<EligibilityRejectionRecord[]>;
   listRunEvents(taskId: string, runId?: string): Promise<RunEvent[]>;
+  /**
+   * Feature 183: return every run event with the given `code` that was
+   * created at or after `sinceIso`, across all tasks, up to `limit` rows.
+   * Used by the dispatcher's daily-budget gate.
+   */
+  listRunEventsByCodeSince(
+    code: string,
+    sinceIso: string,
+    limit?: number
+  ): Promise<RunEvent[]>;
   listPromptSnapshots(): Promise<PromptSnapshot[]>;
   listMemoryRecords(query?: Partial<MemoryQuery>): Promise<MemoryRecord[]>;
   listGitHubIssuePollingCursors(): Promise<GitHubIssuePollingCursor[]>;

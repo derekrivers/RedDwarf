@@ -4,7 +4,104 @@ import { Link } from "react-router-dom";
 import type { PipelineRun } from "@reddwarf/contracts";
 import { getApprovalUiCopy } from "../lib/approval-presenters";
 import { CrewFeedPanel } from "../components/crew-feed";
-import type { DashboardApiClient, TaskDetailResponse } from "../types/dashboard";
+import type {
+  DailyBudgetStatusResponse,
+  DashboardApiClient,
+  TaskDetailResponse
+} from "../types/dashboard";
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat(undefined).format(Math.round(value));
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4
+  }).format(value);
+}
+
+function progressBarTone(rate: number, exhausted: boolean): string {
+  if (exhausted) return "bg-danger";
+  if (rate >= 0.8) return "bg-warning";
+  return "bg-success";
+}
+
+function DailyBudgetCard({ status }: { status: DailyBudgetStatusResponse }) {
+  const tokenRate =
+    status.tokenBudget && status.tokenBudget > 0
+      ? Math.min(1, status.tokensUsed / status.tokenBudget)
+      : 0;
+  const costRate =
+    status.costBudgetUsd && status.costBudgetUsd > 0
+      ? Math.min(1, status.costUsdUsed / status.costBudgetUsd)
+      : 0;
+  return (
+    <div className="card">
+      <div className="card-header d-flex align-items-center justify-content-between">
+        <div>
+          <h3 className="card-title mb-0">Daily autonomy budget</h3>
+          <div className="text-secondary small">
+            Today's burn-down (window opens at 00:00 UTC). Dispatcher pauses new
+            tasks once either cap is hit.
+          </div>
+        </div>
+        {status.exhausted ? (
+          <span className="badge bg-red-lt text-red">Exhausted</span>
+        ) : (
+          <span className="badge bg-green-lt text-green">Within budget</span>
+        )}
+      </div>
+      <div className="card-body">
+        <div className="row g-4">
+          {status.tokenBudget !== null ? (
+            <div className="col-md-6">
+              <div className="d-flex justify-content-between mb-1">
+                <strong>Tokens</strong>
+                <span className="text-secondary">
+                  {formatNumber(status.tokensUsed)} / {formatNumber(status.tokenBudget)}
+                </span>
+              </div>
+              <div className="progress progress-thin">
+                <div
+                  className={`progress-bar ${progressBarTone(tokenRate, status.tokenBudgetExhausted)}`}
+                  style={{ width: `${Math.round(tokenRate * 100)}%` }}
+                />
+              </div>
+              <div className="text-secondary small mt-1">
+                {status.tokensRemaining !== null
+                  ? `${formatNumber(status.tokensRemaining)} remaining`
+                  : null}
+              </div>
+            </div>
+          ) : null}
+          {status.costBudgetUsd !== null ? (
+            <div className="col-md-6">
+              <div className="d-flex justify-content-between mb-1">
+                <strong>Cost</strong>
+                <span className="text-secondary">
+                  {formatUsd(status.costUsdUsed)} / {formatUsd(status.costBudgetUsd)}
+                </span>
+              </div>
+              <div className="progress progress-thin">
+                <div
+                  className={`progress-bar ${progressBarTone(costRate, status.costBudgetExhausted)}`}
+                  style={{ width: `${Math.round(costRate * 100)}%` }}
+                />
+              </div>
+              <div className="text-secondary small mt-1">
+                {status.costUsdRemaining !== null
+                  ? `${formatUsd(status.costUsdRemaining)} remaining`
+                  : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -54,6 +151,12 @@ export function DashboardHomePage(props: { apiClient: DashboardApiClient }) {
     queryKey: ["dashboard-home-blocked"],
     queryFn: () => apiClient.getBlockedApprovals(),
     refetchInterval: 10000
+  });
+
+  const budgetQuery = useQuery({
+    queryKey: ["dashboard-home-budget"],
+    queryFn: () => apiClient.getDailyBudgetStatus(),
+    refetchInterval: 30000
   });
 
   const recentRuns = useMemo(
@@ -155,6 +258,13 @@ export function DashboardHomePage(props: { apiClient: DashboardApiClient }) {
           </div>
         </div>
       </div>
+
+      {budgetQuery.data &&
+      (budgetQuery.data.tokenBudget !== null || budgetQuery.data.costBudgetUsd !== null) ? (
+        <div className="col-12">
+          <DailyBudgetCard status={budgetQuery.data} />
+        </div>
+      ) : null}
 
       <div className="col-xl-5 col-lg-12 order-xl-last">
         <CrewFeedPanel apiClient={apiClient} />

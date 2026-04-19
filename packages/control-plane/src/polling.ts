@@ -36,6 +36,10 @@ import {
 import { classifyComplexity } from "./rimmer/index.js";
 import { findApprovedPolicyGateRequest } from "./pipeline/shared.js";
 import { resolveUnmetTaskGroupDependencies } from "./task-groups.js";
+import { EventCodes } from "./pipeline/types.js";
+import { checkDailyBudgetGate } from "./pipeline/daily-budget.js";
+import { createRunEvent } from "@reddwarf/evidence";
+import { randomUUID } from "node:crypto";
 
 export interface GitHubPollingRepoConfig {
   repo: string;
@@ -968,6 +972,31 @@ export function createReadyTaskDispatcher(
                   sourceRepo: manifest.source.repo
                 })
               : undefined;
+
+            // Feature 183: org-level daily autonomy budget. Block new
+            // dispatches once the configured token or USD cap for today
+            // is reached. Already-running phases keep going — the gate
+            // only stops *new* work from starting.
+            const budgetCheck = await checkDailyBudgetGate({
+              repository: deps.repository,
+              ...(taskLogger ? { logger: taskLogger } : {})
+            });
+            if (!budgetCheck.allowed) {
+              await deps.repository.saveRunEvent(
+                createRunEvent({
+                  eventId: `${manifest.taskId}:budget-exhausted:${randomUUID()}`,
+                  taskId: manifest.taskId,
+                  runId: "dispatcher",
+                  phase: "intake",
+                  level: "warn",
+                  code: EventCodes.BUDGET_EXHAUSTED,
+                  message: `Daily autonomy budget exhausted. Dispatch deferred for ${manifest.taskId}.`,
+                  data: { ...budgetCheck.status },
+                  createdAt: new Date().toISOString()
+                })
+              );
+              return cycleResults;
+            }
 
             taskLogger?.info(
               selection === "ready"

@@ -120,7 +120,15 @@ export const tokenBudgetOverageActionSchema = z.enum(["warn", "block"]);
 
 export const tokenUsageSchema = z.object({
   inputTokens: z.number().int().min(0),
-  outputTokens: z.number().int().min(0)
+  outputTokens: z.number().int().min(0),
+  /** Optional Anthropic prompt-cache read tokens (Feature 180). */
+  cachedTokens: z.number().int().min(0).optional(),
+  /** Optional model id used for this call, e.g. "claude-opus-4-7" (Feature 180). */
+  model: z.string().min(1).optional(),
+  /** Optional provider identifier; derivable from model but explicit is safer. */
+  provider: z
+    .enum(["anthropic", "openai", "openai-codex", "unknown"])
+    .optional()
 });
 
 export const tokenBudgetResultSchema = z.object({
@@ -130,7 +138,15 @@ export const tokenBudgetResultSchema = z.object({
   withinBudget: z.boolean(),
   overageAction: tokenBudgetOverageActionSchema,
   actualInputTokens: z.number().int().min(0).nullable().optional(),
-  actualOutputTokens: z.number().int().min(0).nullable().optional()
+  actualOutputTokens: z.number().int().min(0).nullable().optional(),
+  // Feature 180 — USD cost attribution. `null` means cost could not be
+  // computed (no model info on this phase). All values round to the
+  // millionth of a dollar to avoid float noise across long-running runs.
+  actualCachedTokens: z.number().int().min(0).nullable().optional(),
+  model: z.string().min(1).nullable().optional(),
+  costUsd: z.number().nonnegative().nullable().optional(),
+  costBudgetUsd: z.number().nonnegative().nullable().optional(),
+  withinCostBudget: z.boolean().nullable().optional()
 });
 
 export const phaseRetryBudgetStateSchema = z.object({

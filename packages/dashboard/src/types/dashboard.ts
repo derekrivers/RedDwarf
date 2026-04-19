@@ -179,6 +179,22 @@ export interface DashboardApiClient {
   getAuditExport(filters?: AuditExportFilters): Promise<AuditExportResponse>;
   buildAuditCsvUrl(filters?: AuditExportFilters): string;
   getAgentQualityMetrics(filters?: AgentQualityMetricsFilters): Promise<AgentQualityMetricsResponse>;
+  getDailyBudgetStatus(): Promise<DailyBudgetStatusResponse>;
+}
+
+// Feature 183 — Org-level daily autonomy budget (M24 F-183).
+export interface DailyBudgetStatusResponse {
+  windowStart: string;
+  windowEnd: string;
+  tokensUsed: number;
+  costUsdUsed: number;
+  tokenBudget: number | null;
+  costBudgetUsd: number | null;
+  tokensRemaining: number | null;
+  costUsdRemaining: number | null;
+  tokenBudgetExhausted: boolean;
+  costBudgetExhausted: boolean;
+  exhausted: boolean;
 }
 
 // Feature 179 — Agent quality telemetry aggregates (M24 F-179).

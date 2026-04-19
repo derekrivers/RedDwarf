@@ -95,6 +95,7 @@ import {
   filterAuditEntriesByRepo,
   renderAuditCsv
 } from "./audit-export.js";
+import { checkDailyBudgetGate } from "./pipeline/daily-budget.js";
 import { saveTaskGroupMemberships } from "./task-groups.js";
 import type {
   GitHubIssuePollingDaemon,
@@ -3131,6 +3132,24 @@ async function handleOperatorRequest(
       total: items.length,
       byReason
     });
+    return;
+  }
+
+  // GET /budget/daily — Feature 183 (org-level daily autonomy budget).
+  // Returns the current burn-down — read-only, computed from
+  // TOKEN_USAGE_RECORDED events for today's UTC window. Surfaces the same
+  // status the dispatcher gate uses, so the dashboard ribbon and the gate
+  // never disagree.
+  if (method === "GET" && path === "/budget/daily") {
+    try {
+      const result = await checkDailyBudgetGate({ repository });
+      writeOperatorJsonResponse(res, 200, result.status);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 500, {
+        error: "internal_error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
     return;
   }
 

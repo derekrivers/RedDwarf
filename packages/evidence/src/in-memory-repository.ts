@@ -371,6 +371,18 @@ export class InMemoryPlanningRepository implements PlanningRepository {
     );
   }
 
+  async listRunEventsByCodeSince(
+    code: string,
+    sinceIso: string,
+    limit = 5000
+  ): Promise<RunEvent[]> {
+    return this.runEvents
+      .filter(
+        (event) => event.code === code && event.createdAt >= sinceIso
+      )
+      .slice(0, limit);
+  }
+
   async listPromptSnapshots(): Promise<PromptSnapshot[]> {
     return [...this.promptSnapshots.values()].sort((left, right) =>
       right.capturedAt.localeCompare(left.capturedAt)
