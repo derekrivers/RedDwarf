@@ -2,7 +2,7 @@
 
 This archive lists all features completed to date. Active pending work remains in [FEATURE_BOARD.md](/c:/Dev/RedDwarf/FEATURE_BOARD.md).
 
-Last archive sweep: 2026-04-19. Completed feature count: 169.
+Last archive sweep: 2026-04-19. Completed feature count: 170.
 
 | Priority | Feature                                                                        | Milestone | Status    | Architecture Trace                                                     |
 | -------- | ------------------------------------------------------------------------------ | --------- | --------- | ---------------------------------------------------------------------- |
@@ -192,3 +192,4 @@ Last archive sweep: 2026-04-19. Completed feature count: 169.
 | 173      | Integration test coverage for HTTP hook and ACPX dispatch adapters (msw-based) | M22 | completed | docs/openclaw/OPENCLAW_AUDIT.md F-173 |
 | 175      | Approval rework decision for failed phase retry (approve / rework / reject, rework.feedback memory record) | M23 | completed | M23 Dashboard & Operator UX — board-flipped 2026-04-19 after code verification |
 | 176      | Webhook-driven project ticket advancement on PR merge (GitHub webhook → advanceProjectTicket) | M23 | completed | M23 Dashboard & Operator UX |
+| 177      | Discord outbound notifications for approvals and PR-created events (webhook-based notifier, best-effort, gated by REDDWARF_DISCORD_NOTIFY_ENABLED) | M23 | completed | M23 Dashboard & Operator UX — wired into planning, architecture-review, failure, sweep, project-planning, SCM, and tool-approvals (PR #27) |

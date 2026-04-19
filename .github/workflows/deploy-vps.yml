@@ -1,0 +1,81 @@
+name: Deploy to VPS
+
+# Manual-only deploy workflow. Click the "Run workflow" button on the Actions
+# tab and pick the git ref to ship. Never auto-triggers on push, so nothing
+# reaches production without explicit operator action.
+#
+# Required repository secrets:
+#   VPS_SSH_HOST          host or IP of the VPS
+#   VPS_SSH_USER          SSH user (typically root)
+#   VPS_SSH_PRIVATE_KEY   private key matching an authorized key on the VPS
+#
+# Optional repository variables (or secrets):
+#   VPS_SSH_PORT          SSH port (default 22)
+#   VPS_REPO_PATH         checkout path on the VPS (default /root/RedDwarf)
+#   VPS_SERVICE_NAME      systemd unit to restart (default reddwarf)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to deploy"
+        required: true
+        default: "master"
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Resolve deploy parameters
+        id: params
+        run: |
+          echo "port=${VPS_SSH_PORT:-22}" >> "$GITHUB_OUTPUT"
+          echo "repo_path=${VPS_REPO_PATH:-/root/RedDwarf}" >> "$GITHUB_OUTPUT"
+          echo "service=${VPS_SERVICE_NAME:-reddwarf}" >> "$GITHUB_OUTPUT"
+        env:
+          VPS_SSH_PORT: ${{ vars.VPS_SSH_PORT }}
+          VPS_REPO_PATH: ${{ vars.VPS_REPO_PATH }}
+          VPS_SERVICE_NAME: ${{ vars.VPS_SERVICE_NAME }}
+
+      - name: Install SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          SSH_PORT: ${{ steps.params.outputs.port }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SSH_PORT" -H "$VPS_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        env:
+          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          SSH_PORT: ${{ steps.params.outputs.port }}
+          REPO_PATH: ${{ steps.params.outputs.repo_path }}
+          SERVICE: ${{ steps.params.outputs.service }}
+          REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o ServerAliveInterval=30 \
+            "$VPS_SSH_USER@$VPS_SSH_HOST" \
+            "cd '$REPO_PATH' && git fetch --prune origin && bash scripts/vps-update.sh --ref '$REF' --service '$SERVICE'"
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
