@@ -1233,6 +1233,21 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
     return result.rows.map(mapRunEventRow);
   }
+
+  async listRunEventsByCodeSince(
+    code: string,
+    sinceIso: string,
+    limit = 5000
+  ): Promise<RunEvent[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM run_events
+       WHERE code = $1 AND created_at >= $2
+       ORDER BY created_at ASC, event_id ASC
+       LIMIT $3`,
+      [code, sinceIso, limit]
+    );
+    return result.rows.map(mapRunEventRow);
+  }
   async listMemoryRecords(
     query: Partial<MemoryQuery> = {}
   ): Promise<MemoryRecord[]> {

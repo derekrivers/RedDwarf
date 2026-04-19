@@ -13,6 +13,7 @@ import type {
   ApprovalListResponse,
   AuditExportFilters,
   AuditExportResponse,
+  DailyBudgetStatusResponse,
   DashboardApiClient,
   ProjectApproveResponse,
   ProjectClarificationsResponse,
@@ -462,6 +463,9 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
           ...(filters.until !== undefined ? { until: filters.until } : {})
         })}`
       );
+    },
+    getDailyBudgetStatus() {
+      return request<DailyBudgetStatusResponse>("/budget/daily");
     }
   };
 }

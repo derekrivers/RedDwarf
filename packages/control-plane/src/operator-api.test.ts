@@ -1173,6 +1173,52 @@ describe("operator API server", () => {
     }
   });
 
+  it("returns the daily budget burn-down with no budgets configured", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+    await apiServer.start();
+    try {
+      const response = await operatorGet(apiServer.port, "/budget/daily");
+      expect(response.status).toBe(200);
+      const body = response.body as {
+        tokensUsed: number;
+        costUsdUsed: number;
+        tokenBudget: number | null;
+        costBudgetUsd: number | null;
+        exhausted: boolean;
+      };
+      expect(body.tokensUsed).toBe(0);
+      expect(body.costUsdUsed).toBe(0);
+      expect(body.tokenBudget).toBeNull();
+      expect(body.costBudgetUsd).toBeNull();
+      expect(body.exhausted).toBe(false);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it("requires the operator bearer token on /budget/daily", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+    await apiServer.start();
+    try {
+      const unauthorized = await operatorGet(
+        apiServer.port,
+        "/budget/daily",
+        null
+      );
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("requires the operator bearer token on /metrics/agents", async () => {
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(

@@ -241,6 +241,24 @@ Emit `agents.defaults.compaction` and `agents.defaults.contextLimits` into the g
 | `REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVAL_TARGET` | `channel` | `dm` \| `channel` \| `both`. |
 | `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` | `#d7263d` | Accent color for Discord components. |
 
+### USD cost attribution + daily autonomy budget (M24 F-180, F-183)
+
+Closes the dollar-cost half of the token-budget loop. When set, the per-task
+cap fires `COST_BUDGET_EXCEEDED` as soon as a task's accumulated cost passes
+it; the org-level daily cap pauses new dispatches until the next 00:00 UTC
+boundary. Already-running phases are not cancelled.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REDDWARF_COST_BUDGET_PER_TASK_USD` | _(unset)_ | Per-task USD cap. Omit for unlimited. |
+| `REDDWARF_MODEL_PRICING_JSON` | _(uses defaults)_ | JSON override of the per-model pricing table. Same shape as `DEFAULT_MODEL_PRICING`. |
+| `REDDWARF_DAILY_TOKEN_BUDGET` | _(unset)_ | Daily token cap across all tasks. |
+| `REDDWARF_DAILY_COST_BUDGET_USD` | _(unset)_ | Daily USD cap across all tasks. |
+| `REDDWARF_BUDGET_RESET_TZ` | `UTC` | Reset boundary timezone. v1 always resets at 00:00 UTC; the env var is read for forward compat. |
+
+The current burn-down is exposed at `GET /api/budget/daily` and rendered as a
+card on the dashboard home page when either daily cap is configured.
+
 ### Discord outbound notifications (M23 F-177)
 
 Independent of the native OpenClaw Discord bridge. Posts embed messages to an incoming Discord webhook when a new approval is created (plan, phase, project, or tool) or when a developer-phase session opens a PR. Delivery is best-effort — webhook failures log a warning and never fail the pipeline. Embeds deep-link to the dashboard when `REDDWARF_DASHBOARD_ORIGIN` is set and reuse `REDDWARF_OPENCLAW_DISCORD_ACCENT_COLOR` for embed colour.

@@ -1,4 +1,7 @@
 import {
+  computeCostUsd,
+  type ModelPricingTable,
+  resolveModelPricingFromEnv,
   type PlanningSpec,
   tokenBudgetResultSchema,
   type TaskManifest,
@@ -32,7 +35,11 @@ export interface RunTokenUsageSummary {
   totalActualInputTokens: number;
   totalActualOutputTokens: number;
   totalActualTokens: number;
+  /** Feature 180 — summed USD cost across phases that reported one. */
+  totalCostUsd: number;
   anyPhaseExceeded: boolean;
+  /** Feature 180 — true when any phase reports costUsd > costBudgetUsd. */
+  anyCostBudgetExceeded: boolean;
 }
 
 const phaseBudgetEnvNames: Record<TaskPhase, readonly string[]> = {
@@ -233,18 +240,60 @@ export function checkTokenBudget(
   });
 }
 
+// Feature 180: budget is read once per call at the env (null = unlimited).
+export function resolveCostBudgetUsd(
+  env: NodeJS.ProcessEnv = process.env
+): number | null {
+  const raw = env["REDDWARF_COST_BUDGET_PER_TASK_USD"]?.trim();
+  if (!raw) return null;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 export function attachActualTokenUsage(
   result: TokenBudgetResult,
-  usage?: TokenUsage | null
+  usage?: TokenUsage | null,
+  options?: {
+    pricing?: ModelPricingTable;
+    costBudgetUsd?: number | null;
+  }
 ): TokenBudgetResult {
   if (!usage) {
     return result;
   }
 
+  const pricing = options?.pricing ?? resolveModelPricingFromEnv();
+  const costUsd = computeCostUsd(
+    {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedTokens: usage.cachedTokens ?? null,
+      model: usage.model ?? null
+    },
+    pricing
+  );
+
+  const costBudgetUsd =
+    options?.costBudgetUsd !== undefined
+      ? options.costBudgetUsd
+      : resolveCostBudgetUsd();
+
   return tokenBudgetResultSchema.parse({
     ...result,
     actualInputTokens: usage.inputTokens,
-    actualOutputTokens: usage.outputTokens
+    actualOutputTokens: usage.outputTokens,
+    ...(usage.cachedTokens !== undefined
+      ? { actualCachedTokens: usage.cachedTokens }
+      : {}),
+    ...(usage.model !== undefined ? { model: usage.model } : {}),
+    costUsd,
+    ...(costBudgetUsd !== null
+      ? {
+          costBudgetUsd,
+          withinCostBudget: costUsd <= costBudgetUsd
+        }
+      : {})
   });
 }
 
@@ -399,6 +448,51 @@ export async function recordActualTokenUsage(input: {
     createdAt: input.recordedAt
   });
 
+  // Feature 180: if a per-task USD budget is configured, check cumulative
+  // cost across all TOKEN_USAGE_RECORDED events for this task. Fire a
+  // COST_BUDGET_EXCEEDED event on overrun; the event is advisory — callers
+  // decide whether to fail the phase. Keeping enforcement non-throwing here
+  // avoids surprising legacy callers that don't know about cost budgets.
+  if (
+    budget.costBudgetUsd !== undefined &&
+    budget.costBudgetUsd !== null &&
+    typeof budget.costUsd === "number"
+  ) {
+    const priorEvents = await input.repository.listRunEvents(
+      input.manifest.taskId
+    );
+    const accumulatedCostUsd = priorEvents.reduce((acc, event) => {
+      if (event.code !== EventCodes.TOKEN_USAGE_RECORDED) return acc;
+      const payload = event.data["tokenBudget"];
+      const parsed = tokenBudgetResultSchema.safeParse(payload);
+      if (!parsed.success) return acc;
+      return acc + (parsed.data.costUsd ?? 0);
+    }, 0);
+    if (accumulatedCostUsd > budget.costBudgetUsd) {
+      await recordRunEvent({
+        repository: input.repository,
+        logger: input.logger,
+        eventId: input.nextEventId(
+          input.phase,
+          EventCodes.COST_BUDGET_EXCEEDED
+        ),
+        taskId: input.manifest.taskId,
+        runId: input.runId,
+        phase: input.phase,
+        level: "warn",
+        code: EventCodes.COST_BUDGET_EXCEEDED,
+        message: `Task ${input.manifest.taskId} exceeded its USD cost budget: $${accumulatedCostUsd.toFixed(4)} > $${budget.costBudgetUsd.toFixed(4)}.`,
+        data: {
+          accumulatedCostUsd,
+          costBudgetUsd: budget.costBudgetUsd,
+          phase: input.phase,
+          ...(input.eventData ?? {})
+        },
+        createdAt: input.recordedAt
+      });
+    }
+  }
+
   return budget;
 }
 
@@ -410,7 +504,9 @@ export function summarizeRunTokenUsage(events: readonly {
   let totalEstimatedTokens = 0;
   let totalActualInputTokens = 0;
   let totalActualOutputTokens = 0;
+  let totalCostUsd = 0;
   let anyPhaseExceeded = false;
+  let anyCostBudgetExceeded = false;
 
   for (const event of events) {
     const maybeBudget = event.data["tokenBudget"];
@@ -423,8 +519,12 @@ export function summarizeRunTokenUsage(events: readonly {
     totalEstimatedTokens += parsed.data.estimatedTokens;
     totalActualInputTokens += parsed.data.actualInputTokens ?? 0;
     totalActualOutputTokens += parsed.data.actualOutputTokens ?? 0;
+    totalCostUsd += parsed.data.costUsd ?? 0;
     if (!parsed.data.withinBudget) {
       anyPhaseExceeded = true;
+    }
+    if (parsed.data.withinCostBudget === false) {
+      anyCostBudgetExceeded = true;
     }
   }
 
@@ -434,6 +534,8 @@ export function summarizeRunTokenUsage(events: readonly {
     totalActualInputTokens,
     totalActualOutputTokens,
     totalActualTokens: totalActualInputTokens + totalActualOutputTokens,
-    anyPhaseExceeded
+    totalCostUsd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
+    anyPhaseExceeded,
+    anyCostBudgetExceeded
   };
 }
