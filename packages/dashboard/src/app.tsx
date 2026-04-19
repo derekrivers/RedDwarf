@@ -23,6 +23,7 @@ import {
   IconMoon,
   IconPlugConnected,
   IconRobot,
+  IconShieldOff,
   IconSun
 } from "@tabler/icons-react";
 import { LoginScreen } from "./components/login-screen";
@@ -33,6 +34,7 @@ import { AgentQualityPage } from "./pages/agent-quality-page";
 import { AgentsPage } from "./pages/agents-page";
 import { ApprovalsPage } from "./pages/approvals-page";
 import { AuditPage } from "./pages/audit-page";
+import { TriagePage } from "./pages/triage-page";
 import { DashboardHomePage } from "./pages/dashboard-home-page";
 import { EvidencePage } from "./pages/evidence-page";
 import { OpenClawSettingsPage } from "./pages/openclaw-settings-page";
@@ -70,6 +72,7 @@ const navItems: NavItem[] = [
   { to: "/pipeline", label: "Pipeline", icon: IconActivityHeartbeat },
   { to: "/evidence", label: "Evidence", icon: IconDatabase },
   { to: "/audit", label: "Audit", icon: IconClipboardList },
+  { to: "/triage", label: "Triage", icon: IconShieldOff },
   { to: "/metrics", label: "Agent Quality", icon: IconChartBar },
   { to: "/agents", label: "Agents", icon: IconRobot },
   { to: "/repos", label: "Repositories", icon: IconGitBranch },
@@ -333,6 +336,10 @@ function DashboardShell(props: { token: string; onLogout: () => void }) {
               <Route
                 path="/audit"
                 element={<AuditPage apiClient={apiClient} />}
+              />
+              <Route
+                path="/triage"
+                element={<TriagePage apiClient={apiClient} />}
               />
               <Route
                 path="/metrics"

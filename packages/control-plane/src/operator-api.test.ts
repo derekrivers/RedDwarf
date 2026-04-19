@@ -1173,6 +1173,128 @@ describe("operator API server", () => {
     }
   });
 
+  it("quarantines, releases, notes, and kicks a heartbeat (Feature 186)", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const planResult = await runPlanningPipeline(
+      {
+        ...eligibleInput,
+        requestedCapabilities: ["can_write_code"],
+        affectedPaths: ["src/api.ts"]
+      },
+      {
+        repository,
+        planner: new DeterministicPlanningAgent(),
+        clock: () => new Date("2026-04-19T12:00:00.000Z"),
+        idGenerator: () => "op-triage-001"
+      }
+    );
+
+    const apiServer = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository }
+    );
+    await apiServer.start();
+    const port = apiServer.port;
+
+    try {
+      const taskId = planResult.manifest.taskId;
+
+      // ── Quarantine without reason → 400 ───────────────────────────────
+      const noReason = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/quarantine`,
+        {}
+      );
+      expect(noReason.status).toBe(400);
+
+      // ── Quarantine with reason → 200, manifest updated ────────────────
+      const quarantined = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/quarantine`,
+        { reason: "Suspicious pattern in spec; pausing for review." }
+      );
+      expect(quarantined.status).toBe(200);
+      expect(
+        (quarantined.body as {
+          manifest: { lifecycleStatus: string };
+        }).manifest.lifecycleStatus
+      ).toBe("quarantined");
+
+      // ── Quarantine again → 409 ────────────────────────────────────────
+      const dupQ = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/quarantine`,
+        { reason: "again" }
+      );
+      expect(dupQ.status).toBe(409);
+
+      // ── Release → 200, lifecycleStatus back to ready ──────────────────
+      const released = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/release`,
+        {}
+      );
+      expect(released.status).toBe(200);
+      expect(
+        (released.body as {
+          manifest: { lifecycleStatus: string };
+        }).manifest.lifecycleStatus
+      ).toBe("ready");
+
+      // ── Release a non-quarantined task → 409 ──────────────────────────
+      const dupRelease = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/release`,
+        {}
+      );
+      expect(dupRelease.status).toBe(409);
+
+      // ── Notes (empty body → 400) ──────────────────────────────────────
+      const noteEmpty = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/notes`,
+        { note: "" }
+      );
+      expect(noteEmpty.status).toBe(400);
+
+      // ── Notes (good) → 200, returns memoryId ──────────────────────────
+      const noteOk = await operatorPost(
+        port,
+        `/tasks/${encodeURIComponent(taskId)}/notes`,
+        { note: "On hold pending sec review.", author: "derek" }
+      );
+      expect(noteOk.status).toBe(200);
+      expect(typeof (noteOk.body as { memoryId: string }).memoryId).toBe(
+        "string"
+      );
+
+      // ── Heartbeat-kick: find an active/blocked run for this task ──────
+      const runs = await operatorGet(port, `/runs?taskId=${taskId}`);
+      const runList = (runs.body as { runs: Array<{ runId: string; status: string }> })
+        .runs;
+      const targetRun = runList.find(
+        (r) => r.status === "active" || r.status === "blocked"
+      );
+      expect(targetRun).toBeDefined();
+      const kicked = await operatorPost(
+        port,
+        `/runs/${encodeURIComponent(targetRun!.runId)}/heartbeat-kick`,
+        { reason: "checking on it" }
+      );
+      expect(kicked.status).toBe(200);
+
+      // ── Heartbeat-kick on missing run → 404 ───────────────────────────
+      const missing = await operatorPost(
+        port,
+        `/runs/does-not-exist/heartbeat-kick`,
+        {}
+      );
+      expect(missing.status).toBe(404);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
   it("returns the daily budget burn-down with no budgets configured", async () => {
     const repository = new InMemoryPlanningRepository();
     const apiServer = createOperatorApiServer(

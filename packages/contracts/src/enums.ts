@@ -20,7 +20,10 @@ export const taskLifecycleStatuses = [
   "blocked",
   "completed",
   "failed",
-  "cancelled"
+  "cancelled",
+  // Feature 186: operator-driven hold. Quarantined tasks are excluded from
+  // dispatch until an operator releases them back to ready or cancels them.
+  "quarantined"
 ] as const;
 
 export const phaseLifecycleStatuses = [
@@ -51,7 +54,11 @@ export const capabilities = [
   "can_touch_sensitive_paths",
   "can_use_secrets",
   "can_review",
-  "can_archive_evidence"
+  "can_archive_evidence",
+  // Feature 184: granted explicitly when a task is allowed to mutate
+  // package.json / lock files. Absence trips a `dependency_mutation`
+  // contract violation.
+  "can_modify_dependencies"
 ] as const;
 
 export const agentTypes = [
@@ -107,7 +114,10 @@ export const failureClasses = [
   "integration_failure",
   "merge_failure",
   "policy_violation",
-  "execution_loop"
+  "execution_loop",
+  // Feature 184: deterministic pre-flight contract-check failure
+  // (denied path, dependency mutation, schema drift, large/binary file).
+  "contract_violation"
 ] as const;
 export const pipelineRunStatusesForSummary = [
   "active",

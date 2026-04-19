@@ -29,8 +29,13 @@ import {
   AllowedPathViolationError,
   assignWorkspaceRepoRoot,
   createGitHubWorkspaceRepoBootstrapper,
-  createGitWorkspaceCommitPublisher
+  createGitWorkspaceCommitPublisher,
+  previewWorkspaceChangedFiles
 } from "../live-workflow.js";
+import {
+  evaluateContractViolations,
+  summariseContractViolations
+} from "./contract-check.js";
 import {
   createConcurrencyDecision,
   createPhaseRecord,
@@ -532,6 +537,52 @@ export async function runScmPhase(
         diff: ""
       };
     } else {
+      // Feature 184: deterministic contract check before publishing the
+      // branch. Runs over the workspace diff, fails fast on dependency-
+      // mutation, schema-drift, large-file, or binary-file violations
+      // (denied-path is also enforced inside `publish` as defence in depth).
+      const previewedFiles = await previewWorkspaceChangedFiles(
+        workspace,
+        runLogger
+      );
+      if (previewedFiles && previewedFiles.length > 0) {
+        const contractViolations = evaluateContractViolations({
+          changedFiles: previewedFiles,
+          requestedCapabilities: currentManifest.requestedCapabilities,
+          policySnapshot: validatedPolicySnapshot
+        });
+        if (contractViolations.length > 0) {
+          await recordRunEvent({
+            repository,
+            logger: runLogger,
+            eventId: nextEventId("scm", EventCodes.CONTRACT_CHECK_FAILED),
+            taskId,
+            runId,
+            phase: "scm",
+            level: "warn",
+            code: EventCodes.CONTRACT_CHECK_FAILED,
+            message: summariseContractViolations(contractViolations),
+            failureClass: "contract_violation",
+            data: {
+              workspaceId: workspace.workspaceId,
+              violations: contractViolations
+            },
+            createdAt: asIsoTimestamp(clock())
+          });
+          throw new PlanningPipelineFailure({
+            message: summariseContractViolations(contractViolations),
+            failureClass: "contract_violation",
+            phase: "scm",
+            code: EventCodes.CONTRACT_CHECK_FAILED,
+            details: {
+              workspaceId: workspace.workspaceId,
+              violations: contractViolations
+            },
+            taskId,
+            runId
+          });
+        }
+      }
       try {
         publication = await waitWithHeartbeat({
           work: workspaceCommitPublisher.publish({

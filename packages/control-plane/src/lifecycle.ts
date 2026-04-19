@@ -7,13 +7,17 @@ const taskLifecycleTransitions: Record<
   TaskLifecycleStatus,
   TaskLifecycleStatus[]
 > = {
-  draft: ["ready", "cancelled"],
-  ready: ["active", "cancelled"],
-  active: ["blocked", "completed", "failed", "cancelled"],
-  blocked: ["ready", "active", "failed", "cancelled", "completed"],
+  // Feature 186: `quarantined` is reachable from any non-terminal state via
+  // operator action and releases back to `ready` or `cancelled` only —
+  // dispatch is never resumed implicitly.
+  draft: ["ready", "cancelled", "quarantined"],
+  ready: ["active", "cancelled", "quarantined"],
+  active: ["blocked", "completed", "failed", "cancelled", "quarantined"],
+  blocked: ["ready", "active", "failed", "cancelled", "completed", "quarantined"],
   completed: [],
-  failed: ["draft", "cancelled"],
-  cancelled: []
+  failed: ["draft", "cancelled", "quarantined"],
+  cancelled: [],
+  quarantined: ["ready", "cancelled"]
 };
 
 const phaseLifecycleTransitions: Record<

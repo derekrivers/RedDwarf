@@ -180,6 +180,24 @@ export interface DashboardApiClient {
   buildAuditCsvUrl(filters?: AuditExportFilters): string;
   getAgentQualityMetrics(filters?: AgentQualityMetricsFilters): Promise<AgentQualityMetricsResponse>;
   getDailyBudgetStatus(): Promise<DailyBudgetStatusResponse>;
+  // Feature 186 — operator triage verbs.
+  listTasks(filters?: { lifecycleStatuses?: string[]; repo?: string; limit?: number }): Promise<{ tasks: TaskSummary[]; total: number }>;
+  quarantineTask(taskId: string, reason: string): Promise<{ manifest: TaskDetailResponse["manifest"] }>;
+  releaseTask(taskId: string, reason?: string): Promise<{ manifest: TaskDetailResponse["manifest"] }>;
+  addTaskNote(taskId: string, note: string, author?: string): Promise<{ memoryId: string }>;
+  kickRunHeartbeat(runId: string, reason?: string): Promise<{ run: { runId: string; lastHeartbeatAt: string } }>;
+}
+
+export interface TaskSummary {
+  taskId: string;
+  title: string;
+  source: TaskDetailResponse["manifest"]["source"];
+  lifecycleStatus: string;
+  currentPhase: string;
+  riskClass: string;
+  approvalMode: string;
+  updatedAt: string;
+  createdAt: string;
 }
 
 // Feature 183 — Org-level daily autonomy budget (M24 F-183).

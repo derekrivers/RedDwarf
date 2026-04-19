@@ -67,9 +67,14 @@ const execFileAsync = promisify(execFile);
 import {
   createApprovalRequest,
   createGitHubIssuePollingCursor,
+  createMemoryRecord,
+  createRunEvent,
   type PlanningRepository,
   type RepositoryHealthSnapshot
 } from "@reddwarf/evidence";
+import { assertTaskLifecycleTransition } from "./lifecycle.js";
+import { EventCodes } from "./pipeline/types.js";
+import type { TaskManifest } from "@reddwarf/contracts";
 import {
   assembleRunReport,
   dispatchReadyTask,
@@ -3028,6 +3033,243 @@ async function handleOperatorRequest(
       renderRunReportMarkdown(report),
       "text/markdown; charset=utf-8"
     );
+    return;
+  }
+
+  // POST /runs/:runId/heartbeat-kick — Feature 186 (operator triage).
+  // Refreshes lastHeartbeatAt on a stuck run so the dispatcher reconsiders
+  // it without a full cancel-and-retry. Active or blocked runs only.
+  const runHeartbeatKickMatch =
+    /^\/runs\/([^/]+)\/heartbeat-kick$/.exec(path);
+  if (method === "POST" && runHeartbeatKickMatch) {
+    const runId = decodeURIComponent(runHeartbeatKickMatch[1]!);
+    const run = await repository.getPipelineRun(runId);
+    if (!run) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Pipeline run ${runId} not found.`
+      });
+      return;
+    }
+    if (run.status !== "active" && run.status !== "blocked") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Cannot kick heartbeat on a ${run.status} run.`
+      });
+      return;
+    }
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | Record<string, unknown>
+      | null;
+    const reason =
+      body && typeof body["reason"] === "string"
+        ? body["reason"].trim().slice(0, 500)
+        : null;
+    const now = clock().toISOString();
+    const kicked: PipelineRun = { ...run, lastHeartbeatAt: now };
+    await repository.savePipelineRun(kicked);
+    await repository.saveRunEvent(
+      createRunEvent({
+        eventId: `${run.taskId}:heartbeat-kick:${runId}:${randomUUID()}`,
+        taskId: run.taskId,
+        runId,
+        phase: "intake",
+        level: "info",
+        code: EventCodes.HEARTBEAT_KICKED,
+        message: `Operator kicked heartbeat for run ${runId}.`,
+        data: {
+          previousHeartbeatAt: run.lastHeartbeatAt,
+          newHeartbeatAt: now,
+          ...(reason ? { reason } : {})
+        },
+        createdAt: now
+      })
+    );
+    writeOperatorJsonResponse(res, 200, { run: kicked });
+    return;
+  }
+
+  // POST /tasks/:taskId/quarantine — Feature 186.
+  const taskQuarantineMatch = /^\/tasks\/([^/]+)\/quarantine$/.exec(path);
+  if (method === "POST" && taskQuarantineMatch) {
+    const taskId = decodeURIComponent(taskQuarantineMatch[1]!);
+    const manifest = await repository.getManifest(taskId);
+    if (!manifest) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Task ${taskId} not found.`
+      });
+      return;
+    }
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | Record<string, unknown>
+      | null;
+    const reason =
+      body && typeof body["reason"] === "string"
+        ? body["reason"].trim()
+        : "";
+    if (reason.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "A non-empty `reason` is required for quarantine."
+      });
+      return;
+    }
+    if (manifest.lifecycleStatus === "quarantined") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Task ${taskId} is already quarantined.`
+      });
+      return;
+    }
+    try {
+      assertTaskLifecycleTransition(
+        manifest.lifecycleStatus,
+        "quarantined"
+      );
+    } catch (error) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+    const now = clock().toISOString();
+    const updated: TaskManifest = {
+      ...manifest,
+      lifecycleStatus: "quarantined",
+      updatedAt: now
+    };
+    await repository.updateManifest(updated);
+    await repository.saveRunEvent(
+      createRunEvent({
+        eventId: `${taskId}:quarantine:${randomUUID()}`,
+        taskId,
+        runId: "operator-action",
+        phase: "intake",
+        level: "warn",
+        code: EventCodes.TASK_QUARANTINED,
+        message: `Task ${taskId} quarantined: ${reason.slice(0, 200)}`,
+        data: {
+          previousLifecycleStatus: manifest.lifecycleStatus,
+          reason
+        },
+        createdAt: now
+      })
+    );
+    writeOperatorJsonResponse(res, 200, { manifest: updated });
+    return;
+  }
+
+  // POST /tasks/:taskId/release — Feature 186 (release from quarantine).
+  const taskReleaseMatch = /^\/tasks\/([^/]+)\/release$/.exec(path);
+  if (method === "POST" && taskReleaseMatch) {
+    const taskId = decodeURIComponent(taskReleaseMatch[1]!);
+    const manifest = await repository.getManifest(taskId);
+    if (!manifest) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Task ${taskId} not found.`
+      });
+      return;
+    }
+    if (manifest.lifecycleStatus !== "quarantined") {
+      writeOperatorJsonResponse(res, 409, {
+        error: "conflict",
+        message: `Task ${taskId} is not quarantined (current: ${manifest.lifecycleStatus}).`
+      });
+      return;
+    }
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | Record<string, unknown>
+      | null;
+    const reason =
+      body && typeof body["reason"] === "string"
+        ? body["reason"].trim()
+        : null;
+    const now = clock().toISOString();
+    const updated: TaskManifest = {
+      ...manifest,
+      lifecycleStatus: "ready",
+      updatedAt: now
+    };
+    await repository.updateManifest(updated);
+    await repository.saveRunEvent(
+      createRunEvent({
+        eventId: `${taskId}:release:${randomUUID()}`,
+        taskId,
+        runId: "operator-action",
+        phase: "intake",
+        level: "info",
+        code: EventCodes.TASK_RELEASED,
+        message: `Task ${taskId} released from quarantine.`,
+        data: { ...(reason ? { reason } : {}) },
+        createdAt: now
+      })
+    );
+    writeOperatorJsonResponse(res, 200, { manifest: updated });
+    return;
+  }
+
+  // POST /tasks/:taskId/notes — Feature 186 (operator note as memory record).
+  const taskNotesMatch = /^\/tasks\/([^/]+)\/notes$/.exec(path);
+  if (method === "POST" && taskNotesMatch) {
+    const taskId = decodeURIComponent(taskNotesMatch[1]!);
+    const manifest = await repository.getManifest(taskId);
+    if (!manifest) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Task ${taskId} not found.`
+      });
+      return;
+    }
+    const body = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | Record<string, unknown>
+      | null;
+    const note =
+      body && typeof body["note"] === "string" ? body["note"].trim() : "";
+    if (note.length === 0) {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "A non-empty `note` is required."
+      });
+      return;
+    }
+    const author =
+      body && typeof body["author"] === "string"
+        ? body["author"].trim()
+        : "operator";
+    const now = clock().toISOString();
+    const memoryId = `${taskId}:operator-note:${randomUUID()}`;
+    await repository.saveMemoryRecord(
+      createMemoryRecord({
+        memoryId,
+        taskId,
+        scope: "task",
+        provenance: "operator_provided",
+        key: `operator.note:${now}`,
+        title: `Operator note from ${author}`,
+        value: { note, author, recordedAt: now },
+        repo: manifest.source.repo,
+        tags: ["operator", "note"],
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await repository.saveRunEvent(
+      createRunEvent({
+        eventId: `${taskId}:operator-note:${randomUUID()}`,
+        taskId,
+        runId: "operator-action",
+        phase: "intake",
+        level: "info",
+        code: EventCodes.OPERATOR_NOTE_ADDED,
+        message: `Operator (${author}) added a note to ${taskId}.`,
+        data: { memoryId, author },
+        createdAt: now
+      })
+    );
+    writeOperatorJsonResponse(res, 200, { memoryId });
     return;
   }
 

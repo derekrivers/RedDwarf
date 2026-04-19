@@ -281,24 +281,34 @@ export async function assertWorkspaceRepoChangesWithinAllowedPaths(
   workspace: MaterializedManagedWorkspace,
   logger?: PlanningPipelineLogger
 ): Promise<void> {
-  const repoRoot = readWorkspaceRepoRoot(workspace);
-  if (!repoRoot) {
-    return;
-  }
+  const changedFiles = await previewWorkspaceChangedFiles(workspace, logger);
+  if (changedFiles === null) return;
+  assertChangedFilesAvoidDeniedPaths({
+    workspaceId: workspace.workspaceId,
+    deniedPaths: workspace.descriptor.deniedPaths,
+    changedFiles
+  });
+}
 
+/**
+ * Feature 184: returns the list of changed (modified, added, untracked) files
+ * in the workspace's checked-out repo without raising. Returns `null` when
+ * the workspace has no repo bootstrapped — callers treat that as "no diff to
+ * gate on".
+ */
+export async function previewWorkspaceChangedFiles(
+  workspace: MaterializedManagedWorkspace,
+  logger?: PlanningPipelineLogger
+): Promise<string[] | null> {
+  const repoRoot = readWorkspaceRepoRoot(workspace);
+  if (!repoRoot) return null;
   const statusBefore = await runCommand(
     "git",
     ["status", "--porcelain", "--untracked-files=all"],
     repoRoot,
     logger
   );
-  const changedFiles = parseGitStatusChangedFiles(statusBefore.stdout);
-
-  assertChangedFilesAvoidDeniedPaths({
-    workspaceId: workspace.workspaceId,
-    deniedPaths: workspace.descriptor.deniedPaths,
-    changedFiles
-  });
+  return parseGitStatusChangedFiles(statusBefore.stdout);
 }
 
 const CAN_WRITE_CODE_GUIDANCE =

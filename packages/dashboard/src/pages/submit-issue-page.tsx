@@ -16,7 +16,8 @@ const CAPABILITY_LABELS: Record<Capability, string> = {
   can_touch_sensitive_paths: "Sensitive Paths",
   can_use_secrets: "Use Secrets",
   can_review: "Review",
-  can_archive_evidence: "Archive Evidence"
+  can_archive_evidence: "Archive Evidence",
+  can_modify_dependencies: "Modify Dependencies"
 };
 
 const RISK_CLASS_OPTIONS = [
