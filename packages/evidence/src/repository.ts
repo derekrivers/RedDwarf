@@ -25,13 +25,27 @@ import {
   type PlanningSpec,
   type PolicySnapshot,
   type ProjectSpec,
+  type ProjectSpecProvenance,
   type PromptSnapshot,
   type RunEvent,
   type RunSummary,
   type TaskManifest,
   type TaskManifestQuery,
-  type TicketSpec
+  type TicketSpec,
+  type TranslationNote
 } from "@reddwarf/contracts";
+
+/** Input for an external-injection provenance record. */
+export interface SaveProjectSpecProvenanceInput {
+  projectId: string;
+  contextSpecId: string;
+  contextVersion: number;
+  adapterVersion: string;
+  targetSchemaVersion: string;
+  injectedBy: string | null;
+  translationNotes: TranslationNote[];
+  now: string;
+}
 
 export type RepositoryHealthStatus = "healthy" | "degraded";
 
@@ -78,6 +92,16 @@ export interface PlanningTransactionRepository {
   getTaskSnapshot(taskId: string): Promise<PersistedTaskSnapshot>;
   savePlanningSpec(spec: PlanningSpec): Promise<void>;
   savePolicySnapshot(taskId: string, snapshot: PolicySnapshot): Promise<void>;
+  saveProjectSpecProvenance(
+    input: SaveProjectSpecProvenanceInput
+  ): Promise<ProjectSpecProvenance>;
+  findProjectSpecProvenanceByContext(
+    contextSpecId: string,
+    contextVersion: number
+  ): Promise<ProjectSpecProvenance | null>;
+  findProjectSpecProvenanceByProject(
+    projectId: string
+  ): Promise<ProjectSpecProvenance | null>;
 }
 
 export interface PlanningCommandRepository extends PlanningTransactionRepository {

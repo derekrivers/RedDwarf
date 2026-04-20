@@ -2,6 +2,7 @@ import {
   asIsoTimestamp,
   projectSpecSchema,
   ticketSpecSchema,
+  translationNoteSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type ComplexityClassification,
@@ -17,10 +18,12 @@ import {
   type PlanningSpec,
   type PolicySnapshot,
   type ProjectSpec,
+  type ProjectSpecProvenance,
   type PromptSnapshot,
   type RunEvent,
   type TaskManifest,
-  type TicketSpec
+  type TicketSpec,
+  type TranslationNote
 } from "@reddwarf/contracts";
 import {
   createApprovalRequest,
@@ -309,6 +312,28 @@ export function mapTicketSpecRow(row: Record<string, unknown>): TicketSpec {
     );
   }
   return result.data;
+}
+
+export function mapProvenanceRow(
+  row: Record<string, unknown>
+): ProjectSpecProvenance {
+  const rawNotes = row.translation_notes;
+  const notes: TranslationNote[] = Array.isArray(rawNotes)
+    ? rawNotes.map((n) => translationNoteSchema.parse(n))
+    : typeof rawNotes === "string"
+      ? (JSON.parse(rawNotes) as unknown[]).map((n) => translationNoteSchema.parse(n))
+      : [];
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    context_spec_id: row.context_spec_id as string,
+    context_version: Number(row.context_version),
+    adapter_version: row.adapter_version as string,
+    target_schema_version: row.target_schema_version as string,
+    injected_at: asIsoTimestamp(new Date(row.injected_at as string | Date)),
+    injected_by: (row.injected_by as string | null) ?? null,
+    translation_notes: notes
+  };
 }
 
 export function mapEligibilityRejectionRow(

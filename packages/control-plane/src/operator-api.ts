@@ -34,6 +34,7 @@ import {
   taskPhaseSchema,
   directTaskInjectionRequestSchema,
   githubIssueSubmitSchema,
+  projectInjectionRequestSchema,
   type ApprovalDecision,
   type ApprovalRequest,
   type GitHubIssuePollingCursor,
@@ -41,7 +42,8 @@ import {
   type OperatorConfigField,
   type PlanningAgent,
   type PlanningTaskInput,
-  type PipelineRun
+  type PipelineRun,
+  type ProjectSpec
 } from "@reddwarf/contracts";
 import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
 import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
@@ -197,6 +199,10 @@ export interface OperatorApiDependencies {
   webhookOpenClawDispatch?: import("@reddwarf/integrations").OpenClawDispatchAdapter;
   /** Target root for architect workspace, forwarded to webhook-triggered pipelines. */
   webhookArchitectTargetRoot?: string;
+  /** When false, POST /projects/inject responds 404. Controlled via
+   *  REDDWARF_PROJECTS_INJECT_ENABLED env var by the top-level
+   *  bootstrap; defaults to true if unset. */
+  projectsInjectEnabled?: boolean;
 }
 
 export interface OperatorBlockedSummary {
@@ -361,7 +367,8 @@ export function createOperatorApiServer(
     circuitBreakerSnapshots,
     github: webhookGitHub,
     webhookOpenClawDispatch,
-    webhookArchitectTargetRoot
+    webhookArchitectTargetRoot,
+    projectsInjectEnabled = true
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
@@ -463,7 +470,8 @@ export function createOperatorApiServer(
           taskFlowAdapter,
           downstreamHealthProbes,
           circuitBreakerSnapshots,
-          intakeMode
+          intakeMode,
+          projectsInjectEnabled
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -2448,7 +2456,8 @@ async function handleOperatorRequest(
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null,
   downstreamHealthProbes?: DownstreamHealthProbe[],
   circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>,
-  intakeMode?: string
+  intakeMode?: string,
+  projectsInjectEnabled?: boolean
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -3661,6 +3670,114 @@ async function handleOperatorRequest(
       ...(result.spec ? { spec: result.spec } : {}),
       ...(result.policySnapshot ? { policySnapshot: result.policySnapshot } : {}),
       ...(result.approvalRequest ? { approvalRequest: result.approvalRequest } : {})
+    });
+    return;
+  }
+
+  // POST /projects/inject — deposit a pre-built ProjectSpec from Context (T-10).
+  if (method === "POST" && path === "/projects/inject") {
+    if (projectsInjectEnabled === false) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: "Project injection is disabled on this deployment."
+      });
+      return;
+    }
+
+    const rawBody = (await readOperatorJsonBody(
+      req,
+      maxRequestBodyBytes
+    )) as Record<string, unknown> | null;
+
+    let parsed;
+    try {
+      parsed = projectInjectionRequestSchema.parse(rawBody ?? {});
+    } catch (error) {
+      writeOperatorJsonResponse(res, 422, {
+        error: "unprocessable_entity",
+        message: safeErrorMessage(error, "Invalid ProjectSpec or provenance payload."),
+        ...(error instanceof Error && "issues" in error
+          ? { issues: (error as unknown as { issues: unknown }).issues }
+          : {})
+      });
+      return;
+    }
+
+    const injectedProject: ProjectSpec = {
+      ...parsed.projectSpec,
+      status: "pending_approval"
+    };
+
+    // Idempotency: look for an existing provenance row for this
+    // (context_spec_id, context_version).
+    const existing = await repository.findProjectSpecProvenanceByContext(
+      parsed.provenance.context_spec_id,
+      parsed.provenance.context_version
+    );
+
+    if (existing) {
+      const existingProject = await repository.getProjectSpec(existing.project_id);
+      writeOperatorJsonResponse(res, 200, {
+        project_id: existing.project_id,
+        state: existingProject?.status ?? "unknown",
+        provenance_id: existing.id,
+        deduplicated: true
+      });
+      return;
+    }
+
+    try {
+      await repository.saveProjectSpec(injectedProject);
+    } catch (error) {
+      writeOperatorJsonResponse(res, 422, {
+        error: "unprocessable_entity",
+        message: safeErrorMessage(error, "Project could not be persisted.")
+      });
+      return;
+    }
+
+    let provenance;
+    try {
+      provenance = await repository.saveProjectSpecProvenance({
+        projectId: injectedProject.projectId,
+        contextSpecId: parsed.provenance.context_spec_id,
+        contextVersion: parsed.provenance.context_version,
+        adapterVersion: parsed.provenance.adapter_version,
+        targetSchemaVersion: parsed.provenance.target_schema_version,
+        injectedBy: null,
+        translationNotes: parsed.provenance.translation_notes,
+        now: clock().toISOString()
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        // Race: another request won. Return the winner's record.
+        const winner = await repository.findProjectSpecProvenanceByContext(
+          parsed.provenance.context_spec_id,
+          parsed.provenance.context_version
+        );
+        if (winner) {
+          const winnerProject = await repository.getProjectSpec(winner.project_id);
+          writeOperatorJsonResponse(res, 200, {
+            project_id: winner.project_id,
+            state: winnerProject?.status ?? "unknown",
+            provenance_id: winner.id,
+            deduplicated: true
+          });
+          return;
+        }
+      }
+      writeOperatorJsonResponse(res, 500, {
+        error: "internal_error",
+        message: safeErrorMessage(error, "Failed to persist provenance.")
+      });
+      return;
+    }
+
+    writeOperatorJsonResponse(res, 201, {
+      project_id: injectedProject.projectId,
+      state: injectedProject.status,
+      provenance_id: provenance.id,
+      deduplicated: false
     });
     return;
   }

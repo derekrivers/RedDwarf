@@ -67,6 +67,10 @@ try {
   console.log("GitHub sub-issue creation disabled; project approvals will fall back to Postgres-only mode.");
 }
 
+const projectsInjectEnabledEnv = (process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?? "true")
+  .toLowerCase();
+const projectsInjectEnabled = projectsInjectEnabledEnv !== "false" && projectsInjectEnabledEnv !== "0";
+
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
   {
@@ -74,6 +78,7 @@ const server = createOperatorApiServer(
     planner,
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
+    projectsInjectEnabled,
     ...(githubIssuesAdapter ? { githubIssuesAdapter } : {})
   }
 );
@@ -88,6 +93,11 @@ console.log(`  GET  http://127.0.0.1:${server.port}/approvals`);
 console.log(`  GET  http://127.0.0.1:${server.port}/blocked`);
 console.log(`  GET  http://127.0.0.1:${server.port}/runs`);
 console.log(`  POST http://127.0.0.1:${server.port}/tasks/inject`);
+if (projectsInjectEnabled) {
+  console.log(`  POST http://127.0.0.1:${server.port}/projects/inject (Context injection)`);
+} else {
+  console.log("  /projects/inject disabled via REDDWARF_PROJECTS_INJECT_ENABLED=false");
+}
 console.log("Press Ctrl+C to stop.");
 
 process.on("SIGINT", async () => {
