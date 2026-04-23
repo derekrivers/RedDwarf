@@ -17,6 +17,7 @@ import {
   type PlanningSpec,
   type PolicySnapshot,
   type ProjectSpec,
+  type ProjectSpecProvenance,
   type PromptSnapshot,
   type RunEvent,
   type TaskManifest,
@@ -24,6 +25,7 @@ import {
   assertValidProjectStatusTransition,
   assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
+import { randomUUID } from "node:crypto";
 import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
 import {
@@ -41,7 +43,8 @@ import {
   type PersistedTaskSnapshot,
   type PlanningRepository,
   type PlanningTransactionRepository,
-  type RepositoryHealthSnapshot
+  type RepositoryHealthSnapshot,
+  type SaveProjectSpecProvenanceInput
 } from "./repository.js";
 
 export class InMemoryPlanningRepository implements PlanningRepository {
@@ -64,6 +67,7 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly projectSpecs = new Map<string, ProjectSpec>();
   public readonly ticketSpecs = new Map<string, TicketSpec>();
   public readonly intents = new Map<string, IntentRecord>();
+  public readonly projectSpecProvenance = new Map<string, ProjectSpecProvenance>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -584,6 +588,58 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       assertValidProjectStatusTransition(existing.status, project.status);
     }
     this.projectSpecs.set(project.projectId, project);
+  }
+
+  async saveProjectSpecProvenance(
+    input: SaveProjectSpecProvenanceInput
+  ): Promise<ProjectSpecProvenance> {
+    const existing = Array.from(this.projectSpecProvenance.values()).find(
+      (p) =>
+        p.context_spec_id === input.contextSpecId &&
+        p.context_version === input.contextVersion
+    );
+    if (existing) {
+      const err = new Error(
+        `duplicate key value violates unique constraint "project_spec_provenance_context_spec_id_context_version_key"`
+      );
+      (err as Error & { code?: string }).code = "23505";
+      throw err;
+    }
+    const record: ProjectSpecProvenance = {
+      id: randomUUID(),
+      project_id: input.projectId,
+      context_spec_id: input.contextSpecId,
+      context_version: input.contextVersion,
+      adapter_version: input.adapterVersion,
+      target_schema_version: input.targetSchemaVersion,
+      injected_at: input.now,
+      injected_by: input.injectedBy,
+      translation_notes: input.translationNotes
+    };
+    this.projectSpecProvenance.set(record.id, record);
+    return record;
+  }
+
+  async findProjectSpecProvenanceByContext(
+    contextSpecId: string,
+    contextVersion: number
+  ): Promise<ProjectSpecProvenance | null> {
+    return (
+      Array.from(this.projectSpecProvenance.values()).find(
+        (p) =>
+          p.context_spec_id === contextSpecId && p.context_version === contextVersion
+      ) ?? null
+    );
+  }
+
+  async findProjectSpecProvenanceByProject(
+    projectId: string
+  ): Promise<ProjectSpecProvenance | null> {
+    return (
+      Array.from(this.projectSpecProvenance.values()).find(
+        (p) => p.project_id === projectId
+      ) ?? null
+    );
   }
 
   async saveTicketSpec(ticket: TicketSpec): Promise<void> {

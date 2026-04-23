@@ -26,6 +26,7 @@ import {
   type PlanningSpec,
   type PolicySnapshot,
   type ProjectSpec,
+  type ProjectSpecProvenance,
   type PromptSnapshot,
   type IntentRecord,
   type IntentStatus,
@@ -34,6 +35,8 @@ import {
   type RunSummary,
   type TaskManifest,
   type TicketSpec,
+  type TranslationNote,
+  translationNoteSchema,
   assertValidProjectStatusTransition,
   assertValidTicketStatusTransition
 } from "@reddwarf/contracts";
@@ -53,6 +56,7 @@ import {
   mapPromptSnapshotRow,
   mapEligibilityRejectionRow,
   mapProjectSpecRow,
+  mapProvenanceRow,
   mapTicketSpecRow
 } from "./row-mappers.js";
 import { buildMemoryContextForRepository, summarizeRunEvents } from "./summarize.js";
@@ -68,7 +72,8 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository,
   type PersistedTaskSnapshot,
-  type RepositoryHealthSnapshot
+  type RepositoryHealthSnapshot,
+  type SaveProjectSpecProvenanceInput
 } from "./repository.js";
 import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
 // ── Transient Postgres error detection (R-11) ────────────────────────────────
@@ -1083,7 +1088,17 @@ export class PostgresPlanningRepository implements PlanningRepository {
       getTaskSnapshot: (taskId) => this.getTaskSnapshotWithExecutor(client, taskId),
       savePlanningSpec: (spec) => this.savePlanningSpecWithExecutor(client, spec),
       savePolicySnapshot: (taskId, snapshot) =>
-        this.savePolicySnapshotWithExecutor(client, taskId, snapshot)
+        this.savePolicySnapshotWithExecutor(client, taskId, snapshot),
+      saveProjectSpecProvenance: (input) =>
+        this.saveProjectSpecProvenanceWithExecutor(client, input),
+      findProjectSpecProvenanceByContext: (contextSpecId, contextVersion) =>
+        this.findProjectSpecProvenanceByContextWithExecutor(
+          client,
+          contextSpecId,
+          contextVersion
+        ),
+      findProjectSpecProvenanceByProject: (projectId) =>
+        this.findProjectSpecProvenanceByProjectWithExecutor(client, projectId)
     };
 
     try {
@@ -1659,6 +1674,101 @@ export class PostgresPlanningRepository implements PlanningRepository {
 
   async saveProjectSpec(project: ProjectSpec): Promise<void> {
     await this.saveProjectSpecWithExecutor(this.pool, project);
+  }
+
+  private async saveProjectSpecProvenanceWithExecutor(
+    executor: QueryExecutor,
+    input: SaveProjectSpecProvenanceInput
+  ): Promise<ProjectSpecProvenance> {
+    const result = await executor.query(
+      `
+        INSERT INTO project_spec_provenance (
+          project_id,
+          context_spec_id,
+          context_version,
+          adapter_version,
+          target_schema_version,
+          injected_at,
+          injected_by,
+          translation_notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+        RETURNING id, project_id, context_spec_id, context_version,
+                  adapter_version, target_schema_version, injected_at,
+                  injected_by, translation_notes
+      `,
+      [
+        input.projectId,
+        input.contextSpecId,
+        input.contextVersion,
+        input.adapterVersion,
+        input.targetSchemaVersion,
+        input.now,
+        input.injectedBy,
+        JSON.stringify(input.translationNotes)
+      ]
+    );
+    return mapProvenanceRow(result.rows[0]);
+  }
+
+  async saveProjectSpecProvenance(
+    input: SaveProjectSpecProvenanceInput
+  ): Promise<ProjectSpecProvenance> {
+    return this.saveProjectSpecProvenanceWithExecutor(this.pool, input);
+  }
+
+  private async findProjectSpecProvenanceByContextWithExecutor(
+    executor: QueryExecutor,
+    contextSpecId: string,
+    contextVersion: number
+  ): Promise<ProjectSpecProvenance | null> {
+    const result = await executor.query(
+      `
+        SELECT id, project_id, context_spec_id, context_version,
+               adapter_version, target_schema_version, injected_at,
+               injected_by, translation_notes
+        FROM project_spec_provenance
+        WHERE context_spec_id = $1 AND context_version = $2
+        LIMIT 1
+      `,
+      [contextSpecId, contextVersion]
+    );
+    return result.rows[0] ? mapProvenanceRow(result.rows[0]) : null;
+  }
+
+  async findProjectSpecProvenanceByContext(
+    contextSpecId: string,
+    contextVersion: number
+  ): Promise<ProjectSpecProvenance | null> {
+    return this.findProjectSpecProvenanceByContextWithExecutor(
+      this.pool,
+      contextSpecId,
+      contextVersion
+    );
+  }
+
+  private async findProjectSpecProvenanceByProjectWithExecutor(
+    executor: QueryExecutor,
+    projectId: string
+  ): Promise<ProjectSpecProvenance | null> {
+    const result = await executor.query(
+      `
+        SELECT id, project_id, context_spec_id, context_version,
+               adapter_version, target_schema_version, injected_at,
+               injected_by, translation_notes
+        FROM project_spec_provenance
+        WHERE project_id = $1
+        ORDER BY injected_at DESC
+        LIMIT 1
+      `,
+      [projectId]
+    );
+    return result.rows[0] ? mapProvenanceRow(result.rows[0]) : null;
+  }
+
+  async findProjectSpecProvenanceByProject(
+    projectId: string
+  ): Promise<ProjectSpecProvenance | null> {
+    return this.findProjectSpecProvenanceByProjectWithExecutor(this.pool, projectId);
   }
 
   private async saveTicketSpecWithExecutor(

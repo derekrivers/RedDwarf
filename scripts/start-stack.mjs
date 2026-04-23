@@ -717,6 +717,9 @@ const server = createOperatorApiServer(
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
     githubRepoDiscovery: github,
+    projectsInjectEnabled:
+      ((process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?? "true").toLowerCase() !== "false") &&
+      ((process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?? "true").toLowerCase() !== "0"),
     ...(githubIssuesAdapter ? { githubIssuesAdapter } : {}),
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),

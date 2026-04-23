@@ -3680,3 +3680,172 @@ describe("Project Mode — POST /projects/advance", () => {
     }
   });
 });
+
+describe("Project Mode — POST /projects/inject", () => {
+  const validProjectSpec = () =>
+    buildTestProjectSpec({
+      projectId: "project:context-inject-1",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Context-injected project",
+      summary: "A project injected from Context with well-formed ProjectSpec data for testing.",
+      status: "draft"
+    });
+
+  const validProvenance = () => ({
+    context_spec_id: "11111111-1111-4111-8111-111111111111",
+    context_version: 7,
+    adapter_version: "0.1.0",
+    target_schema_version: "0.1.0@9648d893a55b",
+    translation_notes: [
+      {
+        kind: "grouped" as const,
+        canonicalPath: "capabilities[0]",
+        projectSpecPath: "summary",
+        reason: "Capability folded into summary.",
+        severity: "info" as const
+      }
+    ]
+  });
+
+  it("201s on first inject and lands the project in pending_approval", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: validProjectSpec(),
+        provenance: validProvenance()
+      });
+      expect(res.status).toBe(201);
+      const body = res.body as {
+        project_id: string;
+        state: string;
+        provenance_id: string;
+        deduplicated: boolean;
+      };
+      expect(body.state).toBe("pending_approval");
+      expect(body.deduplicated).toBe(false);
+      const stored = await repository.getProjectSpec(body.project_id);
+      expect(stored?.status).toBe("pending_approval");
+      const prov = await repository.findProjectSpecProvenanceByContext(
+        validProvenance().context_spec_id,
+        validProvenance().context_version
+      );
+      expect(prov?.adapter_version).toBe("0.1.0");
+      expect(prov?.translation_notes).toHaveLength(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("200s with deduplicated: true on idempotent re-post", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const first = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: validProjectSpec(),
+        provenance: validProvenance()
+      });
+      expect(first.status).toBe(201);
+      const second = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: validProjectSpec(),
+        provenance: validProvenance()
+      });
+      expect(second.status).toBe(200);
+      const body = second.body as { deduplicated: boolean; project_id: string };
+      expect(body.deduplicated).toBe(true);
+      expect(body.project_id).toBe((first.body as { project_id: string }).project_id);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("422s on an invalid ProjectSpec payload", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: { projectId: "x" }, // missing required fields
+        provenance: validProvenance()
+      });
+      expect(res.status).toBe(422);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("401s without the operator token", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        "/projects/inject",
+        { projectSpec: validProjectSpec(), provenance: validProvenance() },
+        null
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("404s when REDDWARF_PROJECTS_INJECT_ENABLED is false", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date(testTimestamp),
+        projectsInjectEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: validProjectSpec(),
+        provenance: validProvenance()
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("accepts an adapter schema-version mismatch as informational — does not block injection", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      { repository, clock: () => new Date(testTimestamp) }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: validProjectSpec(),
+        provenance: {
+          ...validProvenance(),
+          target_schema_version: "99.0.0@deadbeef"
+        }
+      });
+      expect(res.status).toBe(201);
+    } finally {
+      await server.stop();
+    }
+  });
+});

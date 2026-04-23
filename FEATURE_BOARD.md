@@ -20,6 +20,10 @@ To pick the next milestone, draft new entries here and reference the source spec
 - [`docs/openclaw/openclaw-integration-features-spec.md`](docs/openclaw/openclaw-integration-features-spec.md) — integration spec (basis for M21)
 - [`docs/reddwarf_project_mode_spec.md`](docs/reddwarf_project_mode_spec.md) — project-mode spec (basis for M20)
 
+### Recently landed (not yet archived)
+
+- **POST /projects/inject** — operator API route that accepts a pre-built `ProjectSpec` from Context (github.com/derekrivers/context) along with `{ context_spec_id, context_version, adapter_version, target_schema_version, translation_notes }` and deposits the project into the same `pending_approval` state a Project Mode planning run reaches. Idempotent on `(context_spec_id, context_version)` via a `project_spec_provenance` table constraint. Gated by `REDDWARF_PROJECTS_INJECT_ENABLED` (default `true`). Migration 0019. Pairs with Context ticket T-10.
+
 ### Known follow-ups (deferred from completed features)
 
 These are explicitly scoped out of the v1 features that shipped them; promote to a board item when there is concrete demand.
