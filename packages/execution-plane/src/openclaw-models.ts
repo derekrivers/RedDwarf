@@ -21,11 +21,11 @@ export const MODEL_PROVIDER_ROLE_MAP = {
     developer: "openai/gpt-5.4"
   },
   "openai-codex": {
-    coordinator: "openai-codex/gpt-5.5",
-    analyst: "openai-codex/gpt-5.5",
-    reviewer: "openai-codex/gpt-5.5",
-    validator: "openai-codex/gpt-5.5",
-    developer: "openai-codex/gpt-5.5"
+    coordinator: "openai-codex/gpt-5.4",
+    analyst: "openai-codex/gpt-5.4",
+    reviewer: "openai-codex/gpt-5.4",
+    validator: "openai-codex/gpt-5.4",
+    developer: "openai-codex/gpt-5.4"
   }
 } as const satisfies Record<
   OpenClawModelProvider,
