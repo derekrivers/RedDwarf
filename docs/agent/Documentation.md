@@ -1,5 +1,13 @@
 # Agent Documentation
 
+## 2026-04-25
+
+- Bumped the `openai-codex` provider role bindings from `openai-codex/gpt-5.4` to `openai-codex/gpt-5.5` in `packages/execution-plane/src/openclaw-models.ts` (all five roles: coordinator, analyst, reviewer, validator, developer). Direct `openai/*` mappings and Anthropic↔OpenAI failover chains continue to target `openai/gpt-5.4` since the user's request was scoped to the codex (OAuth) path.
+- Bumped the default `OPENCLAW_IMAGE` pin from `2026.4.10` to `2026.4.23` in `infra/docker/docker-compose.yml`, `.env.example`, and `docs/reference/CONFIG.md`. The new image is what registers `openai-codex/gpt-5.5` per the [v2026.4.23 CHANGELOG](https://github.com/openclaw/openclaw/blob/v2026.4.23/CHANGELOG.md) — the older default would not resolve the new model id.
+- Added a `gpt-5.5` entry to `DEFAULT_MODEL_PRICING` in `packages/contracts/src/model-pricing.ts` mirroring the `gpt-5.4` rates ($5/$15 per 1M input/output) as a placeholder; deployments with a real list price should override via `REDDWARF_MODEL_PRICING_JSON` rather than editing the default.
+- Updated codex-binding assertions in `packages/control-plane/src/openclaw-config.test.ts` and `packages/execution-plane/src/index.test.ts` to expect `openai-codex/gpt-5.5`.
+- Verification: `corepack pnpm typecheck`; `corepack pnpm test` (750 passed / 11 skipped).
+
 ## 2026-04-19
 
 - Archived 35 completed rows from `FEATURE_BOARD.md` into `features_archive/COMPLETED_FEATURES.md` (all of M20, M21, M22 and M23 Features 175, 176). Counter bumped 134 → 169. Feature 175 was already live in [approval.ts](packages/control-plane/src/pipeline/approval.ts) but was still marked `pending`; flipped to complete after verifying the rework decision path plus `rework.feedback:<phase>` memory record.

@@ -43,7 +43,7 @@ Changing any of these requires a stack restart.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:2026.4.10` | OpenClaw container image. Pin to an explicit tag for reproducibility. |
+| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:2026.4.23` | OpenClaw container image. Pin to an explicit tag for reproducibility. |
 | `OPENCLAW_HOST_PORT` | `3578` | Host port for the OpenClaw Control UI. |
 | `POSTGRES_HOST_PORT` | `55532` | Host port for Docker-managed Postgres (non-standard to avoid collisions). |
 

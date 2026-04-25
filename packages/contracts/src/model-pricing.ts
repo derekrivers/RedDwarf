@@ -51,6 +51,10 @@ export const DEFAULT_MODEL_PRICING: ModelPricingTable = {
     inputPer1M: 5,
     outputPer1M: 15
   },
+  "gpt-5.5": {
+    inputPer1M: 5,
+    outputPer1M: 15
+  },
   "gpt-4o": {
     inputPer1M: 2.5,
     outputPer1M: 10
