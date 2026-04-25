@@ -43,7 +43,7 @@ Changing any of these requires a stack restart.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:2026.4.23` | OpenClaw container image. Pin to an explicit tag for reproducibility. Set to a locally-built toolchain image (see `infra/docker/openclaw/build.sh`) when you want Ruby/Rails, Python, and pnpm/yarn pre-installed so the developer phase does not pay first-install cost on every complex-app task. |
+| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:2026.4.23` | OpenClaw container image. Pin to an explicit tag for reproducibility. Set to a locally-built toolchain image (see `infra/docker/openclaw/build.sh`) to add the universal build chain plus `mise` for polyglot runtime version management. The project's `.tool-versions` decides which runtimes get installed; cache volumes wired into `docker-compose.yml` (gems, npm, pnpm, pip, cargo, go modules, mise-installed runtimes) amortize the install cost across tasks so the developer phase does not pay it per task. |
 | `OPENCLAW_HOST_PORT` | `3578` | Host port for the OpenClaw Control UI. |
 | `POSTGRES_HOST_PORT` | `55532` | Host port for Docker-managed Postgres (non-standard to avoid collisions). |
 

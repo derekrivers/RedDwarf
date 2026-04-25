@@ -1,31 +1,49 @@
 # RedDwarf OpenClaw toolchain image.
 #
-# Derived from the upstream OpenClaw gateway image, this layer pre-bakes the
-# language runtimes and package managers that complex-app tasks repeatedly
-# install on first run (Ruby/Rails, Python, modern Node package managers,
-# common build deps). Without it, a Rails scaffold + `bundle install` + test
-# run frequently exceeds the developer-phase timeout because all of bundler
-# resolution, native gem compiles, and gem cache priming happen inside the
-# task's wall clock budget.
+# Derived from the upstream OpenClaw gateway image. Adds:
 #
-# See `infra/docker/openclaw/build.sh` for the canonical build invocation.
-# After building, set OPENCLAW_IMAGE in your .env to the tag this Dockerfile
-# produces (defaults to reddwarf/openclaw-toolchains:<base-tag>).
+#   1. A stack-agnostic system build chain (`build-essential` + the headers
+#      most native gem / wheel / addon builds need) and common database /
+#      cache clients. These are universal — they don't change when the
+#      project's primary language does.
+#
+#   2. `mise` (https://mise.jdx.dev), a polyglot runtime version manager.
+#      Projects pin runtimes via `.tool-versions` / `mise.toml`; the agent
+#      runs `mise install` and gets whatever Ruby / Node / Python / Go / etc.
+#      version the project asks for. One tool covers ~50 languages, so the
+#      image stays the same when a new stack lands in a generated app.
+#
+#   3. Pre-created cache directories under the runtime user's home. The
+#      docker-compose service mounts named volumes onto these paths so
+#      package-manager state (gems, npm modules, pip wheels, cargo crates,
+#      go modules, mise-installed runtimes) survives across tasks. First
+#      task on a stack pays the install cost; subsequent tasks of the same
+#      stack hit the cache and finish in seconds.
+#
+# This is the scaling counterpart to the workspace-mtime progress signal in
+# `createDeveloperHandoffAwaiter`: the awaiter makes long first-installs
+# survivable, the cache volumes make sure most tasks never pay them again.
 
 ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:2026.4.23
 FROM ${OPENCLAW_BASE_IMAGE}
 
 USER root
 
-# Build essentials and headers commonly needed by native gem / wheel builds.
-# Kept intentionally broad — these are tens of MB and the alternative is an
-# install-time stall on the first task that needs them.
+# Universal build / link / header surface. Everything here is needed by
+# native extensions across multiple ecosystems (Ruby gems with C extensions,
+# Python wheels with native deps, Node `node-gyp` builds, Rust crates that
+# wrap C libraries) — keeping them stack-agnostic is the whole point.
+#
+# Database / cache clients ride along because most generated apps need at
+# least one of them and the marginal image cost is small versus paying
+# `apt-get install` per task.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
         git \
+        gnupg \
         pkg-config \
         libssl-dev \
         libyaml-dev \
@@ -40,39 +58,60 @@ RUN apt-get update \
         sqlite3 \
         postgresql-client \
         redis-tools \
-        python3 \
-        python3-pip \
-        python3-venv \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Ruby + Rails. Use the distro Ruby (Debian bookworm ships 3.1) rather than
-# building from source — version freshness is a non-goal here; what matters
-# is that `bundle` and `rails new` work without internet round trips.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ruby-full \
-    && rm -rf /var/lib/apt/lists/*
+# mise — polyglot runtime version manager. Installed via the official
+# install script with an optional pinned version; without `MISE_VERSION`
+# the install script picks the latest stable release at build time.
+ARG MISE_VERSION=
+RUN set -eu; \
+    if [ -n "${MISE_VERSION}" ]; then \
+        curl -fsSL https://mise.run | MISE_VERSION="${MISE_VERSION}" MISE_INSTALL_PATH=/usr/local/bin/mise sh; \
+    else \
+        curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh; \
+    fi; \
+    chmod 0755 /usr/local/bin/mise; \
+    mise --version
 
-ARG RAILS_VERSION=7.2.2
-RUN gem install --no-document bundler \
-    && gem install --no-document rails -v "${RAILS_VERSION}"
+# Pre-create the cache and runtime-install directories under the runtime
+# user's home. docker-compose mounts named volumes onto these paths so
+# their contents survive across tasks. Listed explicitly rather than via a
+# loop so a future change is easy to grep for.
+#
+# `mise` runtimes live under `~/.local/share/mise/installs/<lang>/<ver>/`;
+# everything else is the conventional package-manager cache location.
+RUN install -d -o node -g node -m 0755 \
+        /home/node/.cache \
+        /home/node/.cache/mise \
+        /home/node/.cache/pip \
+        /home/node/.cache/yarn \
+        /home/node/.local \
+        /home/node/.local/share \
+        /home/node/.local/share/mise \
+        /home/node/.local/share/pnpm \
+        /home/node/.local/share/pnpm/store \
+        /home/node/.npm \
+        /home/node/.bundle \
+        /home/node/.gem \
+        /home/node/.cargo \
+        /home/node/.cargo/registry \
+        /home/node/.cargo/git \
+        /home/node/go \
+        /home/node/go/pkg
 
-# Modern Node package managers. The base image already has Node + npm; pnpm
-# and yarn are common in scaffolded projects and otherwise cost ~20s on
-# first use to install via `corepack`.
-RUN if command -v node >/dev/null 2>&1; then \
-        npm install -g pnpm yarn || true; \
-    fi
+# Make `mise activate` available to interactive shells and to non-login
+# subprocesses spawned by the agent. The PATH prefix covers the case where
+# a tool runs before `mise activate` has a chance to inject shims.
+RUN printf '%s\n' \
+        'export PATH="$HOME/.local/share/mise/shims:$PATH"' \
+        'eval "$(/usr/local/bin/mise activate bash --shims)"' \
+        > /etc/profile.d/mise.sh \
+    && chmod 0644 /etc/profile.d/mise.sh
 
-# Frequently-used Python tooling. Held to a minimal floor so the image stays
-# below ~1.5 GB; tasks that need a specific framework still install it via
-# pip, but the wheel cache + base interpreter are no longer the long pole.
-RUN python3 -m pip install --no-cache-dir --break-system-packages \
-        pipx \
-        virtualenv \
-        || true
+ENV PATH="/home/node/.local/share/mise/shims:${PATH}"
 
-# Restore the upstream image's default user. The upstream entrypoint runs as
-# `node`; reverting here keeps file ownership and gateway behaviour
+# Restore the upstream image's default user. The upstream entrypoint runs
+# as `node`; reverting here keeps file ownership and gateway behaviour
 # identical to the unmodified base image.
 USER node
