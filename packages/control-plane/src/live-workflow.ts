@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
-import { access, readFile, stat, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   architectureReviewReportSchema,
@@ -663,6 +663,23 @@ export interface DeveloperHandoffAwaiterOptions {
    * normal 2-minute sessionIdleTimeoutMs).
    */
   tightenedIdleTimeoutMs?: number;
+  /**
+   * When true (default), the awaiter samples a workspace-tree mtime
+   * fingerprint while the agent is waiting on a long-running tool call.
+   * Filesystem activity (e.g. `bundle install` populating `vendor/bundle`,
+   * `npm install` populating `node_modules`, a build emitting artifacts) is
+   * treated as forward progress and renews the sliding deadline even when no
+   * new transcript entry has been produced. Set to false to fall back to the
+   * pre-existing transcript-only progress model.
+   */
+  workspaceMtimeProgressEnabled?: boolean;
+  /**
+   * Maximum number of files inspected during a single workspace mtime
+   * fingerprint sample. The walk exits early as soon as one file newer than
+   * the last recorded mtime is found, so this only bounds the worst case
+   * (no fresh activity in a large tree). Defaults to 4000.
+   */
+  workspaceMtimeSampleFileCap?: number;
 }
 
 export function createDeveloperHandoffAwaiter(
@@ -678,6 +695,9 @@ export function createDeveloperHandoffAwaiter(
   const maxRuntimeMs = options.maxRuntimeMs ?? null;
   const noWriteActivityWarningMs = options.noWriteActivityWarningMs ?? 4 * 60 * 1000;
   const tightenedIdleTimeoutMs = options.tightenedIdleTimeoutMs ?? 60 * 1000;
+  const workspaceMtimeProgressEnabled =
+    options.workspaceMtimeProgressEnabled ?? true;
+  const workspaceMtimeSampleFileCap = options.workspaceMtimeSampleFileCap ?? 4000;
 
   return {
     async waitForCompletion(input) {
@@ -701,6 +721,19 @@ export function createDeveloperHandoffAwaiter(
       let lastRepoSignature: string | null = null;
       let lastWriteOperationsCount = 0;
       let writeStallWarningEmitted = false;
+      // Workspace-tree mtime fingerprint. Only sampled while the agent is
+      // waiting on a tool call — many long-running tools (`bundle install`,
+      // `npm install`, large compiles) produce no transcript output for
+      // minutes at a time, but the workspace filesystem is constantly being
+      // written to. Treating that as progress prevents false stalls during
+      // legitimate environment-bootstrap and build work without weakening
+      // idle detection for genuinely hung sessions.
+      //
+      // Seeded with the awaiter start time so the first poll only counts
+      // *new* filesystem activity as progress (otherwise pre-existing files
+      // in the workspace would show up as "newer than 0" and falsely renew
+      // the deadline on every poll).
+      let lastWorkspaceMaxMtimeMs = startedAt;
 
       while (
         Date.now() < progressDeadline &&
@@ -810,6 +843,30 @@ export function createDeveloperHandoffAwaiter(
               `Developer session ${input.sessionKey} has been running for ${Math.round(elapsedMs / 1000)}s with code writing enabled but zero write operations. ` +
               `The agent may be stuck in extended planning or preparing a single large write. Tightening idle detection.`
             );
+          }
+
+          // While the agent is waiting on a long-running tool call, sample the
+          // workspace tree for filesystem activity. `bundle install`, `npm
+          // install`, native gem builds, and large compiles can run for many
+          // minutes without producing any transcript output, but they
+          // continuously write files. Treat any fresh mtime in the workspace
+          // (outside `.git`) as forward progress — it renews the sliding
+          // deadline and resets the no-progress idle clock.
+          if (
+            workspaceMtimeProgressEnabled &&
+            transcriptStatus.isWaitingForToolResult &&
+            repoRoot !== null
+          ) {
+            const fingerprint = await inspectWorkspaceMtimeFingerprint(repoRoot, {
+              fileCap: workspaceMtimeSampleFileCap,
+              ignoreDirNames: WORKSPACE_MTIME_IGNORE_DIR_NAMES,
+              earlyExitNewerThanMs: lastWorkspaceMaxMtimeMs
+            });
+            if (fingerprint !== null && fingerprint.maxMtimeMs > lastWorkspaceMaxMtimeMs) {
+              lastWorkspaceMaxMtimeMs = fingerprint.maxMtimeMs;
+              lastTranscriptGrowthAt = Date.now();
+              progressDeadline = Date.now() + timeoutMs;
+            }
           }
 
           // Use a longer idle tolerance when the agent is in the middle of a
@@ -1296,6 +1353,121 @@ async function repositoryHasChanges(
   } catch {
     return false;
   }
+}
+
+/**
+ * Directories that are skipped when sampling workspace-tree mtimes. `.git`
+ * has its own committed-changes signal upstream and would dominate the walk
+ * with object/index churn. The remaining entries are noisy caches that grow
+ * during environment bootstrap (e.g. `bundle install` populating
+ * `vendor/bundle/`) — we still capture progress through their *parent*
+ * directories' mtimes plus parallel signals like `Gemfile.lock`, so omitting
+ * them keeps the walk bounded without losing the progress signal we care
+ * about. Tune via `workspaceMtimeSampleFileCap` if a project legitimately
+ * needs deeper sampling.
+ */
+const WORKSPACE_MTIME_IGNORE_DIR_NAMES: ReadonlySet<string> = new Set([
+  ".git"
+]);
+
+interface WorkspaceMtimeFingerprint {
+  maxMtimeMs: number;
+  sampledFiles: number;
+}
+
+interface WorkspaceMtimeFingerprintOptions {
+  fileCap: number;
+  ignoreDirNames: ReadonlySet<string>;
+  /**
+   * When set, the walk stops as soon as a single file with mtime greater
+   * than this threshold is found. The returned `maxMtimeMs` is then that
+   * file's mtime (a lower bound on the true max). This makes the steady-
+   * state cost essentially "stat one file" when the workspace is being
+   * actively written to, while still bounding the no-activity cost at
+   * `fileCap` stat calls.
+   */
+  earlyExitNewerThanMs: number;
+}
+
+/**
+ * Recursively samples the workspace tree and returns the maximum file mtime
+ * found, capped at `fileCap` files inspected. Returns `null` when the
+ * directory cannot be read — callers should treat that as "no signal" and
+ * fall back to the existing transcript / repo / write-op progress checks.
+ *
+ * Errors from individual `readdir`/`stat` calls are swallowed: the walker
+ * runs concurrently with active subprocesses (bundler, npm, etc.) that may
+ * unlink temp files mid-walk, and a transient ENOENT must not crash the
+ * developer awaiter.
+ */
+async function inspectWorkspaceMtimeFingerprint(
+  workspaceRoot: string,
+  options: WorkspaceMtimeFingerprintOptions
+): Promise<WorkspaceMtimeFingerprint | null> {
+  let sampled = 0;
+  let maxMtimeMs = 0;
+  let earlyExit = false;
+
+  let rootEntries;
+  try {
+    rootEntries = await readdir(workspaceRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const stack: string[] = [];
+  for (const entry of rootEntries) {
+    if (entry.isDirectory()) {
+      if (options.ignoreDirNames.has(entry.name)) continue;
+      stack.push(join(workspaceRoot, entry.name));
+    } else if (entry.isFile()) {
+      try {
+        const s = await stat(join(workspaceRoot, entry.name));
+        if (s.mtimeMs > maxMtimeMs) maxMtimeMs = s.mtimeMs;
+        sampled += 1;
+        if (s.mtimeMs > options.earlyExitNewerThanMs) {
+          earlyExit = true;
+          break;
+        }
+      } catch {
+        // file may have been removed by an active subprocess; ignore.
+      }
+    }
+    if (sampled >= options.fileCap) break;
+  }
+
+  while (!earlyExit && stack.length > 0 && sampled < options.fileCap) {
+    const dir = stack.pop()!;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (sampled >= options.fileCap) break;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (options.ignoreDirNames.has(entry.name)) continue;
+        stack.push(path);
+      } else if (entry.isFile()) {
+        try {
+          const s = await stat(path);
+          if (s.mtimeMs > maxMtimeMs) maxMtimeMs = s.mtimeMs;
+          sampled += 1;
+          if (s.mtimeMs > options.earlyExitNewerThanMs) {
+            earlyExit = true;
+            break;
+          }
+        } catch {
+          // see comment above.
+        }
+      }
+    }
+  }
+
+  if (sampled === 0) return null;
+  return { maxMtimeMs, sampledFiles: sampled };
 }
 
 async function inspectRepositoryProgressSignature(

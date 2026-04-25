@@ -12,6 +12,7 @@ import {
   DeterministicValidationAgent,
   AllowedPathViolationError,
   ExternalCommandTimeoutError,
+  assignWorkspaceRepoRoot,
   PlanningPipelineFailure,
   assertPhaseLifecycleTransition,
   assertTaskLifecycleTransition,
@@ -5567,6 +5568,228 @@ describe("createDeveloperHandoffAwaiter", () => {
       ).rejects.toBeInstanceOf(OpenClawSessionStalledError);
 
       expect(warnings.some((w) => w.includes("zero write operations"))).toBe(true);
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("treats workspace filesystem activity during a long tool call as forward progress", async () => {
+    // Simulates `bundle install` / `npm install`: the model is parked on a
+    // toolUse stop reason with no further transcript output, but the tool
+    // subprocess is busy writing files into the workspace. Without the
+    // workspace-mtime progress signal the awaiter would stall once
+    // toolExecutionGracePeriodMs elapsed; with it, fresh fs activity renews
+    // the deadline and the handoff is observed cleanly.
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-mtime-progress-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-mtime-progress.jsonl"
+      );
+      const repoRoot = join(tempRoot, "repo");
+      const vendorBundle = join(repoRoot, "vendor", "bundle", "ruby", "3.3.0", "gems", "fake-gem-1.0");
+      const artifactsDir = join(tempRoot, "artifacts");
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await mkdir(artifactsDir, { recursive: true });
+      await mkdir(vendorBundle, { recursive: true });
+      await writeFile(join(repoRoot, "Gemfile"), "source 'https://rubygems.org'\n", "utf8");
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Running bundle install..." }],
+              stopReason: "toolUse"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      // Simulate bundler steadily writing fresh files into vendor/bundle/.
+      // Each tick lands well within toolExecutionGracePeriodMs (60ms) so the
+      // mtime walk renews the deadline before the idle clock fires.
+      const tickInterval = setInterval(() => {
+        const filename = `gemfile-${Date.now()}.rb`;
+        void writeFile(join(vendorBundle, filename), "# generated\n", "utf8");
+      }, 25);
+
+      // Handoff arrives well after multiple grace-period windows would have
+      // elapsed without any rescue signal.
+      setTimeout(() => {
+        void writeFile(
+          join(artifactsDir, "developer-handoff.md"),
+          [
+            "# Development Handoff",
+            "",
+            "- Code writing enabled: no",
+            "",
+            "## Summary",
+            "",
+            "bundle install completed.",
+            "",
+            "## Implementation Notes",
+            "",
+            "- none",
+            "",
+            "## Blocked Actions",
+            "",
+            "- none",
+            "",
+            "## Next Actions",
+            "",
+            "- Review."
+          ].join("\n"),
+          "utf8"
+        );
+      }, 250);
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 10,
+        sessionIdleTimeoutMs: 5_000,
+        toolExecutionGracePeriodMs: 60
+      });
+
+      const workspace = {
+        workspaceId: "workspace-mtime-progress",
+        workspaceRoot: tempRoot,
+        artifactsDir,
+        descriptor: {
+          toolPolicy: { codeWriteEnabled: false }
+        }
+      } as never;
+      assignWorkspaceRepoRoot(workspace, repoRoot);
+
+      try {
+        await expect(
+          awaiter.waitForCompletion({
+            manifest: { taskId: "acme-platform-60" } as never,
+            workspace,
+            sessionKey: "github:issue:acme/platform:60",
+            dispatchResult: {
+              accepted: true,
+              sessionKey: "github:issue:acme/platform:60",
+              agentId: "reddwarf-developer",
+              sessionId: "session-mtime-progress",
+              respondedAt: new Date().toISOString(),
+              statusMessage: null
+            },
+            onHeartbeat: undefined
+          })
+        ).resolves.toMatchObject({
+          handoffPath: join(artifactsDir, "developer-handoff.md")
+        });
+      } finally {
+        clearInterval(tickInterval);
+      }
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.REDDWARF_OPENCLAW_CONFIG_PATH = previousConfigPath;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("still stalls during a long tool call when workspace-mtime progress is disabled", async () => {
+    // Companion to the previous test: identical fs activity, but with
+    // workspaceMtimeProgressEnabled disabled the awaiter falls back to the
+    // pre-existing transcript-only progress model and surfaces a stall once
+    // toolExecutionGracePeriodMs elapses. This proves the rescue is gated by
+    // the option, not an unrelated side-effect.
+    const tempRoot = await mkdtemp(join(tmpdir(), "developer-handoff-mtime-disabled-"));
+    const previousConfigPath = process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
+
+    try {
+      const openClawHome = join(tempRoot, "openclaw-home");
+      const sessionPath = join(
+        openClawHome,
+        "agents",
+        "reddwarf-developer",
+        "sessions",
+        "session-mtime-disabled.jsonl"
+      );
+      const repoRoot = join(tempRoot, "repo");
+      const vendorBundle = join(repoRoot, "vendor", "bundle");
+      await mkdir(dirname(sessionPath), { recursive: true });
+      await mkdir(vendorBundle, { recursive: true });
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            type: "message",
+            timestamp: "2026-04-04T12:48:53.726Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Running bundle install..." }],
+              stopReason: "toolUse"
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      process.env.REDDWARF_OPENCLAW_CONFIG_PATH = join(openClawHome, "openclaw.json");
+
+      const tickInterval = setInterval(() => {
+        const filename = `gemfile-${Date.now()}.rb`;
+        void writeFile(join(vendorBundle, filename), "# generated\n", "utf8");
+      }, 25);
+
+      const awaiter = createDeveloperHandoffAwaiter({
+        timeoutMs: 5_000,
+        pollIntervalMs: 10,
+        sessionIdleTimeoutMs: 5_000,
+        toolExecutionGracePeriodMs: 60,
+        workspaceMtimeProgressEnabled: false
+      });
+
+      const workspace = {
+        workspaceId: "workspace-mtime-disabled",
+        workspaceRoot: tempRoot,
+        artifactsDir: join(tempRoot, "artifacts"),
+        descriptor: {
+          toolPolicy: { codeWriteEnabled: false }
+        }
+      } as never;
+      assignWorkspaceRepoRoot(workspace, repoRoot);
+
+      try {
+        await expect(
+          awaiter.waitForCompletion({
+            manifest: { taskId: "acme-platform-61" } as never,
+            workspace,
+            sessionKey: "github:issue:acme/platform:61",
+            dispatchResult: {
+              accepted: true,
+              sessionKey: "github:issue:acme/platform:61",
+              agentId: "reddwarf-developer",
+              sessionId: "session-mtime-disabled",
+              respondedAt: new Date().toISOString(),
+              statusMessage: null
+            },
+            onHeartbeat: undefined
+          })
+        ).rejects.toBeInstanceOf(OpenClawSessionStalledError);
+      } finally {
+        clearInterval(tickInterval);
+      }
     } finally {
       if (previousConfigPath === undefined) {
         delete process.env.REDDWARF_OPENCLAW_CONFIG_PATH;
