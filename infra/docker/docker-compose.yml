@@ -64,6 +64,24 @@ services:
       - ../../runtime-data/openclaw-home:/home/node/.openclaw
       - ../../runtime-data/workspaces:${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       - runtime-evidence:${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
+      # Package-manager and runtime caches. Empty (and effectively free) on
+      # the upstream image; populated by the toolchain image's `mise install`
+      # and any per-project `bundle install` / `npm install` / etc. Mounting
+      # them unconditionally means the first task on any stack pays the
+      # install cost, and every subsequent task of the same stack hits the
+      # cache instead of the developer-phase wall-clock budget. Stack-
+      # agnostic — adding Go, Rust, Java, Elixir, or anything else to a
+      # generated app does not require editing this list.
+      - openclaw-mise-runtimes:/home/node/.local/share/mise
+      - openclaw-mise-downloads:/home/node/.cache/mise
+      - openclaw-npm-cache:/home/node/.npm
+      - openclaw-pnpm-store:/home/node/.local/share/pnpm
+      - openclaw-yarn-cache:/home/node/.cache/yarn
+      - openclaw-bundle-cache:/home/node/.bundle
+      - openclaw-gem-cache:/home/node/.gem
+      - openclaw-pip-cache:/home/node/.cache/pip
+      - openclaw-cargo-cache:/home/node/.cargo
+      - openclaw-go-modcache:/home/node/go
 
   postgres:
     image: postgres:17-alpine
@@ -88,3 +106,15 @@ services:
 volumes:
   postgres-data:
   runtime-evidence:
+  # Package-manager caches and mise-installed runtimes. See the openclaw
+  # service block for why these are mounted unconditionally.
+  openclaw-mise-runtimes:
+  openclaw-mise-downloads:
+  openclaw-npm-cache:
+  openclaw-pnpm-store:
+  openclaw-yarn-cache:
+  openclaw-bundle-cache:
+  openclaw-gem-cache:
+  openclaw-pip-cache:
+  openclaw-cargo-cache:
+  openclaw-go-modcache:
