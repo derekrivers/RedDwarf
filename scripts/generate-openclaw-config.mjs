@@ -5,6 +5,7 @@ import {
   buildBootstrapConfigFromEnv,
   buildCompactionConfigFromEnv,
   buildContextLimitsConfigFromEnv,
+  buildHeartbeatConfigFromEnv,
   buildLoopDetectionConfigFromEnv,
   resolveModelProviderEnv
 } from "./lib/config.mjs";
@@ -82,6 +83,7 @@ const compactionConfig = buildCompactionConfigFromEnv();
 const contextLimitsConfig = buildContextLimitsConfigFromEnv();
 const bootstrapConfig = buildBootstrapConfigFromEnv();
 const loopDetectionConfig = buildLoopDetectionConfigFromEnv();
+const heartbeatConfig = buildHeartbeatConfigFromEnv();
 
 const config = generateOpenClawConfig({
   workspaceRoot: resolvedWorkspaceRoot,
@@ -99,6 +101,7 @@ const config = generateOpenClawConfig({
   ...(contextLimitsConfig ? { contextLimits: contextLimitsConfig } : {}),
   ...(bootstrapConfig ? { bootstrap: bootstrapConfig } : {}),
   ...(loopDetectionConfig ? { loopDetection: loopDetectionConfig } : {}),
+  ...(heartbeatConfig ? { heartbeat: heartbeatConfig } : {}),
   ...(discordEnabled
     ? {
         discord: {

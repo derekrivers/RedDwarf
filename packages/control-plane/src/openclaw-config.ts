@@ -168,6 +168,25 @@ export interface OpenClawBootstrapConfig {
 }
 
 /**
+ * Gateway-level heartbeat applied to every agent via `agents.defaults.heartbeat`.
+ * The OpenClaw gateway periodically sends a wake-up prompt that asks the agent
+ * to read `HEARTBEAT.md` from the workspace root and reply `HEARTBEAT_OK` if
+ * nothing is pending.
+ *
+ * RedDwarf disables this by default (`every: "0m"`) because RedDwarf already
+ * heartbeats at the phase level (`PHASE_HEARTBEAT_INTERVAL_MS`). A gateway
+ * heartbeat firing mid-phase risks interleaving the checklist response with
+ * active work, and the file the prompt asks the agent to read is not present
+ * in the RedDwarf-managed workspace. See `REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL`.
+ */
+export interface OpenClawHeartbeatConfig {
+  /** Interval in OpenClaw duration syntax (e.g. `30m`, `5m`). `0m` disables. */
+  every?: string;
+  /** Optional override for the wake-up prompt body. */
+  prompt?: string;
+}
+
+/**
  * Gateway-level loop detection applied under `tools.loopDetection`. Lets the
  * OpenClaw runtime warn or abort when an agent repeats the same tool call,
  * polls without progress, or ping-pongs between two responses.
@@ -246,6 +265,7 @@ export interface OpenClawConfig {
       bootstrapMaxChars?: number;
       bootstrapTotalMaxChars?: number;
       bootstrapPromptTruncationWarning?: "off" | "once" | "always";
+      heartbeat?: OpenClawHeartbeatConfig;
     };
     list: OpenClawAgentConfig[];
   };
@@ -376,6 +396,17 @@ export interface GenerateOpenClawConfigOptions {
    * Set via REDDWARF_OPENCLAW_LOOP_DETECTION_* env vars.
    */
   loopDetection?: OpenClawLoopDetectionConfig;
+
+  /**
+   * Optional `agents.defaults.heartbeat` block. When omitted, the generator
+   * emits `{ every: "0m" }` to disable the gateway-level wake-up — RedDwarf
+   * already heartbeats at the phase level and the gateway's HEARTBEAT.md
+   * checklist file is not materialized into the managed workspace.
+   *
+   * Set via REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL (and optional
+   * REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_PROMPT) to opt back in.
+   */
+  heartbeat?: OpenClawHeartbeatConfig;
 }
 
 /**
@@ -476,7 +507,8 @@ export function generateOpenClawConfig(
     skipBootstrap,
     ...(options.compaction ? { compaction: options.compaction } : {}),
     ...(options.contextLimits ? { contextLimits: options.contextLimits } : {}),
-    ...(options.bootstrap ? { bootstrap: options.bootstrap } : {})
+    ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}),
+    heartbeat: options.heartbeat ?? { every: "0m" }
   });
 
   const config: OpenClawConfig = {
@@ -747,6 +779,7 @@ function buildAgentDefaults(input: {
   compaction?: OpenClawCompactionConfig;
   contextLimits?: OpenClawContextLimitsConfig;
   bootstrap?: OpenClawBootstrapConfig;
+  heartbeat?: OpenClawHeartbeatConfig;
 }): OpenClawConfig["agents"]["defaults"] {
   const defaults: OpenClawConfig["agents"]["defaults"] = {
     skipBootstrap: input.skipBootstrap
@@ -812,6 +845,20 @@ function buildAgentDefaults(input: {
     if (input.bootstrap.promptTruncationWarning !== undefined) {
       defaults.bootstrapPromptTruncationWarning =
         input.bootstrap.promptTruncationWarning;
+    }
+  }
+
+  if (input.heartbeat) {
+    const heartbeat: OpenClawHeartbeatConfig = {
+      ...(input.heartbeat.every !== undefined
+        ? { every: input.heartbeat.every }
+        : {}),
+      ...(input.heartbeat.prompt !== undefined
+        ? { prompt: input.heartbeat.prompt }
+        : {})
+    };
+    if (Object.keys(heartbeat).length > 0) {
+      defaults.heartbeat = heartbeat;
     }
   }
 

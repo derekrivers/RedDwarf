@@ -378,6 +378,42 @@ export function buildBootstrapConfigFromEnv() {
 }
 
 /**
+ * Build the `agents.defaults.heartbeat` block from
+ * REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL (and optional
+ * REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_PROMPT). The interval uses OpenClaw
+ * duration syntax (e.g. `30m`, `5m`, `0m` to disable). When the env var is
+ * unset, this returns `null` so the generator falls back to its built-in
+ * default of `{ every: "0m" }` (disabled).
+ */
+export function buildHeartbeatConfigFromEnv() {
+  const intervalRaw =
+    process.env.REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL;
+  const promptRaw = process.env.REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_PROMPT;
+
+  const interval =
+    intervalRaw !== undefined && intervalRaw.trim().length > 0
+      ? intervalRaw.trim()
+      : undefined;
+  const prompt =
+    promptRaw !== undefined && promptRaw.trim().length > 0
+      ? promptRaw
+      : undefined;
+
+  if (interval === undefined && prompt === undefined) {
+    return null;
+  }
+
+  const config = {};
+  if (interval !== undefined) {
+    config.every = interval;
+  }
+  if (prompt !== undefined) {
+    config.prompt = prompt;
+  }
+  return config;
+}
+
+/**
  * Build the `tools.loopDetection` block from REDDWARF_OPENCLAW_LOOP_DETECTION_*
  * env vars. Set REDDWARF_OPENCLAW_LOOP_DETECTION_ENABLED=true to opt in; all
  * detectors default on when the feature is enabled unless individually
@@ -611,6 +647,7 @@ export async function resolveOpenClawConfig(options) {
   const contextLimitsConfig = buildContextLimitsConfigFromEnv();
   const bootstrapConfig = buildBootstrapConfigFromEnv();
   const loopDetectionConfig = buildLoopDetectionConfigFromEnv();
+  const heartbeatConfig = buildHeartbeatConfigFromEnv();
   const config = generateOpenClawConfig({
     workspaceRoot: (
       process.env.REDDWARF_WORKSPACE_ROOT ?? "/var/lib/reddwarf/workspaces"
@@ -630,6 +667,7 @@ export async function resolveOpenClawConfig(options) {
     ...(contextLimitsConfig ? { contextLimits: contextLimitsConfig } : {}),
     ...(bootstrapConfig ? { bootstrap: bootstrapConfig } : {}),
     ...(loopDetectionConfig ? { loopDetection: loopDetectionConfig } : {}),
+    ...(heartbeatConfig ? { heartbeat: heartbeatConfig } : {}),
     ...(discordEnabled
       ? {
           discord: {
