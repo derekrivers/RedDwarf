@@ -113,7 +113,10 @@
   },
   "agents": {
     "defaults": {
-      "skipBootstrap": true
+      "skipBootstrap": true,
+      "heartbeat": {
+        "every": "0m"
+      }
     },
     "list": [
       {

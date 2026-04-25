@@ -461,6 +461,27 @@ describe("generateOpenClawConfig — model failover", () => {
     expect(config.tools?.loopDetection).toBeUndefined();
   });
 
+  it("disables the gateway-level heartbeat by default", () => {
+    const config = generateOpenClawConfig({ workspaceRoot: "/ws" });
+
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
+  });
+
+  it("propagates an explicit heartbeat config (interval and prompt override)", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      heartbeat: {
+        every: "30m",
+        prompt: "Custom heartbeat prompt body."
+      }
+    });
+
+    expect(config.agents.defaults.heartbeat).toEqual({
+      every: "30m",
+      prompt: "Custom heartbeat prompt body."
+    });
+  });
+
   it("emits compaction defaults with safeguard mode and strict identifier policy", () => {
     const config = generateOpenClawConfig({
       workspaceRoot: "/ws",

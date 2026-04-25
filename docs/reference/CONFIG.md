@@ -218,6 +218,15 @@ Emit `agents.defaults.compaction` and `agents.defaults.contextLimits` into the g
 | `REDDWARF_OPENCLAW_LOOP_DETECTION_KNOWN_POLL_NO_PROGRESS` | `true` | Flag poll loops with no progress. |
 | `REDDWARF_OPENCLAW_LOOP_DETECTION_PING_PONG` | `true` | Flag two-response ping-pong. |
 
+### OpenClaw gateway heartbeat
+
+Emits `agents.defaults.heartbeat` in the generated config. The OpenClaw gateway periodically sends a wake-up prompt that asks each agent to read `HEARTBEAT.md` from the workspace root. RedDwarf disables this by default (`every: "0m"`) because RedDwarf already heartbeats at the phase level and the file is not materialized into the managed workspace. Set a non-zero interval (`30m`, `5m`) to opt back in.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL` | _(unset → `0m`)_ | OpenClaw duration. `0m` disables; e.g. `30m` matches gateway default. |
+| `REDDWARF_OPENCLAW_GATEWAY_HEARTBEAT_PROMPT` | _(unset)_ | Optional override for the wake-up prompt body. |
+
 ### Discord (native OpenClaw channel)
 
 | Variable | Default | Purpose |
