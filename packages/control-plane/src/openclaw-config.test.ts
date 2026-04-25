@@ -217,10 +217,10 @@ describe("generateOpenClawConfig", () => {
       (agent) => agent.id === "reddwarf-developer-opus"
     );
 
-    expect(coordinator?.model).toBe("openai-codex/gpt-5.4");
-    expect(analyst?.model).toBe("openai-codex/gpt-5.4");
-    expect(developer?.model).toBe("openai-codex/gpt-5.4");
-    expect(developerOpus?.model).toBe("openai-codex/gpt-5.4");
+    expect(coordinator?.model).toBe("openai-codex/gpt-5.5");
+    expect(analyst?.model).toBe("openai-codex/gpt-5.5");
+    expect(developer?.model).toBe("openai-codex/gpt-5.5");
+    expect(developerOpus?.model).toBe("openai-codex/gpt-5.5");
   });
 
   it("rejects unsupported model providers before emitting a roster", () => {

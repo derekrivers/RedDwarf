@@ -495,16 +495,16 @@ describe("openClawAgentRoleDefinitions", () => {
     const validator = roles.find((role) => role.role === "validator");
     const developer = roles.find((role) => role.role === "developer");
 
-    // All codex roles use gpt-5.4 through the subscription
+    // All codex roles use gpt-5.5 through the subscription
     for (const role of [coordinator, analyst, reviewer, validator, developer]) {
       expect(role?.runtimePolicy.model).toEqual({
         provider: "openai-codex",
-        model: "openai-codex/gpt-5.4"
+        model: "openai-codex/gpt-5.5"
       });
     }
 
-    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].coordinator).toBe("openai-codex/gpt-5.4");
-    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].developer).toBe("openai-codex/gpt-5.4");
+    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].coordinator).toBe("openai-codex/gpt-5.5");
+    expect(MODEL_PROVIDER_ROLE_MAP["openai-codex"].developer).toBe("openai-codex/gpt-5.5");
     expect(resolveOpenClawModelProvider("openai-codex")).toBe("openai-codex");
   });
 
