@@ -81,12 +81,13 @@ export function detectScaffoldStack(
 export function buildRequiredChecksWorkflowYaml(stack: ScaffoldStack): string {
   switch (stack) {
     case "node":
-      return `# RedDwarf default required checks (M25 F-192)
+      // npm run --if-present is the right semantic here: it exits 0 only if
+      // the script is missing OR it succeeds. Real script failures surface.
+      return `# RedDwarf default required checks (M25 F-192) — Node stack
 #
-# Installed automatically when a Project Mode project opted into auto-merge
-# but the target repo had no surveyed check names. The job ids below match
-# the RequiredCheckContract that F-191 stamps onto the project + tickets,
-# so the F-194 evaluator gates on these green.
+# Each job (lint / build / test) succeeds iff its underlying npm script
+# either does not exist (--if-present) or exits 0. Real failures surface
+# so the F-194 auto-merge gate's "check is green" signal is meaningful.
 
 name: RedDwarf Required Checks
 
@@ -101,27 +102,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
+        with: { node-version: '20' }
+      - name: install
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - run: npm run lint --if-present
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
+        with: { node-version: '20' }
+      - name: install
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - run: npm run build --if-present
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
+        with: { node-version: '20' }
+      - name: install
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - run: npm test --if-present
 `;
     case "python":
@@ -140,33 +144,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install ruff || true
-      - run: ruff check . || true
+        with: { python-version: '3.12' }
+      - name: install ruff
+        run: pip install ruff
+      - name: ruff check
+        run: ruff check .
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: |
-          if [ -f pyproject.toml ]; then
-            pip install --upgrade pip build
-            python -m build || true
-          else
-            pip install -r requirements.txt || true
+        with: { python-version: '3.12' }
+      - name: detect manifest
+        id: detect
+        run: |
+          if [ -f pyproject.toml ]; then echo "kind=pyproject" >> "$GITHUB_OUTPUT"
+          elif [ -f setup.py ]; then echo "kind=setup-py" >> "$GITHUB_OUTPUT"
+          elif [ -f requirements.txt ]; then echo "kind=requirements" >> "$GITHUB_OUTPUT"
+          else echo "kind=none" >> "$GITHUB_OUTPUT"
           fi
+      - name: build (pyproject)
+        if: steps.detect.outputs.kind == 'pyproject'
+        run: |
+          pip install --upgrade pip build
+          python -m build
+      - name: build (setup.py)
+        if: steps.detect.outputs.kind == 'setup-py'
+        run: pip install .
+      - name: install requirements
+        if: steps.detect.outputs.kind == 'requirements'
+        run: pip install -r requirements.txt
+      - name: no manifest (failing intentionally)
+        if: steps.detect.outputs.kind == 'none'
+        run: |
+          echo "::error::No Python build manifest detected. Add pyproject.toml or setup.py."
+          exit 1
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install pytest || true
-      - run: pytest -q || true
+        with: { python-version: '3.12' }
+      - name: install pytest
+        run: pip install pytest
+      - name: pytest
+        run: pytest -q
 `;
     case "rust":
       return `# RedDwarf default required checks (M25 F-192) — Rust stack
@@ -201,7 +223,21 @@ jobs:
       - run: cargo test --all-targets
 `;
     case "ruby":
+      // Conservative Ruby/Rails scaffold. Three rules:
+      //   - Steps either run their command and surface its real exit code,
+      //     OR they don't run at all (controlled by an `if:` predicate).
+      //     No "command || true" anywhere — that defeats M25's gate 6.
+      //   - bundler-cache=false so this doesn't fail on first-commit Rails
+      //     apps that don't yet have a Gemfile.lock.
+      //   - "detect" prep step exposes per-tool booleans so each subsequent
+      //     step decides cleanly whether to execute.
       return `# RedDwarf default required checks (M25 F-192) — Ruby / Rails stack
+#
+# Each job (lint, build, test) succeeds iff its underlying command
+# succeeds. Steps that depend on tooling not present in this repo
+# (no rubocop, no rails, no rspec) are skipped via if:, not silently
+# swallowed — so the F-194 auto-merge gate's "check is green" signal
+# means the relevant command actually passed.
 
 name: RedDwarf Required Checks
 
@@ -217,40 +253,82 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
-          bundler-cache: true
-      - run: bundle exec rubocop || true
+          bundler-cache: false
+      - name: bundle install
+        run: bundle install --jobs 4 --retry 3
+      - name: detect rubocop
+        id: detect
+        run: |
+          if bundle show rubocop >/dev/null 2>&1; then
+            echo "rubocop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rubocop=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: rubocop
+        if: steps.detect.outputs.rubocop == 'true'
+        run: bundle exec rubocop --parallel
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
-          bundler-cache: true
-      - name: Asset precompile (Rails)
+          bundler-cache: false
+      - name: bundle install
+        run: bundle install --jobs 4 --retry 3
+      - name: detect rails
+        id: detect
+        run: |
+          if [ -x bin/rails ]; then
+            echo "rails=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rails=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: assets:precompile
+        if: steps.detect.outputs.rails == 'true'
         env:
           RAILS_ENV: test
           SECRET_KEY_BASE: dummy_for_assets_precompile
-        run: |
-          if [ -f bin/rails ]; then
-            bundle exec rails assets:precompile || true
-          fi
+        run: bundle exec rails assets:precompile
   test:
     runs-on: ubuntu-latest
+    env:
+      RAILS_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
-          bundler-cache: true
-      - name: Run tests
-        env:
-          RAILS_ENV: test
+          bundler-cache: false
+      - name: bundle install
+        run: bundle install --jobs 4 --retry 3
+      - name: detect runner
+        id: detect
         run: |
-          if [ -f bin/rails ]; then
-            bundle exec rails db:prepare || true
-            bundle exec rails test || bundle exec rspec || true
+          if [ -x bin/rails ]; then
+            echo "runner=rails" >> "$GITHUB_OUTPUT"
+          elif bundle show rspec-core >/dev/null 2>&1; then
+            echo "runner=rspec" >> "$GITHUB_OUTPUT"
+          elif [ -f Rakefile ] && bundle exec rake -T test >/dev/null 2>&1; then
+            echo "runner=rake" >> "$GITHUB_OUTPUT"
           else
-            bundle exec rake test || bundle exec rspec || true
+            echo "runner=none" >> "$GITHUB_OUTPUT"
           fi
+      - name: rails test
+        if: steps.detect.outputs.runner == 'rails'
+        run: |
+          bundle exec rails db:prepare
+          bundle exec rails test
+      - name: rspec
+        if: steps.detect.outputs.runner == 'rspec'
+        run: bundle exec rspec
+      - name: rake test
+        if: steps.detect.outputs.runner == 'rake'
+        run: bundle exec rake test
+      - name: no test runner detected (failing intentionally)
+        if: steps.detect.outputs.runner == 'none'
+        run: |
+          echo "::error::No test runner found (rails / rspec / rake test). Add one or remove the 'test' check from the project's RequiredCheckContract."
+          exit 1
 `;
     case "go":
       return `# RedDwarf default required checks (M25 F-192) — Go stack
