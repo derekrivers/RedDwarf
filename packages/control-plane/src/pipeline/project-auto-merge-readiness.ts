@@ -198,14 +198,23 @@ export async function ensureProjectAutoMergeReady(
   }
 
   // No recognized stack manifest. Auto-merge can't be made safe here.
-  logger?.warn(
-    `M25 readiness: ${inputProject.sourceRepo} has no recognized stack manifest (package.json / pyproject.toml / Cargo.toml). Auto-merge will be disabled.`
-  );
+  // Common case: the project plans to BUILD the app (so its first ticket
+  // will commit the manifest), but at approval time the repo is empty.
+  // Operators have two ways forward in this case:
+  //   1. Approve without auto-merge; enable after ticket 1 merges.
+  //   2. Push a placeholder manifest (Gemfile, package.json, etc.) to the
+  //      target branch first so detection succeeds at toggle time.
+  const reason =
+    `Repo ${inputProject.sourceRepo} has no recognized stack manifest at the root ` +
+    `(looked for package.json, pyproject.toml, requirements.txt, Cargo.toml, Gemfile, go.mod). ` +
+    `Cannot install a default CI workflow. ` +
+    `If your project will add the manifest in its first ticket, approve without auto-merge ` +
+    `and toggle it on after that ticket merges.`;
+  logger?.warn(`M25 readiness: ${reason}`);
   return {
     project: inputProject,
     outcome: "scaffold_unsupported_stack",
-    reason:
-      "Repo has no recognized stack manifest (package.json / pyproject.toml / Cargo.toml). Cannot install a default CI workflow.",
+    reason,
     forceDisableAutoMerge: true,
     contract: null
   };
