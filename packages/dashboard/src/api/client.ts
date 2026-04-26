@@ -394,7 +394,10 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
       decision: "approve" | "amend",
       decidedBy: string,
       decisionSummary?: string,
-      amendments?: string
+      amendments?: string,
+      // M25 — optional auto-merge opt-in. Server returns 409
+      // auto_merge_globally_disabled when enabled=true and the global flag is off.
+      options?: { autoMerge?: boolean }
     ) {
       return request<ProjectApproveResponse>(
         `/projects/${encodeURIComponent(id)}/approve`,
@@ -404,7 +407,10 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
             decision,
             decidedBy,
             ...(decisionSummary ? { decisionSummary } : {}),
-            ...(amendments ? { amendments } : {})
+            ...(amendments ? { amendments } : {}),
+            ...(options?.autoMerge !== undefined
+              ? { auto_merge: { enabled: options.autoMerge } }
+              : {})
           })
         }
       );

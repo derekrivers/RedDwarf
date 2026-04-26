@@ -46,7 +46,7 @@ import {
   type ProjectSpec
 } from "@reddwarf/contracts";
 import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
-import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import type { GitHubAutoMergeAdapter, GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
@@ -110,11 +110,13 @@ import type {
   ReadyTaskDispatcher
 } from "./polling.js";
 import {
+  AutoMergeEvaluatorDebouncer,
   describeIntakeMode,
   handleGitHubWebhook,
   readRawBody,
   type WebhookHandlerDependencies
 } from "./github-webhook.js";
+import { evaluateAutoMerge } from "./pipeline/project-auto-merge.js";
 
 // ============================================================
 // Operator API interfaces
@@ -383,6 +385,46 @@ export function createOperatorApiServer(
   const webhookSecret = config.webhookSecret?.trim() ?? null;
   const webhookPath = config.webhookPath ?? "/webhooks/github";
   const intakeMode = config.intakeMode ?? (webhookSecret ? "webhook" : "polling");
+  // M25 — wire the F-194 auto-merge evaluator behind F-193's debouncer so
+  // CI webhook deliveries actually trigger merges. RestGitHubAdapter
+  // implements both GitHubAdapter and GitHubAutoMergeAdapter; cast through
+  // unknown because the public webhook interface only exposes GitHubAdapter.
+  // Notifier is constructed lazily inside the trigger so env changes via
+  // PUT /config take effect on subsequent evaluations without restart.
+  const autoMergeAdapter = webhookGitHub as unknown as GitHubAutoMergeAdapter | undefined;
+  const autoMergeEvaluator =
+    autoMergeAdapter
+      ? new AutoMergeEvaluatorDebouncer(async (input) => {
+          const notifier = createDiscordNotifier({});
+          await evaluateAutoMerge(input, {
+            repository,
+            github: autoMergeAdapter,
+            projectAutoMergeEnabled,
+            clock,
+            notify: async (n) => {
+              if (n.kind === "blocked") {
+                await notifier.notifyAutoMergeBlocked({
+                  ticketId: n.ticketId,
+                  prNumber: n.prNumber,
+                  repo: n.repo,
+                  failedGates: n.failedGates,
+                  decisionAt: n.decisionAt
+                });
+              } else {
+                await notifier.notifyAutoMerged({
+                  ticketId: n.ticketId,
+                  projectId: n.projectId,
+                  prNumber: n.prNumber,
+                  repo: n.repo,
+                  mergeIndex: n.mergeIndex,
+                  decisionAt: n.decisionAt
+                });
+              }
+            }
+          });
+        })
+      : null;
+
   const webhookDeps: WebhookHandlerDependencies | null =
     webhookSecret && webhookGitHub && planner
       ? {
@@ -394,7 +436,8 @@ export function createOperatorApiServer(
           ...(webhookOpenClawDispatch ? { openClawDispatch: webhookOpenClawDispatch } : {}),
           ...(webhookArchitectTargetRoot ? { architectTargetRoot: webhookArchitectTargetRoot } : {}),
           githubIssuesAdapter: githubIssuesAdapter ?? null,
-          taskFlowAdapter: taskFlowAdapter ?? null
+          taskFlowAdapter: taskFlowAdapter ?? null,
+          ...(autoMergeEvaluator ? { autoMergeEvaluator } : {})
         }
       : null;
 

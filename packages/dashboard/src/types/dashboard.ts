@@ -175,7 +175,9 @@ export interface DashboardApiClient {
     decision: "approve" | "amend",
     decidedBy: string,
     decisionSummary?: string,
-    amendments?: string
+    amendments?: string,
+    /** M25 — optional auto-merge opt-in. Server 409s when global flag is off. */
+    options?: { autoMerge?: boolean }
   ): Promise<ProjectApproveResponse>;
   getClarifications(id: string): Promise<ProjectClarificationsResponse>;
   submitClarifications(

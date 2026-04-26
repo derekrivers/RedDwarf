@@ -228,6 +228,9 @@ function ApprovalPanel(props: {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [decisionSummary, setDecisionSummary] = useState("");
   const [amendments, setAmendments] = useState("");
+  // M25 — auto-merge opt-in at approval time. Server refuses with 409 when the
+  // global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is off; the toast surfaces it.
+  const [autoMergeOptIn, setAutoMergeOptIn] = useState(false);
   const [activeModal, setActiveModal] = useState<"approve" | "amend" | null>(
     null
   );
@@ -240,16 +243,26 @@ function ApprovalPanel(props: {
         projectId,
         "approve",
         "operator",
-        decisionSummary || undefined
+        decisionSummary || undefined,
+        undefined,
+        { autoMerge: autoMergeOptIn }
       );
       await queryClient.invalidateQueries({
         queryKey: ["project-detail", projectId]
       });
       await queryClient.invalidateQueries({ queryKey: ["projects-list"] });
-      pushToast("Project approved and executing.", "success");
+      pushToast(
+        autoMergeOptIn
+          ? "Project approved with auto-merge enabled."
+          : "Project approved and executing.",
+        "success"
+      );
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to approve project.";
       setSubmitError(
-        err instanceof Error ? err.message : "Failed to approve project."
+        /409/.test(msg) && /auto_merge/.test(msg)
+          ? "Auto-merge is globally disabled on this deployment. Set REDDWARF_PROJECT_AUTOMERGE_ENABLED=true and retry, or untick the auto-merge checkbox."
+          : msg
       );
     } finally {
       setIsSubmitting(false);
@@ -318,6 +331,26 @@ function ApprovalPanel(props: {
             onChange={(e) => setAmendments(e.target.value)}
             placeholder="Describe what should be changed in the plan..."
           />
+        </div>
+        {/* M25 — auto-merge opt-in (only meaningful for the approve path). */}
+        <div className="mb-3 form-check">
+          <input
+            type="checkbox"
+            className="form-check-input"
+            id="auto-merge-opt-in"
+            checked={autoMergeOptIn}
+            onChange={(e) => setAutoMergeOptIn(e.target.checked)}
+          />
+          <label className="form-check-label" htmlFor="auto-merge-opt-in">
+            <strong>Enable auto-merge</strong> for sub-ticket PRs
+          </label>
+          <div className="text-secondary" style={{ fontSize: "0.85em" }}>
+            When checked, RedDwarf merges each sub-ticket PR automatically once
+            its required CI checks are green. Requires{" "}
+            <code>REDDWARF_PROJECT_AUTOMERGE_ENABLED=true</code> on the
+            deployment; the request is refused with 409 otherwise. You can
+            still toggle this from the Auto-merge card after approval.
+          </div>
         </div>
         <div className="d-flex gap-2">
           <button
