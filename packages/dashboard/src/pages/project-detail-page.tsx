@@ -11,7 +11,7 @@ import {
   IconMessageQuestion,
   IconTicket
 } from "@tabler/icons-react";
-import type { TicketSpec } from "@reddwarf/contracts";
+import type { ProjectSpec, TicketSpec } from "@reddwarf/contracts";
 import type { DashboardApiClient } from "../types/dashboard";
 import { useToast } from "../components/toast-provider";
 
@@ -68,7 +68,7 @@ function statusLabel(status: string): string {
  * false; the 409 case is surfaced through the toast provider.
  */
 function AutoMergeCard(props: {
-  project: import("@reddwarf/contracts").ProjectSpec;
+  project: ProjectSpec;
   projectId: string;
   apiClient: DashboardApiClient;
 }) {

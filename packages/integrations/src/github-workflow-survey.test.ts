@@ -4,7 +4,8 @@ import {
   FixtureWorkflowSurveyAdapter,
   parseWorkflowJobNames,
   surveyWorkflowFiles,
-  type WorkflowFileContent
+  type WorkflowFileContent,
+  type WorkflowSurveyAdapter
 } from "./github-workflow-survey.js";
 
 describe("M25 F-191 — parseWorkflowJobNames", () => {
@@ -132,7 +133,7 @@ describe("M25 F-191 — surveyWorkflowFiles", () => {
   });
 
   it("treats adapter errors as 'no workflows' and never throws", async () => {
-    const failing: import("./github-workflow-survey.js").WorkflowSurveyAdapter = {
+    const failing: WorkflowSurveyAdapter = {
       async listWorkflowYamlFiles() {
         throw new Error("simulated GitHub 500");
       }

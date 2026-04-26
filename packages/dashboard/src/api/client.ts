@@ -4,7 +4,8 @@ import type {
   ApprovalRequestStatus,
   Capability,
   EvidenceRecord,
-  PipelineRun
+  PipelineRun,
+  ProjectSpec
 } from "@reddwarf/contracts";
 import type {
   AgentQualityMetricsFilters,
@@ -380,7 +381,7 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
      * caller passes `enabled: true`.
      */
     patchProjectAutoMerge(id: string, enabled: boolean) {
-      return request<{ project: import("@reddwarf/contracts").ProjectSpec }>(
+      return request<{ project: ProjectSpec }>(
         `/projects/${encodeURIComponent(id)}`,
         {
           method: "PATCH",

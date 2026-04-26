@@ -169,7 +169,7 @@ export interface DashboardApiClient {
   patchProjectAutoMerge(
     id: string,
     enabled: boolean
-  ): Promise<{ project: import("@reddwarf/contracts").ProjectSpec }>;
+  ): Promise<{ project: ProjectSpec }>;
   approveProject(
     id: string,
     decision: "approve" | "amend",
