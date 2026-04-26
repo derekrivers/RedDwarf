@@ -16,8 +16,16 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository
 } from "@reddwarf/evidence";
-import type { GitHubWriter, GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
-import { V1MutationDisabledError } from "@reddwarf/integrations";
+import type {
+  GitHubWriter,
+  GitHubIssuesAdapter,
+  OpenClawTaskFlowAdapter,
+  RequiredChecksScaffoldAdapter
+} from "@reddwarf/integrations";
+import {
+  ensureRequiredChecksWorkflow,
+  V1MutationDisabledError
+} from "@reddwarf/integrations";
 import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
 import {
   expandAllowedPathsForGeneratedArtifacts,
@@ -43,6 +51,15 @@ export interface ExecuteProjectApprovalDependencies {
    * approval. Best-effort: failure logs a warning but does not block the approval.
    */
   github?: GitHubWriter | null;
+  /**
+   * M25 F-192: when the approved project has auto-merge enabled but its
+   * RequiredCheckContract is empty (greenfield repo, no surveyed
+   * workflows), install a default `reddwarf-required-checks.yml`. If
+   * detection fails (no recognized manifest), the project's
+   * autoMergeEnabled is auto-flipped to false with an evidence record.
+   * Best-effort: any failure logs a warning but does not block approval.
+   */
+  requiredChecksScaffoldAdapter?: RequiredChecksScaffoldAdapter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -706,6 +723,53 @@ export async function executeProjectApproval(
       const wfErrMsg = wfErr instanceof Error ? wfErr.message : String(wfErr);
       logger?.warn(`Failed to install reddwarf-advance.yml in ${project.sourceRepo}: ${wfErrMsg}`);
     }
+  }
+
+  // M25 F-192 — install the default required-checks workflow when this is a
+  // fresh approval, the project opted into auto-merge, and the surveyed
+  // RequiredCheckContract is empty (greenfield repo). Detection failure
+  // (no recognized manifest) auto-disables auto-merge on the project so
+  // F-194 falls back to human review.
+  let scaffoldAutoDisabled = false;
+  if (
+    deps.requiredChecksScaffoldAdapter &&
+    !resumableApprovedProject &&
+    !backfillingMissingSubIssues &&
+    !materializingDispatchedTicketTask &&
+    project.autoMergeEnabled === true &&
+    (project.requiredCheckContract === null ||
+      project.requiredCheckContract.requiredCheckNames.length === 0)
+  ) {
+    try {
+      const scaffoldResult = await ensureRequiredChecksWorkflow(
+        deps.requiredChecksScaffoldAdapter,
+        project.sourceRepo
+      );
+      if (scaffoldResult.installed) {
+        logger?.info(
+          `M25 F-192: installed reddwarf-required-checks.yml (${scaffoldResult.stack}) in ${project.sourceRepo}.`
+        );
+      } else if (scaffoldResult.reason === "already_present") {
+        logger?.info(
+          `M25 F-192: reddwarf-required-checks.yml already present in ${project.sourceRepo}.`
+        );
+      } else if (scaffoldResult.reason === "no_recognized_manifest") {
+        logger?.warn(
+          `M25 F-192: ${project.sourceRepo} has no recognized stack manifest (package.json / pyproject.toml / Cargo.toml). Auto-merge will be disabled for this project.`
+        );
+        scaffoldAutoDisabled = true;
+      }
+    } catch (scaffoldErr) {
+      const errMsg = scaffoldErr instanceof Error ? scaffoldErr.message : String(scaffoldErr);
+      logger?.warn(
+        `M25 F-192: failed to install required-checks workflow in ${project.sourceRepo}: ${errMsg}. Auto-merge will be disabled for this project.`
+      );
+      scaffoldAutoDisabled = true;
+    }
+  }
+  if (scaffoldAutoDisabled) {
+    approvedProject.autoMergeEnabled = false;
+    await repository.saveProjectSpec({ ...approvedProject });
   }
 
   // Collect issue numbers to persist atomically inside the final transaction.

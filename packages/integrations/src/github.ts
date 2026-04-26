@@ -1148,6 +1148,55 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
     return results;
   }
 
+  /**
+   * M25 F-192 — list immediate root entries for stack detection. Returns
+   * filename + type for each top-level path, or `[]` if the repo is empty.
+   */
+  async listRepoRootFiles(
+    repo: string
+  ): Promise<{ path: string }[]> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      const entries = await this.apiGet<Array<{ path: string; type: string }>>(
+        `/repos/${owner}/${repoName}/contents/`
+      );
+      return entries
+        .filter((e) => e.type === "file" || e.type === "dir")
+        .map((e) => ({ path: e.path }));
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /** M25 F-192 — true when the scaffolded workflow file already exists. */
+  async hasRequiredChecksWorkflow(repo: string): Promise<boolean> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-required-checks.yml`;
+    try {
+      await this.apiGet<unknown>(apiPath);
+      return true;
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /** M25 F-192 — install the scaffolded workflow at the canonical path. */
+  async putRequiredChecksWorkflow(repo: string, yaml: string): Promise<void> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-required-checks.yml`;
+    const content = Buffer.from(yaml).toString("base64");
+    await this.apiPut<unknown>(apiPath, {
+      message: "Add RedDwarf required-checks workflow (auto-merge gate)",
+      content
+    });
+  }
+
   async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {
     const { owner, repoName } = this.parseRepo(repo);
     const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-advance.yml`;
