@@ -147,6 +147,7 @@ describe("buildAutoMergeAuditEntries", () => {
         taskId: "p1",
         kind: "gate_decision" as const,
         title: "Auto-merge decision: block_human_review",
+        location: "db://gate_decision/rec-1",
         metadata: {
           phase: "scm" as const,
           ticketId: "project:p1:ticket:1",
@@ -181,6 +182,7 @@ describe("buildAutoMergeAuditEntries", () => {
         taskId: "p1",
         kind: "phase_record" as const,
         title: "Some other record",
+        location: "db://phase_record/rec-2",
         metadata: { phase: "planning" as const },
         createdAt: "2026-04-26T13:00:00.000Z"
       }

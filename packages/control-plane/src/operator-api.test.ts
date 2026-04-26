@@ -3456,6 +3456,174 @@ describe("M25 F-189 — Project Mode auto-merge opt-in", () => {
   });
 });
 
+describe("M25 F-198 — kill-switch verbs", () => {
+  it("POST /projects/:id/auto-merge/halt is idempotent and sets autoMergeEnabled=false", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ autoMergeEnabled: true })
+    );
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const first = await operatorRequest(
+        server.port,
+        "POST",
+        `/projects/${encodeURIComponent("project:task-001")}/auto-merge/halt`,
+        {}
+      );
+      expect(first.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+
+      // Idempotency: a second halt is a no-op.
+      const second = await operatorRequest(
+        server.port,
+        "POST",
+        `/projects/${encodeURIComponent("project:task-001")}/auto-merge/halt`,
+        {}
+      );
+      expect(second.status).toBe(200);
+      const stillFalse = await repository.getProjectSpec("project:task-001");
+      expect(stillFalse?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all returns 403 when REDDWARF_OPERATOR_ADMIN_TOKEN is unset", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {}
+        );
+        expect(res.status).toBe(403);
+        expect((res.body as { error: string }).error).toBe(
+          "operator_admin_required"
+        );
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous !== undefined) {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all halts every project and persists the global flag flip", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = "admin-test-token";
+    try {
+      const repository = new InMemoryPlanningRepository();
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-A", autoMergeEnabled: true })
+      );
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-B", autoMergeEnabled: true })
+      );
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-C", autoMergeEnabled: false })
+      );
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {},
+          "admin-test-token"
+        );
+        expect(res.status).toBe(200);
+        const body = res.body as { projects_halted: number; global_flag: boolean };
+        expect(body.projects_halted).toBe(2); // task-C was already off
+        expect(body.global_flag).toBe(false);
+
+        const projects = await repository.listProjectSpecs();
+        for (const p of projects) {
+          expect(p.autoMergeEnabled).toBe(false);
+        }
+        const persistedFlag = await repository.getOperatorConfigEntry(
+          "REDDWARF_PROJECT_AUTOMERGE_ENABLED"
+        );
+        expect(persistedFlag?.value).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+      } else {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all rejects the regular operator token (admin token required)", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = "different-admin-token";
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {},
+          operatorApiToken // regular operator token, NOT admin
+        );
+        expect(res.status).toBe(403);
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+      } else {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+});
+
 describe("M25 F-196 — PATCH /projects/:id (auto-merge toggle)", () => {
   it("toggles autoMergeEnabled when the global flag is on", async () => {
     const repository = new InMemoryPlanningRepository();

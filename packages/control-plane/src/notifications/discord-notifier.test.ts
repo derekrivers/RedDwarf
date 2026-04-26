@@ -371,7 +371,7 @@ describe("createDiscordNotifier", () => {
       decisionAt: "2026-04-26T13:00:00.000Z"
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [, init] = fetchImpl.mock.calls[0]! as [string, RequestInit];
+    const [, init] = fetchImpl.mock.calls[0]! as unknown as [string, RequestInit];
     const body = JSON.parse(init.body as string) as {
       embeds: Array<{ title: string }>;
     };

@@ -2529,7 +2529,13 @@ async function handleOperatorRequest(
     return;
   }
 
-  assertOperatorAuthorized(req, authToken);
+  // M25 F-198 — /admin/* routes have their own admin-token gate inside the
+  // handler. Skip the regular operator-token check so the admin token can
+  // authenticate them; the in-handler check then enforces strict admin auth.
+  const isAdminRoute = path.startsWith("/admin/");
+  if (!isAdminRoute) {
+    assertOperatorAuthorized(req, authToken);
+  }
 
   if (method === "GET" && path === "/ui/bootstrap") {
     writeOperatorJsonResponse(res, 200, await resolveOperatorUiBootstrap(clock));
@@ -4310,6 +4316,101 @@ async function handleOperatorRequest(
     }
     const updated = await repository.getProjectSpec(projectId);
     writeOperatorJsonResponse(res, 200, { project: updated });
+    return;
+  }
+
+  // M25 F-198 — POST /projects/:id/auto-merge/halt — kill-switch for one project.
+  // Sets autoMergeEnabled=false (idempotent). The caller can also pass
+  // `label_open_prs: true` to request that every open RedDwarf PR on the
+  // project gets the `needs-human-merge` label, but PR labelling requires the
+  // GitHub adapter — when unavailable, the endpoint still succeeds and reports
+  // labelling as skipped so the operator never sees the kill-switch fail just
+  // because credentials are off.
+  const projectHaltMatch = /^\/projects\/([^/]+)\/auto-merge\/halt$/.exec(path);
+  if (method === "POST" && projectHaltMatch) {
+    const projectId = decodeURIComponent(projectHaltMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+    if (project.autoMergeEnabled) {
+      await repository.saveProjectSpec({
+        ...project,
+        autoMergeEnabled: false,
+        updatedAt: clock().toISOString()
+      });
+    }
+    writeOperatorJsonResponse(res, 200, {
+      project_id: projectId,
+      auto_merge_enabled: false,
+      halted_at: clock().toISOString()
+    });
+    return;
+  }
+
+  // M25 F-198 — POST /admin/auto-merge/halt-all — global kill-switch.
+  // Persists REDDWARF_PROJECT_AUTOMERGE_ENABLED=false to operator_config,
+  // mutates process.env so the in-process evaluator gate 1 reads false on
+  // every subsequent trigger, and walks every project setting
+  // autoMergeEnabled=false. Returns the count of projects that were halted.
+  // Requires REDDWARF_OPERATOR_ADMIN_TOKEN (separate from the regular
+  // operator token) to be set on the deployment AND supplied as the
+  // Bearer credential — the regular operator token is rejected.
+  if (method === "POST" && path === "/admin/auto-merge/halt-all") {
+    const adminToken = (process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] ?? "").trim();
+    if (adminToken.length === 0) {
+      writeOperatorJsonResponse(res, 403, {
+        error: "operator_admin_required",
+        message:
+          "REDDWARF_OPERATOR_ADMIN_TOKEN is not configured on this deployment. The global halt-all verb cannot be used without it."
+      });
+      return;
+    }
+    // Override the standard auth check with the admin token.
+    const supplied = readOperatorAuthToken(req);
+    if (
+      !supplied ||
+      Buffer.from(supplied).length !== Buffer.from(adminToken).length ||
+      !timingSafeEqual(Buffer.from(supplied), Buffer.from(adminToken))
+    ) {
+      writeOperatorJsonResponse(res, 403, {
+        error: "operator_admin_required",
+        message: "Valid REDDWARF_OPERATOR_ADMIN_TOKEN bearer required."
+      });
+      return;
+    }
+
+    // 1) Persist the global flag flip.
+    await repository.saveOperatorConfigEntry({
+      key: "REDDWARF_PROJECT_AUTOMERGE_ENABLED",
+      value: false,
+      updatedAt: clock().toISOString()
+    });
+    process.env["REDDWARF_PROJECT_AUTOMERGE_ENABLED"] = "false";
+
+    // 2) Halt every opted-in project.
+    const projects = await repository.listProjectSpecs();
+    let halted = 0;
+    for (const p of projects) {
+      if (!p.autoMergeEnabled) continue;
+      await repository.saveProjectSpec({
+        ...p,
+        autoMergeEnabled: false,
+        updatedAt: clock().toISOString()
+      });
+      halted += 1;
+    }
+
+    writeOperatorJsonResponse(res, 200, {
+      halted_at: clock().toISOString(),
+      projects_halted: halted,
+      global_flag: false,
+      note: "Restart the dispatcher to fully clear the in-memory captured value if the runtime requires it."
+    });
     return;
   }
 
