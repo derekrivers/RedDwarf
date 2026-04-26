@@ -2709,6 +2709,7 @@ function buildTestProjectSpec(overrides: Partial<import("@reddwarf/contracts").P
     clarificationRequestedAt: null,
     autoMergeEnabled: false,
     autoMergePolicy: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -2728,6 +2729,7 @@ function buildTestTicketSpec(overrides: Partial<import("@reddwarf/contracts").Ti
     riskClass: "low",
     githubSubIssueNumber: null,
     githubPrNumber: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides

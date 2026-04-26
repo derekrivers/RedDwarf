@@ -21,6 +21,7 @@ function buildTicketSpec(overrides: Partial<TicketSpec> = {}): TicketSpec {
     riskClass: "low",
     githubSubIssueNumber: 2000,
     githubPrNumber: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides

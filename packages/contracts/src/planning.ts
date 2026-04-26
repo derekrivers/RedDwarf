@@ -253,11 +253,52 @@ export const complexityClassificationSchema = z.object({
   signals: z.array(z.string().min(1))
 });
 
-// M25 F-190 fills in the full RequiredCheckContract shape. F-189 introduces
-// the field with a permissive schema so the migration, repository, and
-// operator API can land before Holly starts emitting populated contracts.
-// `requiredCheckNames: []` (or an empty object) is treated as "no contract"
-// by the auto-merge evaluator (F-194), which then refuses to auto-merge.
+// M25 F-190: the RequiredCheckContract is the live policy that the auto-merge
+// evaluator (F-194) reads to decide whether "green build" is meaningful.
+// Stored on both ProjectSpec (project-level default) and TicketSpec
+// (per-ticket override). An empty contract — `{}` or `requiredCheckNames: []`
+// with `minimumCheckCount: 0` — is treated as "ineligible for auto-merge"
+// and forces fallback to human review.
+//
+// `forbidSkipCi` defaults true so a [skip ci] commit on the PR branch
+// blocks auto-merge by default; an operator can opt out per-ticket if
+// the project genuinely needs that escape hatch.
+//
+// `forbidEmptyTestDiff` defaults true so a code-only PR with no test
+// changes is blocked from auto-merge unless the ticket carries the
+// `docs-only` label (handled inside the F-194 evaluator).
+export const requiredCheckContractSchema = z.object({
+  requiredCheckNames: z.array(z.string().min(1)).default([]),
+  minimumCheckCount: z.number().int().min(0).default(0),
+  forbidSkipCi: z.boolean().default(true),
+  forbidEmptyTestDiff: z.boolean().default(true),
+  rationale: z.string().min(1).max(500).optional()
+});
+export type RequiredCheckContract = z.infer<typeof requiredCheckContractSchema>;
+
+/** Empty contract sentinel — treat as "no auto-merge eligibility". */
+export const EMPTY_REQUIRED_CHECK_CONTRACT: RequiredCheckContract = {
+  requiredCheckNames: [],
+  minimumCheckCount: 0,
+  forbidSkipCi: true,
+  forbidEmptyTestDiff: true
+};
+
+export function isRequiredCheckContractEmpty(
+  contract: RequiredCheckContract | null | undefined
+): boolean {
+  if (!contract) return true;
+  return (
+    contract.requiredCheckNames.length === 0 &&
+    contract.minimumCheckCount === 0
+  );
+}
+
+// `autoMergePolicy` is the FROZEN snapshot persisted at approval time so a
+// historic decision remains reproducible if the live RequiredCheckContract
+// is later edited. F-194 writes the resolved contract here when it accepts
+// the merge. Kept permissive so older snapshots from earlier rev of the
+// schema continue to load.
 export const autoMergePolicySchema = z
   .object({
     requiredCheckNames: z.array(z.string().min(1)).default([]),
@@ -282,6 +323,9 @@ export const ticketSpecSchema = z.object({
   riskClass: riskClassSchema,
   githubSubIssueNumber: z.number().int().positive().nullable().default(null),
   githubPrNumber: z.number().int().positive().nullable().default(null),
+  // M25 F-190: per-ticket override of the project-level RequiredCheckContract.
+  // null = inherit project default; populated = use this contract instead.
+  requiredCheckContract: requiredCheckContractSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema
 });
@@ -309,6 +353,10 @@ export const projectSpecSchema = z.object({
   // historic decision remains reproducible if the global policy changes.
   autoMergeEnabled: z.boolean().default(false),
   autoMergePolicy: autoMergePolicySchema.nullable().default(null),
+  // M25 F-190: project-level RequiredCheckContract — the default applied to
+  // every ticket whose own contract is null. F-194's evaluator resolves the
+  // effective contract per ticket as `ticket.requiredCheckContract ?? project.requiredCheckContract`.
+  requiredCheckContract: requiredCheckContractSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema
 });
