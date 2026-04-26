@@ -759,9 +759,10 @@ export async function executeProjectApproval(
           logger?.warn(
             `M25 advance pre-flight: ${project.sourceRepo} is missing ${missing.join(" + ")}. ` +
             `reddwarf-advance.yml will fail on every PR merge until these are set; the project ticket queue will not advance. ` +
-            `Fix with: ` +
-            `gh secret set REDDWARF_OPERATOR_TOKEN --repo ${project.sourceRepo} --body "<your-operator-token>"; ` +
-            `gh variable set REDDWARF_OPERATOR_API_URL --repo ${project.sourceRepo} --body "<your-operator-api-url>".`
+            `Easiest fix: ./scripts/configure-target-repo.sh ${project.sourceRepo} ` +
+            `(reads from .env, idempotent). ` +
+            `Manual: gh secret set REDDWARF_OPERATOR_TOKEN --repo ${project.sourceRepo} --body "<token>"; ` +
+            `gh variable set REDDWARF_OPERATOR_API_URL --repo ${project.sourceRepo} --body "<public-api-url>".`
           );
         } else {
           logger?.info(

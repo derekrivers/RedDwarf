@@ -484,6 +484,24 @@ Depends on the status code:
 - **404** → payload URL wrong. Should be `https://<your-domain>/webhooks/github`.
 - **No deliveries at all** → webhook not `Active` in GitHub, or the domain isn't reachable (DNS / firewall).
 
+### Auto-merge merges PRs but the queue stops advancing (M25)
+
+Symptom: a sub-ticket PR gets auto-merged, then the next ticket never dispatches. In the target repo's Actions tab you'll see `RedDwarf Ticket Advance` runs failing with `::error::REDDWARF_OPERATOR_API_URL is not set` (or the `_TOKEN` variant).
+
+Root cause: `reddwarf-advance.yml` was installed in the target repo (this happens automatically at first project approval), but its required Actions secret + variable haven't been set on that specific repo. The workflow exits 1 on every PR merge, so the operator API never receives the `/projects/advance` callback that dispatches the next ticket.
+
+The pre-flight check at project approval logs the exact fix command in `journalctl -u reddwarf` — search for `M25 advance pre-flight`. Or just run the helper script:
+
+```bash
+cd /root/RedDwarf
+./scripts/configure-target-repo.sh derekrivers/automerge-syndrome
+# Replace <owner/repo> with whichever target repo's queue is stuck.
+```
+
+The script reads `REDDWARF_OPERATOR_TOKEN` and the public operator-API URL from your local `.env` and pushes them to the target repo as a secret + variable via `gh`. Requires `gh` installed and authenticated against an account with admin access to the target repo. Idempotent — safe to re-run.
+
+After it succeeds, re-trigger the failed Actions run from the GitHub UI (or just wait for the next PR merge) and the queue resumes.
+
 ### Codex auth expired and pipeline fails on every dispatch
 
 Resync per §10. If you can't resync (laptop's tokens also expired), either fall back to `REDDWARF_MODEL_PROVIDER=anthropic` with an `ANTHROPIC_API_KEY`, or upgrade your ChatGPT subscription to Pro and re-run the OpenClaw OAuth flow on the VPS.
