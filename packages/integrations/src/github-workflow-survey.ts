@@ -54,6 +54,33 @@ export interface WorkflowSurvey {
  * job id otherwise. Matrix expansions are ignored (they add suffixes at
  * runtime; the static name is the prefix the merge gate matches against).
  */
+/**
+ * Manual comment-stripping. Linear-time. Replaces a regex like `\s+#.*$`
+ * which CodeQL flags for polynomial backtracking on adversarial input
+ * (long whitespace runs with no `#`). YAML treats `#` as a comment when
+ * it's at the start of the line OR preceded by whitespace; everything
+ * after the comment marker through end-of-line is dropped, plus any
+ * trailing whitespace before the marker.
+ */
+function stripTrailingComment(line: string): string {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
+      // Walk back over the whitespace immediately preceding the marker.
+      let end = i;
+      while (end > 0 && (line[end - 1] === " " || line[end - 1] === "\t")) {
+        end -= 1;
+      }
+      return line.slice(0, end);
+    }
+  }
+  return line;
+}
+
+// Bounded whitespace patterns — CodeQL accepts {n,m} as non-polynomial.
+// 32 is well above any sane YAML indentation / spacing in a workflow file.
+const WS_OPT = "[ \\t]{0,32}";
+const WS_REQ = "[ \\t]{1,32}";
+
 export function parseWorkflowJobNames(yaml: string): string[] {
   const lines = yaml.split(/\r?\n/);
   const names: string[] = [];
@@ -77,7 +104,7 @@ export function parseWorkflowJobNames(yaml: string): string[] {
     // Strip comments (treat `#` outside strings as a comment start; we
     // don't bother with quoted-string awareness since workflow files
     // rarely embed `#` in keys).
-    const commentStripped = rawLine.replace(/\s+#.*$/, "");
+    const commentStripped = stripTrailingComment(rawLine);
     if (commentStripped.trim().length === 0) continue;
 
     const indent = commentStripped.match(/^( *)/)?.[1]?.length ?? 0;
@@ -85,7 +112,7 @@ export function parseWorkflowJobNames(yaml: string): string[] {
 
     if (!inJobsBlock) {
       // Look for the top-level `jobs:` key (indent 0).
-      if (indent === 0 && /^jobs\s*:\s*$/.test(trimmed)) {
+      if (indent === 0 && new RegExp(`^jobs${WS_OPT}:${WS_OPT}$`).test(trimmed)) {
         inJobsBlock = true;
         jobsIndent = 0;
       }
@@ -99,7 +126,7 @@ export function parseWorkflowJobNames(yaml: string): string[] {
       jobsIndent = null;
       // Re-evaluate this line at the top level — could be another `jobs:`
       // (rare, but allowed) or unrelated key.
-      if (indent === 0 && /^jobs\s*:\s*$/.test(trimmed)) {
+      if (indent === 0 && new RegExp(`^jobs${WS_OPT}:${WS_OPT}$`).test(trimmed)) {
         inJobsBlock = true;
         jobsIndent = 0;
       }
@@ -109,7 +136,7 @@ export function parseWorkflowJobNames(yaml: string): string[] {
     // Job ID: a key one indent step inside the jobs block, ending in `:`.
     // We treat the first child indent we see as the job-id indent.
     if (currentJobIndent === null || indent === currentJobIndent) {
-      const jobIdMatch = /^([a-zA-Z0-9_\-]+)\s*:\s*$/.exec(trimmed);
+      const jobIdMatch = new RegExp(`^([a-zA-Z0-9_\\-]+)${WS_OPT}:${WS_OPT}$`).exec(trimmed);
       if (jobIdMatch && jobIdMatch[1]) {
         flushJob();
         currentJobId = jobIdMatch[1];
@@ -124,7 +151,7 @@ export function parseWorkflowJobNames(yaml: string): string[] {
       currentJobIndent !== null &&
       indent > currentJobIndent
     ) {
-      const nameMatch = /^name\s*:\s*(.+)$/.exec(trimmed);
+      const nameMatch = new RegExp(`^name${WS_OPT}:${WS_OPT}(.+)$`).exec(trimmed);
       if (nameMatch && nameMatch[1]) {
         // Strip surrounding quotes, if any.
         const raw = nameMatch[1].trim();
@@ -178,14 +205,14 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
   const ALLOWED_PR_TYPES = new Set(["opened", "synchronize", "reopened"]);
 
   for (const rawLine of lines) {
-    const commentStripped = rawLine.replace(/\s+#.*$/, "");
+    const commentStripped = stripTrailingComment(rawLine);
     if (commentStripped.trim().length === 0) continue;
     const indent = commentStripped.match(/^( *)/)?.[1]?.length ?? 0;
     const trimmed = commentStripped.trim();
 
     if (!inOnBlock) {
       // `on: push` or `on: pull_request` shorthand at top level.
-      const onShorthand = /^on\s*:\s*(.+)$/.exec(trimmed);
+      const onShorthand = new RegExp(`^on${WS_OPT}:${WS_OPT}(.+)$`).exec(trimmed);
       if (indent === 0 && onShorthand && onShorthand[1] && onShorthand[1] !== "") {
         const value = onShorthand[1].trim();
         // Could be `on: push` or `on: [push, pull_request]`.
@@ -197,7 +224,7 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
         }
         continue;
       }
-      if (indent === 0 && /^on\s*:\s*$/.test(trimmed)) {
+      if (indent === 0 && new RegExp(`^on${WS_OPT}:${WS_OPT}$`).test(trimmed)) {
         inOnBlock = true;
         onIndent = 0;
       }
@@ -210,7 +237,7 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
       inOnBlock = false;
       inPullRequest = false;
       inTypes = false;
-      const onShorthand = /^on\s*:\s*(.+)$/.exec(trimmed);
+      const onShorthand = new RegExp(`^on${WS_OPT}:${WS_OPT}(.+)$`).exec(trimmed);
       if (indent === 0 && onShorthand && onShorthand[1]) {
         const value = onShorthand[1].trim();
         if (/\bpush\b/.test(value)) hasPush = true;
@@ -224,13 +251,13 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
 
     // First-level child of `on:`.
     if (pullRequestIndent === -1 || indent === pullRequestIndent) {
-      if (/^push\s*:\s*$/.test(trimmed) || /^push\s*:/.test(trimmed)) {
+      if (new RegExp(`^push${WS_OPT}:${WS_OPT}$`).test(trimmed) || new RegExp(`^push${WS_OPT}:`).test(trimmed)) {
         hasPush = true;
         inPullRequest = false;
         inTypes = false;
         continue;
       }
-      if (/^pull_request\s*:\s*$/.test(trimmed)) {
+      if (new RegExp(`^pull_request${WS_OPT}:${WS_OPT}$`).test(trimmed)) {
         hasPullRequest = true;
         inPullRequest = true;
         pullRequestIndent = indent;
@@ -239,7 +266,7 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
         inTypes = false;
         continue;
       }
-      const prInline = /^pull_request\s*:\s*\[(.*)\]\s*$/.exec(trimmed);
+      const prInline = new RegExp(`^pull_request${WS_OPT}:${WS_OPT}\\[([^\\]]*)\\]${WS_OPT}$`).exec(trimmed);
       if (prInline && prInline[1]) {
         // pull_request: [opened, synchronize] inline form
         hasPullRequest = true;
@@ -262,13 +289,13 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
     // Inside pull_request:.
     if (inPullRequest && indent > pullRequestIndent) {
       if (typesIndent === -1 || indent === typesIndent) {
-        if (/^types\s*:\s*$/.test(trimmed)) {
+        if (new RegExp(`^types${WS_OPT}:${WS_OPT}$`).test(trimmed)) {
           inTypes = true;
           pullRequestHasTypes = true;
           typesIndent = indent;
           continue;
         }
-        const typesInline = /^types\s*:\s*\[(.*)\]\s*$/.exec(trimmed);
+        const typesInline = new RegExp(`^types${WS_OPT}:${WS_OPT}\\[([^\\]]*)\\]${WS_OPT}$`).exec(trimmed);
         if (typesInline && typesInline[1]) {
           pullRequestHasTypes = true;
           for (const t of typesInline[1].split(",").map((s) => s.trim())) {
@@ -279,7 +306,7 @@ export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
       }
       if (inTypes && indent > typesIndent) {
         // List item under types: e.g. `  - opened`
-        const item = /^-\s*(.+)$/.exec(trimmed);
+        const item = new RegExp(`^-${WS_OPT}(.+)$`).exec(trimmed);
         if (item && item[1]) {
           const value = item[1].trim();
           if (ALLOWED_PR_TYPES.has(value)) pullRequestTypesAllowOpen = true;
