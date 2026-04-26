@@ -354,4 +354,83 @@ describe("createDiscordNotifier", () => {
     });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  // ── M25 F-197 — auto-merge notification surfaces ───────────────────────
+
+  it("notifyAutoMergeBlocked posts an embed when enabled", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const notifier = createDiscordNotifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      env: ENABLED_ENV
+    });
+    await notifier.notifyAutoMergeBlocked({
+      ticketId: "project:p1:ticket:1",
+      prNumber: 99,
+      repo: "acme/platform",
+      failedGates: ["empty_test_diff"],
+      decisionAt: "2026-04-26T13:00:00.000Z"
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0]! as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as {
+      embeds: Array<{ title: string }>;
+    };
+    expect(body.embeds[0]?.title).toContain("auto-merge blocked");
+  });
+
+  it("notifyAutoMergeBlocked is a no-op when notifier disabled", async () => {
+    const fetchImpl = vi.fn();
+    const notifier = createDiscordNotifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      env: {} as NodeJS.ProcessEnv
+    });
+    await notifier.notifyAutoMergeBlocked({
+      ticketId: "t",
+      prNumber: 1,
+      repo: "a/b",
+      failedGates: [],
+      decisionAt: "2026-04-26T13:00:00.000Z"
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("notifyAutoMerged respects the rate-limited heartbeat (every Nth)", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const notifier = createDiscordNotifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      env: {
+        ...ENABLED_ENV,
+        REDDWARF_AUTOMERGE_DISCORD_HEARTBEAT_EVERY: "10"
+      } as NodeJS.ProcessEnv
+    });
+    // Fire 50 sequential merges; expect notifications at indices 1, 11, 21, 31, 41.
+    for (let i = 1; i <= 50; i++) {
+      await notifier.notifyAutoMerged({
+        ticketId: `project:p1:ticket:${i}`,
+        projectId: "project:p1",
+        prNumber: i,
+        repo: "acme/platform",
+        mergeIndex: i,
+        decisionAt: "2026-04-26T13:00:00.000Z"
+      });
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
+  it("notifyAutoMerged drops the call when notifier disabled", async () => {
+    const fetchImpl = vi.fn();
+    const notifier = createDiscordNotifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      env: {} as NodeJS.ProcessEnv
+    });
+    await notifier.notifyAutoMerged({
+      ticketId: "t",
+      projectId: "p",
+      prNumber: 1,
+      repo: "a/b",
+      mergeIndex: 1,
+      decisionAt: "2026-04-26T13:00:00.000Z"
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

@@ -33,6 +33,9 @@ function buildProjectSpec(
     clarificationQuestions: null,
     clarificationAnswers: null,
     clarificationRequestedAt: null,
+    autoMergeEnabled: false,
+    autoMergePolicy: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -54,6 +57,7 @@ function buildTicketSpec(
     riskClass: "low",
     githubSubIssueNumber: null,
     githubPrNumber: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides

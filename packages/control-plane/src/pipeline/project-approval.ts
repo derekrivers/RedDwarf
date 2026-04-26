@@ -16,8 +16,17 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository
 } from "@reddwarf/evidence";
-import type { GitHubWriter, GitHubIssuesAdapter, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
-import { V1MutationDisabledError } from "@reddwarf/integrations";
+import type {
+  GitHubWriter,
+  GitHubIssuesAdapter,
+  OpenClawTaskFlowAdapter,
+  RequiredChecksScaffoldAdapter,
+  WorkflowSurveyAdapter
+} from "@reddwarf/integrations";
+import {
+  V1MutationDisabledError
+} from "@reddwarf/integrations";
+import { ensureProjectAutoMergeReady } from "./project-auto-merge-readiness.js";
 import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
 import {
   expandAllowedPathsForGeneratedArtifacts,
@@ -43,6 +52,21 @@ export interface ExecuteProjectApprovalDependencies {
    * approval. Best-effort: failure logs a warning but does not block the approval.
    */
   github?: GitHubWriter | null;
+  /**
+   * M25 F-192: when the approved project has auto-merge enabled but its
+   * RequiredCheckContract is empty (greenfield repo, no surveyed
+   * workflows), install a default `reddwarf-required-checks.yml`. If
+   * detection fails (no recognized manifest), the project's
+   * autoMergeEnabled is auto-flipped to false with an evidence record.
+   * Best-effort: any failure logs a warning but does not block approval.
+   */
+  requiredChecksScaffoldAdapter?: RequiredChecksScaffoldAdapter | null;
+  /**
+   * M25 — workflow surveyor used by the readiness helper to re-derive the
+   * contract from any workflow files the developer added between planning
+   * and approval. When omitted, the readiness helper falls back to scaffold.
+   */
+  workflowSurveyAdapter?: WorkflowSurveyAdapter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -622,7 +646,9 @@ export async function executeProjectApproval(
   }
 
   // Step 1: Build the approved project state
-  const approvedProject: ProjectSpec = resumableApprovedProject
+  // M25: `let` (not const) — the readiness helper below may rebuild this with
+  // a populated requiredCheckContract or a forced autoMergeEnabled=false.
+  let approvedProject: ProjectSpec = resumableApprovedProject
     ? {
         ...project,
         approvalDecision: project.approvalDecision ?? "approve",
@@ -706,6 +732,86 @@ export async function executeProjectApproval(
       const wfErrMsg = wfErr instanceof Error ? wfErr.message : String(wfErr);
       logger?.warn(`Failed to install reddwarf-advance.yml in ${project.sourceRepo}: ${wfErrMsg}`);
     }
+
+    // F-186 follow-up: pre-flight check that reddwarf-advance.yml's required
+    // secret + variable are actually configured on the target repo. Without
+    // them, every PR-merged event hits an `exit 1` in the workflow and the
+    // ticket queue silently stops advancing. Cast through unknown — the
+    // RestGitHubAdapter implements GitHubActionsConfigReader; fixture
+    // adapters typically don't (the methods just won't be there → skip).
+    const configReader = deps.github as unknown as
+      | import("@reddwarf/integrations").GitHubActionsConfigReader
+      | undefined;
+    if (
+      configReader &&
+      typeof configReader.getRepoActionsVariable === "function" &&
+      typeof configReader.hasRepoActionsSecret === "function"
+    ) {
+      try {
+        const [variable, hasSecret] = await Promise.all([
+          configReader.getRepoActionsVariable(project.sourceRepo, "REDDWARF_OPERATOR_API_URL"),
+          configReader.hasRepoActionsSecret(project.sourceRepo, "REDDWARF_OPERATOR_TOKEN")
+        ]);
+        const missing: string[] = [];
+        if (!variable) missing.push("variable REDDWARF_OPERATOR_API_URL");
+        if (!hasSecret) missing.push("secret REDDWARF_OPERATOR_TOKEN");
+        if (missing.length > 0) {
+          logger?.warn(
+            `M25 advance pre-flight: ${project.sourceRepo} is missing ${missing.join(" + ")}. ` +
+            `reddwarf-advance.yml will fail on every PR merge until these are set; the project ticket queue will not advance. ` +
+            `Easiest fix: ./scripts/configure-target-repo.sh ${project.sourceRepo} ` +
+            `(reads from .env, idempotent). ` +
+            `Manual: gh secret set REDDWARF_OPERATOR_TOKEN --repo ${project.sourceRepo} --body "<token>"; ` +
+            `gh variable set REDDWARF_OPERATOR_API_URL --repo ${project.sourceRepo} --body "<public-api-url>".`
+          );
+        } else {
+          logger?.info(
+            `M25 advance pre-flight: ${project.sourceRepo} has both REDDWARF_OPERATOR_TOKEN secret and REDDWARF_OPERATOR_API_URL variable configured.`
+          );
+        }
+      } catch (preflightErr) {
+        const preflightMsg = preflightErr instanceof Error ? preflightErr.message : String(preflightErr);
+        logger?.warn(
+          `M25 advance pre-flight: failed to inspect Actions config on ${project.sourceRepo}: ${preflightMsg}. ` +
+          `Cannot confirm reddwarf-advance.yml will work after merges.`
+        );
+      }
+    }
+  }
+
+  // M25 — make the project "auto-merge ready" when it opted in: re-survey
+  // workflows (in case the dev added CI between planning and approval) and
+  // fall back to the F-192 scaffold for greenfield repos. The helper also
+  // populates the project's RequiredCheckContract so the F-194 evaluator
+  // doesn't block at gate 3 — the original F-192 path forgot to do this.
+  if (
+    !resumableApprovedProject &&
+    !backfillingMissingSubIssues &&
+    !materializingDispatchedTicketTask &&
+    approvedProject.autoMergeEnabled === true
+  ) {
+    const readiness = await ensureProjectAutoMergeReady(approvedProject, {
+      workflowSurveyAdapter: deps.workflowSurveyAdapter ?? null,
+      scaffoldAdapter: deps.requiredChecksScaffoldAdapter ?? null,
+      clock,
+      ...(logger ? { logger } : {})
+    });
+    if (readiness.forceDisableAutoMerge) {
+      approvedProject = {
+        ...readiness.project,
+        autoMergeEnabled: false,
+        updatedAt: now()
+      };
+      logger?.warn(
+        `M25 readiness: ${readiness.outcome} — auto-merge disabled for ${project.projectId}: ${readiness.reason}`
+      );
+    } else {
+      approvedProject = readiness.project;
+      logger?.info(
+        `M25 readiness: ${readiness.outcome} — ${readiness.reason}`
+      );
+    }
+    await repository.saveProjectSpec({ ...approvedProject });
   }
 
   // Collect issue numbers to persist atomically inside the final transaction.

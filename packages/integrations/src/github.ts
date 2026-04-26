@@ -120,6 +120,21 @@ export interface GitHubWriter {
   ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }>;
 }
 
+/**
+ * F-186 follow-up — narrow read-only interface used by the approval flow to
+ * pre-flight-check whether reddwarf-advance.yml's required Actions secret +
+ * variable are configured on the target repo. Implemented by RestGitHubAdapter.
+ * Kept separate from GitHubWriter so fixture adapters don't have to implement
+ * methods they never use.
+ */
+export interface GitHubActionsConfigReader {
+  getRepoActionsVariable(
+    repo: string,
+    name: string
+  ): Promise<{ name: string; value: string } | null>;
+  hasRepoActionsSecret(repo: string, name: string): Promise<boolean>;
+}
+
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
 
 // ============================================================
@@ -1105,6 +1120,247 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
       return response.json() as Promise<T>;
     };
     return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // M25 F-194 — GitHubAutoMergeAdapter implementation
+  // ──────────────────────────────────────────────────────────────────────
+
+  async getPullRequest(repo: string, prNumber: number): Promise<{
+    number: number;
+    state: "open" | "closed" | "merged";
+    merged: boolean;
+    headSha: string;
+    headRef: string;
+    baseRef: string;
+    title: string;
+    body: string;
+    labels: string[];
+  }> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const pr = await this.apiGet<{
+      number: number;
+      state: string;
+      merged: boolean;
+      head: { sha: string; ref: string };
+      base: { ref: string };
+      title: string;
+      body: string | null;
+      labels: Array<{ name: string }>;
+    }>(`/repos/${owner}/${repoName}/pulls/${prNumber}`);
+    return {
+      number: pr.number,
+      state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
+      merged: pr.merged,
+      headSha: pr.head.sha,
+      headRef: pr.head.ref,
+      baseRef: pr.base.ref,
+      title: pr.title,
+      body: pr.body ?? "",
+      labels: pr.labels.map((l) => l.name)
+    };
+  }
+
+  async getPullRequestFiles(
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{
+    path: string;
+    status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+    additions: number;
+    deletions: number;
+  }>> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const files = await this.apiGet<Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }>>(`/repos/${owner}/${repoName}/pulls/${prNumber}/files?per_page=100`);
+    return files.map((f) => ({
+      path: f.filename,
+      status: (f.status as "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged"),
+      additions: f.additions,
+      deletions: f.deletions
+    }));
+  }
+
+  async getPullRequestCommits(
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{ sha: string; message: string }>> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const commits = await this.apiGet<Array<{ sha: string; commit: { message: string } }>>(
+      `/repos/${owner}/${repoName}/pulls/${prNumber}/commits?per_page=100`
+    );
+    return commits.map((c) => ({ sha: c.sha, message: c.commit.message }));
+  }
+
+  async addLabel(repo: string, prNumber: number, label: string): Promise<void> {
+    await this.addLabels(repo, prNumber, [label]);
+  }
+
+  async postComment(repo: string, prNumber: number, body: string): Promise<void> {
+    await this.commentOnIssue({ repo, issueNumber: prNumber, body });
+  }
+
+  async mergePullRequest(input: {
+    repo: string;
+    prNumber: number;
+    headSha: string;
+    commitTitle?: string;
+  }): Promise<{ merged: boolean; mergedSha: string | null; message: string }> {
+    const { owner, repoName } = this.parseRepo(input.repo);
+    const result = await this.apiPut<{ sha?: string; merged: boolean; message: string }>(
+      `/repos/${owner}/${repoName}/pulls/${input.prNumber}/merge`,
+      {
+        sha: input.headSha,
+        merge_method: "squash",
+        ...(input.commitTitle ? { commit_title: input.commitTitle } : {})
+      }
+    );
+    return {
+      merged: result.merged,
+      mergedSha: result.sha ?? null,
+      message: result.message
+    };
+  }
+
+  /**
+   * M25 F-191 — list every `.github/workflows/*.{yml,yaml}` file in the repo
+   * with its decoded contents. Returns `[]` when the directory does not exist
+   * (greenfield repos). Implements WorkflowSurveyAdapter so it can be passed
+   * directly to `surveyWorkflowFiles`.
+   */
+  async listWorkflowYamlFiles(
+    repo: string
+  ): Promise<{ path: string; content: string }[]> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const dirPath = `/repos/${owner}/${repoName}/contents/.github/workflows`;
+
+    let entries: Array<{ name: string; path: string; type: string; download_url: string | null }>;
+    try {
+      entries = await this.apiGet<typeof entries>(dirPath);
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const results: { path: string; content: string }[] = [];
+    for (const entry of entries) {
+      if (entry.type !== "file") continue;
+      if (!/\.(ya?ml)$/i.test(entry.name)) continue;
+      // Fetch each file's content individually — the directory listing
+      // only includes metadata. The contents endpoint returns base64.
+      const fileResponse = await this.apiGet<{ content: string; encoding: string }>(
+        `/repos/${owner}/${repoName}/contents/${entry.path}`
+      );
+      if (fileResponse.encoding !== "base64") {
+        // Non-base64 encoding is unexpected; skip rather than crash.
+        continue;
+      }
+      const decoded = Buffer.from(fileResponse.content, "base64").toString("utf8");
+      results.push({ path: entry.path, content: decoded });
+    }
+    return results;
+  }
+
+  /**
+   * M25 F-192 — list immediate root entries for stack detection. Returns
+   * filename + type for each top-level path, or `[]` if the repo is empty.
+   */
+  async listRepoRootFiles(
+    repo: string
+  ): Promise<{ path: string }[]> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      const entries = await this.apiGet<Array<{ path: string; type: string }>>(
+        `/repos/${owner}/${repoName}/contents/`
+      );
+      return entries
+        .filter((e) => e.type === "file" || e.type === "dir")
+        .map((e) => ({ path: e.path }));
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /** M25 F-192 — true when the scaffolded workflow file already exists. */
+  async hasRequiredChecksWorkflow(repo: string): Promise<boolean> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-required-checks.yml`;
+    try {
+      await this.apiGet<unknown>(apiPath);
+      return true;
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /** M25 F-192 — install the scaffolded workflow at the canonical path. */
+  async putRequiredChecksWorkflow(repo: string, yaml: string): Promise<void> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-required-checks.yml`;
+    const content = Buffer.from(yaml).toString("base64");
+    await this.apiPut<unknown>(apiPath, {
+      message: "Add RedDwarf required-checks workflow (auto-merge gate)",
+      content
+    });
+  }
+
+  /**
+   * F-186 follow-up — read-only check for an Actions variable on the target
+   * repo. Returns null on 404. Used by the approval flow to detect when
+   * `REDDWARF_OPERATOR_API_URL` (or any other expected variable) hasn't been
+   * configured, so the operator gets a clear warning instead of discovering
+   * the misconfiguration when reddwarf-advance.yml fires post-merge.
+   */
+  async getRepoActionsVariable(
+    repo: string,
+    name: string
+  ): Promise<{ name: string; value: string } | null> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      const result = await this.apiGet<{ name: string; value: string }>(
+        `/repos/${owner}/${repoName}/actions/variables/${encodeURIComponent(name)}`
+      );
+      return { name: result.name, value: result.value };
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * F-186 follow-up — does the target repo have an Actions secret with this
+   * name? GitHub never returns secret VALUES via the REST API; we can only
+   * check existence (404 vs 200 on the metadata endpoint). Used to warn
+   * when REDDWARF_OPERATOR_TOKEN isn't configured before reddwarf-advance.yml
+   * starts firing.
+   */
+  async hasRepoActionsSecret(repo: string, name: string): Promise<boolean> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      await this.apiGet<{ name: string }>(
+        `/repos/${owner}/${repoName}/actions/secrets/${encodeURIComponent(name)}`
+      );
+      return true;
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {

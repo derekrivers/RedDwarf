@@ -442,6 +442,9 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -458,6 +461,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -473,6 +477,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: "2026-03-25T20:21:00.000Z",
       updatedAt: "2026-03-25T20:21:00.000Z"
     });
@@ -506,6 +511,9 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -522,6 +530,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -537,6 +546,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: "2026-03-25T20:21:00.000Z",
       updatedAt: "2026-03-25T20:21:00.000Z"
     });
@@ -552,6 +562,7 @@ describe("evidence memory partitions", () => {
       riskClass: "medium",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: "2026-03-25T20:22:00.000Z",
       updatedAt: "2026-03-25T20:22:00.000Z"
     });
@@ -579,6 +590,9 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -595,6 +609,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -621,6 +636,9 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -636,6 +654,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -671,6 +690,9 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -686,6 +708,7 @@ describe("evidence memory partitions", () => {
       riskClass: "low",
       githubSubIssueNumber: null,
       githubPrNumber: null,
+      requiredCheckContract: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -770,5 +793,100 @@ describe("evidence memory partitions", () => {
     expect(firstClaim.blockedByRun).toBeNull();
     expect(secondClaim.staleRunIds).toEqual([]);
     expect(secondClaim.blockedByRun?.runId).toBe("run-fresh");
+  });
+
+  // M25 F-190 — RequiredCheckContract round-trip on both ProjectSpec and TicketSpec.
+  it("round-trips a non-empty RequiredCheckContract on ProjectSpec and TicketSpec", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const contract = {
+      requiredCheckNames: ["build", "test", "lint"],
+      minimumCheckCount: 3,
+      forbidSkipCi: true,
+      forbidEmptyTestDiff: true,
+      rationale: "M25 F-190 round-trip test."
+    };
+
+    await repository.saveProjectSpec({
+      projectId: "proj-rcc",
+      sourceIssueId: "1",
+      sourceRepo: "acme/platform",
+      title: "Required-check contract round-trip",
+      summary: "Persist a non-empty contract and read it back deeply equal.",
+      projectSize: "medium",
+      status: "draft",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      autoMergeEnabled: true,
+      autoMergePolicy: null,
+      requiredCheckContract: contract,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    await repository.saveTicketSpec({
+      ticketId: "ticket-rcc",
+      projectId: "proj-rcc",
+      title: "Ticket with override",
+      description: "Carries its own contract that overrides the project default.",
+      acceptanceCriteria: ["Ticket persists override"],
+      dependsOn: [],
+      status: "pending",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: null,
+      requiredCheckContract: { ...contract, requiredCheckNames: ["build"] },
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const reloadedProject = await repository.getProjectSpec("proj-rcc");
+    expect(reloadedProject?.requiredCheckContract).toEqual(contract);
+    expect(reloadedProject?.autoMergeEnabled).toBe(true);
+
+    const reloadedTickets = await repository.listTicketSpecs("proj-rcc");
+    expect(reloadedTickets).toHaveLength(1);
+    expect(reloadedTickets[0]?.requiredCheckContract).toEqual({
+      ...contract,
+      requiredCheckNames: ["build"]
+    });
+  });
+
+  // M25 F-190 — empty / `{}` contract reads back as null so the evaluator
+  // (F-194) treats it as "ineligible for auto-merge".
+  it("treats an empty contract jsonb cell as null on read-back", async () => {
+    const repository = new InMemoryPlanningRepository();
+
+    await repository.saveProjectSpec({
+      projectId: "proj-empty-rcc",
+      sourceIssueId: null,
+      sourceRepo: "acme/platform",
+      title: "Empty contract",
+      summary: "Default contract should round-trip as null.",
+      projectSize: "small",
+      status: "draft",
+      complexityClassification: null,
+      approvalDecision: null,
+      decidedBy: null,
+      decisionSummary: null,
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const reloaded = await repository.getProjectSpec("proj-empty-rcc");
+    expect(reloaded?.requiredCheckContract).toBeNull();
   });
 });

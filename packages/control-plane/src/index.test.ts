@@ -2623,6 +2623,7 @@ describe("control-plane", () => {
         riskClass: "low",
         githubSubIssueNumber: 2000,
         githubPrNumber: null,
+        requiredCheckContract: null,
         createdAt: "2026-03-25T18:00:00.000Z",
         updatedAt: "2026-03-25T18:00:00.000Z"
       });
@@ -3660,6 +3661,9 @@ describe("control-plane", () => {
         clarificationQuestions: null,
         clarificationAnswers: null,
         clarificationRequestedAt: null,
+        autoMergeEnabled: false,
+        autoMergePolicy: null,
+        requiredCheckContract: null,
         createdAt: "2026-03-25T18:09:00.000Z",
         updatedAt: "2026-03-25T18:09:00.000Z"
       });
@@ -3675,6 +3679,7 @@ describe("control-plane", () => {
         riskClass: "low",
         githubSubIssueNumber: 2000,
         githubPrNumber: null,
+        requiredCheckContract: null,
         createdAt: "2026-03-25T18:09:00.000Z",
         updatedAt: "2026-03-25T18:09:00.000Z"
       });

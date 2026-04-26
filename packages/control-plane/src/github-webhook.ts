@@ -251,6 +251,23 @@ export interface WebhookHandlerDependencies {
   githubIssuesAdapter?: GitHubIssuesAdapter | null;
   /** When provided, enables Task Flow advance on ticket advance via webhook. */
   taskFlowAdapter?: OpenClawTaskFlowAdapter | null;
+  /**
+   * M25 F-193: invoked when a check_run / check_suite / status delivery
+   * for a known RedDwarf-authored PR has been persisted. Implementations
+   * (typically the F-194 evaluator) debounce by `(ticketId, headSha)` and
+   * decide whether to merge, wait, or block. Failures are logged but not
+   * re-raised — the webhook still 202s so GitHub doesn't retry forever.
+   */
+  autoMergeEvaluator?: AutoMergeEvaluatorTrigger | null;
+}
+
+/**
+ * M25 F-193 — narrow trigger interface that F-194's evaluator implements.
+ * Decoupling the webhook receiver from the evaluator lets each be tested
+ * in isolation and avoids a circular module dependency.
+ */
+export interface AutoMergeEvaluatorTrigger {
+  enqueueEvaluation(input: { ticketId: string; headSha: string; prNumber: number }): void;
 }
 
 export interface WebhookHandlerResult {
@@ -297,8 +314,15 @@ export async function handleGitHubWebhook(
     return { status: 200, body: { event: "ping", message: "pong" } };
   }
 
-  // Step 3: Route by event type
-  if (eventType !== "issues" && eventType !== "pull_request") {
+  // Step 3: Route by event type. M25 F-193 adds check_run, check_suite, status.
+  const handledEventTypes = new Set([
+    "issues",
+    "pull_request",
+    "check_run",
+    "check_suite",
+    "status"
+  ]);
+  if (!eventType || !handledEventTypes.has(eventType)) {
     logger?.info("Ignoring unhandled webhook event.", {
       code: "WEBHOOK_EVENT_IGNORED",
       eventType: eventType ?? "unknown"
@@ -324,8 +348,409 @@ export async function handleGitHubWebhook(
   if (eventType === "pull_request") {
     return handlePullRequestEvent(payload, deps, logger);
   }
+  if (eventType === "check_run") {
+    return handleCheckRunEvent(payload, deps, logger);
+  }
+  if (eventType === "check_suite") {
+    return handleCheckSuiteEvent(payload, deps, logger);
+  }
+  if (eventType === "status") {
+    return handleStatusEvent(payload, deps, logger);
+  }
 
   return handleIssuesEvent(payload, deps, logger);
+}
+
+// ============================================================
+// M25 F-193 — CI check ingestion (check_run / check_suite / status)
+// ============================================================
+
+interface CheckRunPayload {
+  action: string;
+  check_run: {
+    name: string;
+    status: string;
+    conclusion: string | null;
+    completed_at: string | null;
+    head_sha: string;
+    pull_requests?: Array<{ number: number }>;
+  };
+  repository: { full_name: string };
+}
+
+interface CheckSuitePayload {
+  action: string;
+  check_suite: {
+    head_sha: string;
+    status: string;
+    conclusion: string | null;
+    updated_at: string | null;
+    pull_requests?: Array<{ number: number }>;
+    app?: { name?: string } | null;
+  };
+  repository: { full_name: string };
+}
+
+interface StatusPayload {
+  state: string;
+  sha: string;
+  context: string;
+  updated_at: string | null;
+  branches?: Array<{ name: string }>;
+  repository: { full_name: string };
+}
+
+function isCheckRunPayload(value: unknown): value is CheckRunPayload {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.action === "string" &&
+    typeof v.check_run === "object" &&
+    v.check_run !== null &&
+    typeof v.repository === "object" &&
+    v.repository !== null
+  );
+}
+
+function isCheckSuitePayload(value: unknown): value is CheckSuitePayload {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.action === "string" &&
+    typeof v.check_suite === "object" &&
+    v.check_suite !== null &&
+    typeof v.repository === "object" &&
+    v.repository !== null
+  );
+}
+
+function isStatusPayload(value: unknown): value is StatusPayload {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.state === "string" &&
+    typeof v.sha === "string" &&
+    typeof v.context === "string" &&
+    typeof v.repository === "object" &&
+    v.repository !== null
+  );
+}
+
+/**
+ * Resolve a webhook event's PR + ticket. Returns null when the event has
+ * no associated open RedDwarf-authored PR (which is the common case — most
+ * checks fire on PRs we did not create).
+ */
+async function resolveTicketForCheck(input: {
+  repo: string;
+  headSha: string;
+  prNumberCandidates: number[];
+  github: GitHubAdapter;
+  repository: PlanningRepository;
+}): Promise<{ ticketId: string; prNumber: number } | null> {
+  // GitHub frequently includes pull_requests on the payload; try those
+  // first to avoid a roundtrip. The fallback path needs an adapter that
+  // can resolve PR by SHA, which the current GitHubAdapter does not
+  // expose — so when no candidates are present we give up cleanly.
+  const candidates = input.prNumberCandidates;
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  for (const prNumber of candidates) {
+    // Fetch every ticket whose github_pr_number matches. We don't have a
+    // reverse-lookup index, so list tickets across all known projects and
+    // filter. In practice the table is small (one entry per PR) and the
+    // evaluator runs at webhook cadence, not request cadence.
+    const projects = await input.repository.listProjectSpecs();
+    for (const project of projects) {
+      const tickets = await input.repository.listTicketSpecs(project.projectId);
+      const match = tickets.find((t) => t.githubPrNumber === prNumber);
+      if (match) {
+        return { ticketId: match.ticketId, prNumber };
+      }
+    }
+  }
+  return null;
+}
+
+async function handleCheckRunEvent(
+  payload: unknown,
+  deps: WebhookHandlerDependencies,
+  logger?: ReturnType<typeof bindPlanningLogger>
+): Promise<WebhookHandlerResult> {
+  if (!isCheckRunPayload(payload)) {
+    return {
+      status: 400,
+      body: { error: "bad_request", message: "Malformed check_run webhook payload." }
+    };
+  }
+  if (payload.action !== "completed") {
+    return {
+      status: 200,
+      body: { event: "check_run", action: payload.action, message: "Only completed actions are processed." }
+    };
+  }
+  const conclusion = payload.check_run.conclusion;
+  if (!conclusion) {
+    return {
+      status: 200,
+      body: { event: "check_run", message: "check_run has no conclusion yet." }
+    };
+  }
+  const repo = payload.repository.full_name;
+  const headSha = payload.check_run.head_sha;
+  const prCandidates = (payload.check_run.pull_requests ?? []).map((p) => p.number);
+  const resolved = await resolveTicketForCheck({
+    repo,
+    headSha,
+    prNumberCandidates: prCandidates,
+    github: deps.github,
+    repository: deps.repository
+  });
+  if (!resolved) {
+    logger?.info("check_run does not match a RedDwarf-authored ticket; ignoring.", {
+      code: "WEBHOOK_CHECK_RUN_NO_TICKET",
+      repo,
+      headSha
+    });
+    return {
+      status: 200,
+      body: { event: "check_run", message: "No matching RedDwarf ticket; ignored." }
+    };
+  }
+
+  await deps.repository.saveCiCheckObservation({
+    ticketId: resolved.ticketId,
+    prNumber: resolved.prNumber,
+    headSha,
+    source: "check_run",
+    checkName: payload.check_run.name,
+    conclusion,
+    completedAt:
+      payload.check_run.completed_at ?? new Date().toISOString()
+  });
+
+  deps.autoMergeEvaluator?.enqueueEvaluation({
+    ticketId: resolved.ticketId,
+    headSha,
+    prNumber: resolved.prNumber
+  });
+
+  return {
+    status: 202,
+    body: {
+      event: "check_run",
+      ticketId: resolved.ticketId,
+      checkName: payload.check_run.name,
+      conclusion,
+      message: "Observation persisted; evaluator notified."
+    }
+  };
+}
+
+async function handleCheckSuiteEvent(
+  payload: unknown,
+  deps: WebhookHandlerDependencies,
+  logger?: ReturnType<typeof bindPlanningLogger>
+): Promise<WebhookHandlerResult> {
+  if (!isCheckSuitePayload(payload)) {
+    return {
+      status: 400,
+      body: { error: "bad_request", message: "Malformed check_suite webhook payload." }
+    };
+  }
+  if (payload.action !== "completed") {
+    return {
+      status: 200,
+      body: { event: "check_suite", action: payload.action, message: "Only completed actions are processed." }
+    };
+  }
+  const conclusion = payload.check_suite.conclusion;
+  if (!conclusion) {
+    return {
+      status: 200,
+      body: { event: "check_suite", message: "check_suite has no conclusion yet." }
+    };
+  }
+  const repo = payload.repository.full_name;
+  const headSha = payload.check_suite.head_sha;
+  const prCandidates = (payload.check_suite.pull_requests ?? []).map((p) => p.number);
+  const resolved = await resolveTicketForCheck({
+    repo,
+    headSha,
+    prNumberCandidates: prCandidates,
+    github: deps.github,
+    repository: deps.repository
+  });
+  if (!resolved) {
+    logger?.info("check_suite does not match a RedDwarf-authored ticket; ignoring.", {
+      code: "WEBHOOK_CHECK_SUITE_NO_TICKET",
+      repo,
+      headSha
+    });
+    return {
+      status: 200,
+      body: { event: "check_suite", message: "No matching RedDwarf ticket; ignored." }
+    };
+  }
+
+  // Use the app/integration name as the synthetic check name when no
+  // per-run name is available. The evaluator dedupes by source.
+  const checkName = payload.check_suite.app?.name ?? "check_suite";
+  await deps.repository.saveCiCheckObservation({
+    ticketId: resolved.ticketId,
+    prNumber: resolved.prNumber,
+    headSha,
+    source: "check_suite",
+    checkName,
+    conclusion,
+    completedAt: payload.check_suite.updated_at ?? new Date().toISOString()
+  });
+
+  deps.autoMergeEvaluator?.enqueueEvaluation({
+    ticketId: resolved.ticketId,
+    headSha,
+    prNumber: resolved.prNumber
+  });
+
+  return {
+    status: 202,
+    body: {
+      event: "check_suite",
+      ticketId: resolved.ticketId,
+      conclusion,
+      message: "Observation persisted; evaluator notified."
+    }
+  };
+}
+
+async function handleStatusEvent(
+  payload: unknown,
+  deps: WebhookHandlerDependencies,
+  logger?: ReturnType<typeof bindPlanningLogger>
+): Promise<WebhookHandlerResult> {
+  if (!isStatusPayload(payload)) {
+    return {
+      status: 400,
+      body: { error: "bad_request", message: "Malformed status webhook payload." }
+    };
+  }
+  if (payload.state === "pending") {
+    return {
+      status: 200,
+      body: { event: "status", message: "Pending status; waiting for terminal state." }
+    };
+  }
+  // status payloads do not include pull_requests; the evaluator can resolve
+  // by SHA via repository lookup. For now we only act when the head SHA
+  // matches a ticket whose githubPrNumber is set; we don't know the PR
+  // number without an extra API call, so we ignore here and rely on the
+  // matching check_run/check_suite event for the same SHA. We still
+  // persist an observation so the audit trail is complete.
+  const repo = payload.repository.full_name;
+  const projects = await deps.repository.listProjectSpecs(repo);
+  for (const project of projects) {
+    const tickets = await deps.repository.listTicketSpecs(project.projectId);
+    for (const ticket of tickets) {
+      if (ticket.githubPrNumber === null) continue;
+      // Persist when the ticket has any PR open; the evaluator's gate-6
+      // check (head_sha matches latest observation set) handles SHA drift.
+      await deps.repository.saveCiCheckObservation({
+        ticketId: ticket.ticketId,
+        prNumber: ticket.githubPrNumber,
+        headSha: payload.sha,
+        source: "status",
+        checkName: payload.context,
+        conclusion: payload.state,
+        completedAt: payload.updated_at ?? new Date().toISOString()
+      });
+      deps.autoMergeEvaluator?.enqueueEvaluation({
+        ticketId: ticket.ticketId,
+        headSha: payload.sha,
+        prNumber: ticket.githubPrNumber
+      });
+    }
+  }
+
+  logger?.info("status event recorded.", {
+    code: "WEBHOOK_STATUS_RECORDED",
+    repo,
+    sha: payload.sha,
+    state: payload.state
+  });
+  return {
+    status: 202,
+    body: { event: "status", state: payload.state, message: "Status observations persisted." }
+  };
+}
+
+// ============================================================
+// M25 F-193 — debouncer used by the F-194 evaluator
+// ============================================================
+
+/**
+ * In-process debouncer for auto-merge evaluations. Multiple webhook
+ * deliveries on the same `(ticket, headSha)` collapse into one evaluation
+ * after `windowMs` of quiet. Construction is decoupled from the webhook
+ * handler so tests can drive the underlying timer manually.
+ */
+export class AutoMergeEvaluatorDebouncer implements AutoMergeEvaluatorTrigger {
+  private readonly pending = new Map<
+    string,
+    { timeout: ReturnType<typeof setTimeout>; ticketId: string; headSha: string; prNumber: number }
+  >();
+
+  constructor(
+    private readonly run: (input: {
+      ticketId: string;
+      headSha: string;
+      prNumber: number;
+    }) => Promise<void>,
+    private readonly windowMs = 1000
+  ) {}
+
+  enqueueEvaluation(input: { ticketId: string; headSha: string; prNumber: number }): void {
+    const key = `${input.ticketId}::${input.headSha}`;
+    const existing = this.pending.get(key);
+    if (existing) {
+      clearTimeout(existing.timeout);
+    }
+    const timeout = setTimeout(() => {
+      this.pending.delete(key);
+      void this.run({ ...input }).catch(() => {
+        // Swallow — the evaluator is responsible for its own logging.
+        // We never want a failed evaluation to crash the webhook server.
+      });
+    }, this.windowMs);
+    this.pending.set(key, {
+      timeout,
+      ticketId: input.ticketId,
+      headSha: input.headSha,
+      prNumber: input.prNumber
+    });
+  }
+
+  /** Test helper: run all pending timers immediately and clear them. */
+  async flushPending(): Promise<void> {
+    const entries = Array.from(this.pending.values());
+    for (const entry of entries) {
+      clearTimeout(entry.timeout);
+    }
+    this.pending.clear();
+    for (const entry of entries) {
+      await this.run({
+        ticketId: entry.ticketId,
+        headSha: entry.headSha,
+        prNumber: entry.prNumber
+      });
+    }
+  }
+
+  /** Test helper: how many distinct (ticket, sha) pairs are currently waiting. */
+  pendingCount(): number {
+    return this.pending.size;
+  }
 }
 
 // ============================================================

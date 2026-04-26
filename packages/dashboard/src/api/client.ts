@@ -4,7 +4,8 @@ import type {
   ApprovalRequestStatus,
   Capability,
   EvidenceRecord,
-  PipelineRun
+  PipelineRun,
+  ProjectSpec
 } from "@reddwarf/contracts";
 import type {
   AgentQualityMetricsFilters,
@@ -374,12 +375,29 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
         `/projects/${encodeURIComponent(id)}`
       );
     },
+    /**
+     * M25 F-196 — flip a project's autoMergeEnabled flag. Server returns 409
+     * if the global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is false and the
+     * caller passes `enabled: true`.
+     */
+    patchProjectAutoMerge(id: string, enabled: boolean) {
+      return request<{ project: ProjectSpec }>(
+        `/projects/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ autoMergeEnabled: enabled })
+        }
+      );
+    },
     approveProject(
       id: string,
       decision: "approve" | "amend",
       decidedBy: string,
       decisionSummary?: string,
-      amendments?: string
+      amendments?: string,
+      // M25 — optional auto-merge opt-in. Server returns 409
+      // auto_merge_globally_disabled when enabled=true and the global flag is off.
+      options?: { autoMerge?: boolean }
     ) {
       return request<ProjectApproveResponse>(
         `/projects/${encodeURIComponent(id)}/approve`,
@@ -389,7 +407,10 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
             decision,
             decidedBy,
             ...(decisionSummary ? { decisionSummary } : {}),
-            ...(amendments ? { amendments } : {})
+            ...(amendments ? { amendments } : {}),
+            ...(options?.autoMerge !== undefined
+              ? { auto_merge: { enabled: options.autoMerge } }
+              : {})
           })
         }
       );

@@ -18,6 +18,11 @@ import {
   classifyRisk
 } from "@reddwarf/policy";
 import {
+  buildRequiredCheckContractFromSurvey,
+  surveyWorkflowFiles,
+  type WorkflowSurvey
+} from "@reddwarf/integrations";
+import {
   createArchitectHandoffAwaiter
 } from "../live-workflow.js";
 import { defaultLogger } from "../logger.js";
@@ -210,6 +215,30 @@ export async function runProjectPlanningPhase(
 
   const draft = planningResult.draft;
 
+  // M25 F-191 — survey the target repo's GitHub Actions workflow files
+  // and derive a deterministic RequiredCheckContract from the job names.
+  // Holly is forbidden to invent check names; the surveyor is the only
+  // source of truth. Survey is best-effort: any error degrades to "no
+  // contract" and the auto-merge evaluator (F-194) skips the project.
+  let workflowSurvey: WorkflowSurvey = {
+    checkNames: [],
+    workflowFiles: [],
+    hasNoWorkflows: true
+  };
+  if (deps.workflowSurveyAdapter) {
+    try {
+      workflowSurvey = await surveyWorkflowFiles(
+        deps.workflowSurveyAdapter,
+        manifest.source.repo
+      );
+    } catch (err) {
+      runLogger.warn?.(
+        `M25 F-191: workflow survey failed for ${manifest.source.repo}: ${err instanceof Error ? err.message : String(err)}. Project will be ineligible for auto-merge.`
+      );
+    }
+  }
+  const surveyedContract = buildRequiredCheckContractFromSurvey(workflowSurvey);
+
   const projectSpec = projectSpecSchema.parse({
     projectId,
     sourceIssueId: manifest.source.issueNumber?.toString() ?? null,
@@ -219,6 +248,7 @@ export async function runProjectPlanningPhase(
     projectSize: classification.size,
     status: "pending_approval",
     complexityClassification: classification,
+    requiredCheckContract: surveyedContract,
     createdAt: planningCompletedAtIso,
     updatedAt: planningCompletedAtIso
   });
@@ -242,6 +272,10 @@ export async function runProjectPlanningPhase(
       status: "pending",
       complexityClass: ticket.complexityClass === "high" ? "high" : ticket.complexityClass === "low" ? "low" : "medium",
       riskClass: ticket.complexityClass === "high" ? "high" : ticket.complexityClass === "low" ? "low" : "medium",
+      // F-191: stamp the surveyed contract on every ticket so a per-ticket
+      // override later (e.g. F-198 halt) can flip just one entry without
+      // having to walk back to the project-level contract.
+      requiredCheckContract: surveyedContract,
       createdAt: planningCompletedAtIso,
       updatedAt: planningCompletedAtIso
     });

@@ -226,6 +226,13 @@ export const projectSpecsTable = pgTable("project_specs", {
   clarificationQuestions: jsonb("clarification_questions"),
   clarificationAnswers: jsonb("clarification_answers"),
   clarificationRequestedAt: timestamp("clarification_requested_at", { withTimezone: true }),
+  // M25 F-189: per-project auto-merge opt-in; jsonb policy snapshot is the
+  // frozen-at-approval RequiredCheckContract.
+  autoMergeEnabled: boolean("auto_merge_enabled").notNull().default(false),
+  autoMergePolicy: jsonb("auto_merge_policy").notNull().default({}),
+  // M25 F-190: live RequiredCheckContract — project-level default applied to
+  // every ticket whose own contract is null.
+  requiredCheckContract: jsonb("required_check_contract").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
@@ -242,6 +249,8 @@ export const ticketSpecsTable = pgTable("ticket_specs", {
   riskClass: riskClassEnum("risk_class").notNull(),
   githubSubIssueNumber: integer("github_sub_issue_number"),
   githubPrNumber: integer("github_pr_number"),
+  // M25 F-190: per-ticket override of the project-level RequiredCheckContract.
+  requiredCheckContract: jsonb("required_check_contract").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });

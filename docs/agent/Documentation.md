@@ -1,5 +1,19 @@
 # Agent Documentation
 
+## 2026-04-26 — M25 Project Mode auto-merge landed (F-189..F-198)
+
+Hidden, opt-in auto-merge for Project Mode sub-ticket PRs is now in place. Default off at every layer; enabling requires both a deployment-level flag and a per-project opt-in.
+
+**Stop condition for the agent:** if any auto-merged PR ever has to be reverted, the agent must call `POST /admin/auto-merge/halt-all` (with `REDDWARF_OPERATOR_ADMIN_TOKEN` as the bearer) before resuming further work on the affected project. The `halt-all` verb persists `REDDWARF_PROJECT_AUTOMERGE_ENABLED=false` to operator_config and flips every project's `autoMergeEnabled` to false in one transaction.
+
+To enable on a deployment:
+1. Set `REDDWARF_PROJECT_AUTOMERGE_ENABLED=true` (env or via `PUT /config`).
+2. Set `REDDWARF_OPERATOR_ADMIN_TOKEN=<separate-secret>` for the kill-switch.
+3. Subscribe `check_run`, `check_suite`, `status`, `pull_request` events on the GitHub App / webhook configuration (see docs/WEBHOOK_SETUP.md).
+4. Per project: `POST /projects/:id/approve` with `auto_merge: { enabled: true }` (or `PATCH /projects/:id` post-approval).
+
+The F-194 evaluator walks 10 ordered gates. The verification contract (RequiredCheckContract on every project + ticket) is what makes "build green" mean something — F-191's planner-side surveyor populates it deterministically from the repo's GitHub Actions job names. Greenfield repos with no workflows get a default scaffold from F-192 (Node/Python/Rust detected from manifest files); detection failure auto-disables auto-merge on the project rather than silently merging.
+
 ## 2026-04-26
 
 - Closed the loop on the "developer phase mysteriously times out on a fresh stack" failure. Real failure mode: the agent reaches for `apt-get install ruby ruby-dev build-essential ...` with `elevated: true`, OpenClaw's runtime denies it (`elevated is not available right now (runtime=direct)`), the agent loop silently retries the denied call, the lane sits idle for ~3.8 min, and the wall clock kills the run. Surface log noise (`lane wait exceeded`, `[bundle-mcp] failed to start server "reddwarf"`, `sessions.resolve INVALID_REQUEST`) is downstream of the stalled session, not the cause. Confirmed RedDwarf does **not** emit `tools.elevated.*` keys anywhere in its generated OpenClaw config (`packages/control-plane/src/openclaw-config.ts`), so there is no operator-side switch to flip — the gate is permanent. Fix is upstream in the agents' standing instructions: the toolchain image is mise-based and stack-agnostic by design, so language runtimes must come from `mise` (via `.tool-versions` or `mise use -g`), not the system package manager. Added a "Runtime & Dependency Installation" section to `agents/openclaw/lister/TOOLS.md` that spells out the mise workflow and the elevated-denial trap, a Known Pitfalls entry to `agents/openclaw/lister/AGENTS.md` so the developer doesn't try the apt-get path, and a corresponding planning Known Pitfall to `agents/openclaw/holly/AGENTS.md` so the architect doesn't generate plans that prescribe `apt-get install` for runtimes. Added a TROUBLESHOOTING.md entry that names the exact log signature, the cascading noise, and the working workaround.

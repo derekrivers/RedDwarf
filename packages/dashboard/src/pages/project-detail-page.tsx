@@ -11,7 +11,7 @@ import {
   IconMessageQuestion,
   IconTicket
 } from "@tabler/icons-react";
-import type { TicketSpec } from "@reddwarf/contracts";
+import type { ProjectSpec, TicketSpec } from "@reddwarf/contracts";
 import type { DashboardApiClient } from "../types/dashboard";
 import { useToast } from "../components/toast-provider";
 
@@ -57,6 +57,108 @@ function projectStatusBadge(status: string): string {
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
+}
+
+/**
+ * M25 F-196 — Auto-merge card on the project detail sidebar.
+ *
+ * Read-only summary of the project's auto-merge state plus a single
+ * toggle button. The toggle calls PATCH /projects/:id which refuses to
+ * enable when the deployment-level REDDWARF_PROJECT_AUTOMERGE_ENABLED is
+ * false; the 409 case is surfaced through the toast provider.
+ */
+function AutoMergeCard(props: {
+  project: ProjectSpec;
+  projectId: string;
+  apiClient: DashboardApiClient;
+}) {
+  const { project, projectId, apiClient } = props;
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [submitting, setSubmitting] = useState(false);
+
+  const contract = project.requiredCheckContract;
+  const enabled = project.autoMergeEnabled;
+
+  const handleToggle = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      await apiClient.patchProjectAutoMerge(projectId, !enabled);
+      await queryClient.invalidateQueries({
+        queryKey: ["project-detail", projectId]
+      });
+      toast.pushToast(
+        !enabled
+          ? "Auto-merge enabled for this project."
+          : "Auto-merge disabled for this project. Open PRs will fall back to human review.",
+        "success"
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.pushToast(
+        /409/.test(msg)
+          ? "Auto-merge is globally disabled on this deployment. Operator must set REDDWARF_PROJECT_AUTOMERGE_ENABLED=true first."
+          : `Could not update auto-merge: ${msg}`,
+        "error"
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Auto-merge</h3>
+      </div>
+      <div className="card-body">
+        <div className="mb-2">
+          <strong>Status:</strong>{" "}
+          <span
+            className={`badge ${enabled ? "bg-green-lt text-green" : "bg-secondary-lt"}`}
+          >
+            {enabled ? "enabled" : "disabled"}
+          </span>
+        </div>
+        {contract && contract.requiredCheckNames.length > 0 ? (
+          <div className="mb-2">
+            <div>
+              <strong>Required checks:</strong>
+            </div>
+            <div className="d-flex flex-wrap gap-1 mt-1">
+              {contract.requiredCheckNames.map((name) => (
+                <span key={name} className="badge bg-blue-lt text-blue">
+                  {name}
+                </span>
+              ))}
+            </div>
+            <div className="text-secondary mt-1" style={{ fontSize: "0.85em" }}>
+              minimumCheckCount: {contract.minimumCheckCount}
+              {contract.forbidSkipCi ? " · forbids [skip ci]" : ""}
+              {contract.forbidEmptyTestDiff ? " · forbids empty test diff" : ""}
+            </div>
+          </div>
+        ) : (
+          <div className="text-secondary mb-2">
+            No RequiredCheckContract — auto-merge is ineligible. Holly's
+            workflow surveyor (F-191) populates this at planning time.
+          </div>
+        )}
+        <button
+          type="button"
+          className={`btn btn-sm ${enabled ? "btn-outline-secondary" : "btn-success"}`}
+          onClick={handleToggle}
+          disabled={submitting}
+        >
+          {submitting
+            ? "Updating…"
+            : enabled
+              ? "Disable auto-merge"
+              : "Enable auto-merge"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function TicketRow(props: { ticket: TicketSpec; allTickets: TicketSpec[] }) {
@@ -126,6 +228,9 @@ function ApprovalPanel(props: {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [decisionSummary, setDecisionSummary] = useState("");
   const [amendments, setAmendments] = useState("");
+  // M25 — auto-merge opt-in at approval time. Server refuses with 409 when the
+  // global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is off; the toast surfaces it.
+  const [autoMergeOptIn, setAutoMergeOptIn] = useState(false);
   const [activeModal, setActiveModal] = useState<"approve" | "amend" | null>(
     null
   );
@@ -138,16 +243,26 @@ function ApprovalPanel(props: {
         projectId,
         "approve",
         "operator",
-        decisionSummary || undefined
+        decisionSummary || undefined,
+        undefined,
+        { autoMerge: autoMergeOptIn }
       );
       await queryClient.invalidateQueries({
         queryKey: ["project-detail", projectId]
       });
       await queryClient.invalidateQueries({ queryKey: ["projects-list"] });
-      pushToast("Project approved and executing.", "success");
+      pushToast(
+        autoMergeOptIn
+          ? "Project approved with auto-merge enabled."
+          : "Project approved and executing.",
+        "success"
+      );
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to approve project.";
       setSubmitError(
-        err instanceof Error ? err.message : "Failed to approve project."
+        /409/.test(msg) && /auto_merge/.test(msg)
+          ? "Auto-merge is globally disabled on this deployment. Set REDDWARF_PROJECT_AUTOMERGE_ENABLED=true and retry, or untick the auto-merge checkbox."
+          : msg
       );
     } finally {
       setIsSubmitting(false);
@@ -216,6 +331,26 @@ function ApprovalPanel(props: {
             onChange={(e) => setAmendments(e.target.value)}
             placeholder="Describe what should be changed in the plan..."
           />
+        </div>
+        {/* M25 — auto-merge opt-in (only meaningful for the approve path). */}
+        <div className="mb-3 form-check">
+          <input
+            type="checkbox"
+            className="form-check-input"
+            id="auto-merge-opt-in"
+            checked={autoMergeOptIn}
+            onChange={(e) => setAutoMergeOptIn(e.target.checked)}
+          />
+          <label className="form-check-label" htmlFor="auto-merge-opt-in">
+            <strong>Enable auto-merge</strong> for sub-ticket PRs
+          </label>
+          <div className="text-secondary" style={{ fontSize: "0.85em" }}>
+            When checked, RedDwarf merges each sub-ticket PR automatically once
+            its required CI checks are green. Requires{" "}
+            <code>REDDWARF_PROJECT_AUTOMERGE_ENABLED=true</code> on the
+            deployment; the request is refused with 409 otherwise. You can
+            still toggle this from the Auto-merge card after approval.
+          </div>
         </div>
         <div className="d-flex gap-2">
           <button
@@ -586,6 +721,17 @@ export function ProjectDetailPage(props: { apiClient: DashboardApiClient }) {
       {/* Sidebar */}
       <div className="col-lg-4">
         <div className="dashboard-sticky-stack d-flex flex-column gap-4">
+          {/* M25 F-196 — Auto-merge card. Read-only summary + a single
+              toggle. Server-side gate refuses enabling when the global
+              REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is off (returns 409). */}
+          {projectId && (
+            <AutoMergeCard
+              project={project}
+              projectId={projectId}
+              apiClient={apiClient}
+            />
+          )}
+
           {/* Complexity classification */}
           {project.complexityClassification && (
             <div className="card">

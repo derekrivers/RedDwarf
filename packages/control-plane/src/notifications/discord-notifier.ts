@@ -42,9 +42,36 @@ export interface PullRequestNotificationInput {
   branchName: string;
 }
 
+// M25 F-197 — Auto-merge notification inputs.
+export interface AutoMergeBlockedNotificationInput {
+  ticketId: string;
+  prNumber: number;
+  repo: string;
+  failedGates: string[];
+  decisionAt: string;
+}
+
+export interface AutoMergeMergedNotificationInput {
+  ticketId: string;
+  projectId: string;
+  prNumber: number;
+  repo: string;
+  /** 1 for the first merge per project, 2 for the second, etc. Drives the
+   *  rate-limited heartbeat: notify on index === 1, 1+N, 1+2N, ... */
+  mergeIndex: number;
+  decisionAt: string;
+}
+
 export interface DiscordNotifier {
   notifyApprovalCreated(input: ApprovalNotificationInput): Promise<void>;
   notifyPullRequestCreated(input: PullRequestNotificationInput): Promise<void>;
+  /** F-197: every block_human_review fires (low volume, high signal). */
+  notifyAutoMergeBlocked(input: AutoMergeBlockedNotificationInput): Promise<void>;
+  /** F-197: rate-limited heartbeat — notify on first merge per project,
+   *  then every Nth thereafter (REDDWARF_AUTOMERGE_DISCORD_HEARTBEAT_EVERY,
+   *  default 10). The caller computes mergeIndex; the notifier applies the
+   *  cadence and drops calls that don't match. */
+  notifyAutoMerged(input: AutoMergeMergedNotificationInput): Promise<void>;
 }
 
 export interface DiscordNotifierOptions {
@@ -339,6 +366,74 @@ export function createDiscordNotifier(
         runId: input.runId,
         repo: input.repo,
         prNumber: input.prNumber
+      });
+    },
+
+    async notifyAutoMergeBlocked(input) {
+      const config = resolveDiscordNotifyConfig(env);
+      if (!config.enabled) return;
+      const embed = {
+        title: "RedDwarf auto-merge blocked",
+        description: `Ticket \`${input.ticketId}\` failed the auto-merge gate at PR-merge time and has been left for human review.`,
+        color: config.embedColor,
+        timestamp: input.decisionAt,
+        fields: [
+          { name: "Repository", value: input.repo, inline: true },
+          { name: "PR", value: `#${input.prNumber}`, inline: true },
+          {
+            name: "Failed gates",
+            value:
+              input.failedGates.length > 0
+                ? input.failedGates.map((g) => `\`${g}\``).join(", ")
+                : "_(none listed)_",
+            inline: false
+          }
+        ],
+        url: `https://github.com/${input.repo}/pull/${input.prNumber}`
+      };
+      await deliver(embed, {
+        event: "auto_merge.blocked",
+        ticketId: input.ticketId,
+        repo: input.repo,
+        prNumber: input.prNumber
+      });
+    },
+
+    async notifyAutoMerged(input) {
+      const config = resolveDiscordNotifyConfig(env);
+      if (!config.enabled) return;
+      // Rate-limited heartbeat: notify on index 1, then every Nth.
+      const everyRaw = (env["REDDWARF_AUTOMERGE_DISCORD_HEARTBEAT_EVERY"] ?? "10").trim();
+      const every = Math.max(1, Number.parseInt(everyRaw, 10) || 10);
+      const isFirst = input.mergeIndex === 1;
+      const isHeartbeat = input.mergeIndex > 1 && (input.mergeIndex - 1) % every === 0;
+      if (!isFirst && !isHeartbeat) {
+        return;
+      }
+      const headline = isFirst
+        ? `First auto-merge on project \`${input.projectId}\`.`
+        : `Auto-merge heartbeat: ${input.mergeIndex} merges on project \`${input.projectId}\` so far.`;
+      const embed = {
+        title: "RedDwarf auto-merge",
+        description: headline,
+        color: config.embedColor,
+        timestamp: input.decisionAt,
+        fields: [
+          { name: "Repository", value: input.repo, inline: true },
+          { name: "PR", value: `#${input.prNumber}`, inline: true },
+          { name: "Ticket", value: `\`${input.ticketId}\``, inline: false },
+          { name: "Merge #", value: String(input.mergeIndex), inline: true }
+        ],
+        url: `https://github.com/${input.repo}/pull/${input.prNumber}`
+      };
+      await deliver(embed, {
+        event: "auto_merge.merged",
+        ticketId: input.ticketId,
+        projectId: input.projectId,
+        repo: input.repo,
+        prNumber: input.prNumber,
+        mergeIndex: input.mergeIndex,
+        every
       });
     }
   };

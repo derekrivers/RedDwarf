@@ -1,6 +1,7 @@
 import {
   approvalRequestQuerySchema,
   approvalRequestSchema,
+  ciCheckObservationSchema,
   eligibilityRejectionQuerySchema,
   asIsoTimestamp,
   memoryContextSchema,
@@ -12,6 +13,7 @@ import {
   runSummarySchema,
   type ApprovalRequest,
   type ApprovalRequestQuery,
+  type CiCheckObservation,
   type EvidenceRecord,
   type EligibilityRejectionQuery,
   type EligibilityRejectionRecord,
@@ -73,6 +75,7 @@ import {
   type PlanningTransactionRepository,
   type PersistedTaskSnapshot,
   type RepositoryHealthSnapshot,
+  type SaveCiCheckObservationInput,
   type SaveProjectSpecProvenanceInput
 } from "./repository.js";
 import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
@@ -1625,8 +1628,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           project_size, status, complexity_classification,
           approval_decision, decided_by, decision_summary, amendments,
           clarification_questions, clarification_answers, clarification_requested_at,
+          auto_merge_enabled, auto_merge_policy, required_check_contract,
           created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19, $20)
         ON CONFLICT (project_id) DO UPDATE SET
           source_issue_id = EXCLUDED.source_issue_id,
           source_repo = EXCLUDED.source_repo,
@@ -1642,6 +1646,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           clarification_questions = EXCLUDED.clarification_questions,
           clarification_answers = EXCLUDED.clarification_answers,
           clarification_requested_at = EXCLUDED.clarification_requested_at,
+          auto_merge_enabled = EXCLUDED.auto_merge_enabled,
+          auto_merge_policy = EXCLUDED.auto_merge_policy,
+          required_check_contract = EXCLUDED.required_check_contract,
           updated_at = EXCLUDED.updated_at
       `,
       [
@@ -1666,6 +1673,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           ? JSON.stringify(project.clarificationAnswers)
           : null,
         project.clarificationRequestedAt,
+        Boolean(project.autoMergeEnabled),
+        JSON.stringify(project.autoMergePolicy ?? {}),
+        JSON.stringify(project.requiredCheckContract ?? {}),
         project.createdAt,
         project.updatedAt
       ]
@@ -1788,8 +1798,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           acceptance_criteria, depends_on, status,
           complexity_class, risk_class,
           github_sub_issue_number, github_pr_number,
+          required_check_contract,
           created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
         ON CONFLICT (ticket_id) DO UPDATE SET
           project_id = EXCLUDED.project_id,
           title = EXCLUDED.title,
@@ -1801,6 +1812,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
           risk_class = EXCLUDED.risk_class,
           github_sub_issue_number = EXCLUDED.github_sub_issue_number,
           github_pr_number = EXCLUDED.github_pr_number,
+          required_check_contract = EXCLUDED.required_check_contract,
           updated_at = EXCLUDED.updated_at
       `,
       [
@@ -1815,6 +1827,7 @@ export class PostgresPlanningRepository implements PlanningRepository {
         ticket.riskClass,
         ticket.githubSubIssueNumber,
         ticket.githubPrNumber,
+        JSON.stringify(ticket.requiredCheckContract ?? {}),
         ticket.createdAt,
         ticket.updatedAt
       ]
@@ -2057,6 +2070,82 @@ export class PostgresPlanningRepository implements PlanningRepository {
       runEvents,
       manifestsByTaskId
     });
+  }
+
+  // M25 F-193 — CI check observations.
+  async saveCiCheckObservation(
+    input: SaveCiCheckObservationInput
+  ): Promise<CiCheckObservation> {
+    const result = await this.pool.query(
+      `
+        INSERT INTO ci_check_observations (
+          ticket_id, pr_number, head_sha, source, check_name, conclusion,
+          completed_at, raw_payload_evidence_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (ticket_id, head_sha, source, check_name) DO UPDATE SET
+          pr_number = EXCLUDED.pr_number,
+          conclusion = EXCLUDED.conclusion,
+          completed_at = EXCLUDED.completed_at,
+          raw_payload_evidence_id = EXCLUDED.raw_payload_evidence_id
+        RETURNING id, ticket_id, pr_number, head_sha, source, check_name,
+                  conclusion, completed_at, raw_payload_evidence_id, created_at
+      `,
+      [
+        input.ticketId,
+        input.prNumber,
+        input.headSha,
+        input.source,
+        input.checkName,
+        input.conclusion,
+        input.completedAt,
+        input.rawPayloadEvidenceId ?? null
+      ]
+    );
+    const row = result.rows[0] as Record<string, unknown>;
+    return ciCheckObservationSchema.parse({
+      id: String(row.id),
+      ticketId: row.ticket_id as string,
+      prNumber: Number(row.pr_number),
+      headSha: row.head_sha as string,
+      source: row.source as CiCheckObservation["source"],
+      checkName: row.check_name as string,
+      conclusion: row.conclusion as string,
+      completedAt: asIsoTimestamp(row.completed_at as Date),
+      rawPayloadEvidenceId: (row.raw_payload_evidence_id as string | null) ?? null,
+      createdAt: asIsoTimestamp(row.created_at as Date)
+    });
+  }
+
+  async listCiCheckObservations(query: {
+    ticketId: string;
+    headSha?: string;
+  }): Promise<CiCheckObservation[]> {
+    const params: unknown[] = [query.ticketId];
+    let sql = `SELECT id, ticket_id, pr_number, head_sha, source, check_name,
+                      conclusion, completed_at, raw_payload_evidence_id, created_at
+               FROM ci_check_observations
+               WHERE ticket_id = $1`;
+    if (query.headSha !== undefined) {
+      params.push(query.headSha);
+      sql += ` AND head_sha = $2`;
+    }
+    sql += ` ORDER BY completed_at ASC`;
+    const result = await this.pool.query(sql, params);
+    return result.rows.map((row: Record<string, unknown>) =>
+      ciCheckObservationSchema.parse({
+        id: String(row.id),
+        ticketId: row.ticket_id as string,
+        prNumber: Number(row.pr_number),
+        headSha: row.head_sha as string,
+        source: row.source as CiCheckObservation["source"],
+        checkName: row.check_name as string,
+        conclusion: row.conclusion as string,
+        completedAt: asIsoTimestamp(row.completed_at as Date),
+        rawPayloadEvidenceId:
+          (row.raw_payload_evidence_id as string | null) ?? null,
+        createdAt: asIsoTimestamp(row.created_at as Date)
+      })
+    );
   }
 
   async listPendingIntents(limit = 100): Promise<IntentRecord[]> {

@@ -114,7 +114,7 @@ describe("renderAuditCsv", () => {
     const csv = renderAuditCsv(buildAuditEntries(approvals, manifests));
     const lines = csv.split("\r\n");
     expect(lines[0]).toBe(
-      "requestId,taskId,runId,repo,issueNumber,phase,status,decision,decidedBy,decisionSummary,riskClass,policyVersion,prNumber,prUrl,createdAt,updatedAt,resolvedAt"
+      "kind,requestId,taskId,runId,repo,issueNumber,phase,status,decision,decidedBy,decisionSummary,riskClass,policyVersion,prNumber,prUrl,gateFailures,headSha,createdAt,updatedAt,resolvedAt"
     );
     expect(lines[1]).toContain("task-1:approval:1");
     expect(lines[1]).toContain("https://github.com/derekrivers/FirstVoyage/pull/99");
@@ -130,8 +130,66 @@ describe("renderAuditCsv", () => {
 
   it("emits an empty data section when there are no entries", () => {
     expect(renderAuditCsv([])).toBe(
-      "requestId,taskId,runId,repo,issueNumber,phase,status,decision,decidedBy,decisionSummary,riskClass,policyVersion,prNumber,prUrl,createdAt,updatedAt,resolvedAt\r\n"
+      "kind,requestId,taskId,runId,repo,issueNumber,phase,status,decision,decidedBy,decisionSummary,riskClass,policyVersion,prNumber,prUrl,gateFailures,headSha,createdAt,updatedAt,resolvedAt\r\n"
     );
+  });
+});
+
+// M25 F-197 — auto-merge audit entry builder + CSV row.
+describe("buildAutoMergeAuditEntries", () => {
+  it("renders a kind=auto_merge row with gateFailures, headSha, and outcome populated", async () => {
+    const { buildAutoMergeAuditEntries, renderAuditCsv } = await import(
+      "./audit-export.js"
+    );
+    const records = [
+      {
+        recordId: "rec-1",
+        taskId: "p1",
+        kind: "gate_decision" as const,
+        title: "Auto-merge decision: block_human_review",
+        location: "db://gate_decision/rec-1",
+        metadata: {
+          phase: "scm" as const,
+          ticketId: "project:p1:ticket:1",
+          prNumber: 99,
+          headSha: "deadbeef",
+          outcome: "block_human_review",
+          reason: "high risk",
+          failedGates: ["high_risk_ticket", "empty_test_diff"]
+        },
+        createdAt: "2026-04-26T13:00:00.000Z"
+      }
+    ];
+    const manifests = new Map([["p1", makeManifest()]]);
+    const entries = buildAutoMergeAuditEntries(records, manifests);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0]!;
+    expect(entry.kind).toBe("auto_merge");
+    expect(entry.decision).toBe("block_human_review");
+    expect(entry.gateFailures).toBe("high_risk_ticket|empty_test_diff");
+    expect(entry.headSha).toBe("deadbeef");
+
+    const csv = renderAuditCsv(entries);
+    expect(csv).toContain("auto_merge,rec-1");
+    expect(csv).toContain("deadbeef");
+  });
+
+  it("ignores evidence records that are not auto-merge gate decisions", async () => {
+    const { buildAutoMergeAuditEntries } = await import("./audit-export.js");
+    const records = [
+      {
+        recordId: "rec-2",
+        taskId: "p1",
+        kind: "phase_record" as const,
+        title: "Some other record",
+        location: "db://phase_record/rec-2",
+        metadata: { phase: "planning" as const },
+        createdAt: "2026-04-26T13:00:00.000Z"
+      }
+    ];
+    expect(
+      buildAutoMergeAuditEntries(records, new Map([["p1", makeManifest()]]))
+    ).toEqual([]);
   });
 });
 

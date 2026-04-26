@@ -201,6 +201,50 @@ function operatorPut(
   });
 }
 
+// M25 F-196 — generic helper for tests that need PATCH/PUT/POST in one path.
+function operatorRequest(
+  port: number,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  authToken: string | null = operatorApiToken
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const payload = body !== undefined ? JSON.stringify(body) : "";
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: {
+          ...buildOperatorHeaders(authToken),
+          ...(payload
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(payload)
+              }
+            : {})
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: raw ? JSON.parse(raw) : null });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
 function operatorDelete(
   port: number,
   path: string,
@@ -2707,6 +2751,9 @@ function buildTestProjectSpec(overrides: Partial<import("@reddwarf/contracts").P
     clarificationQuestions: null,
     clarificationAnswers: null,
     clarificationRequestedAt: null,
+    autoMergeEnabled: false,
+    autoMergePolicy: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -2726,6 +2773,7 @@ function buildTestTicketSpec(overrides: Partial<import("@reddwarf/contracts").Ti
     riskClass: "low",
     githubSubIssueNumber: null,
     githubPrNumber: null,
+    requiredCheckContract: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -3266,6 +3314,394 @@ describe("Project Mode — POST /projects/:id/approve", () => {
         null
       );
       expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("M25 F-189 — Project Mode auto-merge opt-in", () => {
+  it("persists autoMergeEnabled=true when global flag is on and approval body opts in", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          auto_merge: { enabled: true }
+        }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 auto_merge_globally_disabled and does not mutate when global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          auto_merge: { enabled: true }
+        }
+      );
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe(
+        "auto_merge_globally_disabled"
+      );
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      // Project remained in pending_approval — no state mutation took place.
+      expect(persisted?.status).toBe("pending_approval");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("approves without auto-merge when the body omits the auto_merge field", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("/projects/inject returns 409 when injecting an auto-merge-enabled project while the global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: {
+          ...buildTestProjectSpec(),
+          autoMergeEnabled: true
+        },
+        provenance: {
+          context_spec_id: "ctx-automerge-1",
+          context_version: 1,
+          adapter_version: "1.0.0",
+          target_schema_version: "1.0.0",
+          translation_notes: []
+        }
+      });
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe(
+        "auto_merge_globally_disabled"
+      );
+      // Nothing was inserted — list reflects an empty repository.
+      expect(await repository.getProjectSpec("project:task-001")).toBeNull();
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("M25 F-198 — kill-switch verbs", () => {
+  it("POST /projects/:id/auto-merge/halt is idempotent and sets autoMergeEnabled=false", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ autoMergeEnabled: true })
+    );
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const first = await operatorRequest(
+        server.port,
+        "POST",
+        `/projects/${encodeURIComponent("project:task-001")}/auto-merge/halt`,
+        {}
+      );
+      expect(first.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+
+      // Idempotency: a second halt is a no-op.
+      const second = await operatorRequest(
+        server.port,
+        "POST",
+        `/projects/${encodeURIComponent("project:task-001")}/auto-merge/halt`,
+        {}
+      );
+      expect(second.status).toBe(200);
+      const stillFalse = await repository.getProjectSpec("project:task-001");
+      expect(stillFalse?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all returns 403 when REDDWARF_OPERATOR_ADMIN_TOKEN is unset", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {}
+        );
+        expect(res.status).toBe(403);
+        expect((res.body as { error: string }).error).toBe(
+          "operator_admin_required"
+        );
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous !== undefined) {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all halts every project and persists the global flag flip", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = "admin-test-token";
+    try {
+      const repository = new InMemoryPlanningRepository();
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-A", autoMergeEnabled: true })
+      );
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-B", autoMergeEnabled: true })
+      );
+      await repository.saveProjectSpec(
+        buildTestProjectSpec({ projectId: "project:task-C", autoMergeEnabled: false })
+      );
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {},
+          "admin-test-token"
+        );
+        expect(res.status).toBe(200);
+        const body = res.body as { projects_halted: number; global_flag: boolean };
+        expect(body.projects_halted).toBe(2); // task-C was already off
+        expect(body.global_flag).toBe(false);
+
+        const projects = await repository.listProjectSpecs();
+        for (const p of projects) {
+          expect(p.autoMergeEnabled).toBe(false);
+        }
+        const persistedFlag = await repository.getOperatorConfigEntry(
+          "REDDWARF_PROJECT_AUTOMERGE_ENABLED"
+        );
+        expect(persistedFlag?.value).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+      } else {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+
+  it("POST /admin/auto-merge/halt-all rejects the regular operator token (admin token required)", async () => {
+    const previous = process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+    process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = "different-admin-token";
+    try {
+      const repository = new InMemoryPlanningRepository();
+      const server = createOperatorApiServer(
+        { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+        {
+          repository,
+          clock: () => new Date("2026-04-26T13:00:00.000Z"),
+          projectAutoMergeEnabled: true
+        }
+      );
+      await server.start();
+      try {
+        const res = await operatorRequest(
+          server.port,
+          "POST",
+          "/admin/auto-merge/halt-all",
+          {},
+          operatorApiToken // regular operator token, NOT admin
+        );
+        expect(res.status).toBe(403);
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"];
+      } else {
+        process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] = previous;
+      }
+    }
+  });
+});
+
+describe("M25 F-196 — PATCH /projects/:id (auto-merge toggle)", () => {
+  it("toggles autoMergeEnabled when the global flag is on", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: true }
+      );
+      expect(res.status).toBe(200);
+      expect((res.body as { project: { autoMergeEnabled: boolean } }).project.autoMergeEnabled).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when enabling auto-merge while global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: true }
+      );
+      expect(res.status).toBe(409);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("allows disabling auto-merge regardless of global flag (kill-switch path)", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ autoMergeEnabled: true })
+    );
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: false }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
     } finally {
       await server.stop();
     }

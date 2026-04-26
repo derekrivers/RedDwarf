@@ -720,6 +720,12 @@ const server = createOperatorApiServer(
     projectsInjectEnabled:
       ((process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?? "true").toLowerCase() !== "false") &&
       ((process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?? "true").toLowerCase() !== "0"),
+    // M25 F-189: hidden global flag for Project Mode auto-merge. Off by
+    // default; the operator API refuses per-project opt-in unless this is
+    // explicitly true. Reads the same env var as start-operator-api.mjs.
+    projectAutoMergeEnabled:
+      ((process.env.REDDWARF_PROJECT_AUTOMERGE_ENABLED ?? "false").toLowerCase() === "true") ||
+      ((process.env.REDDWARF_PROJECT_AUTOMERGE_ENABLED ?? "false").toLowerCase() === "1"),
     ...(githubIssuesAdapter ? { githubIssuesAdapter } : {}),
     ...(planner ? { planner } : {}),
     ...(dispatcher ? { dispatcher } : {}),

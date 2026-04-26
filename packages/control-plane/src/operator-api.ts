@@ -46,7 +46,7 @@ import {
   type ProjectSpec
 } from "@reddwarf/contracts";
 import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
-import type { GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import type { GitHubAutoMergeAdapter, GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter, RequiredChecksScaffoldAdapter, WorkflowSurveyAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
@@ -110,11 +110,14 @@ import type {
   ReadyTaskDispatcher
 } from "./polling.js";
 import {
+  AutoMergeEvaluatorDebouncer,
   describeIntakeMode,
   handleGitHubWebhook,
   readRawBody,
   type WebhookHandlerDependencies
 } from "./github-webhook.js";
+import { evaluateAutoMerge } from "./pipeline/project-auto-merge.js";
+import { ensureProjectAutoMergeReady } from "./pipeline/project-auto-merge-readiness.js";
 
 // ============================================================
 // Operator API interfaces
@@ -203,6 +206,12 @@ export interface OperatorApiDependencies {
    *  REDDWARF_PROJECTS_INJECT_ENABLED env var by the top-level
    *  bootstrap; defaults to true if unset. */
   projectsInjectEnabled?: boolean;
+  /** M25 F-189: hidden global flag for Project Mode auto-merge. When false
+   *  the approve/inject routes refuse `auto_merge: { enabled: true }` with
+   *  HTTP 409 `auto_merge_globally_disabled`, and the evaluator (F-194)
+   *  treats every project as opt-out regardless of the per-project flag.
+   *  Controlled via REDDWARF_PROJECT_AUTOMERGE_ENABLED. Defaults to false. */
+  projectAutoMergeEnabled?: boolean;
 }
 
 export interface OperatorBlockedSummary {
@@ -368,7 +377,8 @@ export function createOperatorApiServer(
     github: webhookGitHub,
     webhookOpenClawDispatch,
     webhookArchitectTargetRoot,
-    projectsInjectEnabled = true
+    projectsInjectEnabled = true,
+    projectAutoMergeEnabled = false
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
@@ -376,6 +386,46 @@ export function createOperatorApiServer(
   const webhookSecret = config.webhookSecret?.trim() ?? null;
   const webhookPath = config.webhookPath ?? "/webhooks/github";
   const intakeMode = config.intakeMode ?? (webhookSecret ? "webhook" : "polling");
+  // M25 — wire the F-194 auto-merge evaluator behind F-193's debouncer so
+  // CI webhook deliveries actually trigger merges. RestGitHubAdapter
+  // implements both GitHubAdapter and GitHubAutoMergeAdapter; cast through
+  // unknown because the public webhook interface only exposes GitHubAdapter.
+  // Notifier is constructed lazily inside the trigger so env changes via
+  // PUT /config take effect on subsequent evaluations without restart.
+  const autoMergeAdapter = webhookGitHub as unknown as GitHubAutoMergeAdapter | undefined;
+  const autoMergeEvaluator =
+    autoMergeAdapter
+      ? new AutoMergeEvaluatorDebouncer(async (input) => {
+          const notifier = createDiscordNotifier({});
+          await evaluateAutoMerge(input, {
+            repository,
+            github: autoMergeAdapter,
+            projectAutoMergeEnabled,
+            clock,
+            notify: async (n) => {
+              if (n.kind === "blocked") {
+                await notifier.notifyAutoMergeBlocked({
+                  ticketId: n.ticketId,
+                  prNumber: n.prNumber,
+                  repo: n.repo,
+                  failedGates: n.failedGates,
+                  decisionAt: n.decisionAt
+                });
+              } else {
+                await notifier.notifyAutoMerged({
+                  ticketId: n.ticketId,
+                  projectId: n.projectId,
+                  prNumber: n.prNumber,
+                  repo: n.repo,
+                  mergeIndex: n.mergeIndex,
+                  decisionAt: n.decisionAt
+                });
+              }
+            }
+          });
+        })
+      : null;
+
   const webhookDeps: WebhookHandlerDependencies | null =
     webhookSecret && webhookGitHub && planner
       ? {
@@ -387,7 +437,8 @@ export function createOperatorApiServer(
           ...(webhookOpenClawDispatch ? { openClawDispatch: webhookOpenClawDispatch } : {}),
           ...(webhookArchitectTargetRoot ? { architectTargetRoot: webhookArchitectTargetRoot } : {}),
           githubIssuesAdapter: githubIssuesAdapter ?? null,
-          taskFlowAdapter: taskFlowAdapter ?? null
+          taskFlowAdapter: taskFlowAdapter ?? null,
+          ...(autoMergeEvaluator ? { autoMergeEvaluator } : {})
         }
       : null;
 
@@ -471,7 +522,8 @@ export function createOperatorApiServer(
           downstreamHealthProbes,
           circuitBreakerSnapshots,
           intakeMode,
-          projectsInjectEnabled
+          projectsInjectEnabled,
+          projectAutoMergeEnabled
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -2457,7 +2509,8 @@ async function handleOperatorRequest(
   downstreamHealthProbes?: DownstreamHealthProbe[],
   circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>,
   intakeMode?: string,
-  projectsInjectEnabled?: boolean
+  projectsInjectEnabled?: boolean,
+  projectAutoMergeEnabled?: boolean
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -2520,7 +2573,13 @@ async function handleOperatorRequest(
     return;
   }
 
-  assertOperatorAuthorized(req, authToken);
+  // M25 F-198 — /admin/* routes have their own admin-token gate inside the
+  // handler. Skip the regular operator-token check so the admin token can
+  // authenticate them; the in-handler check then enforces strict admin auth.
+  const isAdminRoute = path.startsWith("/admin/");
+  if (!isAdminRoute) {
+    assertOperatorAuthorized(req, authToken);
+  }
 
   if (method === "GET" && path === "/ui/bootstrap") {
     writeOperatorJsonResponse(res, 200, await resolveOperatorUiBootstrap(clock));
@@ -3703,8 +3762,27 @@ async function handleOperatorRequest(
       return;
     }
 
+    // F-189: resolve the auto-merge opt-in from the envelope (operator-level)
+    // first, then fall back to whatever the injected ProjectSpec carries.
+    // Refuse with 409 when the resolved opt-in is `true` but the deployment
+    // has the global flag off — silently dropping it would mean the operator
+    // thinks auto-merge is on while the evaluator never fires.
+    const requestedAutoMerge =
+      parsed.auto_merge !== undefined
+        ? parsed.auto_merge.enabled
+        : Boolean(parsed.projectSpec.autoMergeEnabled);
+    if (requestedAutoMerge && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
+      });
+      return;
+    }
+
     const injectedProject: ProjectSpec = {
       ...parsed.projectSpec,
+      autoMergeEnabled: requestedAutoMerge,
       status: "pending_approval"
     };
 
@@ -4233,6 +4311,187 @@ async function handleOperatorRequest(
     return;
   }
 
+  // M25 F-196 — PATCH /projects/:id — partial update of project fields the
+  // dashboard exposes operator controls for. Currently only `autoMergeEnabled`
+  // is mutable; other fields require a full re-plan or approval workflow.
+  // Refuses `autoMergeEnabled = true` when the global flag is off, so the
+  // operator never accidentally turns on something the deployment forbids.
+  if (method === "PATCH" && projectDetailMatch) {
+    const projectId = decodeURIComponent(projectDetailMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+    const rawBody = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | { autoMergeEnabled?: boolean }
+      | null;
+    if (!rawBody || typeof rawBody !== "object") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Request body must be an object with at least one mutable field."
+      });
+      return;
+    }
+    if (typeof rawBody.autoMergeEnabled !== "boolean") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Only autoMergeEnabled (boolean) is currently mutable via PATCH."
+      });
+      return;
+    }
+    if (rawBody.autoMergeEnabled === true && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
+      });
+      return;
+    }
+    let toSave: ProjectSpec = {
+      ...project,
+      autoMergeEnabled: rawBody.autoMergeEnabled,
+      updatedAt: clock().toISOString()
+    };
+
+    // M25 — any PATCH-with-autoMergeEnabled=true runs the readiness helper.
+    // The helper is idempotent (returns "already_ready" when the contract is
+    // already populated), so it's safe to run on every toggle-on attempt
+    // regardless of prior state. This is the right behaviour for projects
+    // that were toggled on before the readiness fix shipped: they currently
+    // have autoMergeEnabled=true but an empty contract, and we want a way
+    // to populate it without forcing the operator to flip off→on.
+    let readinessReason: string | null = null;
+    if (rawBody.autoMergeEnabled === true) {
+      const surveyAdapter =
+        githubWriter as unknown as WorkflowSurveyAdapter | undefined;
+      const scaffoldAdapter =
+        githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined;
+      const readiness = await ensureProjectAutoMergeReady(toSave, {
+        workflowSurveyAdapter: surveyAdapter ?? null,
+        scaffoldAdapter: scaffoldAdapter ?? null,
+        clock,
+        logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) }
+      });
+      readinessReason = readiness.reason;
+      toSave = readiness.forceDisableAutoMerge
+        ? { ...readiness.project, autoMergeEnabled: false, updatedAt: clock().toISOString() }
+        : readiness.project;
+    }
+
+    if (
+      project.autoMergeEnabled !== toSave.autoMergeEnabled ||
+      JSON.stringify(project.requiredCheckContract) !==
+        JSON.stringify(toSave.requiredCheckContract)
+    ) {
+      await repository.saveProjectSpec(toSave);
+    }
+    const updated = await repository.getProjectSpec(projectId);
+    writeOperatorJsonResponse(res, 200, {
+      project: updated,
+      ...(readinessReason ? { readiness: readinessReason } : {})
+    });
+    return;
+  }
+
+  // M25 F-198 — POST /projects/:id/auto-merge/halt — kill-switch for one project.
+  // Sets autoMergeEnabled=false (idempotent). The caller can also pass
+  // `label_open_prs: true` to request that every open RedDwarf PR on the
+  // project gets the `needs-human-merge` label, but PR labelling requires the
+  // GitHub adapter — when unavailable, the endpoint still succeeds and reports
+  // labelling as skipped so the operator never sees the kill-switch fail just
+  // because credentials are off.
+  const projectHaltMatch = /^\/projects\/([^/]+)\/auto-merge\/halt$/.exec(path);
+  if (method === "POST" && projectHaltMatch) {
+    const projectId = decodeURIComponent(projectHaltMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+    if (project.autoMergeEnabled) {
+      await repository.saveProjectSpec({
+        ...project,
+        autoMergeEnabled: false,
+        updatedAt: clock().toISOString()
+      });
+    }
+    writeOperatorJsonResponse(res, 200, {
+      project_id: projectId,
+      auto_merge_enabled: false,
+      halted_at: clock().toISOString()
+    });
+    return;
+  }
+
+  // M25 F-198 — POST /admin/auto-merge/halt-all — global kill-switch.
+  // Persists REDDWARF_PROJECT_AUTOMERGE_ENABLED=false to operator_config,
+  // mutates process.env so the in-process evaluator gate 1 reads false on
+  // every subsequent trigger, and walks every project setting
+  // autoMergeEnabled=false. Returns the count of projects that were halted.
+  // Requires REDDWARF_OPERATOR_ADMIN_TOKEN (separate from the regular
+  // operator token) to be set on the deployment AND supplied as the
+  // Bearer credential — the regular operator token is rejected.
+  if (method === "POST" && path === "/admin/auto-merge/halt-all") {
+    const adminToken = (process.env["REDDWARF_OPERATOR_ADMIN_TOKEN"] ?? "").trim();
+    if (adminToken.length === 0) {
+      writeOperatorJsonResponse(res, 403, {
+        error: "operator_admin_required",
+        message:
+          "REDDWARF_OPERATOR_ADMIN_TOKEN is not configured on this deployment. The global halt-all verb cannot be used without it."
+      });
+      return;
+    }
+    // Override the standard auth check with the admin token.
+    const supplied = readOperatorAuthToken(req);
+    if (
+      !supplied ||
+      Buffer.from(supplied).length !== Buffer.from(adminToken).length ||
+      !timingSafeEqual(Buffer.from(supplied), Buffer.from(adminToken))
+    ) {
+      writeOperatorJsonResponse(res, 403, {
+        error: "operator_admin_required",
+        message: "Valid REDDWARF_OPERATOR_ADMIN_TOKEN bearer required."
+      });
+      return;
+    }
+
+    // 1) Persist the global flag flip.
+    await repository.saveOperatorConfigEntry({
+      key: "REDDWARF_PROJECT_AUTOMERGE_ENABLED",
+      value: false,
+      updatedAt: clock().toISOString()
+    });
+    process.env["REDDWARF_PROJECT_AUTOMERGE_ENABLED"] = "false";
+
+    // 2) Halt every opted-in project.
+    const projects = await repository.listProjectSpecs();
+    let halted = 0;
+    for (const p of projects) {
+      if (!p.autoMergeEnabled) continue;
+      await repository.saveProjectSpec({
+        ...p,
+        autoMergeEnabled: false,
+        updatedAt: clock().toISOString()
+      });
+      halted += 1;
+    }
+
+    writeOperatorJsonResponse(res, 200, {
+      halted_at: clock().toISOString(),
+      projects_halted: halted,
+      global_flag: false,
+      note: "Restart the dispatcher to fully clear the in-memory captured value if the runtime requires it."
+    });
+    return;
+  }
+
   // POST /projects/:id/approve — approve or amend a project plan
   const projectApproveMatch = /^\/projects\/([^/]+)\/approve$/.exec(path);
   if (method === "POST" && projectApproveMatch) {
@@ -4266,12 +4525,28 @@ async function handleOperatorRequest(
       decidedBy: string;
       decisionSummary?: string;
       amendments?: string;
+      auto_merge?: { enabled?: boolean } | null;
     };
 
     if (body.decision !== "approve" && body.decision !== "amend") {
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
         message: "decision must be 'approve' or 'amend'."
+      });
+      return;
+    }
+
+    // M25 F-189: gate the per-project opt-in on the global flag. Operators
+    // can pass `auto_merge: { enabled: false }` even when the global flag is
+    // off (it's a no-op), but `enabled: true` requires the global flag to
+    // also be true. We refuse with 409 instead of silently dropping the
+    // opt-in so the caller knows their request was not honoured.
+    const autoMergeOptIn = body.auto_merge?.enabled === true;
+    if (autoMergeOptIn && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
       });
       return;
     }
@@ -4338,6 +4613,21 @@ async function handleOperatorRequest(
         }
       }
 
+      // F-189: persist the auto-merge opt-in on the project before approval
+      // executes. We only mutate when the operator explicitly supplied the
+      // field — silent defaults preserve any state set during planning.
+      if (body.auto_merge !== undefined && body.auto_merge !== null) {
+        const updatedAutoMerge = body.auto_merge.enabled === true;
+        const refreshed = await repository.getProjectSpec(projectId);
+        if (refreshed && refreshed.autoMergeEnabled !== updatedAutoMerge) {
+          await repository.saveProjectSpec({
+            ...refreshed,
+            autoMergeEnabled: updatedAutoMerge,
+            updatedAt: clock().toISOString()
+          });
+        }
+      }
+
       const result = await executeProjectApproval(
         {
           projectId,
@@ -4349,6 +4639,13 @@ async function handleOperatorRequest(
           githubIssuesAdapter: githubIssuesAdapter ?? null,
           taskFlowAdapter: taskFlowAdapter ?? null,
           github: githubWriter ?? null,
+          // M25 — wire the survey + scaffold adapters so the readiness helper
+          // populates the contract for opt-in projects. RestGitHubAdapter
+          // implements both interfaces; cast through unknown.
+          workflowSurveyAdapter:
+            (githubWriter as unknown as WorkflowSurveyAdapter | undefined) ?? null,
+          requiredChecksScaffoldAdapter:
+            (githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined) ?? null,
           clock
         }
       );

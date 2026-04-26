@@ -4,6 +4,7 @@ import {
   type AgentQualityMetrics,
   type AgentQualityMetricsQuery,
   type ApprovalRequest,
+  type CiCheckObservation,
   type EvidenceRecord,
   type EligibilityRejectionRecord,
   type GitHubIssuePollingCursor,
@@ -44,6 +45,7 @@ import {
   type PlanningRepository,
   type PlanningTransactionRepository,
   type RepositoryHealthSnapshot,
+  type SaveCiCheckObservationInput,
   type SaveProjectSpecProvenanceInput
 } from "./repository.js";
 
@@ -68,6 +70,8 @@ export class InMemoryPlanningRepository implements PlanningRepository {
   public readonly ticketSpecs = new Map<string, TicketSpec>();
   public readonly intents = new Map<string, IntentRecord>();
   public readonly projectSpecProvenance = new Map<string, ProjectSpecProvenance>();
+  // M25 F-193: CI check observations keyed by composite (ticket, sha, source, name).
+  public readonly ciCheckObservations = new Map<string, CiCheckObservation>();
 
   async saveManifest(manifest: TaskManifest): Promise<void> {
     this.manifests.set(manifest.taskId, manifest);
@@ -750,6 +754,41 @@ export class InMemoryPlanningRepository implements PlanningRepository {
       .filter((i) => i.status === "pending")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit);
+  }
+
+  // M25 F-193 — CI check observations.
+  async saveCiCheckObservation(
+    input: SaveCiCheckObservationInput
+  ): Promise<CiCheckObservation> {
+    const key = `${input.ticketId}::${input.headSha}::${input.source}::${input.checkName}`;
+    const existing = this.ciCheckObservations.get(key);
+    const record: CiCheckObservation = {
+      id: existing?.id ?? randomUUID(),
+      ticketId: input.ticketId,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      source: input.source,
+      checkName: input.checkName,
+      conclusion: input.conclusion,
+      completedAt: input.completedAt,
+      rawPayloadEvidenceId: input.rawPayloadEvidenceId ?? null,
+      createdAt: existing?.createdAt ?? asIsoTimestamp(new Date())
+    };
+    this.ciCheckObservations.set(key, record);
+    return record;
+  }
+
+  async listCiCheckObservations(query: {
+    ticketId: string;
+    headSha?: string;
+  }): Promise<CiCheckObservation[]> {
+    return [...this.ciCheckObservations.values()]
+      .filter(
+        (o) =>
+          o.ticketId === query.ticketId &&
+          (query.headSha === undefined || o.headSha === query.headSha)
+      )
+      .sort((a, b) => a.completedAt.localeCompare(b.completedAt));
   }
 }
 

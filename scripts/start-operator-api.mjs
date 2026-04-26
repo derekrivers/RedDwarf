@@ -71,6 +71,15 @@ const projectsInjectEnabledEnv = (process.env.REDDWARF_PROJECTS_INJECT_ENABLED ?
   .toLowerCase();
 const projectsInjectEnabled = projectsInjectEnabledEnv !== "false" && projectsInjectEnabledEnv !== "0";
 
+// M25 F-189: hidden global flag for Project Mode auto-merge of sub-ticket
+// PRs. Off by default; the operator API refuses per-project opt-in unless
+// this is explicitly true.
+const projectAutoMergeEnabledEnv = (
+  process.env.REDDWARF_PROJECT_AUTOMERGE_ENABLED ?? "false"
+).toLowerCase();
+const projectAutoMergeEnabled =
+  projectAutoMergeEnabledEnv === "true" || projectAutoMergeEnabledEnv === "1";
+
 const server = createOperatorApiServer(
   { port, authToken: operatorApiToken },
   {
@@ -79,6 +88,7 @@ const server = createOperatorApiServer(
     defaultPlanningDryRun: dryRun,
     githubWriter: github,
     projectsInjectEnabled,
+    projectAutoMergeEnabled,
     ...(githubIssuesAdapter ? { githubIssuesAdapter } : {})
   }
 );
@@ -97,6 +107,11 @@ if (projectsInjectEnabled) {
   console.log(`  POST http://127.0.0.1:${server.port}/projects/inject (Context injection)`);
 } else {
   console.log("  /projects/inject disabled via REDDWARF_PROJECTS_INJECT_ENABLED=false");
+}
+if (projectAutoMergeEnabled) {
+  console.log("  Project auto-merge: ENABLED globally (per-project opt-in still required).");
+} else {
+  console.log("  Project auto-merge: disabled (set REDDWARF_PROJECT_AUTOMERGE_ENABLED=true to allow opt-in).");
 }
 console.log("Press Ctrl+C to stop.");
 

@@ -164,12 +164,20 @@ export interface DashboardApiClient {
   submitIssue(req: SubmitIssueRequest): Promise<SubmitIssueResponse>;
   getProjects(filters?: ProjectListFilters): Promise<ProjectListResponse>;
   getProject(id: string): Promise<ProjectDetailResponse>;
+  /** M25 F-196 — flip a project's autoMergeEnabled flag. Server returns 409
+   *  if global REDDWARF_PROJECT_AUTOMERGE_ENABLED is false and `enabled`=true. */
+  patchProjectAutoMerge(
+    id: string,
+    enabled: boolean
+  ): Promise<{ project: ProjectSpec }>;
   approveProject(
     id: string,
     decision: "approve" | "amend",
     decidedBy: string,
     decisionSummary?: string,
-    amendments?: string
+    amendments?: string,
+    /** M25 — optional auto-merge opt-in. Server 409s when global flag is off. */
+    options?: { autoMerge?: boolean }
   ): Promise<ProjectApproveResponse>;
   getClarifications(id: string): Promise<ProjectClarificationsResponse>;
   submitClarifications(

@@ -37,9 +37,20 @@ export const projectInjectionProvenanceSchema = z.object({
   translation_notes: z.array(translationNoteSchema).default([])
 });
 
+// M25 F-189: optional envelope-level auto-merge opt-in. Lets Context (or any
+// other injector) ship a project pre-armed for auto-merge regardless of what
+// the embedded ProjectSpec.autoMergeEnabled value happens to be. The operator
+// API still gates this on the global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag
+// and returns 409 auto_merge_globally_disabled if `enabled: true` is supplied
+// while the global flag is off.
+export const autoMergeOptInSchema = z.object({
+  enabled: z.boolean()
+});
+
 export const projectInjectionRequestSchema = z.object({
   projectSpec: projectSpecSchema,
-  provenance: projectInjectionProvenanceSchema
+  provenance: projectInjectionProvenanceSchema,
+  auto_merge: autoMergeOptInSchema.optional()
 });
 
 export const projectInjectionResponseSchema = z.object({
@@ -67,6 +78,7 @@ export type TranslationNoteKind = z.infer<typeof translationNoteKindSchema>;
 export type ProjectInjectionProvenance = z.infer<
   typeof projectInjectionProvenanceSchema
 >;
+export type AutoMergeOptIn = z.infer<typeof autoMergeOptInSchema>;
 export type ProjectInjectionRequest = z.infer<typeof projectInjectionRequestSchema>;
 export type ProjectInjectionResponse = z.infer<typeof projectInjectionResponseSchema>;
 export type ProjectSpecProvenance = z.infer<typeof projectSpecProvenanceSchema>;
