@@ -120,6 +120,21 @@ export interface GitHubWriter {
   ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }>;
 }
 
+/**
+ * F-186 follow-up — narrow read-only interface used by the approval flow to
+ * pre-flight-check whether reddwarf-advance.yml's required Actions secret +
+ * variable are configured on the target repo. Implemented by RestGitHubAdapter.
+ * Kept separate from GitHubWriter so fixture adapters don't have to implement
+ * methods they never use.
+ */
+export interface GitHubActionsConfigReader {
+  getRepoActionsVariable(
+    repo: string,
+    name: string
+  ): Promise<{ name: string; value: string } | null>;
+  hasRepoActionsSecret(repo: string, name: string): Promise<boolean>;
+}
+
 export interface GitHubAdapter extends GitHubReader, GitHubWriter {}
 
 // ============================================================
@@ -1299,6 +1314,53 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
       message: "Add RedDwarf required-checks workflow (auto-merge gate)",
       content
     });
+  }
+
+  /**
+   * F-186 follow-up — read-only check for an Actions variable on the target
+   * repo. Returns null on 404. Used by the approval flow to detect when
+   * `REDDWARF_OPERATOR_API_URL` (or any other expected variable) hasn't been
+   * configured, so the operator gets a clear warning instead of discovering
+   * the misconfiguration when reddwarf-advance.yml fires post-merge.
+   */
+  async getRepoActionsVariable(
+    repo: string,
+    name: string
+  ): Promise<{ name: string; value: string } | null> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      const result = await this.apiGet<{ name: string; value: string }>(
+        `/repos/${owner}/${repoName}/actions/variables/${encodeURIComponent(name)}`
+      );
+      return { name: result.name, value: result.value };
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * F-186 follow-up — does the target repo have an Actions secret with this
+   * name? GitHub never returns secret VALUES via the REST API; we can only
+   * check existence (404 vs 200 on the metadata endpoint). Used to warn
+   * when REDDWARF_OPERATOR_TOKEN isn't configured before reddwarf-advance.yml
+   * starts firing.
+   */
+  async hasRepoActionsSecret(repo: string, name: string): Promise<boolean> {
+    const { owner, repoName } = this.parseRepo(repo);
+    try {
+      await this.apiGet<{ name: string }>(
+        `/repos/${owner}/${repoName}/actions/secrets/${encodeURIComponent(name)}`
+      );
+      return true;
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {

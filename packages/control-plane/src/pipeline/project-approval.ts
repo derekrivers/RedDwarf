@@ -732,6 +732,50 @@ export async function executeProjectApproval(
       const wfErrMsg = wfErr instanceof Error ? wfErr.message : String(wfErr);
       logger?.warn(`Failed to install reddwarf-advance.yml in ${project.sourceRepo}: ${wfErrMsg}`);
     }
+
+    // F-186 follow-up: pre-flight check that reddwarf-advance.yml's required
+    // secret + variable are actually configured on the target repo. Without
+    // them, every PR-merged event hits an `exit 1` in the workflow and the
+    // ticket queue silently stops advancing. Cast through unknown — the
+    // RestGitHubAdapter implements GitHubActionsConfigReader; fixture
+    // adapters typically don't (the methods just won't be there → skip).
+    const configReader = deps.github as unknown as
+      | import("@reddwarf/integrations").GitHubActionsConfigReader
+      | undefined;
+    if (
+      configReader &&
+      typeof configReader.getRepoActionsVariable === "function" &&
+      typeof configReader.hasRepoActionsSecret === "function"
+    ) {
+      try {
+        const [variable, hasSecret] = await Promise.all([
+          configReader.getRepoActionsVariable(project.sourceRepo, "REDDWARF_OPERATOR_API_URL"),
+          configReader.hasRepoActionsSecret(project.sourceRepo, "REDDWARF_OPERATOR_TOKEN")
+        ]);
+        const missing: string[] = [];
+        if (!variable) missing.push("variable REDDWARF_OPERATOR_API_URL");
+        if (!hasSecret) missing.push("secret REDDWARF_OPERATOR_TOKEN");
+        if (missing.length > 0) {
+          logger?.warn(
+            `M25 advance pre-flight: ${project.sourceRepo} is missing ${missing.join(" + ")}. ` +
+            `reddwarf-advance.yml will fail on every PR merge until these are set; the project ticket queue will not advance. ` +
+            `Fix with: ` +
+            `gh secret set REDDWARF_OPERATOR_TOKEN --repo ${project.sourceRepo} --body "<your-operator-token>"; ` +
+            `gh variable set REDDWARF_OPERATOR_API_URL --repo ${project.sourceRepo} --body "<your-operator-api-url>".`
+          );
+        } else {
+          logger?.info(
+            `M25 advance pre-flight: ${project.sourceRepo} has both REDDWARF_OPERATOR_TOKEN secret and REDDWARF_OPERATOR_API_URL variable configured.`
+          );
+        }
+      } catch (preflightErr) {
+        const preflightMsg = preflightErr instanceof Error ? preflightErr.message : String(preflightErr);
+        logger?.warn(
+          `M25 advance pre-flight: failed to inspect Actions config on ${project.sourceRepo}: ${preflightMsg}. ` +
+          `Cannot confirm reddwarf-advance.yml will work after merges.`
+        );
+      }
+    }
   }
 
   // M25 — make the project "auto-merge ready" when it opted in: re-survey
