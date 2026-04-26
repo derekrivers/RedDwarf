@@ -46,7 +46,7 @@ import {
   type ProjectSpec
 } from "@reddwarf/contracts";
 import { MODEL_PROVIDER_ROLE_MAP } from "@reddwarf/execution-plane";
-import type { GitHubAutoMergeAdapter, GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter } from "@reddwarf/integrations";
+import type { GitHubAutoMergeAdapter, GitHubWriter, GitHubIssuesAdapter, GitHubRepoDiscovery, OpenClawTaskFlowAdapter, RequiredChecksScaffoldAdapter, WorkflowSurveyAdapter } from "@reddwarf/integrations";
 import {
   buildOpenClawIssueSessionKeyFromManifest,
   normalizeOpenClawSessionKey
@@ -117,6 +117,7 @@ import {
   type WebhookHandlerDependencies
 } from "./github-webhook.js";
 import { evaluateAutoMerge } from "./pipeline/project-auto-merge.js";
+import { ensureProjectAutoMergeReady } from "./pipeline/project-auto-merge-readiness.js";
 
 // ============================================================
 // Operator API interfaces
@@ -4351,11 +4352,44 @@ async function handleOperatorRequest(
       return;
     }
     if (project.autoMergeEnabled !== rawBody.autoMergeEnabled) {
-      await repository.saveProjectSpec({
+      let toSave: ProjectSpec = {
         ...project,
         autoMergeEnabled: rawBody.autoMergeEnabled,
         updatedAt: clock().toISOString()
+      };
+
+      // M25 — flipping false → true: ensure the project is auto-merge-ready
+      // (re-survey workflows, scaffold for greenfield, populate contract).
+      // Without this, opting in via the toggle leaves the contract empty
+      // and the F-194 evaluator's gate 3 blocks every webhook trigger.
+      // RestGitHubAdapter implements both WorkflowSurveyAdapter and
+      // RequiredChecksScaffoldAdapter; cast through unknown because the
+      // operator-API config exposes them only via GitHubAdapter/GitHubWriter.
+      let readinessReason: string | null = null;
+      if (rawBody.autoMergeEnabled === true && !project.autoMergeEnabled) {
+        const surveyAdapter =
+          githubWriter as unknown as WorkflowSurveyAdapter | undefined;
+        const scaffoldAdapter =
+          githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined;
+        const readiness = await ensureProjectAutoMergeReady(toSave, {
+          workflowSurveyAdapter: surveyAdapter ?? null,
+          scaffoldAdapter: scaffoldAdapter ?? null,
+          clock,
+          logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) }
+        });
+        readinessReason = readiness.reason;
+        toSave = readiness.forceDisableAutoMerge
+          ? { ...readiness.project, autoMergeEnabled: false, updatedAt: clock().toISOString() }
+          : readiness.project;
+      }
+
+      await repository.saveProjectSpec(toSave);
+      const updated = await repository.getProjectSpec(projectId);
+      writeOperatorJsonResponse(res, 200, {
+        project: updated,
+        ...(readinessReason ? { readiness: readinessReason } : {})
       });
+      return;
     }
     const updated = await repository.getProjectSpec(projectId);
     writeOperatorJsonResponse(res, 200, { project: updated });
@@ -4604,6 +4638,13 @@ async function handleOperatorRequest(
           githubIssuesAdapter: githubIssuesAdapter ?? null,
           taskFlowAdapter: taskFlowAdapter ?? null,
           github: githubWriter ?? null,
+          // M25 — wire the survey + scaffold adapters so the readiness helper
+          // populates the contract for opt-in projects. RestGitHubAdapter
+          // implements both interfaces; cast through unknown.
+          workflowSurveyAdapter:
+            (githubWriter as unknown as WorkflowSurveyAdapter | undefined) ?? null,
+          requiredChecksScaffoldAdapter:
+            (githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined) ?? null,
           clock
         }
       );

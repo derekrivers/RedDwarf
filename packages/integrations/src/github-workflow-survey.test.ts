@@ -4,6 +4,7 @@ import {
   FixtureWorkflowSurveyAdapter,
   parseWorkflowJobNames,
   surveyWorkflowFiles,
+  workflowFiresOnPullRequestOpen,
   type WorkflowFileContent,
   type WorkflowSurveyAdapter
 } from "./github-workflow-survey.js";
@@ -103,11 +104,11 @@ describe("M25 F-191 — surveyWorkflowFiles", () => {
     const files: WorkflowFileContent[] = [
       {
         path: ".github/workflows/ci.yml",
-        content: "jobs:\n  build:\n    runs-on: ubuntu-latest\n  test:\n    runs-on: ubuntu-latest\n"
+        content: "on:\n  pull_request:\njobs:\n  build:\n    runs-on: ubuntu-latest\n  test:\n    runs-on: ubuntu-latest\n"
       },
       {
         path: ".github/workflows/lint.yml",
-        content: "jobs:\n  lint:\n    name: Lint code\n    runs-on: ubuntu-latest\n"
+        content: "on:\n  pull_request:\njobs:\n  lint:\n    name: Lint code\n    runs-on: ubuntu-latest\n"
       }
     ];
     const adapter = new FixtureWorkflowSurveyAdapter(
@@ -185,5 +186,105 @@ describe("M25 F-191 — buildRequiredCheckContractFromSurvey", () => {
     // Hypothetical malicious model output ("deploy", "secret-leak-check")
     // never makes it into the contract — the function only reads the
     // survey's checkNames as input. This is the deterministic guarantee.
+  });
+});
+
+describe("M25 readiness — workflowFiresOnPullRequestOpen (trigger awareness)", () => {
+  it("returns true for plain `on: pull_request` (default types fire on open)", () => {
+    expect(
+      workflowFiresOnPullRequestOpen("on:\n  pull_request:\njobs:\n  build:\n    runs-on: u\n")
+    ).toBe(true);
+  });
+
+  it("returns true for `on: push`", () => {
+    expect(
+      workflowFiresOnPullRequestOpen("on:\n  push:\njobs:\n  build:\n    runs-on: u\n")
+    ).toBe(true);
+  });
+
+  it("returns true for `on: pull_request: types: [opened, synchronize]`", () => {
+    expect(
+      workflowFiresOnPullRequestOpen(
+        "on:\n  pull_request:\n    types: [opened, synchronize]\njobs:\n  x:\n    runs-on: u\n"
+      )
+    ).toBe(true);
+  });
+
+  it("returns true for the list form `types:\\n  - opened`", () => {
+    expect(
+      workflowFiresOnPullRequestOpen(
+        "on:\n  pull_request:\n    types:\n      - opened\n      - synchronize\njobs:\n  x:\n    runs-on: u\n"
+      )
+    ).toBe(true);
+  });
+
+  // Critical: the user's repo had reddwarf-advance.yml which fires only on close.
+  it("returns false for `on: pull_request: types: [closed]` (the reddwarf-advance.yml case)", () => {
+    expect(
+      workflowFiresOnPullRequestOpen(
+        "on:\n  pull_request:\n    types: [closed]\njobs:\n  advance:\n    runs-on: u\n"
+      )
+    ).toBe(false);
+  });
+
+  it("returns false for schedule-only or workflow_dispatch-only", () => {
+    expect(
+      workflowFiresOnPullRequestOpen(
+        "on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n  nightly:\n    runs-on: u\n"
+      )
+    ).toBe(false);
+    expect(
+      workflowFiresOnPullRequestOpen(
+        "on:\n  workflow_dispatch:\njobs:\n  manual:\n    runs-on: u\n"
+      )
+    ).toBe(false);
+  });
+
+  it("returns true for inline list form `on: [push, pull_request]`", () => {
+    expect(
+      workflowFiresOnPullRequestOpen("on: [push, pull_request]\njobs:\n  x:\n    runs-on: u\n")
+    ).toBe(true);
+  });
+});
+
+describe("M25 readiness — surveyWorkflowFiles skips PR-close-only workflows", () => {
+  it("includes CI workflow but skips reddwarf-advance.yml", async () => {
+    const files: WorkflowFileContent[] = [
+      {
+        path: ".github/workflows/ci.yml",
+        content:
+          "on:\n  pull_request:\njobs:\n  build:\n    runs-on: u\n  test:\n    runs-on: u\n"
+      },
+      {
+        path: ".github/workflows/reddwarf-advance.yml",
+        content:
+          "on:\n  pull_request:\n    types: [closed]\njobs:\n  advance:\n    runs-on: u\n"
+      }
+    ];
+    const adapter = new FixtureWorkflowSurveyAdapter(
+      new Map([["acme/platform", files]])
+    );
+    const survey = await surveyWorkflowFiles(adapter, "acme/platform");
+    expect(survey.checkNames).toEqual(["build", "test"]);
+    expect(survey.workflowFiles).toEqual([".github/workflows/ci.yml"]);
+    // hasNoWorkflows distinguishes "directory empty" from "no eligible workflows".
+    expect(survey.hasNoWorkflows).toBe(false);
+  });
+
+  it("returns empty contract when ONLY a close-only workflow exists", async () => {
+    const files: WorkflowFileContent[] = [
+      {
+        path: ".github/workflows/reddwarf-advance.yml",
+        content:
+          "on:\n  pull_request:\n    types: [closed]\njobs:\n  advance:\n    runs-on: u\n"
+      }
+    ];
+    const adapter = new FixtureWorkflowSurveyAdapter(
+      new Map([["acme/platform", files]])
+    );
+    const survey = await surveyWorkflowFiles(adapter, "acme/platform");
+    expect(survey.checkNames).toEqual([]);
+    // Empty PR-eligible workflow set; readiness helper should fall back to scaffold.
+    expect(buildRequiredCheckContractFromSurvey(survey)).toBeNull();
   });
 });

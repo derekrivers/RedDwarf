@@ -20,12 +20,13 @@ import type {
   GitHubWriter,
   GitHubIssuesAdapter,
   OpenClawTaskFlowAdapter,
-  RequiredChecksScaffoldAdapter
+  RequiredChecksScaffoldAdapter,
+  WorkflowSurveyAdapter
 } from "@reddwarf/integrations";
 import {
-  ensureRequiredChecksWorkflow,
   V1MutationDisabledError
 } from "@reddwarf/integrations";
+import { ensureProjectAutoMergeReady } from "./project-auto-merge-readiness.js";
 import { buildPolicySnapshot, getPolicyVersion } from "@reddwarf/policy";
 import {
   expandAllowedPathsForGeneratedArtifacts,
@@ -60,6 +61,12 @@ export interface ExecuteProjectApprovalDependencies {
    * Best-effort: any failure logs a warning but does not block approval.
    */
   requiredChecksScaffoldAdapter?: RequiredChecksScaffoldAdapter | null;
+  /**
+   * M25 — workflow surveyor used by the readiness helper to re-derive the
+   * contract from any workflow files the developer added between planning
+   * and approval. When omitted, the readiness helper falls back to scaffold.
+   */
+  workflowSurveyAdapter?: WorkflowSurveyAdapter | null;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
@@ -639,7 +646,9 @@ export async function executeProjectApproval(
   }
 
   // Step 1: Build the approved project state
-  const approvedProject: ProjectSpec = resumableApprovedProject
+  // M25: `let` (not const) — the readiness helper below may rebuild this with
+  // a populated requiredCheckContract or a forced autoMergeEnabled=false.
+  let approvedProject: ProjectSpec = resumableApprovedProject
     ? {
         ...project,
         approvalDecision: project.approvalDecision ?? "approve",
@@ -725,50 +734,38 @@ export async function executeProjectApproval(
     }
   }
 
-  // M25 F-192 — install the default required-checks workflow when this is a
-  // fresh approval, the project opted into auto-merge, and the surveyed
-  // RequiredCheckContract is empty (greenfield repo). Detection failure
-  // (no recognized manifest) auto-disables auto-merge on the project so
-  // F-194 falls back to human review.
-  let scaffoldAutoDisabled = false;
+  // M25 — make the project "auto-merge ready" when it opted in: re-survey
+  // workflows (in case the dev added CI between planning and approval) and
+  // fall back to the F-192 scaffold for greenfield repos. The helper also
+  // populates the project's RequiredCheckContract so the F-194 evaluator
+  // doesn't block at gate 3 — the original F-192 path forgot to do this.
   if (
-    deps.requiredChecksScaffoldAdapter &&
     !resumableApprovedProject &&
     !backfillingMissingSubIssues &&
     !materializingDispatchedTicketTask &&
-    project.autoMergeEnabled === true &&
-    (project.requiredCheckContract === null ||
-      project.requiredCheckContract.requiredCheckNames.length === 0)
+    approvedProject.autoMergeEnabled === true
   ) {
-    try {
-      const scaffoldResult = await ensureRequiredChecksWorkflow(
-        deps.requiredChecksScaffoldAdapter,
-        project.sourceRepo
-      );
-      if (scaffoldResult.installed) {
-        logger?.info(
-          `M25 F-192: installed reddwarf-required-checks.yml (${scaffoldResult.stack}) in ${project.sourceRepo}.`
-        );
-      } else if (scaffoldResult.reason === "already_present") {
-        logger?.info(
-          `M25 F-192: reddwarf-required-checks.yml already present in ${project.sourceRepo}.`
-        );
-      } else if (scaffoldResult.reason === "no_recognized_manifest") {
-        logger?.warn(
-          `M25 F-192: ${project.sourceRepo} has no recognized stack manifest (package.json / pyproject.toml / Cargo.toml). Auto-merge will be disabled for this project.`
-        );
-        scaffoldAutoDisabled = true;
-      }
-    } catch (scaffoldErr) {
-      const errMsg = scaffoldErr instanceof Error ? scaffoldErr.message : String(scaffoldErr);
+    const readiness = await ensureProjectAutoMergeReady(approvedProject, {
+      workflowSurveyAdapter: deps.workflowSurveyAdapter ?? null,
+      scaffoldAdapter: deps.requiredChecksScaffoldAdapter ?? null,
+      clock,
+      ...(logger ? { logger } : {})
+    });
+    if (readiness.forceDisableAutoMerge) {
+      approvedProject = {
+        ...readiness.project,
+        autoMergeEnabled: false,
+        updatedAt: now()
+      };
       logger?.warn(
-        `M25 F-192: failed to install required-checks workflow in ${project.sourceRepo}: ${errMsg}. Auto-merge will be disabled for this project.`
+        `M25 readiness: ${readiness.outcome} — auto-merge disabled for ${project.projectId}: ${readiness.reason}`
       );
-      scaffoldAutoDisabled = true;
+    } else {
+      approvedProject = readiness.project;
+      logger?.info(
+        `M25 readiness: ${readiness.outcome} — ${readiness.reason}`
+      );
     }
-  }
-  if (scaffoldAutoDisabled) {
-    approvedProject.autoMergeEnabled = false;
     await repository.saveProjectSpec({ ...approvedProject });
   }
 

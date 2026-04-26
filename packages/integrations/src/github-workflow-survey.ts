@@ -142,8 +142,167 @@ export function parseWorkflowJobNames(yaml: string): string[] {
 }
 
 /**
+ * Inspect a workflow YAML file's `on:` block and decide whether the
+ * workflow would fire on a freshly-opened (or pushed-to) pull request.
+ * The auto-merge evaluator only ever sees check_runs from workflows
+ * that produce checks at PR-open / PR-update time — workflows that
+ * fire only on `pull_request: closed` (e.g. RedDwarf's own
+ * reddwarf-advance.yml) or schedule-only or workflow_dispatch-only
+ * would otherwise be picked up as required checks and the gate would
+ * wait forever for a check that never produces a check_run on the open
+ * PR.
+ *
+ * Returns true when:
+ *   - `on: push` is present (PR head pushes fire it), OR
+ *   - `on: pull_request` is present with NO `types:` filter, OR
+ *   - `on: pull_request` is present with a `types:` filter that
+ *     includes one of `opened`, `synchronize`, or `reopened`.
+ *
+ * Returns false otherwise (closed-only, schedule-only, dispatch-only,
+ * unparseable, or no `on:` block at all).
+ */
+export function workflowFiresOnPullRequestOpen(yaml: string): boolean {
+  const lines = yaml.split(/\r?\n/);
+
+  let inOnBlock = false;
+  let onIndent = -1;
+  let inPullRequest = false;
+  let pullRequestIndent = -1;
+  let inTypes = false;
+  let typesIndent = -1;
+  let pullRequestHasTypes = false;
+  let pullRequestTypesAllowOpen = false;
+  let hasPush = false;
+  let hasPullRequest = false;
+
+  const ALLOWED_PR_TYPES = new Set(["opened", "synchronize", "reopened"]);
+
+  for (const rawLine of lines) {
+    const commentStripped = rawLine.replace(/\s+#.*$/, "");
+    if (commentStripped.trim().length === 0) continue;
+    const indent = commentStripped.match(/^( *)/)?.[1]?.length ?? 0;
+    const trimmed = commentStripped.trim();
+
+    if (!inOnBlock) {
+      // `on: push` or `on: pull_request` shorthand at top level.
+      const onShorthand = /^on\s*:\s*(.+)$/.exec(trimmed);
+      if (indent === 0 && onShorthand && onShorthand[1] && onShorthand[1] !== "") {
+        const value = onShorthand[1].trim();
+        // Could be `on: push` or `on: [push, pull_request]`.
+        if (/\bpush\b/.test(value)) hasPush = true;
+        if (/\bpull_request\b/.test(value)) {
+          // Inline pull_request = no types filter = fires on open.
+          hasPullRequest = true;
+          pullRequestTypesAllowOpen = true;
+        }
+        continue;
+      }
+      if (indent === 0 && /^on\s*:\s*$/.test(trimmed)) {
+        inOnBlock = true;
+        onIndent = 0;
+      }
+      continue;
+    }
+
+    // Inside the `on:` block.
+    if (indent <= onIndent) {
+      // Block ended. Re-evaluate this line at the top level.
+      inOnBlock = false;
+      inPullRequest = false;
+      inTypes = false;
+      const onShorthand = /^on\s*:\s*(.+)$/.exec(trimmed);
+      if (indent === 0 && onShorthand && onShorthand[1]) {
+        const value = onShorthand[1].trim();
+        if (/\bpush\b/.test(value)) hasPush = true;
+        if (/\bpull_request\b/.test(value)) {
+          hasPullRequest = true;
+          pullRequestTypesAllowOpen = true;
+        }
+      }
+      continue;
+    }
+
+    // First-level child of `on:`.
+    if (pullRequestIndent === -1 || indent === pullRequestIndent) {
+      if (/^push\s*:\s*$/.test(trimmed) || /^push\s*:/.test(trimmed)) {
+        hasPush = true;
+        inPullRequest = false;
+        inTypes = false;
+        continue;
+      }
+      if (/^pull_request\s*:\s*$/.test(trimmed)) {
+        hasPullRequest = true;
+        inPullRequest = true;
+        pullRequestIndent = indent;
+        pullRequestHasTypes = false;
+        pullRequestTypesAllowOpen = false;
+        inTypes = false;
+        continue;
+      }
+      const prInline = /^pull_request\s*:\s*\[(.*)\]\s*$/.exec(trimmed);
+      if (prInline && prInline[1]) {
+        // pull_request: [opened, synchronize] inline form
+        hasPullRequest = true;
+        pullRequestHasTypes = true;
+        for (const t of prInline[1].split(",").map((s) => s.trim())) {
+          if (ALLOWED_PR_TYPES.has(t)) {
+            pullRequestTypesAllowOpen = true;
+          }
+        }
+        inPullRequest = false;
+        inTypes = false;
+        continue;
+      }
+      if (inPullRequest && indent <= pullRequestIndent) {
+        inPullRequest = false;
+        inTypes = false;
+      }
+    }
+
+    // Inside pull_request:.
+    if (inPullRequest && indent > pullRequestIndent) {
+      if (typesIndent === -1 || indent === typesIndent) {
+        if (/^types\s*:\s*$/.test(trimmed)) {
+          inTypes = true;
+          pullRequestHasTypes = true;
+          typesIndent = indent;
+          continue;
+        }
+        const typesInline = /^types\s*:\s*\[(.*)\]\s*$/.exec(trimmed);
+        if (typesInline && typesInline[1]) {
+          pullRequestHasTypes = true;
+          for (const t of typesInline[1].split(",").map((s) => s.trim())) {
+            if (ALLOWED_PR_TYPES.has(t)) pullRequestTypesAllowOpen = true;
+          }
+          continue;
+        }
+      }
+      if (inTypes && indent > typesIndent) {
+        // List item under types: e.g. `  - opened`
+        const item = /^-\s*(.+)$/.exec(trimmed);
+        if (item && item[1]) {
+          const value = item[1].trim();
+          if (ALLOWED_PR_TYPES.has(value)) pullRequestTypesAllowOpen = true;
+        }
+      }
+    }
+  }
+
+  // If pull_request is present without an explicit types filter, GitHub
+  // defaults to [opened, synchronize, reopened] — so it DOES fire on open.
+  if (hasPullRequest && !pullRequestHasTypes) {
+    pullRequestTypesAllowOpen = true;
+  }
+
+  return hasPush || (hasPullRequest && pullRequestTypesAllowOpen);
+}
+
+/**
  * Survey every workflow file the adapter can find and return the unique
- * set of check names the gate (F-194) will require to be green.
+ * set of check names the gate (F-194) will require to be green. Workflows
+ * that don't fire on PR open / PR update are skipped — see
+ * workflowFiresOnPullRequestOpen — so the contract never includes a check
+ * the evaluator could wait on forever.
  */
 export async function surveyWorkflowFiles(
   adapter: WorkflowSurveyAdapter,
@@ -162,6 +321,11 @@ export async function surveyWorkflowFiles(
   const checkNames = new Set<string>();
   const workflowFiles: string[] = [];
   for (const file of files) {
+    if (!workflowFiresOnPullRequestOpen(file.content)) {
+      // Skip workflows whose triggers wouldn't produce check_runs on a
+      // freshly-opened PR (e.g. reddwarf-advance.yml fires only on close).
+      continue;
+    }
     workflowFiles.push(file.path);
     for (const name of parseWorkflowJobNames(file.content)) {
       checkNames.add(name);
@@ -171,6 +335,9 @@ export async function surveyWorkflowFiles(
   return {
     checkNames: Array.from(checkNames).sort(),
     workflowFiles: workflowFiles.sort(),
+    // Distinguish "repo has no workflows" from "repo has workflows but none
+    // fire on PR open". Both result in an empty contract, but only the
+    // former is a true greenfield.
     hasNoWorkflows: files.length === 0
   };
 }
