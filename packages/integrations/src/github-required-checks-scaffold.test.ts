@@ -39,6 +39,23 @@ describe("M25 F-192 — detectScaffoldStack", () => {
     });
   });
 
+  it("detects Ruby from Gemfile (Rails apps included)", () => {
+    expect(
+      detectScaffoldStack([
+        { path: "Gemfile" },
+        { path: "app" },
+        { path: "config" }
+      ])
+    ).toEqual({ stack: "ruby", signals: ["Gemfile"] });
+  });
+
+  it("detects Go from go.mod", () => {
+    expect(detectScaffoldStack([{ path: "go.mod" }, { path: "main.go" }])).toEqual({
+      stack: "go",
+      signals: ["go.mod"]
+    });
+  });
+
   it("returns unknown when no recognized manifest is present", () => {
     expect(detectScaffoldStack([{ path: "Makefile" }, { path: "README.md" }])).toEqual({
       stack: "unknown",
@@ -54,7 +71,7 @@ describe("M25 F-192 — detectScaffoldStack", () => {
 });
 
 describe("M25 F-192 — buildRequiredChecksWorkflowYaml", () => {
-  it.each(["node", "python", "rust"] as const)(
+  it.each(["node", "python", "rust", "ruby", "go"] as const)(
     "produces lint, build, test job ids for stack=%s that the F-191 surveyor extracts",
     (stack) => {
       const yaml = buildRequiredChecksWorkflowYaml(stack);

@@ -4351,48 +4351,49 @@ async function handleOperatorRequest(
       });
       return;
     }
-    if (project.autoMergeEnabled !== rawBody.autoMergeEnabled) {
-      let toSave: ProjectSpec = {
-        ...project,
-        autoMergeEnabled: rawBody.autoMergeEnabled,
-        updatedAt: clock().toISOString()
-      };
+    let toSave: ProjectSpec = {
+      ...project,
+      autoMergeEnabled: rawBody.autoMergeEnabled,
+      updatedAt: clock().toISOString()
+    };
 
-      // M25 — flipping false → true: ensure the project is auto-merge-ready
-      // (re-survey workflows, scaffold for greenfield, populate contract).
-      // Without this, opting in via the toggle leaves the contract empty
-      // and the F-194 evaluator's gate 3 blocks every webhook trigger.
-      // RestGitHubAdapter implements both WorkflowSurveyAdapter and
-      // RequiredChecksScaffoldAdapter; cast through unknown because the
-      // operator-API config exposes them only via GitHubAdapter/GitHubWriter.
-      let readinessReason: string | null = null;
-      if (rawBody.autoMergeEnabled === true && !project.autoMergeEnabled) {
-        const surveyAdapter =
-          githubWriter as unknown as WorkflowSurveyAdapter | undefined;
-        const scaffoldAdapter =
-          githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined;
-        const readiness = await ensureProjectAutoMergeReady(toSave, {
-          workflowSurveyAdapter: surveyAdapter ?? null,
-          scaffoldAdapter: scaffoldAdapter ?? null,
-          clock,
-          logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) }
-        });
-        readinessReason = readiness.reason;
-        toSave = readiness.forceDisableAutoMerge
-          ? { ...readiness.project, autoMergeEnabled: false, updatedAt: clock().toISOString() }
-          : readiness.project;
-      }
-
-      await repository.saveProjectSpec(toSave);
-      const updated = await repository.getProjectSpec(projectId);
-      writeOperatorJsonResponse(res, 200, {
-        project: updated,
-        ...(readinessReason ? { readiness: readinessReason } : {})
+    // M25 — any PATCH-with-autoMergeEnabled=true runs the readiness helper.
+    // The helper is idempotent (returns "already_ready" when the contract is
+    // already populated), so it's safe to run on every toggle-on attempt
+    // regardless of prior state. This is the right behaviour for projects
+    // that were toggled on before the readiness fix shipped: they currently
+    // have autoMergeEnabled=true but an empty contract, and we want a way
+    // to populate it without forcing the operator to flip off→on.
+    let readinessReason: string | null = null;
+    if (rawBody.autoMergeEnabled === true) {
+      const surveyAdapter =
+        githubWriter as unknown as WorkflowSurveyAdapter | undefined;
+      const scaffoldAdapter =
+        githubWriter as unknown as RequiredChecksScaffoldAdapter | undefined;
+      const readiness = await ensureProjectAutoMergeReady(toSave, {
+        workflowSurveyAdapter: surveyAdapter ?? null,
+        scaffoldAdapter: scaffoldAdapter ?? null,
+        clock,
+        logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) }
       });
-      return;
+      readinessReason = readiness.reason;
+      toSave = readiness.forceDisableAutoMerge
+        ? { ...readiness.project, autoMergeEnabled: false, updatedAt: clock().toISOString() }
+        : readiness.project;
+    }
+
+    if (
+      project.autoMergeEnabled !== toSave.autoMergeEnabled ||
+      JSON.stringify(project.requiredCheckContract) !==
+        JSON.stringify(toSave.requiredCheckContract)
+    ) {
+      await repository.saveProjectSpec(toSave);
     }
     const updated = await repository.getProjectSpec(projectId);
-    writeOperatorJsonResponse(res, 200, { project: updated });
+    writeOperatorJsonResponse(res, 200, {
+      project: updated,
+      ...(readinessReason ? { readiness: readinessReason } : {})
+    });
     return;
   }
 

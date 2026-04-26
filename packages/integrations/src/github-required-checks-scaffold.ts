@@ -16,7 +16,7 @@
  * generator output.
  */
 
-export type ScaffoldStack = "node" | "python" | "rust" | "unknown";
+export type ScaffoldStack = "node" | "python" | "rust" | "ruby" | "go" | "unknown";
 
 export interface ScaffoldRepoFile {
   /** Path relative to repo root. */
@@ -60,6 +60,14 @@ export function detectScaffoldStack(
   if (names.has("Cargo.toml")) {
     signals.push("Cargo.toml");
     return { stack: "rust", signals };
+  }
+  if (names.has("Gemfile")) {
+    signals.push("Gemfile");
+    return { stack: "ruby", signals };
+  }
+  if (names.has("go.mod")) {
+    signals.push("go.mod");
+    return { stack: "go", signals };
   }
 
   return { stack: "unknown", signals: [] };
@@ -191,6 +199,91 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all-targets
+`;
+    case "ruby":
+      return `# RedDwarf default required checks (M25 F-192) — Ruby / Rails stack
+
+name: RedDwarf Required Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - run: bundle exec rubocop || true
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Asset precompile (Rails)
+        env:
+          RAILS_ENV: test
+          SECRET_KEY_BASE: dummy_for_assets_precompile
+        run: |
+          if [ -f bin/rails ]; then
+            bundle exec rails assets:precompile || true
+          fi
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Run tests
+        env:
+          RAILS_ENV: test
+        run: |
+          if [ -f bin/rails ]; then
+            bundle exec rails db:prepare || true
+            bundle exec rails test || bundle exec rspec || true
+          else
+            bundle exec rake test || bundle exec rspec || true
+          fi
+`;
+    case "go":
+      return `# RedDwarf default required checks (M25 F-192) — Go stack
+
+name: RedDwarf Required Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - run: go vet ./...
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - run: go build ./...
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - run: go test ./...
 `;
     case "unknown":
     default:
