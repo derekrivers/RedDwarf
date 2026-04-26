@@ -61,9 +61,30 @@ export interface EvaluateAutoMergeDeps {
   projectAutoMergeEnabled: boolean;
   clock?: () => Date;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
-  /** Optional Discord notifier hook for block_human_review (F-197). */
-  notify?: (input: AutoMergeBlockNotification) => void | Promise<void>;
+  /** Optional Discord notifier hook for both block_human_review and merge
+   *  outcomes (F-197). The notifier is responsible for any rate-limiting. */
+  notify?: (input: AutoMergeNotification) => void | Promise<void>;
 }
+
+export type AutoMergeNotification =
+  | {
+      kind: "blocked";
+      ticketId: string;
+      prNumber: number;
+      repo: string;
+      failedGates: string[];
+      decisionAt: string;
+    }
+  | {
+      kind: "merged";
+      ticketId: string;
+      projectId: string;
+      prNumber: number;
+      repo: string;
+      /** 1-indexed: 1 for the first merge on this project, etc. */
+      mergeIndex: number;
+      decisionAt: string;
+    };
 
 export type AutoMergeOutcome = "merge" | "wait" | "block_human_review" | "skip";
 
@@ -85,13 +106,11 @@ export interface AutoMergeDecision {
   contract?: RequiredCheckContract | null;
 }
 
-export interface AutoMergeBlockNotification {
-  ticketId: string;
-  prNumber: number;
-  repo: string;
-  failedGates: string[];
-  decisionAt: string;
-}
+/** @deprecated use AutoMergeNotification (the discriminated union). */
+export type AutoMergeBlockNotification = Extract<
+  AutoMergeNotification,
+  { kind: "blocked" }
+>;
 
 const SKIP_CI_RE = /\[skip ci\]/i;
 const TEST_FILE_RE = /(^|\/)(tests?|spec|__tests__)\/|\.(test|spec)\.[a-zA-Z0-9]+$/;
@@ -425,6 +444,41 @@ export async function evaluateAutoMerge(
       logger?.info(
         `M25 F-194: auto-merged PR ${project.sourceRepo}#${pr.number} (ticket ${ticket.ticketId}).`
       );
+      // F-197: rate-limited Discord heartbeat. mergeIndex = count of prior
+      // merge gate_decision evidence records on this project + 1 (this one).
+      // We listEvidence on the parent task id, not the project id directly,
+      // because evidence is keyed by task_id and the parent task is the
+      // logical owner of the project's audit trail.
+      if (deps.notify) {
+        try {
+          const parentTaskId = project.projectId.startsWith("project:")
+            ? project.projectId.slice("project:".length)
+            : project.projectId;
+          const records = await repository.listEvidenceRecords(parentTaskId);
+          const priorMerges = records.filter(
+            (r) =>
+              r.kind === "gate_decision" &&
+              r.title === "Auto-merge decision: merge"
+          ).length;
+          // priorMerges already includes the record we wrote earlier in
+          // this evaluation — the count IS the 1-indexed mergeIndex for
+          // the just-merged PR.
+          const mergeIndex = Math.max(1, priorMerges);
+          await deps.notify({
+            kind: "merged",
+            ticketId: input.ticketId,
+            projectId: project.projectId,
+            prNumber: input.prNumber,
+            repo: project.sourceRepo,
+            mergeIndex,
+            decisionAt: now()
+          });
+        } catch (notifyErr) {
+          logger?.warn(
+            `M25 F-197: merge notifier failed: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`
+          );
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger?.warn(
@@ -478,6 +532,7 @@ export async function evaluateAutoMerge(
     if (deps.notify) {
       try {
         await deps.notify({
+          kind: "blocked",
           ticketId: input.ticketId,
           prNumber: input.prNumber,
           repo: project.sourceRepo,

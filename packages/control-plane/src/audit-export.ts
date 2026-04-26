@@ -1,4 +1,8 @@
-import type { ApprovalRequest, TaskManifest } from "@reddwarf/contracts";
+import type {
+  ApprovalRequest,
+  EvidenceRecord,
+  TaskManifest
+} from "@reddwarf/contracts";
 
 // Feature 185 — Audit-log export.
 //
@@ -7,22 +11,34 @@ import type { ApprovalRequest, TaskManifest } from "@reddwarf/contracts";
 // questions like "every autonomous change that touched packages/billing in Q2"
 // without bespoke SQL. All fields derive from existing persisted data — no new
 // events captured, no new tables.
+//
+// M25 F-197 — `kind` discriminator + auto-merge columns. Auto-merge gate
+// decisions (recorded by F-194 as gate_decision evidence records titled
+// "Auto-merge decision: …") flow through the same CSV with `kind="auto_merge"`
+// rows. The new `decision` value carries the AutoMergeOutcome string; the
+// `gateFailures` and `headSha` columns are populated only for auto-merge rows.
+
+export type AuditEntryKind = "approval" | "auto_merge";
 
 export interface AuditEntry {
+  kind: AuditEntryKind;
   requestId: string;
   taskId: string;
   runId: string;
   repo: string | null;
   issueNumber: number | null;
   phase: ApprovalRequest["phase"];
-  status: ApprovalRequest["status"];
-  decision: ApprovalRequest["decision"];
+  status: ApprovalRequest["status"] | "auto_merge";
+  decision: ApprovalRequest["decision"] | string;
   decidedBy: string | null;
   decisionSummary: string | null;
   riskClass: ApprovalRequest["riskClass"];
   policyVersion: string | null;
   prNumber: number | null;
   prUrl: string | null;
+  // M25 F-197 — auto-merge-only columns; null on approval rows.
+  gateFailures: string | null;
+  headSha: string | null;
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
@@ -44,6 +60,7 @@ export function buildAuditEntries(
     const prNumber = manifest?.prNumber ?? null;
     const policyVersion = manifest?.policyVersion ?? null;
     return {
+      kind: "approval" as const,
       requestId: approval.requestId,
       taskId: approval.taskId,
       runId: approval.runId,
@@ -58,11 +75,63 @@ export function buildAuditEntries(
       policyVersion,
       prNumber,
       prUrl: buildPrUrl(repo, prNumber),
+      gateFailures: null,
+      headSha: null,
       createdAt: approval.createdAt,
       updatedAt: approval.updatedAt,
       resolvedAt: approval.resolvedAt
     };
   });
+}
+
+// M25 F-197 — build audit entries from auto-merge gate_decision evidence
+// records. Recognises records whose title starts with "Auto-merge decision:".
+// All metadata fields are read defensively: malformed/missing entries fall
+// back to safe nulls so a single corrupt record never breaks the export.
+export function buildAutoMergeAuditEntries(
+  records: readonly EvidenceRecord[],
+  manifestsByTaskId: ReadonlyMap<string, TaskManifest>
+): AuditEntry[] {
+  return records
+    .filter(
+      (r) => r.kind === "gate_decision" && r.title.startsWith("Auto-merge decision")
+    )
+    .map((r) => {
+      const meta = (r.metadata ?? {}) as Record<string, unknown>;
+      const manifest = manifestsByTaskId.get(r.taskId);
+      const repo = manifest?.source?.repo ?? null;
+      const issueNumber = manifest?.source?.issueNumber ?? null;
+      const prNumber = typeof meta.prNumber === "number" ? meta.prNumber : null;
+      const policyVersion = manifest?.policyVersion ?? null;
+      const failedGates = Array.isArray(meta.failedGates)
+        ? (meta.failedGates as unknown[]).map(String).join("|")
+        : null;
+      const headSha = typeof meta.headSha === "string" ? meta.headSha : null;
+      const outcome = typeof meta.outcome === "string" ? meta.outcome : "unknown";
+      const reason = typeof meta.reason === "string" ? meta.reason : null;
+      return {
+        kind: "auto_merge" as const,
+        requestId: r.recordId,
+        taskId: r.taskId,
+        runId: "",
+        repo,
+        issueNumber,
+        phase: "scm" as const,
+        status: "auto_merge" as const,
+        decision: outcome,
+        decidedBy: "reddwarf-evaluator",
+        decisionSummary: reason,
+        riskClass: "low" as const,
+        policyVersion,
+        prNumber,
+        prUrl: buildPrUrl(repo, prNumber),
+        gateFailures: failedGates,
+        headSha,
+        createdAt: r.createdAt,
+        updatedAt: r.createdAt,
+        resolvedAt: r.createdAt
+      };
+    });
 }
 
 // ── CSV rendering ──────────────────────────────────────────────────────────
@@ -71,6 +140,7 @@ export function buildAuditEntries(
 // newline, carriage return, or double-quote; double-up embedded quotes.
 
 const AUDIT_CSV_COLUMNS: Array<keyof AuditEntry> = [
+  "kind",
   "requestId",
   "taskId",
   "runId",
@@ -85,6 +155,9 @@ const AUDIT_CSV_COLUMNS: Array<keyof AuditEntry> = [
   "policyVersion",
   "prNumber",
   "prUrl",
+  // M25 F-197 — populated for kind=auto_merge rows; empty on approval rows.
+  "gateFailures",
+  "headSha",
   "createdAt",
   "updatedAt",
   "resolvedAt"

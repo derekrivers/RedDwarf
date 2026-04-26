@@ -453,7 +453,7 @@ describe("M25 F-194 — evaluateAutoMerge (full evaluator with side effects)", (
   it("notifier hook fires on block_human_review with the failed gates list", async () => {
     const { repository } = await setup({ ticket: { riskClass: "high" } });
     const adapter = buildFixtureAdapter({});
-    const notifications: Array<{ failedGates: string[] }> = [];
+    const notifications: Array<{ kind: string; failedGates?: string[] }> = [];
     await evaluateAutoMerge(
       { ticketId: "project:auto-1:ticket:1", headSha: "deadbeef", prNumber: 99 },
       {
@@ -461,12 +461,39 @@ describe("M25 F-194 — evaluateAutoMerge (full evaluator with side effects)", (
         github: adapter,
         projectAutoMergeEnabled: true,
         notify: (n) => {
-          notifications.push({ failedGates: n.failedGates });
+          notifications.push({
+            kind: n.kind,
+            ...(n.kind === "blocked" ? { failedGates: n.failedGates } : {})
+          });
         }
       }
     );
     expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.kind).toBe("blocked");
     expect(notifications[0]?.failedGates).toContain("high_risk_ticket");
+  });
+
+  it("notifier hook fires on merge with kind='merged' and an incrementing mergeIndex", async () => {
+    const { repository } = await setup();
+    const adapter = buildFixtureAdapter({});
+    const notifications: Array<{ kind: string; mergeIndex?: number }> = [];
+    await evaluateAutoMerge(
+      { ticketId: "project:auto-1:ticket:1", headSha: "deadbeef", prNumber: 99 },
+      {
+        repository,
+        github: adapter,
+        projectAutoMergeEnabled: true,
+        notify: (n) => {
+          notifications.push({
+            kind: n.kind,
+            ...(n.kind === "merged" ? { mergeIndex: n.mergeIndex } : {})
+          });
+        }
+      }
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.kind).toBe("merged");
+    expect(notifications[0]?.mergeIndex).toBe(1);
   });
 
   it("does not call merge API when global flag is off", async () => {
