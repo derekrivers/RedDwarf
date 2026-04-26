@@ -501,3 +501,299 @@ describe("handleGitHubWebhook — pull_request events", () => {
     expect(result.body.error).toBe("bad_request");
   });
 });
+
+// ============================================================
+// M25 F-193 — check_run / check_suite / status ingestion
+// ============================================================
+
+describe("M25 F-193 — handleGitHubWebhook (CI checks)", () => {
+  async function setupRepoWithTicket(
+    prNumber: number = 99
+  ): Promise<{ deps: WebhookHandlerDependencies; ticketId: string }> {
+    const deps = await createTestDeps();
+    const projectId = "project:auto-merge-1";
+    const ticketId = `${projectId}:ticket:1`;
+    await deps.repository.saveProjectSpec({
+      projectId,
+      sourceIssueId: "1",
+      sourceRepo: "acme/platform",
+      title: "Auto-merge fixture project",
+      summary: "Project carrying a ticket whose PR has been opened.",
+      projectSize: "small",
+      status: "executing",
+      complexityClassification: null,
+      approvalDecision: "approve",
+      decidedBy: "operator",
+      decisionSummary: "Approved.",
+      amendments: null,
+      clarificationQuestions: null,
+      clarificationAnswers: null,
+      clarificationRequestedAt: null,
+      autoMergeEnabled: true,
+      autoMergePolicy: null,
+      requiredCheckContract: null,
+      createdAt: "2026-04-26T10:00:00.000Z",
+      updatedAt: "2026-04-26T10:00:00.000Z"
+    });
+    await deps.repository.saveTicketSpec({
+      ticketId,
+      projectId,
+      title: "Open PR ticket",
+      description: "Has a PR open at the given number.",
+      acceptanceCriteria: ["PR opens"],
+      dependsOn: [],
+      status: "pr_open",
+      complexityClass: "low",
+      riskClass: "low",
+      githubSubIssueNumber: null,
+      githubPrNumber: prNumber,
+      requiredCheckContract: null,
+      createdAt: "2026-04-26T10:00:00.000Z",
+      updatedAt: "2026-04-26T10:00:00.000Z"
+    });
+    return { deps, ticketId };
+  }
+
+  function makeCheckRunPayload(opts: {
+    name: string;
+    conclusion: "success" | "failure";
+    headSha: string;
+    prNumber: number;
+  }) {
+    return {
+      action: "completed",
+      check_run: {
+        name: opts.name,
+        status: "completed",
+        conclusion: opts.conclusion,
+        completed_at: "2026-04-26T11:00:00Z",
+        head_sha: opts.headSha,
+        pull_requests: [{ number: opts.prNumber }]
+      },
+      repository: { full_name: "acme/platform" }
+    };
+  }
+
+  function makeCheckSuitePayload(opts: {
+    headSha: string;
+    prNumber: number;
+    conclusion: "success" | "failure";
+  }) {
+    return {
+      action: "completed",
+      check_suite: {
+        head_sha: opts.headSha,
+        status: "completed",
+        conclusion: opts.conclusion,
+        updated_at: "2026-04-26T11:00:00Z",
+        pull_requests: [{ number: opts.prNumber }],
+        app: { name: "GitHub Actions" }
+      },
+      repository: { full_name: "acme/platform" }
+    };
+  }
+
+  function makeStatusPayload(opts: { sha: string; state: string; context: string }) {
+    return {
+      state: opts.state,
+      sha: opts.sha,
+      context: opts.context,
+      updated_at: "2026-04-26T11:00:00Z",
+      branches: [{ name: "feature/x" }],
+      repository: { full_name: "acme/platform" }
+    };
+  }
+
+  it("persists a check_run observation and notifies the evaluator", async () => {
+    const { deps, ticketId } = await setupRepoWithTicket(99);
+    const triggers: Array<{ ticketId: string; headSha: string }> = [];
+    const triggerDeps: WebhookHandlerDependencies = {
+      ...deps,
+      autoMergeEvaluator: {
+        enqueueEvaluation: (input) => {
+          triggers.push({ ticketId: input.ticketId, headSha: input.headSha });
+        }
+      }
+    };
+
+    const payload = makeCheckRunPayload({
+      name: "build",
+      conclusion: "success",
+      headSha: "deadbeef1234567",
+      prNumber: 99
+    });
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "check_run",
+      TEST_SECRET,
+      triggerDeps
+    );
+
+    expect(result.status).toBe(202);
+    const observations = await deps.repository.listCiCheckObservations({ ticketId });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.checkName).toBe("build");
+    expect(observations[0]?.conclusion).toBe("success");
+    expect(triggers).toEqual([{ ticketId, headSha: "deadbeef1234567" }]);
+  });
+
+  it("persists a check_suite observation using app.name as the check name", async () => {
+    const { deps, ticketId } = await setupRepoWithTicket(99);
+    const payload = makeCheckSuitePayload({
+      headSha: "feedface1234567",
+      prNumber: 99,
+      conclusion: "success"
+    });
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "check_suite",
+      TEST_SECRET,
+      deps
+    );
+    expect(result.status).toBe(202);
+    const observations = await deps.repository.listCiCheckObservations({
+      ticketId
+    });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.source).toBe("check_suite");
+    expect(observations[0]?.checkName).toBe("GitHub Actions");
+  });
+
+  it("persists status observations for every ticket in the source repo", async () => {
+    const { deps, ticketId } = await setupRepoWithTicket(99);
+    const payload = makeStatusPayload({
+      sha: "abc1234567890ab",
+      state: "success",
+      context: "ci/circleci"
+    });
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "status",
+      TEST_SECRET,
+      deps
+    );
+    expect(result.status).toBe(202);
+    const observations = await deps.repository.listCiCheckObservations({ ticketId });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.source).toBe("status");
+    expect(observations[0]?.checkName).toBe("ci/circleci");
+  });
+
+  it("ignores check_run events whose pull_requests list is empty (no matching ticket)", async () => {
+    const { deps } = await setupRepoWithTicket(99);
+    const payload = makeCheckRunPayload({
+      name: "build",
+      conclusion: "success",
+      headSha: "noref",
+      prNumber: 99
+    });
+    payload.check_run.pull_requests = [];
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "check_run",
+      TEST_SECRET,
+      deps
+    );
+    expect(result.status).toBe(200);
+    expect((result.body as { event: string }).event).toBe("check_run");
+  });
+
+  it("ignores pending status events (waits for terminal state)", async () => {
+    const { deps } = await setupRepoWithTicket(99);
+    const payload = makeStatusPayload({ sha: "abc", state: "pending", context: "ci/x" });
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "status",
+      TEST_SECRET,
+      deps
+    );
+    expect(result.status).toBe(200);
+    expect((result.body as { message: string }).message).toMatch(/Pending status/);
+  });
+
+  it("ignores check_run events whose action is not 'completed'", async () => {
+    const { deps } = await setupRepoWithTicket(99);
+    const payload = makeCheckRunPayload({
+      name: "build",
+      conclusion: "success",
+      headSha: "x",
+      prNumber: 99
+    });
+    payload.action = "created";
+    const body = makeRawBody(payload);
+    const result = await handleGitHubWebhook(
+      body,
+      sign(body),
+      "check_run",
+      TEST_SECRET,
+      deps
+    );
+    expect(result.status).toBe(200);
+    expect((result.body as { message: string }).message).toMatch(/completed actions/);
+  });
+});
+
+describe("M25 F-193 — AutoMergeEvaluatorDebouncer", () => {
+  it("collapses multiple enqueueEvaluation calls on the same (ticket, sha) into one run", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Array<{ ticketId: string; headSha: string; prNumber: number }> = [];
+      const { AutoMergeEvaluatorDebouncer } = await import("./github-webhook.js");
+      const debouncer = new AutoMergeEvaluatorDebouncer(async (input) => {
+        calls.push(input);
+      }, 1000);
+
+      // Simulate 5 webhook deliveries arriving within 200ms each.
+      for (let i = 0; i < 5; i++) {
+        debouncer.enqueueEvaluation({
+          ticketId: "t-1",
+          headSha: "abc",
+          prNumber: 99
+        });
+        vi.advanceTimersByTime(200);
+      }
+      // Still pending — only 1 entry in the map.
+      expect(debouncer.pendingCount()).toBe(1);
+      // Advance past the 1s window since the last enqueue.
+      vi.advanceTimersByTime(1500);
+      // Drain microtasks created inside the timer callback.
+      await Promise.resolve();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual({ ticketId: "t-1", headSha: "abc", prNumber: 99 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("debounces independently per (ticket, sha) pair", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Array<{ ticketId: string; headSha: string }> = [];
+      const { AutoMergeEvaluatorDebouncer } = await import("./github-webhook.js");
+      const debouncer = new AutoMergeEvaluatorDebouncer(async (input) => {
+        calls.push({ ticketId: input.ticketId, headSha: input.headSha });
+      }, 1000);
+
+      debouncer.enqueueEvaluation({ ticketId: "t-1", headSha: "abc", prNumber: 1 });
+      debouncer.enqueueEvaluation({ ticketId: "t-2", headSha: "abc", prNumber: 2 });
+      debouncer.enqueueEvaluation({ ticketId: "t-1", headSha: "def", prNumber: 1 });
+
+      expect(debouncer.pendingCount()).toBe(3);
+      vi.advanceTimersByTime(1500);
+      await Promise.resolve();
+      expect(calls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

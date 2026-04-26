@@ -1,6 +1,7 @@
 import {
   approvalRequestQuerySchema,
   approvalRequestSchema,
+  ciCheckObservationSchema,
   eligibilityRejectionQuerySchema,
   asIsoTimestamp,
   memoryContextSchema,
@@ -12,6 +13,7 @@ import {
   runSummarySchema,
   type ApprovalRequest,
   type ApprovalRequestQuery,
+  type CiCheckObservation,
   type EvidenceRecord,
   type EligibilityRejectionQuery,
   type EligibilityRejectionRecord,
@@ -73,6 +75,7 @@ import {
   type PlanningTransactionRepository,
   type PersistedTaskSnapshot,
   type RepositoryHealthSnapshot,
+  type SaveCiCheckObservationInput,
   type SaveProjectSpecProvenanceInput
 } from "./repository.js";
 import { computeAgentQualityMetrics } from "./agent-quality-metrics.js";
@@ -2067,6 +2070,82 @@ export class PostgresPlanningRepository implements PlanningRepository {
       runEvents,
       manifestsByTaskId
     });
+  }
+
+  // M25 F-193 — CI check observations.
+  async saveCiCheckObservation(
+    input: SaveCiCheckObservationInput
+  ): Promise<CiCheckObservation> {
+    const result = await this.pool.query(
+      `
+        INSERT INTO ci_check_observations (
+          ticket_id, pr_number, head_sha, source, check_name, conclusion,
+          completed_at, raw_payload_evidence_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (ticket_id, head_sha, source, check_name) DO UPDATE SET
+          pr_number = EXCLUDED.pr_number,
+          conclusion = EXCLUDED.conclusion,
+          completed_at = EXCLUDED.completed_at,
+          raw_payload_evidence_id = EXCLUDED.raw_payload_evidence_id
+        RETURNING id, ticket_id, pr_number, head_sha, source, check_name,
+                  conclusion, completed_at, raw_payload_evidence_id, created_at
+      `,
+      [
+        input.ticketId,
+        input.prNumber,
+        input.headSha,
+        input.source,
+        input.checkName,
+        input.conclusion,
+        input.completedAt,
+        input.rawPayloadEvidenceId ?? null
+      ]
+    );
+    const row = result.rows[0] as Record<string, unknown>;
+    return ciCheckObservationSchema.parse({
+      id: String(row.id),
+      ticketId: row.ticket_id as string,
+      prNumber: Number(row.pr_number),
+      headSha: row.head_sha as string,
+      source: row.source as CiCheckObservation["source"],
+      checkName: row.check_name as string,
+      conclusion: row.conclusion as string,
+      completedAt: asIsoTimestamp(row.completed_at as Date),
+      rawPayloadEvidenceId: (row.raw_payload_evidence_id as string | null) ?? null,
+      createdAt: asIsoTimestamp(row.created_at as Date)
+    });
+  }
+
+  async listCiCheckObservations(query: {
+    ticketId: string;
+    headSha?: string;
+  }): Promise<CiCheckObservation[]> {
+    const params: unknown[] = [query.ticketId];
+    let sql = `SELECT id, ticket_id, pr_number, head_sha, source, check_name,
+                      conclusion, completed_at, raw_payload_evidence_id, created_at
+               FROM ci_check_observations
+               WHERE ticket_id = $1`;
+    if (query.headSha !== undefined) {
+      params.push(query.headSha);
+      sql += ` AND head_sha = $2`;
+    }
+    sql += ` ORDER BY completed_at ASC`;
+    const result = await this.pool.query(sql, params);
+    return result.rows.map((row: Record<string, unknown>) =>
+      ciCheckObservationSchema.parse({
+        id: String(row.id),
+        ticketId: row.ticket_id as string,
+        prNumber: Number(row.pr_number),
+        headSha: row.head_sha as string,
+        source: row.source as CiCheckObservation["source"],
+        checkName: row.check_name as string,
+        conclusion: row.conclusion as string,
+        completedAt: asIsoTimestamp(row.completed_at as Date),
+        rawPayloadEvidenceId:
+          (row.raw_payload_evidence_id as string | null) ?? null,
+        createdAt: asIsoTimestamp(row.created_at as Date)
+      })
+    );
   }
 
   async listPendingIntents(limit = 100): Promise<IntentRecord[]> {

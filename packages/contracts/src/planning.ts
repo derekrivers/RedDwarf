@@ -365,6 +365,29 @@ export type ComplexityClassification = z.infer<typeof complexityClassificationSc
 export type TicketSpec = z.infer<typeof ticketSpecSchema>;
 export type ProjectSpec = z.infer<typeof projectSpecSchema>;
 
+// M25 F-193 — CI check observation captured from a GitHub webhook delivery.
+export const ciCheckObservationSourceSchema = z.enum([
+  "check_run",
+  "check_suite",
+  "status"
+]);
+
+export const ciCheckObservationSchema = z.object({
+  id: z.string().min(1),
+  ticketId: z.string().min(1),
+  prNumber: z.number().int().positive(),
+  headSha: z.string().min(7),
+  source: ciCheckObservationSourceSchema,
+  checkName: z.string().min(1),
+  conclusion: z.string().min(1),
+  completedAt: isoDateTimeSchema,
+  rawPayloadEvidenceId: z.string().min(1).nullable().default(null),
+  createdAt: isoDateTimeSchema
+});
+
+export type CiCheckObservationSource = z.infer<typeof ciCheckObservationSourceSchema>;
+export type CiCheckObservation = z.infer<typeof ciCheckObservationSchema>;
+
 export interface RetryBudgetConfig {
   maxRetries: Partial<Record<z.infer<typeof taskPhaseSchema>, number>>;
 }

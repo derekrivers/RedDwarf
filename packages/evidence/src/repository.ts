@@ -9,6 +9,8 @@ import {
   type AgentQualityMetricsQuery,
   type ApprovalRequest,
   type ApprovalRequestQuery,
+  type CiCheckObservation,
+  type CiCheckObservationSource,
   type EvidenceRecord,
   type EligibilityRejectionQuery,
   type EligibilityRejectionRecord,
@@ -34,6 +36,18 @@ import {
   type TicketSpec,
   type TranslationNote
 } from "@reddwarf/contracts";
+
+/** M25 F-193: input for upserting a single CI check observation. */
+export interface SaveCiCheckObservationInput {
+  ticketId: string;
+  prNumber: number;
+  headSha: string;
+  source: CiCheckObservationSource;
+  checkName: string;
+  conclusion: string;
+  completedAt: string;
+  rawPayloadEvidenceId?: string | null;
+}
 
 /** Input for an external-injection provenance record. */
 export interface SaveProjectSpecProvenanceInput {
@@ -185,6 +199,12 @@ export interface PlanningQueryRepository {
   resolveNextReadyTicket(projectId: string): Promise<TicketSpec | null>;
   // R-18: Write-ahead intent log
   listPendingIntents(limit?: number): Promise<IntentRecord[]>;
+  // M25 F-193: CI check observations from GitHub webhooks.
+  saveCiCheckObservation(input: SaveCiCheckObservationInput): Promise<CiCheckObservation>;
+  listCiCheckObservations(query: {
+    ticketId: string;
+    headSha?: string;
+  }): Promise<CiCheckObservation[]>;
 }
 
 export type PlanningRepository = PlanningCommandRepository & PlanningQueryRepository;
