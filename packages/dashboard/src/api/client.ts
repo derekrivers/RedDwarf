@@ -374,6 +374,20 @@ export function createApiClient(options: ApiClientOptions): DashboardApiClient {
         `/projects/${encodeURIComponent(id)}`
       );
     },
+    /**
+     * M25 F-196 — flip a project's autoMergeEnabled flag. Server returns 409
+     * if the global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is false and the
+     * caller passes `enabled: true`.
+     */
+    patchProjectAutoMerge(id: string, enabled: boolean) {
+      return request<{ project: import("@reddwarf/contracts").ProjectSpec }>(
+        `/projects/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ autoMergeEnabled: enabled })
+        }
+      );
+    },
     approveProject(
       id: string,
       decision: "approve" | "amend",

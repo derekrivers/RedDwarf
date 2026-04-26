@@ -4261,6 +4261,58 @@ async function handleOperatorRequest(
     return;
   }
 
+  // M25 F-196 — PATCH /projects/:id — partial update of project fields the
+  // dashboard exposes operator controls for. Currently only `autoMergeEnabled`
+  // is mutable; other fields require a full re-plan or approval workflow.
+  // Refuses `autoMergeEnabled = true` when the global flag is off, so the
+  // operator never accidentally turns on something the deployment forbids.
+  if (method === "PATCH" && projectDetailMatch) {
+    const projectId = decodeURIComponent(projectDetailMatch[1]!);
+    const project = await repository.getProjectSpec(projectId);
+    if (!project) {
+      writeOperatorJsonResponse(res, 404, {
+        error: "not_found",
+        message: `Project ${projectId} not found.`
+      });
+      return;
+    }
+    const rawBody = (await readOperatorJsonBody(req, maxRequestBodyBytes)) as
+      | { autoMergeEnabled?: boolean }
+      | null;
+    if (!rawBody || typeof rawBody !== "object") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Request body must be an object with at least one mutable field."
+      });
+      return;
+    }
+    if (typeof rawBody.autoMergeEnabled !== "boolean") {
+      writeOperatorJsonResponse(res, 400, {
+        error: "bad_request",
+        message: "Only autoMergeEnabled (boolean) is currently mutable via PATCH."
+      });
+      return;
+    }
+    if (rawBody.autoMergeEnabled === true && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
+      });
+      return;
+    }
+    if (project.autoMergeEnabled !== rawBody.autoMergeEnabled) {
+      await repository.saveProjectSpec({
+        ...project,
+        autoMergeEnabled: rawBody.autoMergeEnabled,
+        updatedAt: clock().toISOString()
+      });
+    }
+    const updated = await repository.getProjectSpec(projectId);
+    writeOperatorJsonResponse(res, 200, { project: updated });
+    return;
+  }
+
   // POST /projects/:id/approve — approve or amend a project plan
   const projectApproveMatch = /^\/projects\/([^/]+)\/approve$/.exec(path);
   if (method === "POST" && projectApproveMatch) {

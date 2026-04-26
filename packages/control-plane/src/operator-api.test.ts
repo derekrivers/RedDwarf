@@ -201,6 +201,50 @@ function operatorPut(
   });
 }
 
+// M25 F-196 — generic helper for tests that need PATCH/PUT/POST in one path.
+function operatorRequest(
+  port: number,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  authToken: string | null = operatorApiToken
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const payload = body !== undefined ? JSON.stringify(body) : "";
+    const req = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: {
+          ...buildOperatorHeaders(authToken),
+          ...(payload
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(payload)
+              }
+            : {})
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, body: raw ? JSON.parse(raw) : null });
+          } catch {
+            reject(new Error(`Non-JSON response: ${raw}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
 function operatorDelete(
   port: number,
   path: string,
@@ -3406,6 +3450,90 @@ describe("M25 F-189 — Project Mode auto-merge opt-in", () => {
       );
       // Nothing was inserted — list reflects an empty repository.
       expect(await repository.getProjectSpec("project:task-001")).toBeNull();
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("M25 F-196 — PATCH /projects/:id (auto-merge toggle)", () => {
+  it("toggles autoMergeEnabled when the global flag is on", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: true }
+      );
+      expect(res.status).toBe(200);
+      expect((res.body as { project: { autoMergeEnabled: boolean } }).project.autoMergeEnabled).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 when enabling auto-merge while global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: true }
+      );
+      expect(res.status).toBe(409);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("allows disabling auto-merge regardless of global flag (kill-switch path)", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(
+      buildTestProjectSpec({ autoMergeEnabled: true })
+    );
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorRequest(
+        server.port,
+        "PATCH",
+        `/projects/${encodeURIComponent("project:task-001")}`,
+        { autoMergeEnabled: false }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
     } finally {
       await server.stop();
     }

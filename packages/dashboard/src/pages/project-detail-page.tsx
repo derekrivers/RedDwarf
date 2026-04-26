@@ -59,6 +59,108 @@ function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+/**
+ * M25 F-196 — Auto-merge card on the project detail sidebar.
+ *
+ * Read-only summary of the project's auto-merge state plus a single
+ * toggle button. The toggle calls PATCH /projects/:id which refuses to
+ * enable when the deployment-level REDDWARF_PROJECT_AUTOMERGE_ENABLED is
+ * false; the 409 case is surfaced through the toast provider.
+ */
+function AutoMergeCard(props: {
+  project: import("@reddwarf/contracts").ProjectSpec;
+  projectId: string;
+  apiClient: DashboardApiClient;
+}) {
+  const { project, projectId, apiClient } = props;
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [submitting, setSubmitting] = useState(false);
+
+  const contract = project.requiredCheckContract;
+  const enabled = project.autoMergeEnabled;
+
+  const handleToggle = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      await apiClient.patchProjectAutoMerge(projectId, !enabled);
+      await queryClient.invalidateQueries({
+        queryKey: ["project-detail", projectId]
+      });
+      toast.pushToast(
+        !enabled
+          ? "Auto-merge enabled for this project."
+          : "Auto-merge disabled for this project. Open PRs will fall back to human review.",
+        "success"
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.pushToast(
+        /409/.test(msg)
+          ? "Auto-merge is globally disabled on this deployment. Operator must set REDDWARF_PROJECT_AUTOMERGE_ENABLED=true first."
+          : `Could not update auto-merge: ${msg}`,
+        "error"
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Auto-merge</h3>
+      </div>
+      <div className="card-body">
+        <div className="mb-2">
+          <strong>Status:</strong>{" "}
+          <span
+            className={`badge ${enabled ? "bg-green-lt text-green" : "bg-secondary-lt"}`}
+          >
+            {enabled ? "enabled" : "disabled"}
+          </span>
+        </div>
+        {contract && contract.requiredCheckNames.length > 0 ? (
+          <div className="mb-2">
+            <div>
+              <strong>Required checks:</strong>
+            </div>
+            <div className="d-flex flex-wrap gap-1 mt-1">
+              {contract.requiredCheckNames.map((name) => (
+                <span key={name} className="badge bg-blue-lt text-blue">
+                  {name}
+                </span>
+              ))}
+            </div>
+            <div className="text-secondary mt-1" style={{ fontSize: "0.85em" }}>
+              minimumCheckCount: {contract.minimumCheckCount}
+              {contract.forbidSkipCi ? " · forbids [skip ci]" : ""}
+              {contract.forbidEmptyTestDiff ? " · forbids empty test diff" : ""}
+            </div>
+          </div>
+        ) : (
+          <div className="text-secondary mb-2">
+            No RequiredCheckContract — auto-merge is ineligible. Holly's
+            workflow surveyor (F-191) populates this at planning time.
+          </div>
+        )}
+        <button
+          type="button"
+          className={`btn btn-sm ${enabled ? "btn-outline-secondary" : "btn-success"}`}
+          onClick={handleToggle}
+          disabled={submitting}
+        >
+          {submitting
+            ? "Updating…"
+            : enabled
+              ? "Disable auto-merge"
+              : "Enable auto-merge"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TicketRow(props: { ticket: TicketSpec; allTickets: TicketSpec[] }) {
   const { ticket, allTickets } = props;
   const deps = ticket.dependsOn
@@ -586,6 +688,17 @@ export function ProjectDetailPage(props: { apiClient: DashboardApiClient }) {
       {/* Sidebar */}
       <div className="col-lg-4">
         <div className="dashboard-sticky-stack d-flex flex-column gap-4">
+          {/* M25 F-196 — Auto-merge card. Read-only summary + a single
+              toggle. Server-side gate refuses enabling when the global
+              REDDWARF_PROJECT_AUTOMERGE_ENABLED flag is off (returns 409). */}
+          {projectId && (
+            <AutoMergeCard
+              project={project}
+              projectId={projectId}
+              apiClient={apiClient}
+            />
+          )}
+
           {/* Complexity classification */}
           {project.complexityClassification && (
             <div className="card">
