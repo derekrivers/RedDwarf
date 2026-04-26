@@ -30,6 +30,8 @@ function buildProjectSpec(
     clarificationQuestions: null,
     clarificationAnswers: null,
     clarificationRequestedAt: null,
+    autoMergeEnabled: false,
+    autoMergePolicy: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     ...overrides

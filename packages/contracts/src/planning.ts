@@ -253,6 +253,23 @@ export const complexityClassificationSchema = z.object({
   signals: z.array(z.string().min(1))
 });
 
+// M25 F-190 fills in the full RequiredCheckContract shape. F-189 introduces
+// the field with a permissive schema so the migration, repository, and
+// operator API can land before Holly starts emitting populated contracts.
+// `requiredCheckNames: []` (or an empty object) is treated as "no contract"
+// by the auto-merge evaluator (F-194), which then refuses to auto-merge.
+export const autoMergePolicySchema = z
+  .object({
+    requiredCheckNames: z.array(z.string().min(1)).default([]),
+    minimumCheckCount: z.number().int().min(0).default(0),
+    forbidSkipCi: z.boolean().default(true),
+    forbidEmptyTestDiff: z.boolean().default(true),
+    rationale: z.string().min(1).optional()
+  })
+  .partial()
+  .passthrough();
+export type AutoMergePolicy = z.infer<typeof autoMergePolicySchema>;
+
 export const ticketSpecSchema = z.object({
   ticketId: z.string().min(1),
   projectId: z.string().min(1),
@@ -285,6 +302,13 @@ export const projectSpecSchema = z.object({
   clarificationQuestions: z.array(z.string().min(1)).nullable().default(null),
   clarificationAnswers: z.record(z.string(), z.string()).nullable().default(null),
   clarificationRequestedAt: isoDateTimeSchema.nullable().default(null),
+  // M25 F-189: per-project opt-in for auto-merge of sub-ticket PRs.
+  // The global REDDWARF_PROJECT_AUTOMERGE_ENABLED flag must also be true for
+  // the evaluator (F-194) to ever attempt a merge. `autoMergePolicy` is a
+  // snapshot of the resolved RequiredCheckContract at approval time so a
+  // historic decision remains reproducible if the global policy changes.
+  autoMergeEnabled: z.boolean().default(false),
+  autoMergePolicy: autoMergePolicySchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema
 });

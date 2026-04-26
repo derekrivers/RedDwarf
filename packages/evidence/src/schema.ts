@@ -226,6 +226,9 @@ export const projectSpecsTable = pgTable("project_specs", {
   clarificationQuestions: jsonb("clarification_questions"),
   clarificationAnswers: jsonb("clarification_answers"),
   clarificationRequestedAt: timestamp("clarification_requested_at", { withTimezone: true }),
+  // M25 F-189: per-project auto-merge opt-in; jsonb policy snapshot follows in F-190.
+  autoMergeEnabled: boolean("auto_merge_enabled").notNull().default(false),
+  autoMergePolicy: jsonb("auto_merge_policy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });

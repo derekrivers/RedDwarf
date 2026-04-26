@@ -2707,6 +2707,8 @@ function buildTestProjectSpec(overrides: Partial<import("@reddwarf/contracts").P
     clarificationQuestions: null,
     clarificationAnswers: null,
     clarificationRequestedAt: null,
+    autoMergeEnabled: false,
+    autoMergePolicy: null,
     createdAt: testTimestamp,
     updatedAt: testTimestamp,
     ...overrides
@@ -3266,6 +3268,142 @@ describe("Project Mode — POST /projects/:id/approve", () => {
         null
       );
       expect(res.status).toBe(401);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("M25 F-189 — Project Mode auto-merge opt-in", () => {
+  it("persists autoMergeEnabled=true when global flag is on and approval body opts in", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          auto_merge: { enabled: true }
+        }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("returns 409 auto_merge_globally_disabled and does not mutate when global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        {
+          decision: "approve",
+          decidedBy: "derek",
+          auto_merge: { enabled: true }
+        }
+      );
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe(
+        "auto_merge_globally_disabled"
+      );
+
+      const persisted = await repository.getProjectSpec("project:task-001");
+      // Project remained in pending_approval — no state mutation took place.
+      expect(persisted?.status).toBe("pending_approval");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("approves without auto-merge when the body omits the auto_merge field", async () => {
+    const repository = new InMemoryPlanningRepository();
+    await repository.saveProjectSpec(buildTestProjectSpec());
+    await repository.saveTicketSpec(buildTestTicketSpec());
+
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: true
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(
+        server.port,
+        `/projects/${encodeURIComponent("project:task-001")}/approve`,
+        { decision: "approve", decidedBy: "derek" }
+      );
+      expect(res.status).toBe(200);
+      const persisted = await repository.getProjectSpec("project:task-001");
+      expect(persisted?.autoMergeEnabled).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("/projects/inject returns 409 when injecting an auto-merge-enabled project while the global flag is off", async () => {
+    const repository = new InMemoryPlanningRepository();
+    const server = createOperatorApiServer(
+      { port: 0, host: "127.0.0.1", authToken: operatorApiToken },
+      {
+        repository,
+        clock: () => new Date("2026-04-26T13:00:00.000Z"),
+        projectAutoMergeEnabled: false
+      }
+    );
+    await server.start();
+    try {
+      const res = await operatorPost(server.port, "/projects/inject", {
+        projectSpec: {
+          ...buildTestProjectSpec(),
+          autoMergeEnabled: true
+        },
+        provenance: {
+          context_spec_id: "ctx-automerge-1",
+          context_version: 1,
+          adapter_version: "1.0.0",
+          target_schema_version: "1.0.0",
+          translation_notes: []
+        }
+      });
+      expect(res.status).toBe(409);
+      expect((res.body as { error: string }).error).toBe(
+        "auto_merge_globally_disabled"
+      );
+      // Nothing was inserted — list reflects an empty repository.
+      expect(await repository.getProjectSpec("project:task-001")).toBeNull();
     } finally {
       await server.stop();
     }

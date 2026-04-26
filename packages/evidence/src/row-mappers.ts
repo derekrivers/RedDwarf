@@ -1,10 +1,12 @@
 import {
   asIsoTimestamp,
+  autoMergePolicySchema,
   projectSpecSchema,
   ticketSpecSchema,
   translationNoteSchema,
   type ApprovalDecision,
   type ApprovalRequest,
+  type AutoMergePolicy,
   type ComplexityClassification,
   type ConcurrencyStrategy,
   type EvidenceRecord,
@@ -255,6 +257,31 @@ export function mapPromptSnapshotRow(row: Record<string, unknown>): PromptSnapsh
   });
 }
 
+function parseAutoMergePolicyCell(raw: unknown): AutoMergePolicy | null {
+  // Postgres jsonb returns a parsed object; in-memory tests may pass a string.
+  // Treat `null`, `{}`, or empty-string-after-trim as "no contract" → null.
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    value = JSON.parse(trimmed);
+  }
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length === 0
+  ) {
+    return null;
+  }
+  return autoMergePolicySchema.parse(value);
+}
+
 export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
   const mapped = {
     projectId: row.project_id as string,
@@ -275,6 +302,8 @@ export function mapProjectSpecRow(row: Record<string, unknown>): ProjectSpec {
     clarificationRequestedAt: row.clarification_requested_at
       ? asIsoTimestamp(new Date(row.clarification_requested_at as string | Date))
       : null,
+    autoMergeEnabled: Boolean(row.auto_merge_enabled),
+    autoMergePolicy: parseAutoMergePolicyCell(row.auto_merge_policy),
     createdAt: asIsoTimestamp(new Date(row.created_at as string | Date)),
     updatedAt: asIsoTimestamp(new Date(row.updated_at as string | Date))
   };

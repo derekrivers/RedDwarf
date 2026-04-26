@@ -1625,8 +1625,9 @@ export class PostgresPlanningRepository implements PlanningRepository {
           project_size, status, complexity_classification,
           approval_decision, decided_by, decision_summary, amendments,
           clarification_questions, clarification_answers, clarification_requested_at,
+          auto_merge_enabled, auto_merge_policy,
           created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18, $19)
         ON CONFLICT (project_id) DO UPDATE SET
           source_issue_id = EXCLUDED.source_issue_id,
           source_repo = EXCLUDED.source_repo,
@@ -1642,6 +1643,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
           clarification_questions = EXCLUDED.clarification_questions,
           clarification_answers = EXCLUDED.clarification_answers,
           clarification_requested_at = EXCLUDED.clarification_requested_at,
+          auto_merge_enabled = EXCLUDED.auto_merge_enabled,
+          auto_merge_policy = EXCLUDED.auto_merge_policy,
           updated_at = EXCLUDED.updated_at
       `,
       [
@@ -1666,6 +1669,8 @@ export class PostgresPlanningRepository implements PlanningRepository {
           ? JSON.stringify(project.clarificationAnswers)
           : null,
         project.clarificationRequestedAt,
+        Boolean(project.autoMergeEnabled),
+        JSON.stringify(project.autoMergePolicy ?? {}),
         project.createdAt,
         project.updatedAt
       ]

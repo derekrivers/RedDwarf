@@ -64,7 +64,12 @@ export const operatorConfigValueSchemas = {
   REDDWARF_TOKEN_BUDGET_VALIDATOR: z.number().int().positive(),
   REDDWARF_TOKEN_BUDGET_REVIEWER: z.number().int().positive(),
   REDDWARF_TOKEN_BUDGET_SCM: z.number().int().positive(),
-  REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION: tokenBudgetOverageActionSchema
+  REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION: tokenBudgetOverageActionSchema,
+  // M25 F-189: hidden global kill-switch for Project Mode auto-merge. When
+  // false the evaluator (F-194) treats every project as opt-out regardless
+  // of the per-project flag. Default false so the feature is dark on
+  // existing deployments until an operator explicitly enables it.
+  REDDWARF_PROJECT_AUTOMERGE_ENABLED: z.boolean()
 } as const;
 
 export const operatorConfigKeys = Object.keys(
@@ -132,7 +137,8 @@ export const operatorConfigDefaults: {
   REDDWARF_TOKEN_BUDGET_VALIDATOR: 40000,
   REDDWARF_TOKEN_BUDGET_REVIEWER: 60000,
   REDDWARF_TOKEN_BUDGET_SCM: 40000,
-  REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION: "warn"
+  REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION: "warn",
+  REDDWARF_PROJECT_AUTOMERGE_ENABLED: false
 };
 
 export const operatorConfigDescriptions: Record<OperatorConfigKey, string> = {
@@ -208,7 +214,9 @@ export const operatorConfigDescriptions: Record<OperatorConfigKey, string> = {
   REDDWARF_TOKEN_BUDGET_REVIEWER: "Architecture-review token budget.",
   REDDWARF_TOKEN_BUDGET_SCM: "SCM token budget.",
   REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION:
-    "Budget overage behavior: warn or block."
+    "Budget overage behavior: warn or block.",
+  REDDWARF_PROJECT_AUTOMERGE_ENABLED:
+    "Hidden global kill-switch for Project Mode auto-merge of sub-ticket PRs. Per-project opt-in is also required."
 };
 
 export function parseOperatorConfigValue<K extends OperatorConfigKey>(
@@ -248,7 +256,8 @@ export function parseOperatorConfigEnvValue<K extends OperatorConfigKey>(
     key === "REDDWARF_OPENCLAW_DISCORD_REQUIRE_MENTION" ||
     key === "REDDWARF_OPENCLAW_DISCORD_NOTIFICATIONS_ENABLED" ||
     key === "REDDWARF_OPENCLAW_DISCORD_AUTO_PRESENCE_ENABLED" ||
-    key === "REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED"
+    key === "REDDWARF_OPENCLAW_DISCORD_EXEC_APPROVALS_ENABLED" ||
+    key === "REDDWARF_PROJECT_AUTOMERGE_ENABLED"
   ) {
     return parseOperatorConfigValue(
       key,
@@ -470,7 +479,8 @@ const jsonSchemaTypeByKey: Record<OperatorConfigKey, unknown> = {
   REDDWARF_TOKEN_BUDGET_OVERAGE_ACTION: {
     type: "string",
     enum: ["warn", "block"]
-  }
+  },
+  REDDWARF_PROJECT_AUTOMERGE_ENABLED: { type: "boolean" }
 };
 
 export const operatorConfigSchemaResponseSchema = z.object({

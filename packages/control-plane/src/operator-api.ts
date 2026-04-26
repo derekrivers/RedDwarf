@@ -203,6 +203,12 @@ export interface OperatorApiDependencies {
    *  REDDWARF_PROJECTS_INJECT_ENABLED env var by the top-level
    *  bootstrap; defaults to true if unset. */
   projectsInjectEnabled?: boolean;
+  /** M25 F-189: hidden global flag for Project Mode auto-merge. When false
+   *  the approve/inject routes refuse `auto_merge: { enabled: true }` with
+   *  HTTP 409 `auto_merge_globally_disabled`, and the evaluator (F-194)
+   *  treats every project as opt-out regardless of the per-project flag.
+   *  Controlled via REDDWARF_PROJECT_AUTOMERGE_ENABLED. Defaults to false. */
+  projectAutoMergeEnabled?: boolean;
 }
 
 export interface OperatorBlockedSummary {
@@ -368,7 +374,8 @@ export function createOperatorApiServer(
     github: webhookGitHub,
     webhookOpenClawDispatch,
     webhookArchitectTargetRoot,
-    projectsInjectEnabled = true
+    projectsInjectEnabled = true,
+    projectAutoMergeEnabled = false
   } = deps;
   /** In-memory store for pending tool-level approval requests (Feature 152). */
   const toolApprovals = new Map<string, ToolApprovalRequest>();
@@ -471,7 +478,8 @@ export function createOperatorApiServer(
           downstreamHealthProbes,
           circuitBreakerSnapshots,
           intakeMode,
-          projectsInjectEnabled
+          projectsInjectEnabled,
+          projectAutoMergeEnabled
         );
       } catch (err) {
         if (err instanceof OperatorApiRequestError) {
@@ -2457,7 +2465,8 @@ async function handleOperatorRequest(
   downstreamHealthProbes?: DownstreamHealthProbe[],
   circuitBreakerSnapshots?: () => Record<string, { state: string; consecutiveFailures: number }>,
   intakeMode?: string,
-  projectsInjectEnabled?: boolean
+  projectsInjectEnabled?: boolean,
+  projectAutoMergeEnabled?: boolean
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -3703,8 +3712,27 @@ async function handleOperatorRequest(
       return;
     }
 
+    // F-189: resolve the auto-merge opt-in from the envelope (operator-level)
+    // first, then fall back to whatever the injected ProjectSpec carries.
+    // Refuse with 409 when the resolved opt-in is `true` but the deployment
+    // has the global flag off — silently dropping it would mean the operator
+    // thinks auto-merge is on while the evaluator never fires.
+    const requestedAutoMerge =
+      parsed.auto_merge !== undefined
+        ? parsed.auto_merge.enabled
+        : Boolean(parsed.projectSpec.autoMergeEnabled);
+    if (requestedAutoMerge && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
+      });
+      return;
+    }
+
     const injectedProject: ProjectSpec = {
       ...parsed.projectSpec,
+      autoMergeEnabled: requestedAutoMerge,
       status: "pending_approval"
     };
 
@@ -4266,12 +4294,28 @@ async function handleOperatorRequest(
       decidedBy: string;
       decisionSummary?: string;
       amendments?: string;
+      auto_merge?: { enabled?: boolean } | null;
     };
 
     if (body.decision !== "approve" && body.decision !== "amend") {
       writeOperatorJsonResponse(res, 400, {
         error: "bad_request",
         message: "decision must be 'approve' or 'amend'."
+      });
+      return;
+    }
+
+    // M25 F-189: gate the per-project opt-in on the global flag. Operators
+    // can pass `auto_merge: { enabled: false }` even when the global flag is
+    // off (it's a no-op), but `enabled: true` requires the global flag to
+    // also be true. We refuse with 409 instead of silently dropping the
+    // opt-in so the caller knows their request was not honoured.
+    const autoMergeOptIn = body.auto_merge?.enabled === true;
+    if (autoMergeOptIn && projectAutoMergeEnabled !== true) {
+      writeOperatorJsonResponse(res, 409, {
+        error: "auto_merge_globally_disabled",
+        message:
+          "Auto-merge cannot be enabled on this project because REDDWARF_PROJECT_AUTOMERGE_ENABLED is false on this deployment."
       });
       return;
     }
@@ -4335,6 +4379,21 @@ async function handleOperatorRequest(
             message: `Project ${projectId} is in status 'executing' but cannot be recovered because no GitHub sub-issues or dispatched child tasks are missing, or at least one ticket already has a PR.`
           });
           return;
+        }
+      }
+
+      // F-189: persist the auto-merge opt-in on the project before approval
+      // executes. We only mutate when the operator explicitly supplied the
+      // field — silent defaults preserve any state set during planning.
+      if (body.auto_merge !== undefined && body.auto_merge !== null) {
+        const updatedAutoMerge = body.auto_merge.enabled === true;
+        const refreshed = await repository.getProjectSpec(projectId);
+        if (refreshed && refreshed.autoMergeEnabled !== updatedAutoMerge) {
+          await repository.saveProjectSpec({
+            ...refreshed,
+            autoMergeEnabled: updatedAutoMerge,
+            updatedAt: clock().toISOString()
+          });
         }
       }
 

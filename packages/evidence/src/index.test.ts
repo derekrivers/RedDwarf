@@ -442,6 +442,8 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -506,6 +508,8 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -579,6 +583,8 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -621,6 +627,8 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -671,6 +679,8 @@ describe("evidence memory partitions", () => {
       clarificationQuestions: null,
       clarificationAnswers: null,
       clarificationRequestedAt: null,
+      autoMergeEnabled: false,
+      autoMergePolicy: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
