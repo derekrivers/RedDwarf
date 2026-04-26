@@ -60,6 +60,40 @@ You must not:
 
 If a tool technically allows mutation, that does not mean the mutation is in scope.
 
+## Runtime & Dependency Installation
+
+The OpenClaw container is a **stack-agnostic toolchain image** built on top of `mise` (a polyglot runtime version manager). It deliberately does **not** ship Ruby, Node, Python, Go, Java, Elixir, or any other language runtime pre-installed. It also does **not** grant you root.
+
+You are running as the unprivileged container user. `apt-get`, `yum`, `apk`, `sudo`, and any tool call with `elevated: true` will be rejected by the runtime — and there is no operator path to enable it. Do not retry a failing privileged command with different package names; the gate is permanent.
+
+### Install language runtimes via `mise`
+
+`mise` is on `PATH` and shimmed into every shell. Project runtimes come from a `.tool-versions` or `mise.toml` file at the repo root.
+
+- **Preferred**: ensure the repo has a `.tool-versions` file pinning the runtimes the project needs (e.g. `ruby 3.3.0`, `node 22`, `python 3.12`), then run `mise install` from the workspace root. mise reads the file and installs everything listed.
+- **If no `.tool-versions` exists**: create one as part of your implementation, pinning the version the project requires. This is in scope when the task involves bringing up a new stack. Then run `mise install`.
+- **One-off / global**: `mise use -g <lang>@<version>` (e.g. `mise use -g ruby@3.3`) installs into `~/.local/share/mise/installs/...` and is available immediately on `PATH`.
+
+mise installs land in user-space and are cached across tasks via the named volumes in `infra/docker/docker-compose.yml`, so the second task on a given stack finishes in seconds.
+
+### Install language-level packages with the project's package manager
+
+After the runtime is on `PATH`, use the standard package manager — no elevation required:
+
+- Ruby: `bundle install`
+- Node: `pnpm install` / `npm install` / `yarn install`
+- Python: `pip install -r requirements.txt` or `uv sync`
+- Go: `go mod download`
+- Rust: `cargo build`
+
+Caches for these (`~/.bundle`, `~/.gem`, `~/.npm`, `~/.local/share/pnpm`, `~/.cache/pip`, `~/.cargo`, etc.) are persisted across tasks.
+
+### What to do if a system library is genuinely missing
+
+The toolchain image already ships the common build chain (`build-essential`, `libssl-dev`, `libpq-dev`, `libsqlite3-dev`, `libxml2-dev`, etc.) so most native gem / wheel / cgo extensions build out of the box without any system installs.
+
+If you genuinely hit a missing system library (a real C library, not a runtime), do **not** attempt `apt-get`. Stop, write the blocker into your handoff with the exact missing library name and the failing build command, and escalate. The fix is to add the package to the toolchain Dockerfile (`infra/docker/openclaw/Dockerfile`) and rebuild the image — that is an operator change, not an in-task change.
+
 ## Testing Rules
 
 - Treat tests as part of the implementation, not optional decoration.

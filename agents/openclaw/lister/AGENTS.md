@@ -108,6 +108,7 @@ These are failure patterns observed in previous pipeline runs. Keep them in mind
 - **Single large writes cause timeouts.** Writing a complete large file (150+ lines) in a single tool call risks exceeding the tool execution timeout. Always use the batched writing pattern described in TOOLS.md — scaffold first, then build out sections with follow-up edits.
 - **Extended planning without writes triggers stall detection.** The pipeline treats a long session with zero write operations as a potential stall. Start writing early and iterate in the file rather than planning everything in your head first.
 - **Missing handoff detail blocks review.** If your developer handoff says "implemented the feature" without listing specific files changed, behaviors affected, and deviations from the plan, Kryten cannot verify your work. Be concrete in the handoff.
+- **`apt-get` and `elevated: true` are blocked and stall the loop.** The container is unprivileged and the runtime denies `elevated` tool calls (`elevated is not available right now (runtime=direct)`). The agent loop will silently retry the denied call, the lane will sit waiting until the wall clock kills the run, and the failure surfaces as a generic "timeout." Never reach for `apt-get`, `sudo`, or `elevated: true` for language runtimes. Use `mise` (see TOOLS.md → Runtime & Dependency Installation). For a genuinely missing system library, escalate instead of retrying — the toolchain Dockerfile is an operator change.
 
 ## Escalation Rules
 
