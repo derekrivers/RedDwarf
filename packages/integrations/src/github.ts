@@ -1107,6 +1107,47 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
     return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
   }
 
+  /**
+   * M25 F-191 — list every `.github/workflows/*.{yml,yaml}` file in the repo
+   * with its decoded contents. Returns `[]` when the directory does not exist
+   * (greenfield repos). Implements WorkflowSurveyAdapter so it can be passed
+   * directly to `surveyWorkflowFiles`.
+   */
+  async listWorkflowYamlFiles(
+    repo: string
+  ): Promise<{ path: string; content: string }[]> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const dirPath = `/repos/${owner}/${repoName}/contents/.github/workflows`;
+
+    let entries: Array<{ name: string; path: string; type: string; download_url: string | null }>;
+    try {
+      entries = await this.apiGet<typeof entries>(dirPath);
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const results: { path: string; content: string }[] = [];
+    for (const entry of entries) {
+      if (entry.type !== "file") continue;
+      if (!/\.(ya?ml)$/i.test(entry.name)) continue;
+      // Fetch each file's content individually — the directory listing
+      // only includes metadata. The contents endpoint returns base64.
+      const fileResponse = await this.apiGet<{ content: string; encoding: string }>(
+        `/repos/${owner}/${repoName}/contents/${entry.path}`
+      );
+      if (fileResponse.encoding !== "base64") {
+        // Non-base64 encoding is unexpected; skip rather than crash.
+        continue;
+      }
+      const decoded = Buffer.from(fileResponse.content, "base64").toString("utf8");
+      results.push({ path: entry.path, content: decoded });
+    }
+    return results;
+  }
+
   async ensureWorkflowFile(repo: string): Promise<{ created: boolean; skipped: boolean }> {
     const { owner, repoName } = this.parseRepo(repo);
     const apiPath = `/repos/${owner}/${repoName}/contents/.github/workflows/reddwarf-advance.yml`;

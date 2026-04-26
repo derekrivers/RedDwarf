@@ -36,7 +36,8 @@ import {
   type GitHubPullRequestSummary,
   type OpenClawDispatchAdapter,
   type OpenClawDispatchResult,
-  type SecretsAdapter
+  type SecretsAdapter,
+  type WorkflowSurveyAdapter
 } from "@reddwarf/integrations";
 import {
   DEFAULT_OPENCLAW_COMPLETION_TIMEOUT_MS,
@@ -189,6 +190,15 @@ export interface PlanningPipelineDependencies {
   idGenerator?: () => string;
   concurrency?: PlanningConcurrencyOptions;
   timing?: PhaseTimingOptions;
+  /**
+   * M25 F-191: optional GitHub Actions workflow surveyor. When supplied,
+   * project-mode planning surveys the target repo's `.github/workflows/*.yml`
+   * job names and stamps the resulting RequiredCheckContract on the
+   * ProjectSpec and every TicketSpec. When omitted, the contract is left as
+   * `null` and the auto-merge evaluator (F-194) treats the project as
+   * "ineligible for auto-merge".
+   */
+  workflowSurveyAdapter?: WorkflowSurveyAdapter;
 }
 
 export interface PlanningPipelineResult {

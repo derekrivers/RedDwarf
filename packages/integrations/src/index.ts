@@ -6,6 +6,7 @@ export * from "./secrets.js";
 export * from "./openclaw.js";
 export * from "./openclaw-task-flow.js";
 export * from "./github.js";
+export * from "./github-workflow-survey.js";
 export * from "./intake.js";
 export * from "./intake-github.js";
 export * from "./intake-fixture.js";
