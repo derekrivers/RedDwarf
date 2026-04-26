@@ -1107,6 +1107,110 @@ export class RestGitHubAdapter implements GitHubAdapter, GitHubRepoDiscovery {
     return this.circuitBreaker ? this.circuitBreaker.execute(doFetch) : doFetch();
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  // M25 F-194 — GitHubAutoMergeAdapter implementation
+  // ──────────────────────────────────────────────────────────────────────
+
+  async getPullRequest(repo: string, prNumber: number): Promise<{
+    number: number;
+    state: "open" | "closed" | "merged";
+    merged: boolean;
+    headSha: string;
+    headRef: string;
+    baseRef: string;
+    title: string;
+    body: string;
+    labels: string[];
+  }> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const pr = await this.apiGet<{
+      number: number;
+      state: string;
+      merged: boolean;
+      head: { sha: string; ref: string };
+      base: { ref: string };
+      title: string;
+      body: string | null;
+      labels: Array<{ name: string }>;
+    }>(`/repos/${owner}/${repoName}/pulls/${prNumber}`);
+    return {
+      number: pr.number,
+      state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
+      merged: pr.merged,
+      headSha: pr.head.sha,
+      headRef: pr.head.ref,
+      baseRef: pr.base.ref,
+      title: pr.title,
+      body: pr.body ?? "",
+      labels: pr.labels.map((l) => l.name)
+    };
+  }
+
+  async getPullRequestFiles(
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{
+    path: string;
+    status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+    additions: number;
+    deletions: number;
+  }>> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const files = await this.apiGet<Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+    }>>(`/repos/${owner}/${repoName}/pulls/${prNumber}/files?per_page=100`);
+    return files.map((f) => ({
+      path: f.filename,
+      status: (f.status as "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged"),
+      additions: f.additions,
+      deletions: f.deletions
+    }));
+  }
+
+  async getPullRequestCommits(
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{ sha: string; message: string }>> {
+    const { owner, repoName } = this.parseRepo(repo);
+    const commits = await this.apiGet<Array<{ sha: string; commit: { message: string } }>>(
+      `/repos/${owner}/${repoName}/pulls/${prNumber}/commits?per_page=100`
+    );
+    return commits.map((c) => ({ sha: c.sha, message: c.commit.message }));
+  }
+
+  async addLabel(repo: string, prNumber: number, label: string): Promise<void> {
+    await this.addLabels(repo, prNumber, [label]);
+  }
+
+  async postComment(repo: string, prNumber: number, body: string): Promise<void> {
+    await this.commentOnIssue({ repo, issueNumber: prNumber, body });
+  }
+
+  async mergePullRequest(input: {
+    repo: string;
+    prNumber: number;
+    headSha: string;
+    commitTitle?: string;
+  }): Promise<{ merged: boolean; mergedSha: string | null; message: string }> {
+    const { owner, repoName } = this.parseRepo(input.repo);
+    const result = await this.apiPut<{ sha?: string; merged: boolean; message: string }>(
+      `/repos/${owner}/${repoName}/pulls/${input.prNumber}/merge`,
+      {
+        sha: input.headSha,
+        merge_method: "squash",
+        ...(input.commitTitle ? { commit_title: input.commitTitle } : {})
+      }
+    );
+    return {
+      merged: result.merged,
+      mergedSha: result.sha ?? null,
+      message: result.message
+    };
+  }
+
   /**
    * M25 F-191 — list every `.github/workflows/*.{yml,yaml}` file in the repo
    * with its decoded contents. Returns `[]` when the directory does not exist
