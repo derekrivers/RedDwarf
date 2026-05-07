@@ -567,6 +567,14 @@
 - Working workaround: set `REDDWARF_OPENCLAW_OPERATOR_API_URL=http://host.docker.internal:8080` in the OpenClaw service environment, map `host.docker.internal:host-gateway` in Docker Compose, inject that value into `mcp.servers.reddwarf.env.REDDWARF_API_URL` when generating `openclaw.json`, and also set the service-level `REDDWARF_API_URL` to the same host-reachable URL. Some bundled MCP launches can fall back to the container-wide `REDDWARF_API_URL` instead of the per-server `env` override, so leaving the service default at `127.0.0.1:8080` still causes `fetch failed` and startup timeouts.
 - Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate OpenClaw, and run `docker compose -f infra/docker/docker-compose.yml exec -T openclaw sh -lc "node openclaw.mjs config get mcp.servers"`; the `reddwarf` entry should show `REDDWARF_API_URL` pointing at `http://host.docker.internal:8080`.
 
+## OpenClaw `bundle-mcp` closes the `reddwarf` server immediately with `EACCES: permission denied, open '/opt/reddwarf/.secrets'`
+
+- Symptom: OpenClaw starts normally, but logs repeated `bundle-mcp failed to start server "reddwarf" ... Connection closed`. The bridge diag log at `/tmp/reddwarf-mcp-diag.log` shows `fatal: EACCES: permission denied, open '/opt/reddwarf/.secrets'`.
+- Root cause: `scripts/start-operator-mcp.mjs` used the generic repo env loader, which tries both `.env` and `.secrets` from the repo root. Inside the OpenClaw container the repo is mounted read-only at `/opt/reddwarf`, and `.secrets` is typically host-owned `0600`, so the `node` user cannot read it even though the needed MCP secrets were already injected into the process environment.
+- Failing approach: debugging host reachability or token injection first when `/tmp/reddwarf-mcp-diag.log` already shows the child process dying on `/opt/reddwarf/.secrets`.
+- Working workaround: have `start-operator-mcp.mjs` load only the repo `.env` as a local fallback and rely on the already-injected container environment for `REDDWARF_OPERATOR_TOKEN` and `REDDWARF_API_URL`. The MCP bridge does not need to read `.secrets` from the mounted repo inside the container.
+- Verification: recreate OpenClaw, confirm `/tmp/reddwarf-mcp-diag.log` shows `startup ... token=set ... ready` instead of the `EACCES` fatal, and rerun `corepack pnpm verify:operator-mcp`.
+
 ## GitHub AI Task issues using the checked-in template still get rejected as under-specified
 
 - Symptom: a GitHub issue created from `.github/ISSUE_TEMPLATE/ai-task.yml` is ingested, but pre-screening blocks planning with `under_specified` and says no affected paths were provided even though the issue includes an `Affected Areas` section.
