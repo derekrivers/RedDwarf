@@ -2,7 +2,7 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { runOperatorMcpStdioServer } from "../packages/control-plane/dist/index.js";
-import { loadRepoEnv } from "./lib/repo-env.mjs";
+import { loadRepoEnv, repoEnvPath } from "./lib/repo-env.mjs";
 
 const startMs = Date.now();
 const logPath = "/tmp/reddwarf-mcp-diag.log";
@@ -17,7 +17,11 @@ const log = (msg) => {
 log(`startup pid=${process.pid} token=${process.env.REDDWARF_OPERATOR_TOKEN ? "set" : "MISSING"} url=${process.env.REDDWARF_API_URL ?? "MISSING"}`);
 
 try {
-  await loadRepoEnv();
+  // The OpenClaw container injects the MCP bridge secrets through the process
+  // environment. Loading the repo's `.secrets` file from the read-only policy
+  // mount can fail under the `node` user (`/opt/reddwarf/.secrets` is often
+  // mode 0600 on the host), so only fall back to `.env` here.
+  await loadRepoEnv({ paths: [repoEnvPath] });
   log(`ready (+${Date.now() - startMs}ms)`);
   await runOperatorMcpStdioServer();
   log(`exited (+${Date.now() - startMs}ms)`);
