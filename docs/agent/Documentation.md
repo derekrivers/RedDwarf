@@ -1,5 +1,12 @@
 # Agent Documentation
 
+## 2026-05-07
+
+- Investigated unhealthy OpenClaw VPS startup logs showing `plugins failed to initialize (validation: browser, openai, ...)`, `canvas failed: node required`, and `npm error ... /home/node/.npm/_logs`. Root cause was self-inflicted: RedDwarf's `plugins.allow` trust list had been narrowed to only the repo-mounted `reddwarf-operator` plugin, which starved bundled plugins the runtime actually needs once browser support or OpenAI-family providers are enabled. On older VPS installs the stale Docker-owned `/home/node/.npm` volume also produced noisy npm log-dir write failures during plugin dependency recovery.
+- Fixed the generated `openclaw.json` allowlist logic so it now trusts only the repo plugin plus the bundled browser, Discord, and provider plugins actually implied by the generated config, preserving the non-bundled-plugin trust boundary without breaking runtime features. Updated the checked-in template to match.
+- Moved the OpenClaw container's npm cache onto the bind-mounted OpenClaw home (`/home/node/.openclaw/cache/npm`) via `NPM_CONFIG_CACHE`, and removed the dedicated `openclaw-npm-cache` Docker volume mount. Startup now creates the cache/log directory before launching the gateway so browser/provider plugin recovery no longer depends on a stale `/home/node/.npm` volume having the right ownership.
+- Added focused config-generation regression coverage for browser/plugin allowlisting, OpenAI-family providers, and failover-provider allowlisting. Updated `docs/agent/TROUBLESHOOTING.md` so future retries use the new plugin-allowlist and npm-cache path instead of reintroducing the old failure.
+
 ## 2026-04-26 — M25 Project Mode auto-merge landed (F-189..F-198)
 
 Hidden, opt-in auto-merge for Project Mode sub-ticket PRs is now in place. Default off at every layer; enabling requires both a deployment-level flag and a per-project opt-in.

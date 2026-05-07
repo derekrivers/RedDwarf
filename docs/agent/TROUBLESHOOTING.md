@@ -548,8 +548,16 @@
 - Symptom: after adding a repo-mounted OpenClaw plugin, gateway logs warn that `plugins.allow is empty; discovered non-bundled plugins may auto-load`.
 - Root cause: OpenClaw treats repo plugins as non-bundled code and expects an explicit trust list in `plugins.allow` so only named plugin ids are permitted to load from configured paths.
 - Failing approach: adding `plugins.load.paths` and `plugins.entries` for a repo plugin without also pinning the trusted plugin ids.
-- Working workaround: set `plugins.allow` explicitly in both the generated config and the checked-in template. For feature 121, RedDwarf now trusts only `reddwarf-operator`.
+- Working workaround: set `plugins.allow` explicitly in both the generated config and the checked-in template, but include the bundled plugin ids that RedDwarf actively uses as well. The current safe allowlist is the repo plugin `reddwarf-operator` plus any bundled browser, Discord, and active model-provider plugins implied by the generated OpenClaw config.
 - Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate the OpenClaw container, and confirm `node openclaw.mjs plugins inspect reddwarf-operator --json` reports `status: "loaded"` without the trust warning.
+
+## OpenClaw logs `plugins failed to initialize (validation: browser, openai, ...)` and `npm error ... /home/node/.npm/_logs`
+
+- Symptom: `docker compose ... logs openclaw` shows lines such as `2 plugin(s) failed to initialize (validation: browser, openai)`, `canvas failed: node required`, or `npm error Log files were not written due to an error writing to the directory: /home/node/.npm/_logs` during gateway startup.
+- Root cause: RedDwarf originally trust-listed only the repo-mounted `reddwarf-operator` plugin, which prevented bundled plugins that the runtime actually depends on from loading cleanly once browser support or OpenAI-family model providers were enabled. On long-lived VPS installs, an older Docker-owned `/home/node/.npm` cache volume could also make bundled-plugin dependency recovery noisy because npm could not write its cache/log directory.
+- Failing approach: keeping a restrictive `plugins.allow` that names only `reddwarf-operator`, or repeatedly recreating the container while preserving the same stale npm cache path.
+- Working workaround: generate `plugins.allow` from the active RedDwarf surfaces so it includes the repo plugin plus the bundled browser, Discord, and provider plugins implied by the generated config. RedDwarf now also routes `NPM_CONFIG_CACHE` to `/home/node/.openclaw/cache/npm` on the bind-mounted OpenClaw home, avoiding the brittle `/home/node/.npm` Docker volume path.
+- Verification: regenerate `runtime-data/openclaw-home/openclaw.json`, recreate OpenClaw, inspect `plugins.allow`, and confirm gateway logs no longer report validation failures for `browser` or the active provider plugin. If the old `openclaw-npm-cache` Docker volume still exists, it can be removed once the new cache path is live because the container no longer uses it.
 
 ## RedDwarf MCP bridge inside OpenClaw cannot reach the operator API
 
