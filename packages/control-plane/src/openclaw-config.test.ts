@@ -34,7 +34,7 @@ describe("generateOpenClawConfig", () => {
     });
     expect(config.plugins).toEqual({
       enabled: true,
-      allow: ["reddwarf-operator"],
+      allow: ["reddwarf-operator", "anthropic"],
       load: {
         paths: ["/opt/reddwarf/agents/openclaw/plugins/reddwarf-operator"]
       },
@@ -333,6 +333,28 @@ describe("generateOpenClawConfig", () => {
     expect(config.browser).toEqual({
       enabled: true
     });
+    expect(config.plugins?.allow).toContain("browser");
+  });
+
+  it("allows the bundled provider plugin needed by OpenAI-family models", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai-codex"
+    });
+
+    expect(config.plugins?.allow).toContain("openai");
+    expect(config.plugins?.allow).not.toContain("openai-codex");
+  });
+
+  it("includes fallback provider plugins when model failover is enabled", () => {
+    const config = generateOpenClawConfig({
+      workspaceRoot: "/ws",
+      modelProvider: "openai",
+      enableModelFailover: true
+    });
+
+    expect(config.plugins?.allow).toContain("openai");
+    expect(config.plugins?.allow).toContain("anthropic");
   });
 
   it("allows a subset of roles", () => {

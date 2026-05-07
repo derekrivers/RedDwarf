@@ -9,6 +9,7 @@ services:
       - -lc
       - |
         mkdir -p /home/node/.openclaw
+        mkdir -p /home/node/.openclaw/cache/npm/_logs
         if [ ! -s /home/node/.openclaw/openclaw.json ]; then
           cp /etc/openclaw/openclaw.json /home/node/.openclaw/openclaw.json
         fi
@@ -43,6 +44,10 @@ services:
       REDDWARF_WORKSPACE_ROOT: ${REDDWARF_WORKSPACE_ROOT:-/var/lib/reddwarf/workspaces}
       REDDWARF_EVIDENCE_ROOT: ${REDDWARF_EVIDENCE_ROOT:-/var/lib/reddwarf/evidence}
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      # Keep npm cache on the bind-mounted OpenClaw home so browser/provider
+      # plugin recovery does not depend on a Docker-owned /home/node/.npm
+      # volume surviving image upgrades with the right ownership.
+      NPM_CONFIG_CACHE: /home/node/.openclaw/cache/npm
       # ── Discord (optional, only needed when Discord channel is enabled) ─
       OPENCLAW_DISCORD_BOT_TOKEN: ${OPENCLAW_DISCORD_BOT_TOKEN:-}
     extra_hosts:
@@ -74,7 +79,6 @@ services:
       # generated app does not require editing this list.
       - openclaw-mise-runtimes:/home/node/.local/share/mise
       - openclaw-mise-downloads:/home/node/.cache/mise
-      - openclaw-npm-cache:/home/node/.npm
       - openclaw-pnpm-store:/home/node/.local/share/pnpm
       - openclaw-yarn-cache:/home/node/.cache/yarn
       - openclaw-bundle-cache:/home/node/.bundle
@@ -110,7 +114,6 @@ volumes:
   # service block for why these are mounted unconditionally.
   openclaw-mise-runtimes:
   openclaw-mise-downloads:
-  openclaw-npm-cache:
   openclaw-pnpm-store:
   openclaw-yarn-cache:
   openclaw-bundle-cache:

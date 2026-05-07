@@ -95,7 +95,9 @@
   "plugins": {
     "enabled": true,
     "allow": [
-      "reddwarf-operator"
+      "reddwarf-operator",
+      "browser",
+      "anthropic"
     ],
     "load": {
       "paths": [

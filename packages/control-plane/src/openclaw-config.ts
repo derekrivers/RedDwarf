@@ -496,6 +496,13 @@ export function generateOpenClawConfig(
 
   const enableAgentToAgent = options.enableAgentToAgent ?? false;
   const agentIds = roles.map((role) => role.agentId);
+  const enableModelFailover = options.enableModelFailover ?? false;
+  const pluginAllowlist = buildPluginAllowlist({
+    roles,
+    browserEnabled: options.browser?.enabled ?? false,
+    discordEnabled: options.discord?.enabled ?? false,
+    enableModelFailover
+  });
 
   const globalTools = buildGlobalToolsConfig({
     enableAgentToAgent,
@@ -687,7 +694,7 @@ export function generateOpenClawConfig(
     },
     plugins: {
       enabled: true,
-      allow: ["reddwarf-operator"],
+      allow: pluginAllowlist,
       load: {
         paths: [reddwarfOperatorPluginPath]
       },
@@ -706,7 +713,6 @@ export function generateOpenClawConfig(
     }
   };
 
-  const enableModelFailover = options.enableModelFailover ?? false;
   for (const [index, role] of roles.entries()) {
     const agentEntry = buildAgentConfig(role, options.workspaceRoot, skipBootstrap, {
       enableModelFailover
@@ -772,6 +778,61 @@ function buildGlobalToolsConfig(input: {
   }
 
   return Object.keys(tools).length > 0 ? tools : null;
+}
+
+function buildPluginAllowlist(input: {
+  roles: readonly OpenClawAgentRoleDefinition[];
+  browserEnabled: boolean;
+  discordEnabled: boolean;
+  enableModelFailover: boolean;
+}): string[] {
+  const allowlist = new Set<string>(["reddwarf-operator"]);
+
+  if (input.browserEnabled) {
+    allowlist.add("browser");
+  }
+
+  if (input.discordEnabled) {
+    allowlist.add("discord");
+  }
+
+  for (const role of input.roles) {
+    const primaryPluginId = resolvePluginIdForModelRef(role.runtimePolicy.model.model);
+    if (primaryPluginId) {
+      allowlist.add(primaryPluginId);
+    }
+
+    if (!input.enableModelFailover) {
+      continue;
+    }
+
+    const fallbackModel = MODEL_FAILOVER_MAP[role.runtimePolicy.model.provider]?.[role.role];
+    const fallbackPluginId = resolvePluginIdForModelRef(fallbackModel);
+    if (fallbackPluginId) {
+      allowlist.add(fallbackPluginId);
+    }
+  }
+
+  return [...allowlist];
+}
+
+function resolvePluginIdForModelRef(modelRef: string | undefined): string | null {
+  if (typeof modelRef !== "string" || modelRef.length === 0) {
+    return null;
+  }
+
+  const providerId = modelRef.split("/", 1)[0]?.trim();
+  if (!providerId) {
+    return null;
+  }
+
+  // `openai-codex/*` models are served by the bundled `openai` plugin. The
+  // separate `codex` plugin is only for the native app-server harness.
+  if (providerId === "openai-codex") {
+    return "openai";
+  }
+
+  return providerId;
 }
 
 function buildAgentDefaults(input: {
